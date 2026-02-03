@@ -208,7 +208,7 @@ class LocFileManager:
             self.main.show_temp_msg(
                 "Mode Switched",
                 f"Successfully loaded {loaded_count} clips.\n\nCurrent Mode: LOCALIZATION",
-                duration=1500,
+                duration=1000,
                 icon=QMessageBox.Icon.Information,
             )
 
