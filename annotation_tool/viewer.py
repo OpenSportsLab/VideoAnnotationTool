@@ -251,7 +251,7 @@ class ActionClassifierApp(QMainWindow):
 
         self.show_temp_msg(
             "New Project Created",
-            "Workspace ready. Add labels in the Category Editor."
+            "Workspace ready. Add labels in the Category Editor.",
             duration=800
         )
 
