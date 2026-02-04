@@ -56,8 +56,8 @@ class LocFileManager:
         # This ensures the Right Panel is enabled (clickable) even with 0 videos.
         if hasattr(self.main, "prepare_new_localization_ui"):
             self.main.prepare_new_localization_ui()
+        self.main.statusBar().showMessage("Project Created — Localization Workspace Ready", 5000)
 
-        self.main.show_temp_msg("Project Created", "Localization Workspace Ready")
 
     def load_project(self, data, file_path):
         """
@@ -205,12 +205,11 @@ class LocFileManager:
                 msg += "\n..."
             QMessageBox.warning(self.main, "Load Warning", msg)
         else:
-            self.main.show_temp_msg(
-                "Mode Switched",
-                f"Successfully loaded {loaded_count} clips.\n\nCurrent Mode: LOCALIZATION",
-                duration=1000,
-                icon=QMessageBox.Icon.Information,
+            self.main.statusBar().showMessage(
+                f"Mode Switched — Loaded {loaded_count} clips. Current Mode: LOCALIZATION",
+                1500
             )
+
 
         return True
 
@@ -290,7 +289,7 @@ class LocFileManager:
                 json.dump(output, f, indent=4, ensure_ascii=False)
 
             self.model.is_data_dirty = False
-            self.main.show_temp_msg("Saved", f"Saved to {os.path.basename(path)}")
+            self.main.statusBar().showMessage(f"Saved — {os.path.basename(path)}", 1500)
             return True
         except Exception as e:
             QMessageBox.critical(self.main, "Error", f"Save failed: {e}")
