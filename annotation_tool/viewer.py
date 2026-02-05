@@ -352,7 +352,7 @@ class ActionClassifierApp(QMainWindow):
     
 
     def show_temp_msg(self, title: str, msg: str, duration: int = 1500, **kwargs) -> None:
-        # status bar 更适合一行文本
+        # status bar 
         one_line = " ".join(str(msg).splitlines()).strip()
         text = f"{title} — {one_line}" if title else one_line
         self.statusBar().showMessage(text, duration)
