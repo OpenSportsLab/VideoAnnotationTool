@@ -1,12 +1,8 @@
 # SoccerNet Pro Annotation Tool
 
-This project is a professional video annotation desktop application built with **PyQt6**. It features a **triple-mode** architecture supporting:
+This project is a professional video annotation desktop application built with **PyQt6**. It features a comprehensive tri-mode architecture supporting **Whole-Video Classification**, **Action Spotting (Localization)**, and **Video Captioning (Description)** tasks.
 
-1.  **Whole-Video Classification**
-2.  **Action Spotting (Localization)**
-3.  **Video Description (Captioning)** [NEW]
-
-The project follows a modular **MVC (Model-View-Controller)** design pattern to ensure separation of concerns between data handling, business logic, and user interface. Recent updates have unified the UI architecture using a composite design pattern and migrated the resource management to a robust **Qt Model/View** architecture.
+The project follows a modular **MVC (Model-View-Controller)** design pattern to ensure separation of concerns between data handling, business logic, and user interface. Recent updates have unified the UI architecture using a composite design pattern and migrated resource management to a robust **Qt Model/View** architecture.
 
 ## 📂 Project Structure Overview
 
@@ -39,49 +35,31 @@ annotation_tool/
 │   │   ├── loc_file_manager.py
 │   │   └── localization_manager.py
 │   │
-│   └── description/            # [NEW] Logic for Description mode
-│       ├── desc_annotation_manager.py # Handles text editor & save logic
-│       ├── desc_file_manager.py       # Handles JSON I/O for description
-│       └── desc_navigation_manager.py # Handles interaction with shared Tree Model
+│   └── description/            # [NEW] Logic for Description/Captioning mode
+│       ├── desc_annotation_manager.py  # Handles Q&A text formatting & saving
+│       ├── desc_file_manager.py        # JSON I/O & Tree population for Description
+│       └── desc_navigation_manager.py  # Video playback & tree navigation logic
 │
 └── ui/                         # [View Layer] Interface definitions
     ├── common/                 # Shared widgets & layouts
     │   ├── main_window.py      # Main UI Assembler (Stacks Views)
     │   ├── workspace.py        # Generic 3-Column Layout (UnifiedTaskPanel)
-    │   ├── clip_explorer.py    # Universal Left Sidebar (QTreeView)
+    │   ├── clip_explorer.py    # Universal Sidebar (Project Tree View)
     │   ├── project_controls.py # Unified control buttons (Save, Export, etc.)
     │   ├── dialogs.py          # Pop-up dialogs (Wizard, File Picker)
     │   └── welcome_widget.py   # Welcome screen
     │
     ├── classification/         # UI components for Classification
-    │   ├── media_player/       # [Widget] Center Panel components
-    │   │   ├── preview.py
-    │   │   ├── controls.py
-    │   │   └── __init__.py
-    │   └── event_editor/       # [Widget] Right Panel components
-    │       ├── dynamic_widgets.py
-    │       ├── editor.py
-    │       └── __init__.py
+    │   ├── media_player/       # Video Player & Navigation controls
+    │   └── event_editor/       # Dynamic Radio/Checkbox Schema Editor
     │
     ├── localization/           # UI components for Localization
-    │   ├── media_player/       # [Widget] Center Panel components
-    │   │   ├── preview.py
-    │   │   ├── timeline.py
-    │   │   ├── controls.py
-    │   │   └── __init__.py
-    │   └── event_editor/       # [Widget] Right Panel components
-    │       ├── annotation_table.py
-    │       ├── spotting_controls.py
-    │       └── __init__.py
+    │   ├── media_player/       # Timeline & Custom Player
+    │   └── event_editor/       # Spotting Interface & Annotation Table
     │
     └── description/            # [NEW] UI components for Description
-        ├── media_player/       # [Widget] Center Panel components
-        │   ├── preview.py      # Video player with robust loading logic
-        │   ├── controls.py     # Simple playback controls
-        │   └── __init__.py
-        └── event_editor/       # [Widget] Right Panel components
-            ├── editor.py       # Text editor for Captions/Q&A
-            └── __init__.py
+        ├── media_player/       # Video Player optimized for Q&A review
+        └── event_editor/       # Text-based Caption/Q&A Editor
 
 ```
 
@@ -94,14 +72,14 @@ annotation_tool/
 These files form the backbone of the application infrastructure.
 
 * **`main.py`**: The bootstrap script. Initializes the `QApplication` and launches the main window.
-* **`viewer.py`**: Defines the `ActionClassifierApp` (Main Window). It acts as the primary **Controller**, initializing the shared `ProjectTreeModel` and connecting UI signals to specific Logic Controllers based on the active mode.
+* **`viewer.py`**: Defines the `ActionClassifierApp` (Main Window). It acts as the primary **Controller**, initializing the shared `ProjectTreeModel` and connecting UI signals to specific Logic Controllers (Classification, Localization, or Description).
 * **`utils.py`**: Utility functions for file handling, natural sorting, and icon generation.
 
 ### 2. Models (`/models`)
 
 The **Data Layer**. These files handle the application state, data structures, and validation logic. They are completely decoupled from the UI.
 
-* **`app_state.py`**: The core Application State. Stores runtime data (`manual_annotations`, `localization_events`, `action_item_data`), defines Undo/Redo stacks, and contains strict JSON schema validation logic for all three modes.
+* **`app_state.py`**: The core Application State. Stores runtime data (`manual_annotations`, `localization_events`, `action_item_data`), defines Undo/Redo stacks (`CmdType`), and contains strict JSON schema validation logic for all three modes.
 * **`project_tree.py`**: The **Qt Standard Item Model**. This is the data source for the project tree. It inherits from `QStandardItemModel` and manages the hierarchical data of clips and source files using standard Qt roles.
 
 ### 3. User Interface (`/ui`)
@@ -111,24 +89,28 @@ The **View Layer**. Contains PyQt6 widgets and layout definitions. The UI struct
 #### Common Components (`/ui/common`)
 
 * **`main_window.py`**: The top-level UI container. Manages the `QStackedLayout` to switch between Welcome, Classification, Localization, and Description views.
-* **`workspace.py`**: Defines `UnifiedTaskPanel`. A generic 3-column skeleton that embeds the shared `CommonProjectTreePanel` on the left.
-* **`clip_explorer.py`**: Defines `CommonProjectTreePanel`. The **Shared View** for the project list. Uses `QTreeView` to visualize `ProjectTreeModel`.
+* **`workspace.py`**: Defines `UnifiedTaskPanel`. A generic 3-column skeleton that embeds the shared `CommonProjectTreePanel`.
+* **`clip_explorer.py`**: Defines `CommonProjectTreePanel`. The **Shared View** for the project list.
+* *MVC Update*: Uses `QTreeView` to visualize the `ProjectTreeModel`.
+
+
+* **`dialogs.py`**: Contains modal dialogs such as the **Project Creation Wizard** (now supports Description mode) and custom **Folder Picker**.
 * **`project_controls.py`**: Unified control buttons (Save, Export, Add Video) used in the sidebar.
 
 #### Classification Components (`/ui/classification`)
 
-* **`media_player/`**: Contains the **Center Panel** widgets (Video Player, Slider).
-* **`event_editor/`**: Contains the **Right Panel** widgets (Dynamic Radio/Checkbox groups driven by Schema).
+* **`media_player/`**: Contains the **Video Playback** widgets (Video Player, Slider, Action Navigation).
+* **`event_editor/`**: Contains the **Annotation Interface** widgets (Dynamic Radio/Checkbox groups driven by Schema).
 
 #### Localization Components (`/ui/localization`)
 
-* **`media_player/`**: Contains the **Center Panel** widgets (Timeline, Custom Video Player).
-* **`event_editor/`**: Contains the **Right Panel** widgets (Tabbed Spotting Interface, Annotation Table).
+* **`media_player/`**: Contains the **Video Playback** widgets (Timeline, Custom Video Player).
+* **`event_editor/`**: Contains the **Annotation Interface** widgets (Tabbed Spotting Interface, Annotation Table).
 
 #### Description Components (`/ui/description`) [NEW]
 
-* **`media_player/`**: Contains the **Center Panel** widgets. Features a specialized video player with explicit "Stop-Load-Delay-Play" logic to prevent black screens during rapid navigation.
-* **`event_editor/`**: Contains the **Right Panel** widgets. A streamlined text editor that formats `questions` and `captions` metadata into a unified "Q: ... A: ..." block for editing.
+* **`media_player/`**: Contains the **Video Playback** widgets tailored for captioning review (Preview Player, Playback Controls).
+* **`event_editor/`**: Contains the **Caption Interface** widgets (Text Editor for Q&A/Descriptions, Confirm/Clear controls).
 
 ### 4. Controllers (`/controllers`)
 
@@ -136,35 +118,25 @@ The **Logic Layer**. Pure Python logic handling business rules, data manipulatio
 
 #### Shared Controllers
 
-* **`router.py`**: Handles project lifecycle (Load/Create/Close). Determines which mode to launch (Classification/Localization/Description) based on JSON structure.
+* **`router.py`**: Handles project lifecycle (Load/Create/Close). Determines which mode to launch (Classification, Localization, or Description) based on JSON structure.
 * **`history_manager.py`**: Manages the Command Pattern implementation for the Undo/Redo system.
 
 #### Classification Sub-module (`/controllers/classification`)
 
-* **`class_file_manager.py`**: Handles JSON I/O. Clears the **Model** directly upon workspace reset.
-* **`navigation_manager.py`**: Manages video navigation and filtering via `setRowHidden`.
+* **`class_file_manager.py`**: Handles JSON I/O for classification tasks.
+* **`navigation_manager.py`**: Manages video navigation and playlist logic.
 * **`annotation_manager.py`**: Handles schema logic and saving user selections.
 
 #### Localization Sub-module (`/controllers/localization`)
 
-* **`loc_file_manager.py`**: Handles JSON I/O for localization.
-* **`localization_manager.py`**: Core logic for action spotting. Listens to View selection changes to trigger video loading.
+* **`loc_file_manager.py`**: Handles JSON I/O for localization tasks.
+* **`localization_manager.py`**: Core logic for action spotting and timestamp recording.
 
 #### Description Sub-module (`/controllers/description`) [NEW]
 
-* **`desc_file_manager.py`**: Handles JSON I/O for description/captioning. Parses the `Action -> Inputs` hierarchy and populates the tree.
-* **`desc_navigation_manager.py`**: Manages file navigation.
-* Implements logic to automatically play child video clips when a parent Action node is selected.
-* Includes robust playback logic (Stop -> Load -> Delay -> Play) to ensure stability.
-* Handles adding new video files to the project.
-
-
-* **`desc_annotation_manager.py`**: Manages the right-hand text editor.
-* Loads metadata questions and formats them with existing captions.
-* Saves edited text back to the model, flattening the structure (removing explicit question keys) upon confirmation.
-* Implements auto-advance logic after saving.
-
-
+* **`desc_file_manager.py`**: Handles JSON I/O for captioning tasks. Populates the tree with `Action -> Inputs` structure and manages saving data back to disk.
+* **`desc_navigation_manager.py`**: Manages file navigation and playback logic specific to description tasks (e.g., auto-playing the first clip of an action). Includes robust playback handling (Stop -> Load -> Delay -> Play) to prevent black screens.
+* **`desc_annotation_manager.py`**: Handles the Q&A text formatting logic. Parses JSON `questions` and `captions` into a readable text block and flattens edits back into the data model upon confirmation. Supports auto-advance after saving.
 
 ### 5. Style (`/style`)
 
