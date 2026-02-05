@@ -248,11 +248,10 @@ class ActionClassifierApp(QMainWindow):
         self.ui.classification_ui.right_panel.manual_box.setEnabled(True)
         self.ui.classification_ui.right_panel.task_label.setText(f"Task: {self.model.current_task_name}")
         
-
         self.show_temp_msg(
-            "New Project Created",
-            "Workspace ready. Add labels in the Category Editor.",
-            duration=800
+            "New Project Created", 
+            "Workspace is ready. You can now use the Schema Editor (Right Panel) to add Categories and Labels.",
+            duration=2500
         )
 
     def prepare_new_localization_ui(self) -> None:
@@ -262,12 +261,16 @@ class ActionClassifierApp(QMainWindow):
         """
         # Unlock the Right Panel (contains Annotations, Schema Editor, etc.)
         self.ui.localization_ui.right_panel.setEnabled(True)
-        
-        self.show_temp_msg(
-            "New Project Created", 
-            "Workspace ready. You can now use the Right Panel to add Heads (+) and Labels.",
-            duration=2500
+
+        self.statusBar().showMessage(
+            "New Project Created — Workspace ready. Add labels in the Category Editor.",
+            1500
         )
+
+
+
+
+
 
     def load_stylesheet(self) -> None:
         style_path = resource_path(os.path.join("style", "style.qss"))
@@ -346,14 +349,14 @@ class ActionClassifierApp(QMainWindow):
         self.ui.localization_ui.right_panel.undo_btn.setEnabled(can_undo)
         self.ui.localization_ui.right_panel.redo_btn.setEnabled(can_redo)
 
-    def show_temp_msg(self, title: str, msg: str, duration: int = 1500, icon: QMessageBox.Icon = QMessageBox.Icon.Information) -> None:
-        box = QMessageBox(self)
-        box.setWindowTitle(title)
-        box.setText(msg)
-        box.setIcon(icon)
-        box.setStandardButtons(QMessageBox.StandardButton.NoButton)
-        QTimer.singleShot(duration, box.accept)
-        box.exec()
+    
+
+    def show_temp_msg(self, title: str, msg: str, duration: int = 1500, **kwargs) -> None:
+        # status bar 更适合一行文本
+        one_line = " ".join(str(msg).splitlines()).strip()
+        text = f"{title} — {one_line}" if title else one_line
+        self.statusBar().showMessage(text, duration)
+
 
     def get_current_action_path(self):
         """
