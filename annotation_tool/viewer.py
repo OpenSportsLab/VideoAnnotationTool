@@ -9,6 +9,9 @@ from controllers.classification.annotation_manager import AnnotationManager
 from controllers.classification.navigation_manager import NavigationManager
 from controllers.history_manager import HistoryManager
 from controllers.localization.localization_manager import LocalizationManager
+# [NEW] Import Description Managers
+from controllers.description.desc_navigation_manager import DescNavigationManager
+from controllers.description.desc_annotation_manager import DescAnnotationManager
 from controllers.router import AppRouter
 from models import AppStateModel
 
@@ -18,7 +21,7 @@ from utils import create_checkmark_icon, natural_sort_key, resource_path
 
 
 class ActionClassifierApp(QMainWindow):
-    """Main application window for annotation + localization workflows."""
+    """Main application window for annotation + localization + description workflows."""
 
     FILTER_ALL = 0
     FILTER_DONE = 1
@@ -35,14 +38,13 @@ class ActionClassifierApp(QMainWindow):
         self.setCentralWidget(self.ui)
         self.model = AppStateModel()
 
-        # [NEW] Instantiate the Project Tree Model
+        # Instantiate the Project Tree Model
         self.tree_model = ProjectTreeModel(self)
         
-        # Bind the model to the Classification View
+        # Bind the model to Views
         self.ui.classification_ui.left_panel.tree.setModel(self.tree_model)
-        
-        #  Bind the model to the Localization View as well.
         self.ui.localization_ui.left_panel.tree.setModel(self.tree_model)
+        self.ui.description_ui.left_panel.tree.setModel(self.tree_model)
 
         # --- Controllers ---
         self.router = AppRouter(self)
@@ -50,6 +52,10 @@ class ActionClassifierApp(QMainWindow):
         self.annot_manager = AnnotationManager(self)
         self.nav_manager = NavigationManager(self)
         self.loc_manager = LocalizationManager(self)
+        
+        # [NEW] Description Mode Controllers
+        self.desc_nav_manager = DescNavigationManager(self)
+        self.desc_annot_manager = DescAnnotationManager(self)
 
         # --- Local UI state (icons, etc.) ---
         bright_blue = QColor("#00BFFF")
@@ -79,7 +85,7 @@ class ActionClassifierApp(QMainWindow):
         self.ui.welcome_widget.import_btn.clicked.connect(self.router.import_annotations)
         self.ui.welcome_widget.create_btn.clicked.connect(self.router.create_new_project_flow)
 
-        # Classification - Left panel
+        # --- Classification - Left panel ---
         cls_left = self.ui.classification_ui.left_panel
         cls_controls = cls_left.project_controls
         
@@ -91,16 +97,11 @@ class ActionClassifierApp(QMainWindow):
         cls_controls.exportRequested.connect(self.router.class_fm.export_json)
 
         cls_left.clear_btn.clicked.connect(self._on_class_clear_clicked)
-        
-        # [MV Adapter] Context menu remove
         cls_left.request_remove_item.connect(self._on_remove_item_requested)
-        
-        # [MV Adapter] Selection Change
         cls_left.tree.selectionModel().currentChanged.connect(self._on_tree_selection_changed)
-        
         cls_left.filter_combo.currentIndexChanged.connect(self.nav_manager.apply_action_filter)
 
-        # Classification - Center panel
+        # --- Classification - Center panel ---
         cls_center = self.ui.classification_ui.center_panel
         cls_center.play_btn.clicked.connect(self.nav_manager.play_video)
         cls_center.multi_view_btn.clicked.connect(self.nav_manager.show_all_views)
@@ -109,7 +110,7 @@ class ActionClassifierApp(QMainWindow):
         cls_center.next_clip.clicked.connect(self.nav_manager.nav_next_clip)
         cls_center.next_action.clicked.connect(self.nav_manager.nav_next_action)
 
-        # Classification - Right panel
+        # --- Classification - Right panel ---
         cls_right = self.ui.classification_ui.right_panel
         cls_right.confirm_btn.clicked.connect(self.annot_manager.save_manual_annotation)
         cls_right.clear_sel_btn.clicked.connect(self.annot_manager.clear_current_manual_annotation)
@@ -119,17 +120,36 @@ class ActionClassifierApp(QMainWindow):
         # Undo/redo
         cls_right.undo_btn.clicked.connect(self.history_manager.perform_undo)
         cls_right.redo_btn.clicked.connect(self.history_manager.perform_redo)
-        
         self.ui.localization_ui.right_panel.undo_btn.clicked.connect(self.history_manager.perform_undo)
         self.ui.localization_ui.right_panel.redo_btn.clicked.connect(self.history_manager.perform_redo)
 
-        # Localization panel
+        # --- Localization panel ---
         loc_controls = self.ui.localization_ui.left_panel.project_controls
         loc_controls.createRequested.connect(self.router.create_new_project_flow)
         loc_controls.closeRequested.connect(self.router.close_project)
 
-        # This will now work because setModel was called above
         self.loc_manager.setup_connections()
+
+        # --- [NEW] Description Panel Wiring ---
+        desc_left = self.ui.description_ui.left_panel
+        desc_controls = desc_left.project_controls
+        
+        desc_controls.createRequested.connect(self.router.create_new_project_flow)
+        desc_controls.loadRequested.connect(self.router.import_annotations) # Reuse Generic Router
+        desc_controls.closeRequested.connect(self.router.close_project) # Reuse Generic Router
+        
+        # Connect Specific Managers
+        desc_controls.addVideoRequested.connect(self.desc_nav_manager.add_items_via_dialog)
+        desc_controls.saveRequested.connect(self.router.desc_fm.save_json)
+        desc_controls.exportRequested.connect(self.router.desc_fm.export_json)
+
+        # [NEW] Filter & Clear for Description
+        desc_left.filter_combo.currentIndexChanged.connect(self.desc_nav_manager.apply_action_filter)
+        desc_left.clear_btn.clicked.connect(self._on_desc_clear_clicked)
+
+        # Connect Description Logic
+        self.desc_nav_manager.setup_connections()
+        self.desc_annot_manager.setup_connections()
 
     def _setup_shortcuts(self) -> None:
         """Register common keyboard shortcuts."""
@@ -164,12 +184,15 @@ class ActionClassifierApp(QMainWindow):
     # MV Adapter Methods
     # ---------------------------------------------------------------------
     def _on_tree_selection_changed(self, current: QModelIndex, previous: QModelIndex):
+        # Only for Classification; Description handles its own signals in DescNavigationManager
+        if self._is_desc_mode():
+            return
+
         if current.isValid():
             self.nav_manager.on_item_selected(current, previous)
 
     def _on_remove_item_requested(self, index: QModelIndex):
         """Handle context menu remove request via Model Index."""
-        # We need the item or the path to identify what to remove
         if index.isValid():
             self.nav_manager.remove_single_action_item(index)
 
@@ -179,15 +202,25 @@ class ActionClassifierApp(QMainWindow):
     def _is_loc_mode(self) -> bool:
         return self.ui.stack_layout.currentWidget() == self.ui.localization_ui
 
+    def _is_desc_mode(self) -> bool:
+        """[NEW] Helper to check if current view is Description."""
+        return self.ui.stack_layout.currentWidget() == self.ui.description_ui
+
     def _dispatch_save(self) -> None:
         if self._is_loc_mode():
             self.router.loc_fm.overwrite_json()
+        elif self._is_desc_mode():
+            # [NEW] Save current editor text first
+            self.desc_annot_manager.save_current_annotation()
+            self.router.desc_fm.save_json() 
         else:
             self.router.class_fm.save_json()
 
     def _dispatch_export(self) -> None:
         if self._is_loc_mode():
             self.router.loc_fm.export_json()
+        elif self._is_desc_mode():
+            self.router.desc_fm.export_json()
         else:
             self.router.class_fm.export_json()
 
@@ -198,22 +231,29 @@ class ActionClassifierApp(QMainWindow):
                 player.pause()
             else:
                 player.play()
+        elif self._is_desc_mode():
+            # [NEW] Forward to Description UI
+            self.ui.description_ui.center_panel.toggle_play_pause()
         else:
             player = self.ui.classification_ui.center_panel.single_view_widget.player
-
-        if not player:
-            return
+            if player:
+                if player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                    player.pause()
+                else:
+                    player.play()
 
     def _dispatch_seek(self, delta_ms: int) -> None:
+        player = None
         if self._is_loc_mode():
             player = self.loc_manager.center_panel.media_preview.player
+        elif self._is_desc_mode():
+             # [NEW] Forward to Description UI
+            player = self.ui.description_ui.center_panel.player
         else:
             player = self.ui.classification_ui.center_panel.single_view_widget.player
 
-        if not player:
-            return
-
-        player.setPosition(max(0, player.position() + delta_ms))
+        if player:
+            player.setPosition(max(0, player.position() + delta_ms))
 
     def _dispatch_add_annotation(self) -> None:
         if self._is_loc_mode():
@@ -222,6 +262,9 @@ class ActionClassifierApp(QMainWindow):
                 self.show_temp_msg("Warning", "No head/category selected.", icon=QMessageBox.Icon.Warning)
                 return
             self.loc_manager._on_label_add_req(current_head)
+        elif self._is_desc_mode():
+            # [NEW] Shortcut 'A' triggers save/confirm in Description mode
+            self.desc_annot_manager.save_current_annotation()
         else:
             self.annot_manager.save_manual_annotation()
 
@@ -240,37 +283,34 @@ class ActionClassifierApp(QMainWindow):
         if msg.exec() == QMessageBox.StandardButton.Yes:
             self.router.class_fm._clear_workspace(full_reset=True)
 
+    def _on_desc_clear_clicked(self) -> None:
+        """[NEW] Handle Clear button click for Description Mode."""
+        if not self.model.json_loaded and not self.model.action_item_data:
+            return
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Clear Workspace")
+        msg.setText("Clear description workspace? Unsaved changes will be lost.")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+
+        if msg.exec() == QMessageBox.StandardButton.Yes:
+            self.router.desc_fm._clear_workspace(full_reset=True)
+
     def prepare_new_project_ui(self) -> None:
-        """
-        [NEW] Unlocks the Classification UI components for a fresh blank project.
-        """
-        # Unlock the Schema Editor (Right Panel)
+        """Unlocks the Classification UI components for a fresh blank project."""
         self.ui.classification_ui.right_panel.manual_box.setEnabled(True)
         self.ui.classification_ui.right_panel.task_label.setText(f"Task: {self.model.current_task_name}")
-        
-        self.show_temp_msg(
-            "New Project Created", 
-            "Workspace is ready. You can now use the Schema Editor (Right Panel) to add Categories and Labels.",
-            duration=2500
-        )
+        self.show_temp_msg("New Project Created", "Classification Workspace ready.")
 
     def prepare_new_localization_ui(self) -> None:
-        """
-        [NEW] Unlocks the Localization UI components for a fresh blank project.
-        Allows adding Heads/Labels without a video loaded.
-        """
-        # Unlock the Right Panel (contains Annotations, Schema Editor, etc.)
+        """Unlocks the Localization UI components for a fresh blank project."""
         self.ui.localization_ui.right_panel.setEnabled(True)
+        self.statusBar().showMessage("New Project Created — Localization Workspace ready.", 1500)
 
-        self.statusBar().showMessage(
-            "New Project Created — Workspace ready. Add labels in the Category Editor.",
-            1500
-        )
-
-
-
-
-
+    def prepare_new_description_ui(self) -> None:
+        """[NEW] Unlocks the Description UI components for a fresh blank project."""
+        self.ui.description_ui.right_panel.setEnabled(True)
+        self.statusBar().showMessage("New Project Created — Description Workspace ready.", 1500)
 
     def load_stylesheet(self) -> None:
         style_path = resource_path(os.path.join("style", "style.qss"))
@@ -300,8 +340,19 @@ class ActionClassifierApp(QMainWindow):
         return msg_box.clickedButton() == btn_yes
 
     def closeEvent(self, event) -> None:
-        is_loc_mode = self._is_loc_mode()
-        has_data = bool(self.model.localization_events) if is_loc_mode else bool(self.model.manual_annotations)
+        # Check current mode for unsaved data
+        is_loc = self._is_loc_mode()
+        is_desc = self._is_desc_mode() # [NEW]
+
+        has_data = False
+        if is_loc:
+            has_data = bool(self.model.localization_events)
+        elif is_desc:
+            # Assume true if project loaded for now
+            has_data = self.model.json_loaded 
+        else:
+            has_data = bool(self.model.manual_annotations)
+
         can_export = self.model.json_loaded and has_data
 
         if not self.model.is_data_dirty or not can_export:
@@ -321,7 +372,16 @@ class ActionClassifierApp(QMainWindow):
         msg.exec()
 
         if msg.clickedButton() == save_btn:
-            ok = self.router.loc_fm.overwrite_json() if is_loc_mode else self.router.class_fm.save_json()
+            ok = False
+            if is_loc:
+                ok = self.router.loc_fm.overwrite_json()
+            elif is_desc:
+                # Save RAM state then Disk
+                self.desc_annot_manager.save_current_annotation()
+                ok = self.router.desc_fm.save_json()
+            else:
+                ok = self.router.class_fm.save_json()
+            
             event.accept() if ok else event.ignore()
         elif msg.clickedButton() == discard_btn:
             event.accept()
@@ -329,17 +389,32 @@ class ActionClassifierApp(QMainWindow):
             event.ignore()
 
     def update_save_export_button_state(self) -> None:
-        is_loc_mode = self._is_loc_mode()
-        has_data = bool(self.model.localization_events) if is_loc_mode else bool(self.model.manual_annotations)
+        # Update buttons for all modes
+        is_loc = self._is_loc_mode()
+        is_desc = self._is_desc_mode()
+
+        has_data = False
+        if is_loc:
+            has_data = bool(self.model.localization_events)
+        elif is_desc:
+            has_data = self.model.json_loaded
+        else:
+            has_data = bool(self.model.manual_annotations)
 
         can_export = self.model.json_loaded and has_data
         can_save = can_export and (self.model.current_json_path is not None) and self.model.is_data_dirty
 
+        # Update Classification controls
         self.ui.classification_ui.left_panel.project_controls.btn_save.setEnabled(can_save)
         self.ui.classification_ui.left_panel.project_controls.btn_export.setEnabled(can_export)
         
+        # Update Localization controls
         self.ui.localization_ui.left_panel.project_controls.btn_save.setEnabled(can_save)
         self.ui.localization_ui.left_panel.project_controls.btn_export.setEnabled(can_export)
+
+        # [NEW] Update Description controls
+        self.ui.description_ui.left_panel.project_controls.btn_save.setEnabled(can_save)
+        self.ui.description_ui.left_panel.project_controls.btn_export.setEnabled(can_export)
 
         can_undo = len(self.model.undo_stack) > 0
         can_redo = len(self.model.redo_stack) > 0
@@ -348,37 +423,30 @@ class ActionClassifierApp(QMainWindow):
         self.ui.classification_ui.right_panel.redo_btn.setEnabled(can_redo)
         self.ui.localization_ui.right_panel.undo_btn.setEnabled(can_undo)
         self.ui.localization_ui.right_panel.redo_btn.setEnabled(can_redo)
-
-    
+        # TODO: Description Undo/Redo buttons
 
     def show_temp_msg(self, title: str, msg: str, duration: int = 1500, **kwargs) -> None:
-        # status bar 
         one_line = " ".join(str(msg).splitlines()).strip()
         text = f"{title} — {one_line}" if title else one_line
         self.statusBar().showMessage(text, duration)
 
-
     def get_current_action_path(self):
-        """
-        Return the selected action path from the tree (top-level item path).
-        """
+        """Return the selected action path from the tree (top-level item path)."""
+        # Note: This currently assumes Classification tree focus. 
+        # For Description mode, we might need to check which tree is focused.
         tree_view = self.ui.classification_ui.left_panel.tree
         idx = tree_view.selectionModel().currentIndex()
         
         if not idx.isValid():
             return None
 
-        # Check if it has a parent
         if idx.parent().isValid():
             return idx.parent().data(ProjectTreeModel.FilePathRole)
 
-        # It's top level
         return idx.data(ProjectTreeModel.FilePathRole)
 
     def populate_action_tree(self) -> None:
-        """
-        Rebuild the action tree from model data using the new ProjectTreeModel.
-        """
+        """Rebuild the action tree from model data using the new ProjectTreeModel."""
         self.tree_model.clear()
         self.model.action_item_map.clear()
 
@@ -399,6 +467,7 @@ class ActionClassifierApp(QMainWindow):
 
         if self.tree_model.rowCount() > 0:
             first_idx = self.tree_model.index(0, 0)
+            # Default to Classification tree focus for now
             tree_view = self.ui.classification_ui.left_panel.tree
             tree_view.setCurrentIndex(first_idx)
             QTimer.singleShot(200, self.nav_manager.play_video)
