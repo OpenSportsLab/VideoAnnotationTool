@@ -1,8 +1,10 @@
 # SoccerNet Pro Annotation Tool
 
-This project is a professional video annotation desktop application built with **PyQt6**. It features a comprehensive tri-mode architecture supporting **Whole-Video Classification**, **Action Spotting (Localization)**, and **Video Captioning (Description)** tasks.
+This project is a professional video annotation desktop application built with **PyQt6**. It features a comprehensive **quad-mode** architecture supporting **Whole-Video Classification**, **Action Spotting (Localization)**, **Video Captioning (Global Description)**, and **Dense Video Captioning (Dense Description)** tasks.
 
-The project follows a modular **MVC (Model-View-Controller)** design pattern to ensure separation of concerns between data handling, business logic, and user interface. Recent updates have unified the UI architecture using a composite design pattern and migrated resource management to a robust **Qt Model/View** architecture.
+The project follows a modular **MVC (Model-View-Controller)** design pattern to ensure a clean separation of concerns. By utilizing a **Qt Model/View** architecture for data handling and a **Unified Media Controller** for playback, the tool provides a high-performance and race-condition-free environment for complex video labeling.
+
+---
 
 ## 📂 Project Structure Overview
 
@@ -14,130 +16,96 @@ annotation_tool/
 ├── __init__.py                 # Package initialization
 │
 ├── models/                     # [Model Layer] Data Structures & State
-│   ├── __init__.py
-│   ├── app_state.py            # Global Application State & Undo/Redo Stack & Data Validation
-│   └── project_tree.py         # Shared QStandardItemModel for File Tree (MV Pattern)
-│
-├── style/                      # Visual theme assets
-│   └── style.qss               # Dark mode stylesheet (default)
+│   ├── app_state.py            # Central state & strict JSON validation for all 4 modes
+│   └── project_tree.py         # Shared QStandardItemModel for the Project Tree
 │
 ├── controllers/                # [Controller Layer] Business logic
-│   ├── __init__.py
-│   ├── router.py               # Routing logic (Project loading & mode switching)
+│   ├── router.py               # Global routing & project type auto-detection
 │   ├── history_manager.py      # Universal Undo/Redo system
-│   │
+│   ├── media_controller.py     # Standardized playback logic (Load/Stop/Delay/Play)
 │   ├── classification/         # Logic for Classification mode
-│   │   ├── annotation_manager.py
-│   │   ├── class_file_manager.py
-│   │   └── navigation_manager.py
-│   │
 │   ├── localization/           # Logic for Localization mode
-│   │   ├── loc_file_manager.py
-│   │   └── localization_manager.py
-│   │
-│   └── description/            # [NEW] Logic for Description/Captioning mode
-│       ├── desc_annotation_manager.py  # Handles Q&A text formatting & saving
-│       ├── desc_file_manager.py        # JSON I/O & Tree population for Description
-│       └── desc_navigation_manager.py  # Video playback & tree navigation logic
+│   ├── description/            # Logic for Global Captioning mode
+│   └── dense_description/      # [NEW] Logic for Dense Captioning mode
 │
-└── ui/                         # [View Layer] Interface definitions
-    ├── common/                 # Shared widgets & layouts
-    │   ├── main_window.py      # Main UI Assembler (Stacks Views)
-    │   ├── workspace.py        # Generic 3-Column Layout (UnifiedTaskPanel)
-    │   ├── clip_explorer.py    # Universal Sidebar (Project Tree View)
-    │   ├── project_controls.py # Unified control buttons (Save, Export, etc.)
-    │   ├── dialogs.py          # Pop-up dialogs (Wizard, File Picker)
-    │   └── welcome_widget.py   # Welcome screen
-    │
-    ├── classification/         # UI components for Classification
-    │   ├── media_player/       # Video Player & Navigation controls
-    │   └── event_editor/       # Dynamic Radio/Checkbox Schema Editor
-    │
-    ├── localization/           # UI components for Localization
-    │   ├── media_player/       # Timeline & Custom Player
-    │   └── event_editor/       # Spotting Interface & Annotation Table
-    │
-    └── description/            # [NEW] UI components for Description
-        ├── media_player/       # Video Player optimized for Q&A review
-        └── event_editor/       # Text-based Caption/Q&A Editor
+├── ui/                         # [View Layer] Interface definitions
+│   ├── common/                 # Shared widgets (VideoSurface, Workspace skeleton)
+│   ├── classification/         # UI components for Video Classification
+│   ├── localization/           # UI components for Action Spotting (Timeline-based)
+│   ├── description/            # UI components for Global Captioning (Text-based)
+│   └── dense_description/      # [NEW] UI components for Dense Captioning
+│
+└── style/
+    └── style.qss               # Centralized Dark mode styling (ID-based)
 
 ```
 
 ---
 
-## 📝 File & Module Descriptions
+## 🏗️ Core Architecture & Component Reuse
 
-### 1. Root Directory (Core Infrastructure)
+The application is designed for maximum **code reusability** and **UI consistency**. The architecture leverages inheritance and component composition across all four modes.
 
-These files form the backbone of the application infrastructure.
+### 1. The Quad-Mode System
 
-* **`main.py`**: The bootstrap script. Initializes the `QApplication` and launches the main window.
-* **`viewer.py`**: Defines the `ActionClassifierApp` (Main Window). It acts as the primary **Controller**, initializing the shared `ProjectTreeModel` and connecting UI signals to specific Logic Controllers (Classification, Localization, or Description).
-* **`utils.py`**: Utility functions for file handling, natural sorting, and icon generation.
+The application distinguishes between modes based on the annotation granularity and UI requirements:
 
-### 2. Models (`/models`)
+| Mode | Task Type | Key UI Features | Data Structure |
+| --- | --- | --- | --- |
+| **Classification** | Global Labeling | Single View / Multi-view slider | Dictionary (Head -> Label) |
+| **Localization** | Action Spotting | **Timeline**, Markers, Action Tabs | List of events (Head, Label, Time) |
+| **Description** | Global Caption | Text Editor | Global text captions |
+| **Dense Description** | Dense Caption | **Timeline**, Markers, **Text Input** | List of events (Text, Time) |
 
-The **Data Layer**. These files handle the application state, data structures, and validation logic. They are completely decoupled from the UI.
+### 2. Cross-Mode Component Reuse
 
-* **`app_state.py`**: The core Application State. Stores runtime data (`manual_annotations`, `localization_events`, `action_item_data`), defines Undo/Redo stacks (`CmdType`), and contains strict JSON schema validation logic for all three modes.
-* **`project_tree.py`**: The **Qt Standard Item Model**. This is the data source for the project tree. It inherits from `QStandardItemModel` and manages the hierarchical data of clips and source files using standard Qt roles.
+* **The Skeleton (`UnifiedTaskPanel`)**: All modes use a 3-column layout (Sidebar, Video Center, Editor Right).
+* **The Project Tree**: All modes share `ProjectTreeModel` and `CommonProjectTreePanel`, ensuring the file list behaves identically across tasks.
+* **The Media Engine**: All modes use `VideoSurface` for rendering and `MediaController` for robust playback, preventing "black screens" or "ghost frames."
+* **Localization & Dense Description (Heavy Reuse)**:
+* **Dense Description** reuses the `LocCenterPanel` from the Localization mode, which includes the specialized **Zoomable Timeline** and **Marker system**.
+* **Dense Description**'s table model (`DenseTableModel`) inherits from `AnnotationTableModel`, simply overriding the columns to display "Text" instead of "Label."
+
+
+
+---
+
+## 📝 Detailed Module Descriptions
+
+### 1. Models (`/models`)
+
+* **`app_state.py`**: The "Source of Truth." It maintains the internal state for all four modes. It contains `validate_loc_json`, `validate_desc_json`, and `validate_dense_json` to ensure strict schema compliance.
+* **`project_tree.py`**: Implements a standard Qt Model that stores file paths and natural-sorts clip names.
+
+### 2. Controllers (`/controllers`)
+
+* **`router.py`**: The "Traffic Cop." It detects the project type by inspecting the `task` field in the JSON (e.g., `dense_video_captioning`) and switches the UI to the correct index.
+* **`media_controller.py`**: Manages the video lifecycle. It enforces a specific sequence (Stop -> Clear Source -> Load -> 150ms Delay -> Play) to ensure the GPU buffer is cleared between clips.
+* **`dense_description/dense_manager.py`**: Manages the logic for dense captioning. It captures the current `position_ms` from the player when a description is submitted and updates the timeline markers.
 
 ### 3. User Interface (`/ui`)
 
-The **View Layer**. Contains PyQt6 widgets and layout definitions. The UI structure uses **Passive Views**—widgets generally do not contain business logic.
+* **`common/video_surface.py`**: A pure wrapper around `QVideoWidget`. It ensures volume is managed and rendering is consistent.
+* **`localization/media_player/timeline.py`**: A custom-drawn widget that renders markers on a zoomable axis. It is used in both Localization and Dense Description modes.
+* **`dense_description/event_editor/desc_input_widget.py`**: Specifically designed for Dense Description, providing a `QTextEdit` for long-form text instead of the predefined category buttons used in Localization.
 
-#### Common Components (`/ui/common`)
+---
 
-* **`main_window.py`**: The top-level UI container. Manages the `QStackedLayout` to switch between Welcome, Classification, Localization, and Description views.
-* **`workspace.py`**: Defines `UnifiedTaskPanel`. A generic 3-column skeleton that embeds the shared `CommonProjectTreePanel`.
-* **`clip_explorer.py`**: Defines `CommonProjectTreePanel`. The **Shared View** for the project list.
-* *MVC Update*: Uses `QTreeView` to visualize the `ProjectTreeModel`.
+## 🔄 Is Dense Description Reusing Localization Code?
 
+**Yes.** The Dense Description mode was specifically designed to leverage the infrastructure of the Localization mode.
 
-* **`dialogs.py`**: Contains modal dialogs such as the **Project Creation Wizard** (now supports Description mode) and custom **Folder Picker**.
-* **`project_controls.py`**: Unified control buttons (Save, Export, Add Video) used in the sidebar.
+1. **Shared Center Panel**: It uses the same `LocCenterPanel` (Video + Timeline). When you add a text description, it appears as a marker on the timeline, exactly like an action spot in Localization mode.
+2. **Shared Table Logic**: The right-panel table uses a modified version of the Localization table. The underlying logic for jumping to a timestamp when a row is clicked is preserved.
+3. **Data Flow**: Both modes use a `position_ms` based event system. The primary difference is that Localization uses **discrete labels** from a schema, while Dense Description uses **free-form text**.
 
-#### Classification Components (`/ui/classification`)
+---
 
-* **`media_player/`**: Contains the **Video Playback** widgets (Video Player, Slider, Action Navigation).
-* **`event_editor/`**: Contains the **Annotation Interface** widgets (Dynamic Radio/Checkbox groups driven by Schema).
+## 🚀 Getting Started
 
-#### Localization Components (`/ui/localization`)
+1. **Select Mode**: Upon creating a "New Project," choose between Classification, Localization, or Description (Global).
+2. **Auto-Detection**: When importing a JSON, the tool will automatically detect if it is a **Dense Description** project based on the presence of `text` fields within the `events` list or the `task` key in the header.
+3. **Annotation**:
+* In **Dense Description**, navigate the video, type your description in the right panel, and click "Add Description" (or use Shortcut **'A'**) to mark the point.
+* Use **Undo/Redo** to revert any text edits or timestamp changes.
 
-* **`media_player/`**: Contains the **Video Playback** widgets (Timeline, Custom Video Player).
-* **`event_editor/`**: Contains the **Annotation Interface** widgets (Tabbed Spotting Interface, Annotation Table).
-
-#### Description Components (`/ui/description`) [NEW]
-
-* **`media_player/`**: Contains the **Video Playback** widgets tailored for captioning review (Preview Player, Playback Controls).
-* **`event_editor/`**: Contains the **Caption Interface** widgets (Text Editor for Q&A/Descriptions, Confirm/Clear controls).
-
-### 4. Controllers (`/controllers`)
-
-The **Logic Layer**. Pure Python logic handling business rules, data manipulation, and bridging Models and Views.
-
-#### Shared Controllers
-
-* **`router.py`**: Handles project lifecycle (Load/Create/Close). Determines which mode to launch (Classification, Localization, or Description) based on JSON structure.
-* **`history_manager.py`**: Manages the Command Pattern implementation for the Undo/Redo system.
-
-#### Classification Sub-module (`/controllers/classification`)
-
-* **`class_file_manager.py`**: Handles JSON I/O for classification tasks.
-* **`navigation_manager.py`**: Manages video navigation and playlist logic.
-* **`annotation_manager.py`**: Handles schema logic and saving user selections.
-
-#### Localization Sub-module (`/controllers/localization`)
-
-* **`loc_file_manager.py`**: Handles JSON I/O for localization tasks.
-* **`localization_manager.py`**: Core logic for action spotting and timestamp recording.
-
-#### Description Sub-module (`/controllers/description`) [NEW]
-
-* **`desc_file_manager.py`**: Handles JSON I/O for captioning tasks. Populates the tree with `Action -> Inputs` structure and manages saving data back to disk.
-* **`desc_navigation_manager.py`**: Manages file navigation and playback logic specific to description tasks (e.g., auto-playing the first clip of an action). Includes robust playback handling (Stop -> Load -> Delay -> Play) to prevent black screens.
-* **`desc_annotation_manager.py`**: Handles the Q&A text formatting logic. Parses JSON `questions` and `captions` into a readable text block and flattens edits back into the data model upon confirmation. Supports auto-advance after saving.
-
-### 5. Style (`/style`)
-
-* **`style.qss`**: CSS-like definitions for the default **Dark Theme**.
