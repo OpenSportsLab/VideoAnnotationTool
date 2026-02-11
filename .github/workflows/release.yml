@@ -18,12 +18,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - id: notes
+        shell: bash
         run: |
-          echo "changelog=$(git log -20 --pretty=format:'* %s')" >> $GITHUB_OUTPUT
+          {
+            echo "changelog<<EOF"
+            git log -20 --pretty=format:'* %s'
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  create-release:
+    needs: generate-release-notes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create/Update GitHub Release (body only)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: ${{ needs.generate-release-notes.outputs.changelog }}
 
   build-windows:
-    needs: generate-release-notes
+    needs: create-release
     runs-on: windows-latest
     defaults:
       run:
@@ -48,11 +65,13 @@ jobs:
           try { pip cache purge } catch { Write-Host "pip cache purge failed (ignored)" }
 
       - name: Build exe
+        shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --windowed --onefile `
+          python -m PyInstaller --noconfirm --clean --windowed --onefile `
             --name "SoccerNetProAnalyzer" `
             --add-data "style;style" `
             --add-data "ui;ui" `
+            --add-data "controllers;controllers" `
             "main.py"
 
       - name: Rename binary
@@ -70,10 +89,9 @@ jobs:
         with:
           files: annotation_tool/dist/SoccerNetProAnalyzer-win.zip
           tag_name: ${{ github.ref_name }}
-          body: ${{ needs.generate-release-notes.outputs.changelog }}
 
   build-macos:
-    needs: generate-release-notes
+    needs: create-release
     runs-on: macos-latest
     defaults:
       run:
@@ -95,33 +113,27 @@ jobs:
           rm -rf build dist *.spec
           pip cache purge || true
 
-      - name: Build binary
+      - name: Build app
         run: |
-          pyinstaller --noconfirm --clean --windowed --onefile \
+          python -m PyInstaller --noconfirm --clean --windowed \
             --name "SoccerNetProAnalyzer" \
             --add-data "style:style" \
             --add-data "ui:ui" \
+            --add-data "controllers:controllers" \
             "main.py"
 
-      - name: Rename binary
+      - name: Zip macOS app
         run: |
-          mv -f dist/SoccerNetProAnalyzer dist/SoccerNetProAnalyzer-mac
-
-      - name: Zip macOS binary
-        run: |
-          cd dist
-          zip -r SoccerNetProAnalyzer-mac.zip SoccerNetProAnalyzer-mac
-          cd ..
+          ditto -c -k --sequesterRsrc --keepParent "dist/SoccerNetProAnalyzer.app" "dist/SoccerNetProAnalyzer-mac.zip"
 
       - name: Upload Release Asset (macOS)
         uses: softprops/action-gh-release@v2
         with:
           files: annotation_tool/dist/SoccerNetProAnalyzer-mac.zip
           tag_name: ${{ github.ref_name }}
-          body: ${{ needs.generate-release-notes.outputs.changelog }}
 
   build-linux:
-    needs: generate-release-notes
+    needs: create-release
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -136,7 +148,7 @@ jobs:
       - name: Install system deps (Qt/OpenCV runtime)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1 libglib2.0-0
+          sudo apt-get install -y libgl1 libglib2.0-0 libxcb-cursor0
 
       - name: Install requirements
         run: |
@@ -150,10 +162,11 @@ jobs:
 
       - name: Build binary
         run: |
-          pyinstaller --noconfirm --clean --windowed --onefile \
+          python -m PyInstaller --noconfirm --clean --windowed --onefile \
             --name "SoccerNetProAnalyzer" \
             --add-data "style:style" \
             --add-data "ui:ui" \
+            --add-data "controllers:controllers" \
             "main.py"
 
       - name: Rename binary
@@ -171,4 +184,3 @@ jobs:
         with:
           files: annotation_tool/dist/SoccerNetProAnalyzer-linux.zip
           tag_name: ${{ github.ref_name }}
-          body: ${{ needs.generate-release-notes.outputs.changelog }}
