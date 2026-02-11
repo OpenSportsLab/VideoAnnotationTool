@@ -22,12 +22,14 @@ jobs:
       - id: notes
         shell: bash
         run: |
+          set -euo pipefail
           delim="__CHANGELOG__"
           {
-            echo "changelog<<$delim"
-            git log -20 --pretty=format:'* %s'
-            echo "$delim"
+            printf 'changelog<<%s\n' "$delim"
+            git log -20 --pretty=format:'* %s' || true
+            printf '\n%s\n' "$delim"
           } >> "$GITHUB_OUTPUT"
+
 
 
   create-release:
