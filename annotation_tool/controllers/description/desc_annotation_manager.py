@@ -54,7 +54,8 @@ class DescAnnotationManager:
         # We search by path first, fallback to ID if needed
         action_data = next((item for item in self.model.action_item_data if item.get("metadata", {}).get("path") == path), None)
         if not action_data:
-             action_data = next((item for item in self.model.action_item_data if item.get("id") == current.text()), None)
+             #action_data = next((item for item in self.model.action_item_data if item.get("id") == current.text()), None)
+             action_data = next((item for item in self.model.action_item_data if item.get("id") == current.data()), None)
 
         if not action_data:
             self.ui.caption_edit.setPlaceholderText("No metadata found for this item.")

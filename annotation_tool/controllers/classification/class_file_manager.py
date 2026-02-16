@@ -11,13 +11,40 @@ class ClassFileManager:
         self.ui = main_window.ui
 
     def load_project(self, data, file_path):
-        """Load Classification Project"""
+        """
+        Load Classification Project.
+        Returns:
+            bool: True if loaded successfully, False if validation failed or cancelled.
+        """
+        
+        # 1. Strict Validation
         valid, err, warn = self.model.validate_gac_json(data)
+        
         if not valid:
-            QMessageBox.critical(self.main, "JSON Error", err); return
-        if warn:
-            QMessageBox.warning(self.main, "Warnings", warn)
+             # Truncate extremely long error messages for display
+            if len(err) > 1000:
+                err = err[:1000] + "\n... (truncated)"
             
+            QMessageBox.critical(
+                self.main, 
+                "Validation Error (Classification)", 
+                "The imported JSON contains critical errors and cannot be loaded.\n\n" + err
+            )
+            return False # [FIX] Return False to signal failure
+            
+        if warn:
+            if len(warn) > 1000:
+                warn = warn[:1000] + "\n... (truncated)"
+            
+            res = QMessageBox.warning(
+                self.main, "Validation Warnings", 
+                "The file contains warnings:\n\n" + warn + "\n\nContinue loading?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if res != QMessageBox.StandardButton.Yes:
+                return False # [FIX] Return False on user cancel
+            
+        # 2. Clear Workspace (Only if validation passed)
         self._clear_workspace(full_reset=True)
         
         self.model.current_working_directory = os.path.dirname(file_path)
@@ -80,13 +107,14 @@ class ClassFileManager:
         self.main.populate_action_tree()
         self.main.update_save_export_button_state()
         
-        # 2s block
         self.main.show_temp_msg(
             "Mode Switched", 
             f"Project loaded with {len(self.model.action_item_data)} items.\n\nCurrent Mode: CLASSIFICATION",
             duration=1500,
             icon=QMessageBox.Icon.Information
         )
+        
+        return True # [FIX] Explicitly return True on success
 
     def save_json(self):
         if self.model.current_json_path: 

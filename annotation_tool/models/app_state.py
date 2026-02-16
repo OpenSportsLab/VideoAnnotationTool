@@ -23,7 +23,7 @@ class CmdType(Enum):
     LOC_EVENT_ADD = auto()
     LOC_EVENT_DEL = auto()
     LOC_EVENT_MOD = auto()
-    
+
     DESC_EDIT = auto()  # Records text changes in Description mode
 
     # --- Dense Description commands ---
@@ -113,62 +113,171 @@ class AppStateModel:
         self.redo_stack.clear()
         self.is_data_dirty = True
 
+    # ------------------------------------------------------------
+    # Validation: Classification (Action Classification)
+    # ------------------------------------------------------------
     def validate_gac_json(self, data):
         """
-        Placeholder for Classification JSON validation.
-        Kept to match the existing codebase interface.
-        """
-        return True, "", ""
-
-    def validate_desc_json(self, data):
-        """
-        [NEW] Validation for Description / Video Captioning JSON.
+        Strict validation for Classification JSON.
         Returns: (is_valid, error_msg, warning_msg)
         """
         errors = []
-        
+        warnings = []
+
+        # --- Top-level Structure Checks ---
+        if not isinstance(data, dict):
+            return False, "Root JSON must be a dictionary.", ""
+
+        # 1. Modalities Check
+        if "modalities" not in data:
+            errors.append("Critical: Missing top-level key 'modalities'.")
+        else:
+            mods = data["modalities"]
+            if not isinstance(mods, list):
+                errors.append(f"Critical: 'modalities' must be a list. Found: {type(mods).__name__}")
+            elif len(mods) == 0:
+                errors.append("Critical: 'modalities' list is empty.")
+
+        # 2. Labels Schema Check
+        if "labels" not in data:
+            errors.append("Critical: Missing top-level key 'labels'.")
+        else:
+            lbls_def = data["labels"]
+            if not isinstance(lbls_def, dict):
+                errors.append("Critical: Top-level 'labels' must be a dictionary.")
+            else:
+                # Check individual heads
+                for head, content in lbls_def.items():
+                    if not isinstance(content, dict):
+                        errors.append(f"Label definition for '{head}' must be a dictionary.")
+                        continue
+                    
+                    # Check Type
+                    if "type" not in content:
+                        errors.append(f"Label head '{head}' missing 'type' field.")
+                    
+                    # Check Labels list
+                    if "labels" not in content:
+                        errors.append(f"Label head '{head}' missing 'labels' list.")
+                    elif not isinstance(content["labels"], list):
+                        errors.append(f"Label head '{head}' 'labels' must be a list.")
+                    elif len(content["labels"]) == 0:
+                        # Depending on policy, an empty label list might be useless/invalid
+                        errors.append(f"Label head '{head}' has an empty 'labels' list.")
+
+        # 3. Data Items Check
+        if "data" not in data:
+            errors.append("Critical: Missing top-level key 'data'.")
+        elif not isinstance(data["data"], list):
+            errors.append("Critical: Top-level 'data' must be a list.")
+        else:
+            # Per-item Validation
+            err_inputs_missing = []
+            err_inputs_not_list = []
+            err_inputs_empty = []
+            err_input_path_missing = []
+            err_input_type_wrong = []
+            
+            for i, item in enumerate(data["data"]):
+                if not isinstance(item, dict):
+                    errors.append(f"Item #{i} is not a dictionary.")
+                    continue
+
+                # Inputs check
+                if "inputs" not in item:
+                    err_inputs_missing.append(f"Item #{i}")
+                    continue
+                
+                inputs = item["inputs"]
+                if not isinstance(inputs, list):
+                    err_inputs_not_list.append(f"Item #{i}")
+                    continue
+                
+                if not inputs:
+                    err_inputs_empty.append(f"Item #{i}")
+                    continue
+
+                # Check first input (Classification usually assumes 1 main video/clip)
+                inp0 = inputs[0]
+                if isinstance(inp0, dict):
+                    if "path" not in inp0:
+                        err_input_path_missing.append(f"Item #{i}")
+                    if inp0.get("type") != "video":
+                        err_input_type_wrong.append(f"Item #{i} type='{inp0.get('type')}'")
+                else:
+                    err_inputs_not_list.append(f"Item #{i} (inputs[0] not dict)")
+
+            def _fmt(title, lst):
+                if not lst: return None
+                preview = "\n  ".join(lst[:5]) + ("\n  ..." if len(lst) > 5 else "")
+                return f"{title} ({len(lst)}):\n  {preview}"
+
+            crit_item_errors = [
+                _fmt("Items missing 'inputs'", err_inputs_missing),
+                _fmt("Items 'inputs' not a list", err_inputs_not_list),
+                _fmt("Items 'inputs' empty", err_inputs_empty),
+                _fmt("Items missing 'path' in input", err_input_path_missing),
+                _fmt("Items input type not 'video'", err_input_type_wrong)
+            ]
+            
+            errors.extend([e for e in crit_item_errors if e])
+
+        if errors:
+            return False, "\n\n".join(errors), ""
+
+        return True, "", "\n".join(warnings)
+
+    # ------------------------------------------------------------
+    # Validation: Global Description / Video Captioning
+    # ------------------------------------------------------------
+    def validate_desc_json(self, data):
+        """
+        Validation for Description / Video Captioning JSON.
+        Returns: (is_valid, error_msg, warning_msg)
+        """
+        errors = []
+
         # 1. Root Check
         if not isinstance(data, dict):
             return False, "Root must be a dictionary.", ""
-        
+
         if "data" not in data:
             return False, "Critical: Missing top-level key 'data'.", ""
-            
+
         items = data["data"]
         if not isinstance(items, list):
             return False, "Critical: 'data' must be a list.", ""
-            
+
         # 2. Item Check
         err_inputs_missing = []
-        err_captions_missing = []
-        
+
         for i, item in enumerate(items):
             if not isinstance(item, dict):
                 errors.append(f"Item #{i} is not a dictionary.")
                 continue
-                
+
             # Check inputs (Videos)
             if "inputs" not in item:
                 err_inputs_missing.append(f"Item #{i}")
             elif not isinstance(item["inputs"], list):
                 errors.append(f"Item #{i} 'inputs' must be a list.")
-                
-            # Check captions (The core of description task)
-            # Note: We allow empty captions (unannotated), but the field should exist 
-            # or at least be the intended structure.
+
+            # Check captions existence (soft check)
             if "captions" not in item and "labels" not in item:
-                # If neither captions nor labels exist, it might be ambiguous, 
-                # but for now we warn if structure looks completely wrong.
-                pass 
+                # Not hard-failing here, depends on your app policy.
+                pass
 
         if err_inputs_missing:
             errors.append(f"Items missing 'inputs': {', '.join(err_inputs_missing[:5])}...")
-            
+
         if errors:
             return False, "\n".join(errors), ""
-            
+
         return True, "", f"Validated {len(items)} items for Description."
 
+    # ------------------------------------------------------------
+    # Validation: Localization / Action Spotting
+    # ------------------------------------------------------------
     def validate_loc_json(self, data):
         """
         Strict validation for Localization / Action Spotting JSON.
@@ -306,7 +415,7 @@ class AppStateModel:
                     err_evt_unknown_head.append(f"Item #{i} Evt #{j} head='{head}'")
                     continue
 
-                allowed_labels = head_label_map[head]  # may be empty; then all labels are invalid
+                allowed_labels = head_label_map[head]
                 if label not in allowed_labels:
                     err_evt_unknown_label.append(
                         f"Item #{i} Evt #{j} label='{label}' not in head '{head}'"
@@ -321,21 +430,18 @@ class AppStateModel:
                     err_evt_pos_format.append(f"Item #{i} Evt #{j} pos='{pos_val}'")
                     continue
 
-                # Duplicate detection is a warning (same head/label/time within an item)
                 sig = (head, label, pos_int)
                 if sig in seen_events:
                     warn_duplicates.append(f"Item #{i} ({head}, {label}, {pos_val})")
                 else:
                     seen_events.add(sig)
 
-        # --- Formatting helpers ---
         def _fmt(title, lst):
             if not lst:
                 return None
             preview = "\n  ".join(lst[:5]) + ("\n  ..." if len(lst) > 5 else "")
             return f"{title} ({len(lst)}):\n  {preview}"
 
-        # Critical errors -> return False
         crit_errors = [
             _fmt("Data items missing 'inputs'", err_inputs_missing),
             _fmt("Data items 'inputs' is not a list", err_inputs_not_list),
@@ -356,8 +462,334 @@ class AppStateModel:
         if final_errors:
             return False, "\n\n".join(final_errors), ""
 
-        # Warnings -> return True
         if warn_duplicates:
             warnings.append(_fmt("Duplicate events found", warn_duplicates))
+
+        return True, "", "\n\n".join(warnings)
+
+
+
+
+    # ------------------------------------------------------------
+    # Validation: Global Description / Video Captioning (Strict)
+    # ------------------------------------------------------------
+    def validate_desc_json(self, data):
+        """
+        Strict validation for Description / Video Captioning JSON.
+        Matches strict criteria:
+        - Top level: version, date (YYYY-MM-DD), task (must be captioning), dataset_name, data (list).
+        - Per Item: unique id, inputs (video), captions (list of {text/description, lang}).
+        
+        Returns: (is_valid, error_msg, warning_msg)
+        """
+        import re
+        errors = []
+        warnings = []
+
+        # --- Top-level Checks ---
+        if not isinstance(data, dict):
+            return False, "Root JSON must be a dictionary.", ""
+
+        # 1. Missing Task / Wrong Task
+        if "task" not in data:
+            errors.append("Critical: Missing top-level key 'task'.")
+        else:
+            task_str = str(data["task"]).lower()
+            if "caption" not in task_str and "description" not in task_str:
+                errors.append(f"Critical: Task '{data['task']}' is not a valid Description/Captioning task.")
+
+        # 2. Missing Dataset Name
+        if "dataset_name" not in data:
+            errors.append("Critical: Missing top-level key 'dataset_name'.")
+
+        # 3. Bad Date Format (YYYY-MM-DD)
+        if "date" in data:
+            date_str = str(data["date"])
+            # Simple regex for YYYY-MM-DD
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+                errors.append(f"Critical: Date '{date_str}' is not in YYYY-MM-DD format.")
+        else:
+            errors.append("Critical: Missing top-level key 'date'.")
+
+        # 4. Data Not Array
+        if "data" not in data:
+            errors.append("Critical: Missing top-level key 'data'.")
+        elif not isinstance(data["data"], list):
+            errors.append(f"Critical: 'data' must be a list. Found: {type(data['data']).__name__}")
+            return False, "\n".join(errors), "" # Stop here if data structure is wrong
+
+        # --- Item-level Checks ---
+        items = data["data"]
+        
+        seen_ids = set()
+        err_dup_ids = []
+        
+        err_inputs_missing = []
+        err_inputs_not_list = []
+        err_input_type = []
+        
+        err_captions_missing = []
+        err_captions_not_list = []
+        
+        err_cap_missing_text = []
+        err_cap_empty_text = []
+
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                errors.append(f"Item #{i} is not a dictionary.")
+                continue
+
+            # 5. Duplicate Sample ID
+            # Assuming 'id' is required for strict projects, though some legacy might not have it.
+            # If ID exists, check duplicates.
+            if "id" in item:
+                aid = str(item["id"])
+                if aid in seen_ids:
+                    err_dup_ids.append(aid)
+                else:
+                    seen_ids.add(aid)
+
+            # 6. Missing Inputs / Not Array
+            if "inputs" not in item:
+                err_inputs_missing.append(f"Item #{i}")
+            elif not isinstance(item["inputs"], list):
+                err_inputs_not_list.append(f"Item #{i}")
+            elif len(item["inputs"]) > 0:
+                # 7. Input Type Not Video
+                inp0 = item["inputs"][0]
+                if isinstance(inp0, dict):
+                    if inp0.get("type") != "video":
+                        err_input_type.append(f"Item #{i} (type='{inp0.get('type')}')")
+                else:
+                    err_inputs_not_list.append(f"Item #{i} input[0]")
+
+            # 8. Missing Captions / Not Array
+            # Supports key "captions" (standard) or legacy keys if needed, focusing on "captions" based on your files.
+            if "captions" not in item:
+                err_captions_missing.append(f"Item #{i}")
+            elif not isinstance(item["captions"], list):
+                err_captions_not_list.append(f"Item #{i}")
+            else:
+                # 9. Caption Content Checks
+                for c_idx, cap in enumerate(item["captions"]):
+                    if not isinstance(cap, dict):
+                        continue
+                    
+                    # Accept 'text' or 'description' or 'sentence'
+                    text_val = cap.get("text", cap.get("description", cap.get("sentence")))
+                    
+                    if text_val is None:
+                        err_cap_missing_text.append(f"Item #{i} Cap #{c_idx}")
+                    elif not str(text_val).strip():
+                        err_cap_empty_text.append(f"Item #{i} Cap #{c_idx}")
+
+        # Formatting Errors
+        def _fmt(title, lst):
+            if not lst: return None
+            preview = ", ".join(lst[:5]) + (", ..." if len(lst) > 5 else "")
+            return f"{title} ({len(lst)}): {preview}"
+
+        crit_errors = [
+            _fmt("Duplicate IDs found", err_dup_ids),
+            _fmt("Items missing 'inputs'", err_inputs_missing),
+            _fmt("Items 'inputs' not list", err_inputs_not_list),
+            _fmt("Inputs not type 'video'", err_input_type),
+            _fmt("Items missing 'captions'", err_captions_missing),
+            _fmt("Items 'captions' not list", err_captions_not_list),
+            _fmt("Captions missing 'text' field", err_cap_missing_text),
+            _fmt("Captions have empty text", err_cap_empty_text),
+        ]
+
+        final_errors = [e for e in crit_errors if e] + errors
+        
+        if final_errors:
+            return False, "\n\n".join(final_errors), ""
+            
+        return True, "", "\n".join(warnings)
+    
+    # ------------------------------------------------------------
+    # Validation: Dense Description / Dense Video Captioning
+    # ------------------------------------------------------------
+    def validate_dense_json(self, data):
+        """
+        Strict validation for Dense Description JSON (dense_video_captioning).
+        Returns: (is_valid, error_msg, warning_msg)
+        """
+        errors = []
+        warnings = []
+
+        # --- Top-level checks ---
+        if not isinstance(data, dict):
+            return False, "Root JSON must be a dictionary.", ""
+
+        if "data" not in data:
+            return False, "Critical: Missing top-level key 'data'.", ""
+
+        items = data["data"]
+        if not isinstance(items, list):
+            return False, "Critical: Top-level 'data' must be a list.", ""
+
+        # --- Per-item checks ---
+        err_item_not_dict = []
+
+        err_inputs_missing = []
+        err_inputs_not_list = []
+        err_inputs_empty = []
+        err_input0_not_dict = []
+        err_input0_type = []
+        err_input0_path = []
+        err_input0_fps = []
+
+        err_dense_missing = []
+        err_dense_not_list = []
+        err_dense_item_not_dict = []
+
+        err_cap_missing_fields = []
+        err_cap_pos_format = []
+        err_cap_pos_neg = []
+        err_cap_lang_missing = []
+        err_cap_lang_empty = []
+        err_cap_text_missing = []
+        err_cap_text_empty = []
+
+        warn_duplicates = []
+
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                err_item_not_dict.append(f"Item #{i}")
+                continue
+
+            # inputs
+            if "inputs" not in item:
+                err_inputs_missing.append(f"Item #{i}")
+                continue
+
+            inputs = item["inputs"]
+            if not isinstance(inputs, list):
+                err_inputs_not_list.append(f"Item #{i}")
+                continue
+
+            if len(inputs) == 0:
+                err_inputs_empty.append(f"Item #{i}")
+                continue
+
+            inp0 = inputs[0]
+            if not isinstance(inp0, dict):
+                err_input0_not_dict.append(f"Item #{i}")
+                continue
+
+            if inp0.get("type") != "video":
+                err_input0_type.append(f"Item #{i} type='{inp0.get('type')}'")
+
+            if "path" not in inp0:
+                err_input0_path.append(f"Item #{i}")
+
+            fps = inp0.get("fps")
+            if fps is None or not isinstance(fps, (int, float)) or fps <= 0:
+                err_input0_fps.append(f"Item #{i} fps={fps}")
+
+            # dense_captions (required)
+            if "dense_captions" not in item:
+                err_dense_missing.append(f"Item #{i}")
+                continue
+
+            dense_caps = item["dense_captions"]
+            if not isinstance(dense_caps, list):
+                err_dense_not_list.append(f"Item #{i}")
+                continue
+
+            # Allow empty dense_captions? depends on your policy.
+            # Here: empty is allowed (unannotated), but structure must be correct.
+            seen = set()
+            for j, cap in enumerate(dense_caps):
+                if not isinstance(cap, dict):
+                    err_dense_item_not_dict.append(f"Item #{i} Cap #{j}")
+                    continue
+
+                missing = []
+                if "position_ms" not in cap:
+                    missing.append("position_ms")
+                if "lang" not in cap:
+                    missing.append("lang")
+                if "text" not in cap:
+                    missing.append("text")
+
+                if missing:
+                    err_cap_missing_fields.append(f"Item #{i} Cap #{j} missing {missing}")
+                    continue
+
+                # position_ms
+                pos_val = cap.get("position_ms")
+                try:
+                    pos_int = int(pos_val)
+                except (ValueError, TypeError):
+                    err_cap_pos_format.append(f"Item #{i} Cap #{j} pos='{pos_val}'")
+                    continue
+
+                if pos_int < 0:
+                    err_cap_pos_neg.append(f"Item #{i} Cap #{j} pos={pos_int}")
+                    continue
+
+                # lang
+                lang = cap.get("lang")
+                if lang is None:
+                    err_cap_lang_missing.append(f"Item #{i} Cap #{j}")
+                elif not isinstance(lang, str):
+                    err_cap_lang_missing.append(f"Item #{i} Cap #{j} lang_type={type(lang).__name__}")
+                elif lang.strip() == "":
+                    err_cap_lang_empty.append(f"Item #{i} Cap #{j}")
+
+                # text
+                text = cap.get("text")
+                if text is None:
+                    err_cap_text_missing.append(f"Item #{i} Cap #{j}")
+                elif not isinstance(text, str):
+                    err_cap_text_missing.append(f"Item #{i} Cap #{j} text_type={type(text).__name__}")
+                elif text.strip() == "":
+                    err_cap_text_empty.append(f"Item #{i} Cap #{j}")
+
+                # duplicate warning
+                sig = (pos_int, str(lang), str(text))
+                if sig in seen:
+                    warn_duplicates.append(f"Item #{i} duplicate (pos={pos_int}, lang={lang})")
+                else:
+                    seen.add(sig)
+
+        def _fmt(title, lst):
+            if not lst:
+                return None
+            preview = "\n  ".join(lst[:5]) + ("\n  ..." if len(lst) > 5 else "")
+            return f"{title} ({len(lst)}):\n  {preview}"
+
+        crit_errors = [
+            _fmt("Data items are not dict", err_item_not_dict),
+
+            _fmt("Data items missing 'inputs'", err_inputs_missing),
+            _fmt("Data items 'inputs' is not a list", err_inputs_not_list),
+            _fmt("Data items 'inputs' is empty", err_inputs_empty),
+            _fmt("inputs[0] is not a dict", err_input0_not_dict),
+            _fmt("inputs[0].type is not 'video'", err_input0_type),
+            _fmt("inputs[0] missing 'path'", err_input0_path),
+            _fmt("inputs[0] fps invalid (<= 0 or not number)", err_input0_fps),
+
+            _fmt("Data items missing 'dense_captions'", err_dense_missing),
+            _fmt("Data items 'dense_captions' is not a list", err_dense_not_list),
+            _fmt("dense_captions entries not dict", err_dense_item_not_dict),
+
+            _fmt("dense caption missing keys (position_ms/lang/text)", err_cap_missing_fields),
+            _fmt("dense caption position_ms invalid format (not int)", err_cap_pos_format),
+            _fmt("dense caption position_ms is negative", err_cap_pos_neg),
+            _fmt("dense caption lang missing/invalid type", err_cap_lang_missing),
+            _fmt("dense caption lang empty string", err_cap_lang_empty),
+            _fmt("dense caption text missing/invalid type", err_cap_text_missing),
+            _fmt("dense caption text empty string", err_cap_text_empty),
+        ]
+
+        final_errors = [e for e in crit_errors if e] + errors
+        if final_errors:
+            return False, "\n\n".join(final_errors), ""
+
+        if warn_duplicates:
+            warnings.append(_fmt("Duplicate dense captions found", warn_duplicates))
 
         return True, "", "\n\n".join(warnings)

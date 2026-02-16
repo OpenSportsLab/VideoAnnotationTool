@@ -275,7 +275,10 @@ class ActionClassifierApp(QMainWindow):
 
     def _is_desc_mode(self) -> bool:
         """Helper to check if current view is Global Description."""
-        return self.ui.stack_layout.currentWidget() == self.ui.description_ui
+        if self.ui.stack_layout.currentWidget() == self.ui.description_ui:
+            return True
+        task = str(self.model.current_task_name).lower()
+        return ("caption" in task or "description" in task) and "dense" not in task
     
     def _is_dense_mode(self) -> bool:
         """[NEW] Helper to check if current view is Dense Description."""
@@ -572,6 +575,8 @@ class ActionClassifierApp(QMainWindow):
         else:
             self.nav_manager.apply_action_filter()
 
+   
+
     def update_action_item_status(self, action_path: str) -> None:
         item: QStandardItem = self.model.action_item_map.get(action_path)
         if not item:
@@ -581,20 +586,23 @@ class ActionClassifierApp(QMainWindow):
         if self._is_loc_mode():
             is_done = action_path in self.model.localization_events and bool(self.model.localization_events[action_path])
         elif self._is_desc_mode():
-            # Check description completion
+            # Correctly identify if the action has ANY non-empty caption text
             for d in self.model.action_item_data:
-                if d.get("path") == action_path:
+                # Support both path and ID matching
+                if d.get("path") == action_path or d.get("id") == action_path:
                     captions = d.get("captions", [])
-                    if captions and captions[0].get("text", "").strip():
+                    if any(cap.get("text", "").strip() for cap in captions):
                         is_done = True
                     break
+
         elif self._is_dense_mode():
-            # [NEW] Check dense completion
             is_done = action_path in self.model.dense_description_events and bool(self.model.dense_description_events[action_path])
         else:
+            # Classification mode logic
             is_done = action_path in self.model.manual_annotations and bool(self.model.manual_annotations[action_path])
             
         item.setIcon(self.done_icon if is_done else self.empty_icon)
+
 
     def setup_dynamic_ui(self) -> None:
         cls_right = self.ui.classification_ui.right_panel
