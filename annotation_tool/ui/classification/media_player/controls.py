@@ -26,8 +26,3 @@ class PlaybackControlBar(QWidget):
         for b in btns:
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             self.layout.addWidget(b)
-            
-        self.multi_view_btn = QPushButton("Multi-View")
-        self.multi_view_btn.setCheckable(True)
-        self.multi_view_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.layout.addWidget(self.multi_view_btn)
