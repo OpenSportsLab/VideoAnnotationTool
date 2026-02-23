@@ -18,10 +18,7 @@ class LocFileManager:
         Create a new Localization project (Blank).
         Skips the wizard dialog and immediately unlocks the workspace.
         """
-        # 1) Check whether the current project needs to be saved/closed
-        if not self.main.check_and_close_current_project():
-            return
-
+    
         # 2) Clear the existing workspace (Full Reset)
         # This clears the UI and resets model data
         self._clear_workspace(full_reset=True)
