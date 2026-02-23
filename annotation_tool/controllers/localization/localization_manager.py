@@ -42,7 +42,6 @@ class LocalizationManager:
     def setup_connections(self):
         # --- Left Panel ---
         pc = self.left_panel.project_controls
-        pc.loadRequested.connect(self._on_load_clicked)
         pc.addVideoRequested.connect(self._on_add_video_clicked)
         pc.saveRequested.connect(self._on_save_clicked)
         pc.exportRequested.connect(self._on_export_clicked)
