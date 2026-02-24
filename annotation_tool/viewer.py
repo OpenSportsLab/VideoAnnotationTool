@@ -604,6 +604,17 @@ class ActionClassifierApp(QMainWindow):
         else:
             self.nav_manager.apply_action_filter()
 
+        active_tree = None
+        if self._is_desc_mode():
+            active_tree = self.ui.description_ui.left_panel.tree
+        elif not self._is_loc_mode() and not self._is_dense_mode():
+            active_tree = self.ui.classification_ui.left_panel.tree
+
+        if active_tree and self.tree_model.rowCount() > 0:
+            first_index = self.tree_model.index(0, 0)
+            if first_index.isValid():
+                active_tree.setCurrentIndex(first_index)
+
    
 
     def update_action_item_status(self, action_path: str) -> None:
