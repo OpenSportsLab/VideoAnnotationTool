@@ -125,7 +125,7 @@ jobs:
             --add-data "style:style" \
             --add-data "ui:ui" \
             --add-data "controllers:controllers" \
-            --add-data "image;image" `
+            --add-data "image:image" `
             "main.py"
 
       - name: Zip macOS app
@@ -173,7 +173,7 @@ jobs:
             --add-data "style:style" \
             --add-data "ui:ui" \
             --add-data "controllers:controllers" \
-            --add-data "image;image" `
+            --add-data "image:image" `
             "main.py"
 
       - name: Rename binary
