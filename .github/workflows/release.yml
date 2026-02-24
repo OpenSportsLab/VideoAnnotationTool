@@ -30,8 +30,6 @@ jobs:
             printf '\n%s\n' "$delim"
           } >> "$GITHUB_OUTPUT"
 
-
-
   create-release:
     needs: generate-release-notes
     runs-on: ubuntu-latest
@@ -114,21 +112,24 @@ jobs:
           pip install -r requirements.txt
 
       - name: Cleanup before PyInstaller
+        shell: bash
         run: |
           rm -rf build dist *.spec
           pip cache purge || true
 
       - name: Build app
-        run: |
-          python -m PyInstaller --noconfirm --clean --windowed \
-            --name "SoccerNetProAnalyzer" \
-            --add-data "style:style" \
-            --add-data "ui:ui" \
-            --add-data "controllers:controllers" \
-            --add-data "image:image" `
-            "main.py"
+        shell: bash
+        run: >
+          python -m PyInstaller --noconfirm --clean --windowed
+          --name "SoccerNetProAnalyzer"
+          --add-data "style:style"
+          --add-data "ui:ui"
+          --add-data "controllers:controllers"
+          --add-data "image:image"
+          "main.py"
 
       - name: Zip macOS app
+        shell: bash
         run: |
           ditto -c -k --sequesterRsrc --keepParent "dist/SoccerNetProAnalyzer.app" "dist/SoccerNetProAnalyzer-mac.zip"
 
@@ -152,6 +153,7 @@ jobs:
           python-version: "3.9"
 
       - name: Install system deps (Qt/OpenCV runtime)
+        shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y libgl1 libglib2.0-0 libxcb-cursor0
@@ -162,25 +164,29 @@ jobs:
           pip install -r requirements.txt
 
       - name: Cleanup before PyInstaller
+        shell: bash
         run: |
           rm -rf build dist *.spec
           pip cache purge || true
 
       - name: Build binary
-        run: |
-          python -m PyInstaller --noconfirm --clean --windowed --onefile \
-            --name "SoccerNetProAnalyzer" \
-            --add-data "style:style" \
-            --add-data "ui:ui" \
-            --add-data "controllers:controllers" \
-            --add-data "image:image" `
-            "main.py"
+        shell: bash
+        run: >
+          python -m PyInstaller --noconfirm --clean --windowed --onefile
+          --name "SoccerNetProAnalyzer"
+          --add-data "style:style"
+          --add-data "ui:ui"
+          --add-data "controllers:controllers"
+          --add-data "image:image"
+          "main.py"
 
       - name: Rename binary
+        shell: bash
         run: |
           mv -f dist/SoccerNetProAnalyzer dist/SoccerNetProAnalyzer-linux
 
       - name: Zip Linux binary
+        shell: bash
         run: |
           cd dist
           zip -r SoccerNetProAnalyzer-linux.zip SoccerNetProAnalyzer-linux
