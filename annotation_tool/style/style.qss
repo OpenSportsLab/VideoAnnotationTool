@@ -234,18 +234,57 @@ QPushButton[class="dialog_mode_btn"]:hover {
 /* --- Welcome Screen --- */
 /* Target: ui/common/welcome_widget.py */
 
+QWidget#welcome_page {
+    background-color: #555; 
+}
+
+QWidget#welcome_page QLabel {
+    background-color: transparent;
+}
+
 QLabel#welcome_title_lbl {
     font-size: 24px;
     font-weight: bold;
-    color: #00BFFF;
+    color: #00ff2f;
 }
 
 QPushButton[class="welcome_action_btn"] {
     font-size: 16px;
     font-weight: bold;
-    /* Size (200x50) is better handled in Layout/Python, 
-       but colors fall back to default QPushButton styles unless overridden here */
+    background-color: #2E2E2E; 
+    border: 1px solid #111;    
+    color: #F0F0F0;
+    border-radius: 6px;        
 }
+
+QPushButton[class="welcome_action_btn"]:hover {
+    background-color: #3C3C3C; 
+    border-color: #555;
+}
+
+QPushButton[class="welcome_action_btn"]:pressed {
+    background-color: #1A1A1A; 
+}
+
+QPushButton[class="welcome_secondary_btn"] {
+    font-size: 14px;            /* 字体比主按钮(16px)小一号 */
+    font-weight: bold;
+    background-color: transparent; /* 背景透明，让它看起来像链接而不是沉重的按钮 */
+    border: 1px solid #84ff00;     /* 使用和标题同色的边框呼应 */
+    color: #84ff00;
+    border-radius: 6px;
+}
+
+QPushButton[class="welcome_secondary_btn"]:hover {
+    background-color: rgba(0, 191, 255, 0.1); /* 鼠标悬浮时呈现淡淡的青色背光 */
+    border-color: #84ff00;
+    color: #84ff00;
+}
+
+QPushButton[class="welcome_secondary_btn"]:pressed {
+    background-color: rgba(0, 191, 255, 0.2); 
+}
+
 
 /* --- Common Project Tree Panel --- */
 /* Target: ui/common/clip_explorer.py */
