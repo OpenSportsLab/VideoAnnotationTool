@@ -24,11 +24,19 @@ class ClassFileManager:
              # Truncate extremely long error messages for display
             if len(err) > 1000:
                 err = err[:1000] + "\n... (truncated)"
+
+            error_text = (
+                "The imported JSON contains critical errors and cannot be loaded.\n\n"
+                f"{err}\n\n"
+                "--------------------------------------------------\n"
+                "💡 Please download the correct Classification JSON format from:\n"
+                "https://huggingface.co/datasets/OpenSportsLab/soccernetpro-classification-vars"
+            )
             
             QMessageBox.critical(
                 self.main, 
                 "Validation Error (Classification)", 
-                "The imported JSON contains critical errors and cannot be loaded.\n\n" + err
+                error_text
             )
             return False # [FIX] Return False to signal failure
             
