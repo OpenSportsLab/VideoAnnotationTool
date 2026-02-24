@@ -67,10 +67,18 @@ class LocFileManager:
             if not is_valid:
                 if len(error_msg) > 800:
                     error_msg = error_msg[:800] + "\n... (truncated)"
+                error_text = (
+                    "Critical errors found in JSON. Load aborted.\n\n"
+                    f"{error_msg}\n\n"
+                    "--------------------------------------------------\n"
+                    "💡 Please download the correct Localization JSON format from:\n"
+                    "https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-snbas"
+                )
+                
                 QMessageBox.critical(
                     self.main,
                     "Validation Error",
-                    "Critical errors found in JSON. Load aborted.\n\n" + error_msg,
+                    error_text,
                 )
                 return False
 
