@@ -76,6 +76,7 @@ jobs:
             --add-data "controllers;controllers" `
             --add-data "image;image" `
             --add-data "config.yaml;." `
+            --collect-all "soccernetpro" `
             "main.py"
 
       - name: Rename binary
@@ -128,6 +129,7 @@ jobs:
           --add-data "controllers:controllers"
           --add-data "image:image"
           --add-data "config.yaml:."
+          --collect-all "soccernetpro"
           "main.py"
 
       - name: Zip macOS app
@@ -181,6 +183,7 @@ jobs:
           --add-data "controllers:controllers"
           --add-data "image:image"
           --add-data "config.yaml:."
+          --collect-all "soccernetpro"
           "main.py"
 
       - name: Rename binary
