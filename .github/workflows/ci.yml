@@ -63,6 +63,7 @@ jobs:
           --add-data "controllers;controllers"
           --add-data "image;image"
           --add-data "config.yaml;."
+          --collect-all "soccernetpro"
           "main.py"
 
       - name: Zip Windows binary (manual runs only)
@@ -124,6 +125,7 @@ jobs:
           --add-data "controllers:controllers"
           --add-data "image:image"
           --add-data "config.yaml:."
+          --collect-all "soccernetpro"
           "main.py"
 
       - name: Zip macOS app (manual runs only)
@@ -189,6 +191,7 @@ jobs:
           --add-data "controllers:controllers"
           --add-data "image:image"
           --add-data "config.yaml:."
+          --collect-all "soccernetpro"
           "main.py"
 
       - name: Zip Linux binary (manual runs only)
