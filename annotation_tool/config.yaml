@@ -79,7 +79,7 @@ TRAIN:
     lr: 0.0001
     backbone_lr: 0.00005
     head_lr: 0.001
-    betas: [0.9, 0.999]     # ⬅️ 刚才就是缺少了这个导致报错
+    betas: [0.9, 0.999]     
     eps: 0.0000001
     weight_decay: 0.001
     amsgrad: false
@@ -93,6 +93,6 @@ SYSTEM:
   log_dir: ./logs
   use_seed: false
   seed: 42
-  GPU: 0         # Mac 上没有多卡 Nvidia，设为 0
-  device: cpu    # 关键：由于你是 M1 芯片，为了防止 cuda 报错，先设为 cpu (或 auto 试试)
+  GPU: 0       
+  device: cpu   
   gpu_id: 0
