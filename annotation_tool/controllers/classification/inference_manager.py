@@ -80,9 +80,13 @@ class InferenceWorker(QThread):
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 config_text = f.read()
             
+            logs_dir_fwd = os.path.join(writable_dir, "logs").replace('\\', '/')
+            
             config_text = config_text.replace('./temp_workspace', writable_dir_fwd)
+            config_text = config_text.replace('./logs', logs_dir_fwd)  
 
             temp_config_path = os.path.join(writable_dir, f"temp_config_{unique_id}.yaml")
+            
             with open(temp_config_path, 'w', encoding='utf-8') as f:
                 f.write(config_text)
 
