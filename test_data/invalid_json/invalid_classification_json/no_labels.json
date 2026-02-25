@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "date": "2025-11-17",
+  "task": "action_classification",
+  "dataset_name": "Soccer-Foul-AC-invalid-no-labels",
+
+  "modalities": ["video", "image"],
+
+  "metadata": {
+    "source": "Professional Soccer Dataset",
+    "license": "CC-BY-NC-4.0",
+    "created_by": "AI Sports Lab",
+    "notes": "Invalid: no 'labels' field."
+  },
+
+  "data": []
+}

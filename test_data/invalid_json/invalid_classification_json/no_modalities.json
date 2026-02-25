@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "date": "2025-11-17",
+  "task": "action_classification",
+  "dataset_name": "Soccer-Foul-AC-invalid-no-modalities",
+
+  "metadata": {
+    "source": "Professional Soccer Dataset",
+    "license": "CC-BY-NC-4.0",
+    "created_by": "AI Sports Lab",
+    "notes": "Invalid: no 'modalities' field."
+  },
+
+  "labels": {
+    "foul_type": {
+      "type": "single_label",
+      "labels": [
+        "Challenge",
+        "Dive"
+      ]
+    }
+  },
+
+  "data": []
+}

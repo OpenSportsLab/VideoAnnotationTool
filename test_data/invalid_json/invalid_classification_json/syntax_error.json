@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+
+  "date": "YYYY-MM-DD",
+
+  "task": "action_classification",
+
+  "dataset_name": "Soccer-Foul-AC-template-video-only",
+
+  "modalities": ["video"],
+
+  "metadata": {
+    "source": "Professional Soccer Dataset",
+    "license": "CC-BY-NC-4.0",
+    "created_by": "AI Sports Lab",
+    "notes": "Template file for foul classification dataset (video-only, no labeled samples yet)."
+  },
+
+  "labels": 
+    "foul_type": {
+      "type": "single_label",
+      "labels": [
+        "Challenge",
+        "Dive",
+        "Elbowing",
+        "High Leg",
+        "Holding",
+        "Pushing",
+        "Standing Tackling",
+        "Tackling"
+      ]
+    },
+
+    "severity": {
+      "type": "single_label",
+      "labels": [
+        "No Offence",
+        "Offence + No Card",
+        "Offence + Yellow Card",
+        "Offence + Red Card"
+      ]
+    },
+
+    "attributes": {
+      "type": "multi_label",
+      "labels": [
+        "Intentional",
+        "Reckless",
+        "Dangerous Play",
+        "VAR Checked",
+        "InBox",
+        "CounterAttack"
+      ]
+    }
+  },
+
+  "data": []
+}
