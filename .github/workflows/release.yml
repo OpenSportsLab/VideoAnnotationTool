@@ -78,6 +78,8 @@ jobs:
             --add-data "image;image" `
             --add-data "config.yaml;." `
             --collect-all "soccernetpro" `
+            --collect-all "wandb" `
+            --collect-all "torch_geometric" `
             "main.py"
 
       - name: Rename binary
@@ -131,6 +133,8 @@ jobs:
           --add-data "image:image"
           --add-data "config.yaml:."
           --collect-all "soccernetpro"
+          --collect-all "wandb"
+          --collect-all "torch_geometric"
           "main.py"
 
       - name: Zip macOS app
@@ -186,6 +190,8 @@ jobs:
           --add-data "image:image"
           --add-data "config.yaml:."
           --collect-all "soccernetpro"
+          --collect-all "wandb"
+          --collect-all "torch_geometric"
           "main.py"
 
       - name: Rename binary
