@@ -1,0 +1,98 @@
+TASK: classification
+
+DATA:
+  TASK: classification
+  dataset_name: mvfouls
+  data_dir: ""
+  data_modality: video
+  view_type: multi 
+  num_classes: 8     
+  
+  # ⬅️ Added back the dummy train block
+  train:
+    type: annotations_train.json
+    video_path: ""
+    path: ""
+    dataloader:
+      batch_size: 1
+      shuffle: true
+      num_workers: 0
+      pin_memory: false
+
+  # ⬅️ Added back the dummy valid block
+  valid:
+    type: annotations_valid.json
+    video_path: ""
+    path: ""
+    dataloader:
+      batch_size: 1
+      num_workers: 0
+      shuffle: false
+
+  test:
+    type: annotations_test.json
+    video_path: "" 
+    path: ./temp_workspace/temp_test.json 
+    dataloader:
+      batch_size: 1  
+      num_workers: 0 
+      shuffle: false
+
+  num_frames: 16               
+  input_fps: 25                
+  target_fps: 17               
+  start_frame: 63            
+  end_frame: 87             
+  frame_size: [224, 224]       
+  
+  augmentations:
+    random_affine: false
+    random_perspective: false
+    random_rotation: false
+    color_jitter: false
+    random_horizontal_flip: false
+    random_crop: false
+MODEL:
+  TASK: classification
+  type: custom 
+  backbone: 
+    type: mvit_v2_s 
+  neck:
+    type: MV_Aggregate
+    agr_type: max   
+  head: 
+    type: MV_LinearLayer
+  pretrained_model: mvit_v2_s 
+
+TRAIN:
+  monitor: loss
+  mode: min
+  enabled: false   
+  use_weighted_sampler: false
+  use_weighted_loss: false
+  epochs: 1
+  save_dir: ./temp_workspace/checkpoints
+  criterion:
+    type: CrossEntropyLoss
+  optimizer:
+    type: AdamW
+    lr: 0.0001
+    backbone_lr: 0.00005
+    head_lr: 0.001
+    betas: [0.9, 0.999]     # ⬅️ 刚才就是缺少了这个导致报错
+    eps: 0.0000001
+    weight_decay: 0.001
+    amsgrad: false
+  scheduler:
+    type: StepLR
+    step_size: 3
+    gamma: 0.1
+
+
+SYSTEM:
+  log_dir: ./logs
+  use_seed: false
+  seed: 42
+  GPU: 0         # Mac 上没有多卡 Nvidia，设为 0
+  device: cpu    # 关键：由于你是 M1 芯片，为了防止 cuda 报错，先设为 cpu (或 auto 试试)
+  gpu_id: 0
