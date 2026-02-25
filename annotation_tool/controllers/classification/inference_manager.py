@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import glob
 import ssl
@@ -34,7 +35,9 @@ class InferenceWorker(QThread):
         try:
             writable_dir = os.path.join(os.path.expanduser("~"), ".soccernet_workspace")
             os.makedirs(writable_dir, exist_ok=True)
+            
             writable_dir_fwd = writable_dir.replace('\\', '/')
+            logs_dir_fwd = os.path.join(writable_dir, "logs").replace('\\', '/')
 
             with open(self.json_path, 'r', encoding='utf-8') as f:
                 original_data = json.load(f)
@@ -80,13 +83,10 @@ class InferenceWorker(QThread):
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 config_text = f.read()
             
-            logs_dir_fwd = os.path.join(writable_dir, "logs").replace('\\', '/')
-            
             config_text = config_text.replace('./temp_workspace', writable_dir_fwd)
-            config_text = config_text.replace('./logs', logs_dir_fwd)  
+            config_text = config_text.replace('./logs', logs_dir_fwd)
 
             temp_config_path = os.path.join(writable_dir, f"temp_config_{unique_id}.yaml")
-            
             with open(temp_config_path, 'w', encoding='utf-8') as f:
                 f.write(config_text)
 
@@ -96,6 +96,7 @@ class InferenceWorker(QThread):
                 pretrained="jeetv/snpro-classification-mvit"
             )
 
+            
             checkpoint_dir = os.path.join(writable_dir, "checkpoints")
             search_pattern = os.path.join(checkpoint_dir, "**", "predictions_test_epoch_*.json")
             pred_files = glob.glob(search_pattern, recursive=True)
@@ -170,7 +171,6 @@ class InferenceManager(QObject):
         self.main = main_window
         self.ui = main_window.ui
         
-        import sys
         if hasattr(sys, '_MEIPASS'):
             self.base_dir = sys._MEIPASS
         else:
