@@ -149,7 +149,8 @@ python test_data/download_osl_hf.py \
 
 ### 🟩 Localization – Test Data
 **Data location (HuggingFace):**  
-[Localization Dataset](https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-snas)
+- [Localization Dataset (Soccer)](https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-snas)  
+- [Localization Dataset (Tennis)](https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-tennis)
 
 Each folder (e.g., `england efl/`) contains video clips for localization testing.
 
