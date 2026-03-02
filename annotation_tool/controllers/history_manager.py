@@ -90,6 +90,31 @@ class HistoryManager:
                 if path in self.model.manual_annotations: del self.model.manual_annotations[path]
             else: self.model.manual_annotations[path] = copy.deepcopy(data)
             self.main.refresh_ui_after_undo_redo(path)
+
+        # ==========================================
+        # [NEW] Handle batch annotation confirm
+        # ==========================================
+        elif ctype == CmdType.BATCH_ANNOTATION_CONFIRM:
+            batch_changes = cmd['batch_changes'] # Retrieve the packed dictionary
+            
+            # Loop through every video that was modified in this batch
+            for path, changes in batch_changes.items():
+                data = changes['old_data'] if is_undo else changes['new_data']
+                
+                # Apply the data
+                if data:
+                    self.model.manual_annotations[path] = copy.deepcopy(data)
+                else:
+                    if path in self.model.manual_annotations:
+                        del self.model.manual_annotations[path]
+                        
+                # Update the checkmark status in the Tree UI for this video
+                self.main.update_action_item_status(path)
+                
+            # Refresh the right panel if the currently selected item was affected
+            self._refresh_active_view()
+        # ==========================================
+
             
         elif ctype == CmdType.UI_CHANGE:
             path = cmd['path']
