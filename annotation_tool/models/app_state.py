@@ -8,6 +8,7 @@ class CmdType(Enum):
 
     # --- Classification commands ---
     ANNOTATION_CONFIRM = auto()  # Persist a user-confirmed annotation to the model
+    BATCH_ANNOTATION_CONFIRM = auto() # [NEW] Persist a batch of annotations as a single action
     UI_CHANGE = auto()           # Fine-grained UI toggle (radio/checkbox changes)
 
     # --- Shared schema commands (used by both modes) ---
