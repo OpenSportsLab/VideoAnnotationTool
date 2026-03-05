@@ -267,7 +267,7 @@ The commands below assume you run them **from the repository root**.
 cd annotation_tool
 
 python -m PyInstaller --noconfirm --clean --windowed \
-  --name "SoccerNetProAnalyzer" \
+  --name "VideoAnnotationTool" \
   --add-data "style:style" \
   --add-data "ui:ui" \
   --add-data "controllers:controllers" \
@@ -276,7 +276,7 @@ python -m PyInstaller --noconfirm --clean --windowed \
 
 Output:
 
-* `annotation_tool/dist/SoccerNetProAnalyzer.app`
+* `annotation_tool/dist/VideoAnnotationTool.app`
 
 ---
 
@@ -288,7 +288,7 @@ Output:
 cd annotation_tool
 
 python -m PyInstaller --noconfirm --clean --windowed --onefile \
-  --name "SoccerNetProAnalyzer" \
+  --name "VideoAnnotationTool" \
   --add-data "style:style" \
   --add-data "ui:ui" \
   --add-data "controllers:controllers" \
@@ -297,7 +297,7 @@ python -m PyInstaller --noconfirm --clean --windowed --onefile \
 
 Output:
 
-* `annotation_tool/dist/SoccerNetProAnalyzer`
+* `annotation_tool/dist/VideoAnnotationTool`
 
 
 #### Windows (PowerShell)
@@ -308,7 +308,7 @@ On Windows, the `--add-data` separator is **`;`** (not `:`).
 cd annotation_tool
 
 python -m PyInstaller --noconfirm --clean --windowed --onefile `
-  --name "SoccerNetProAnalyzer" `
+  --name "VideoAnnotationTool" `
   --add-data "style;style" `
   --add-data "ui;ui" `
   --add-data "controllers;controllers" `
@@ -317,7 +317,7 @@ python -m PyInstaller --noconfirm --clean --windowed --onefile `
 
 Output:
 
-* `annotation_tool\dist\SoccerNetProAnalyzer.exe`
+* `annotation_tool\dist\VideoAnnotationTool.exe`
 
 ---
 
