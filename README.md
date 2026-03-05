@@ -8,7 +8,7 @@ A **PyQt6-based GUI** for analyzing and annotating **OSL formart** datasets from
 
 ## Features
 
-- Open and visualize SoccerNetPro-style data and annotations.
+- Open and visualize OSL-style data and annotations.
 - Annotate and edit events/actions with a user-friendly GUI.
 - Manage labels/categories and export results for downstream tasks.
 - Easy to extend with additional viewers, overlays, and tools.
@@ -24,16 +24,16 @@ We recommend using [Anaconda](https://www.anaconda.com/) or [Miniconda](https://
 ### Step 0 – Clone the repository
 
 ```bash
-git clone https://github.com/OpenSportsLab/soccernetpro-ui.git
-cd soccernetpro-ui
+git clone https://github.com/OpenSportsLab/VideoAnnotationTool.git
+cd VideoAnnotationTool
 ```
 
 
 ### Step 1 – Create a new Conda environment
 
 ```bash
-conda create -n soccernetpro-ui python=3.9 -y
-conda activate soccernetpro-ui
+conda create -n VideoAnnotationTool python=3.9 -y
+conda activate VideoAnnotationTool
 ```
 
 
@@ -63,14 +63,14 @@ This project provides **test datasets** for multiple tasks, including:
 - **Description (Video Captioning)**
 - **Dense Description (Dense Video Captioning)**
 
-More details are available at: [`/test_data`](https://github.com/OpenSportsLab/soccernetpro-ui/tree/main/test_data)
+More details are available at: [`/test_data`](https://github.com/OpenSportsLab/VideoAnnotationTool/tree/main/test_data)
 
 > ⚠️ **Important**
 > For all tasks, the corresponding **JSON annotation file must be placed in the same directory**
 > as the referenced data folders (e.g., `test/`, `germany_bundesliga/`, etc.).
 > Otherwise, the GUI may not load the data correctly due to relative path mismatches.
 
-Some Hugging Face datasets (including SoccerNetPro datasets) are **restricted / gated**. Therefore you must:
+Some Hugging Face datasets (including OSL datasets) are **restricted / gated**. Therefore you must:
 
 1. Have access to the dataset on Hugging Face
 2. Be authenticated locally using your Hugging Face account (`hf auth login`)
