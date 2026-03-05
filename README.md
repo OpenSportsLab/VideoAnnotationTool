@@ -1,8 +1,8 @@
-# SoccerNetPro Analyzer (UI)
+# Video Annotation Tool (UI)
 
 [![Documentation Status](https://img.shields.io/badge/docs-online-brightgreen)](https://opensportslab.github.io/soccernetpro-ui/)
 
-A **PyQt6-based GUI** for analyzing and annotating **SoccerNetPro / action spotting** datasets (OpenSportsLab).
+A **PyQt6-based GUI** for analyzing and annotating **OSL formart** datasets from OpenSportsLab.
 
 ---
 
