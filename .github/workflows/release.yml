@@ -70,7 +70,7 @@ jobs:
         shell: pwsh
         run: |
           python -m PyInstaller --noconfirm --clean --windowed --onefile `
-            --name "SoccerNetProAnalyzer" `
+            --name "VideoAnnotationTool" `
             --add-data "style;style" `
             --add-data "ui;ui" `
             --add-data "controllers;controllers" `
@@ -80,17 +80,17 @@ jobs:
       - name: Rename binary
         shell: pwsh
         run: |
-          Move-Item -Force dist\SoccerNetProAnalyzer.exe dist\SoccerNetProAnalyzer-win.exe
+          Move-Item -Force dist\VideoAnnotationTool.exe dist\VideoAnnotationTool-win.exe
 
       - name: Zip Windows binary
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\SoccerNetProAnalyzer-win.exe -DestinationPath dist\SoccerNetProAnalyzer-win.zip -Force
+          Compress-Archive -Path dist\VideoAnnotationTool-win.exe -DestinationPath dist\VideoAnnotationTool-win.zip -Force
 
       - name: Upload Release Asset (Windows)
         uses: softprops/action-gh-release@v2
         with:
-          files: annotation_tool/dist/SoccerNetProAnalyzer-win.zip
+          files: annotation_tool/dist/VideoAnnotationTool-win.zip
           tag_name: ${{ github.ref_name }}
 
   build-macos:
@@ -121,7 +121,7 @@ jobs:
         shell: bash
         run: >
           python -m PyInstaller --noconfirm --clean --windowed
-          --name "SoccerNetProAnalyzer"
+          --name "VideoAnnotationTool"
           --add-data "style:style"
           --add-data "ui:ui"
           --add-data "controllers:controllers"
@@ -131,12 +131,12 @@ jobs:
       - name: Zip macOS app
         shell: bash
         run: |
-          ditto -c -k --sequesterRsrc --keepParent "dist/SoccerNetProAnalyzer.app" "dist/SoccerNetProAnalyzer-mac.zip"
+          ditto -c -k --sequesterRsrc --keepParent "dist/VideoAnnotationTool.app" "dist/VideoAnnotationTool-mac.zip"
 
       - name: Upload Release Asset (macOS)
         uses: softprops/action-gh-release@v2
         with:
-          files: annotation_tool/dist/SoccerNetProAnalyzer-mac.zip
+          files: annotation_tool/dist/VideoAnnotationTool-mac.zip
           tag_name: ${{ github.ref_name }}
 
   build-linux:
@@ -173,7 +173,7 @@ jobs:
         shell: bash
         run: >
           python -m PyInstaller --noconfirm --clean --windowed --onefile
-          --name "SoccerNetProAnalyzer"
+          --name "VideoAnnotationTool"
           --add-data "style:style"
           --add-data "ui:ui"
           --add-data "controllers:controllers"
@@ -183,13 +183,13 @@ jobs:
       - name: Rename binary
         shell: bash
         run: |
-          mv -f dist/SoccerNetProAnalyzer dist/SoccerNetProAnalyzer-linux
+          mv -f dist/VideoAnnotationTool dist/VideoAnnotationTool-linux
 
       - name: Zip Linux binary
         shell: bash
         run: |
           cd dist
-          zip -r SoccerNetProAnalyzer-linux.zip SoccerNetProAnalyzer-linux
+          zip -r VideoAnnotationTool-linux.zip VideoAnnotationTool-linux
           cd ..
 
       - name: Upload Release Asset (Linux)
