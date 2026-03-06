@@ -1,14 +1,14 @@
-# SoccerNetPro Analyzer (UI)
+# Video Annotation Tool (UI)
 
 [![Documentation Status](https://img.shields.io/badge/docs-online-brightgreen)](https://opensportslab.github.io/soccernetpro-ui/)
 
-A **PyQt6-based GUI** for analyzing and annotating **SoccerNetPro / action spotting** datasets (OpenSportsLab).
+A **PyQt6-based GUI** for analyzing and annotating **OSL format** datasets (OpenSportsLab).
 
 ---
 
 ## Features
 
-- Open and visualize SoccerNetPro-style data and annotations.
+- Open and visualize OSL-style data and annotations.
 - Annotate and edit events/actions with a user-friendly GUI.
 - Manage labels/categories and export results for downstream tasks.
 - Easy to extend with additional viewers, overlays, and tools.
@@ -24,16 +24,16 @@ We recommend using [Anaconda](https://www.anaconda.com/) or [Miniconda](https://
 ### Step 0 – Clone the repository
 
 ```bash
-git clone https://github.com/OpenSportsLab/soccernetpro-ui.git
-cd soccernetpro-ui
+git clone https://github.com/OpenSportsLab/VideoAnnotationTool.git
+cd VideoAnnotationTool
 ```
 
 
 ### Step 1 – Create a new Conda environment
 
 ```bash
-conda create -n soccernetpro-ui python=3.9 -y
-conda activate soccernetpro-ui
+conda create -n VideoAnnotationTool python=3.9 -y
+conda activate VideoAnnotationTool
 ```
 
 
@@ -63,14 +63,14 @@ This project provides **test datasets** for multiple tasks, including:
 - **Description (Video Captioning)**
 - **Dense Description (Dense Video Captioning)**
 
-More details are available at: [`/test_data`](https://github.com/OpenSportsLab/soccernetpro-ui/tree/main/test_data)
+More details are available at: [`/test_data`](https://github.com/OpenSportsLab/VideoAnnotationTool/tree/main/test_data)
 
 > ⚠️ **Important**
 > For all tasks, the corresponding **JSON annotation file must be placed in the same directory**
 > as the referenced data folders (e.g., `test/`, `germany_bundesliga/`, etc.).
 > Otherwise, the GUI may not load the data correctly due to relative path mismatches.
 
-Some Hugging Face datasets (including SoccerNetPro datasets) are **restricted / gated**. Therefore you must:
+Some Hugging Face datasets (including OSL datasets) are **restricted / gated**. Therefore you must:
 
 1. Have access to the dataset on Hugging Face
 2. Be authenticated locally using your Hugging Face account (`hf auth login`)
@@ -151,6 +151,7 @@ python test_data/download_osl_hf.py \
 **Data location (HuggingFace):**  
 - [Localization Dataset (Soccer)](https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-snas)  
 - [Localization Dataset (Tennis)](https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-tennis)
+- [Localization Dataset (gymnastics)](https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-gymnastics)
 
 Each folder (e.g., `england efl/`) contains video clips for localization testing.
 
@@ -199,7 +200,7 @@ Test_Data/Description/XFoul/
 
 ---
 
-## 🟧 Dense Description (Dense Video Captioning) – SoccerNetPro SNDVC
+## 🟧 Dense Description (Dense Video Captioning) 
 
 **Dataset (Hugging Face):**
 [Dense—Description Dataset](https://huggingface.co/datasets/OpenSportsLab/soccernetpro-densedescription-sndvc)
@@ -266,7 +267,7 @@ The commands below assume you run them **from the repository root**.
 cd annotation_tool
 
 python -m PyInstaller --noconfirm --clean --windowed \
-  --name "SoccerNetProAnalyzer" \
+  --name "VideoAnnotationTool" \
   --add-data "style:style" \
   --add-data "ui:ui" \
   --add-data "controllers:controllers" \
@@ -275,7 +276,7 @@ python -m PyInstaller --noconfirm --clean --windowed \
 
 Output:
 
-* `annotation_tool/dist/SoccerNetProAnalyzer.app`
+* `annotation_tool/dist/VideoAnnotationTool.app`
 
 ---
 
@@ -287,7 +288,7 @@ Output:
 cd annotation_tool
 
 python -m PyInstaller --noconfirm --clean --windowed --onefile \
-  --name "SoccerNetProAnalyzer" \
+  --name "VideoAnnotationTool" \
   --add-data "style:style" \
   --add-data "ui:ui" \
   --add-data "controllers:controllers" \
@@ -296,7 +297,7 @@ python -m PyInstaller --noconfirm --clean --windowed --onefile \
 
 Output:
 
-* `annotation_tool/dist/SoccerNetProAnalyzer`
+* `annotation_tool/dist/VideoAnnotationTool`
 
 
 #### Windows (PowerShell)
@@ -307,7 +308,7 @@ On Windows, the `--add-data` separator is **`;`** (not `:`).
 cd annotation_tool
 
 python -m PyInstaller --noconfirm --clean --windowed --onefile `
-  --name "SoccerNetProAnalyzer" `
+  --name "VideoAnnotationTool" `
   --add-data "style;style" `
   --add-data "ui;ui" `
   --add-data "controllers;controllers" `
@@ -316,7 +317,7 @@ python -m PyInstaller --noconfirm --clean --windowed --onefile `
 
 Output:
 
-* `annotation_tool\dist\SoccerNetProAnalyzer.exe`
+* `annotation_tool\dist\VideoAnnotationTool.exe`
 
 ---
 
@@ -356,10 +357,10 @@ There is also a standalone build workflow that can be triggered manually:
 
 ## 📜 License
 
-This Soccernet Pro project offers two licensing options to suit different needs:
+This Video Annotation Tool project offers two licensing options to suit different needs:
 
-* **AGPL-3.0 License**: This open-source license is ideal for students, researchers, and the community. It supports open collaboration and sharing. See the [`LICENSE.txt`](https://github.com/OpenSportsLab/soccernetpro-ui/blob/main/LICENSE.txt) file for full details.
-* **Commercial License**: Designed for [`commercial use`](https://github.com/OpenSportsLab/soccernetpro-ui/blob/main/COMMERCIAL_LICENSE.md
+* **AGPL-3.0 License**: This open-source license is ideal for students, researchers, and the community. It supports open collaboration and sharing. See the [`LICENSE.txt`](https://github.com/OpenSportsLab/VideoAnnotationTool/blob/main/LICENSE.txt) file for full details.
+* **Commercial License**: Designed for [`commercial use`](https://github.com/OpenSportsLab/VideoAnnotationTool/blob/main/COMMERCIAL_LICENSE.md
 ), this option allows you to integrate this software into proprietary products and services without the open-source obligations of GPL-3.0. If your use case involves commercial deployment, please contact the maintainers to obtain a commercial license.
 
 **Contact:** OpenSportsLab / project maintainers.
