@@ -24,7 +24,7 @@ class WelcomeWidget(QWidget):
         title_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         title_layout.setSpacing(15) 
         
-        title = QLabel("SoccerNetPro Annotation Tool")
+        title = QLabel("Video Annotation Tool")
         title.setObjectName("welcome_title_lbl")
         
         self.logo_lbl = QLabel()
