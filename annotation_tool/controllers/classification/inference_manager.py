@@ -6,6 +6,8 @@ import ssl
 import copy
 import uuid
 import re
+import yaml
+from models import CmdType
 from PyQt6.QtCore import QThread, pyqtSignal, QObject
 from PyQt6.QtWidgets import QMessageBox
 from utils import natural_sort_key
@@ -15,11 +17,74 @@ ssl._create_default_https_context = ssl._create_unverified_context
 
 from soccernetpro import model
 
+
+def _run_soccernet_inference(base_config_path: str, temp_data: dict, prefix: str):
+    """
+    [REFACTORED] A shared helper function to handle the repetitive setup, 
+    execution, and cleanup of the soccernetpro inference process.
+    Used by both Single Inference and Batch Inference workers.
+    """
+    writable_dir = os.path.join(os.path.expanduser("~"), ".soccernet_workspace")
+    os.makedirs(writable_dir, exist_ok=True)
+    
+    writable_dir_fwd = writable_dir.replace('\\', '/')
+    logs_dir_fwd = os.path.join(writable_dir, "logs").replace('\\', '/')
+
+    unique_id = uuid.uuid4().hex[:8]
+    temp_json_path = os.path.join(writable_dir, f"temp_{prefix}_{unique_id}.json")
+    temp_config_path = os.path.join(writable_dir, f"temp_config_{prefix}_{unique_id}.yaml")
+
+    try:
+        # 1. Write the temporary JSON data
+        with open(temp_json_path, 'w', encoding='utf-8') as f:
+            json.dump(temp_data, f, indent=4)
+
+        # 2. Read and modify the YAML config dynamically
+        with open(base_config_path, 'r', encoding='utf-8') as f:
+            config_text = f.read()
+        
+        config_text = config_text.replace('./temp_workspace', writable_dir_fwd)
+        config_text = config_text.replace('./logs', logs_dir_fwd)
+
+        with open(temp_config_path, 'w', encoding='utf-8') as f:
+            f.write(config_text)
+
+        # 3. Initialize model and run inference
+        myModel = model.classification(config=temp_config_path)
+        metrics = myModel.infer(
+            test_set=temp_json_path,
+            pretrained="jeetv/snpro-classification-mvit"
+        )
+
+        # 4. Search for the generated prediction output
+        checkpoint_dir = os.path.join(writable_dir, "checkpoints")
+        search_pattern = os.path.join(checkpoint_dir, "**", "predictions_test_epoch_*.json")
+        pred_files = glob.glob(search_pattern, recursive=True)
+
+        if not pred_files:
+            raise FileNotFoundError("Could not find the generated prediction JSON file.")
+
+        latest_pred_file = max(pred_files, key=os.path.getctime)
+        with open(latest_pred_file, 'r', encoding='utf-8') as pf:
+            pred_data = json.load(pf)
+
+        return metrics if metrics else {}, pred_data
+
+    finally:
+        # 5. Guaranteed cleanup of temporary payload files
+        if os.path.exists(temp_json_path):
+            try: os.remove(temp_json_path)
+            except: pass
+        if os.path.exists(temp_config_path):
+            try: os.remove(temp_config_path)
+            except: pass
+
+
 class InferenceWorker(QThread):
     finished_signal = pyqtSignal(str, str, dict)
     error_signal = pyqtSignal(str)
 
-    def __init__(self, config_path, base_dir, action_id, json_path, video_path):
+    def __init__(self, config_path, base_dir, action_id, json_path, video_path, label_map):
         super().__init__()
         self.config_path = config_path
         self.base_dir = base_dir
@@ -27,21 +92,11 @@ class InferenceWorker(QThread):
         self.json_path = json_path
         self.video_path = video_path 
         
-        self.label_map = {
-            '0': 'Challenge', '1': 'Dive', '2': 'Elbowing', '3': 'High leg', 
-            '4': 'Holding', '5': 'Pushing', '6': 'Standing tackling', '7': 'Tackling'
-        }
+        # [DYNAMIC] Assigned from config.yaml, no more hardcoding!
+        self.label_map = label_map
 
     def run(self):
-        temp_json_path = ""
-        temp_config_path = ""
         try:
-            writable_dir = os.path.join(os.path.expanduser("~"), ".soccernet_workspace")
-            os.makedirs(writable_dir, exist_ok=True)
-            
-            writable_dir_fwd = writable_dir.replace('\\', '/')
-            logs_dir_fwd = os.path.join(writable_dir, "logs").replace('\\', '/')
-
             video_abs_path = self.video_path
             if not os.path.isabs(video_abs_path):
                 if self.json_path and os.path.exists(self.json_path):
@@ -66,12 +121,15 @@ class InferenceWorker(QThread):
                         target_item = copy.deepcopy(item)
                         break
 
+            # Dynamic default fallback from the schema instead of hardcoded strings
+            default_label = list(self.label_map.values())[0] if self.label_map else "Unknown"
+
             if not target_item:
                 target_item = {
                     "id": self.action_id,
                     "inputs": [{"type": "video", "path": video_abs_path}],
                     "labels": {
-                        "action": {"label": "Tackling", "confidence": 1.0}
+                        "action": {"label": default_label, "confidence": 1.0}
                     }
                 }
             else:
@@ -83,7 +141,7 @@ class InferenceWorker(QThread):
                 if "labels" not in target_item:
                     target_item["labels"] = {}
                 if "action" not in target_item["labels"]:
-                    target_item["labels"]["action"] = {"label": "Tackling"}
+                    target_item["labels"]["action"] = {"label": default_label}
 
             global_labels = original_data.get("labels", {})
             if not isinstance(global_labels, dict):
@@ -102,38 +160,8 @@ class InferenceWorker(QThread):
                 "data": [target_item]
             }
             
-            unique_id = uuid.uuid4().hex[:8]
-            temp_json_path = os.path.join(writable_dir, f"temp_infer_{unique_id}.json")
-            
-            with open(temp_json_path, 'w', encoding='utf-8') as f:
-                json.dump(temp_data, f, indent=4)
-
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                config_text = f.read()
-            
-            config_text = config_text.replace('./temp_workspace', writable_dir_fwd)
-            config_text = config_text.replace('./logs', logs_dir_fwd)
-
-            temp_config_path = os.path.join(writable_dir, f"temp_config_{unique_id}.yaml")
-            with open(temp_config_path, 'w', encoding='utf-8') as f:
-                f.write(config_text)
-
-            myModel = model.classification(config=temp_config_path)
-            metrics = myModel.infer(
-                test_set=temp_json_path,
-                pretrained="jeetv/snpro-classification-mvit"
-            )
-
-            checkpoint_dir = os.path.join(writable_dir, "checkpoints")
-            search_pattern = os.path.join(checkpoint_dir, "**", "predictions_test_epoch_*.json")
-            pred_files = glob.glob(search_pattern, recursive=True)
-
-            if not pred_files:
-                raise FileNotFoundError("Could not find the generated prediction JSON file.")
-
-            latest_pred_file = max(pred_files, key=os.path.getctime)
-            with open(latest_pred_file, 'r', encoding='utf-8') as pf:
-                pred_data = json.load(pf)
+            # Use the shared helper function to run inference
+            metrics, pred_data = _run_soccernet_inference(self.config_path, temp_data, "infer")
 
             predicted_label_idx = None
             confidence = 0.0
@@ -171,8 +199,6 @@ class InferenceWorker(QThread):
                 clean_idx = predicted_label_idx.replace(".0", "")
                 if clean_idx in self.label_map:
                     final_label = self.label_map[clean_idx]
-            else:
-                final_label = "Unknown"
 
             conf_dict = {}
             if "confidences" in raw_action_data and isinstance(raw_action_data["confidences"], dict):
@@ -189,31 +215,21 @@ class InferenceWorker(QThread):
 
         except Exception as e:
             self.error_signal.emit(str(e))
-        
-        finally:
-            if os.path.exists(temp_json_path):
-                try: os.remove(temp_json_path)
-                except: pass
-            if os.path.exists(temp_config_path):
-                try: os.remove(temp_config_path)
-                except: pass
 
 
 class BatchInferenceWorker(QThread):
     finished_signal = pyqtSignal(dict, list) 
     error_signal = pyqtSignal(str)
 
-    def __init__(self, config_path, base_dir, json_path, target_clips):
+    def __init__(self, config_path, base_dir, json_path, target_clips, label_map):
         super().__init__()
         self.config_path = config_path
         self.base_dir = base_dir
         self.json_path = json_path
         self.target_clips = target_clips 
         
-        self.label_map = {
-            '0': 'Challenge', '1': 'Dive', '2': 'Elbowing', '3': 'High leg', 
-            '4': 'Holding', '5': 'Pushing', '6': 'Standing tackling', '7': 'Tackling'
-        }
+        # [DYNAMIC] Load map from external source
+        self.label_map = label_map
 
     def _map_label(self, raw_label):
         valid_class_names = list(self.label_map.values())
@@ -225,16 +241,10 @@ class BatchInferenceWorker(QThread):
         return "Unknown"
 
     def run(self):
-        temp_json_path = ""
-        temp_config_path = ""
         try:
-            writable_dir = os.path.join(os.path.expanduser("~"), ".soccernet_workspace")
-            os.makedirs(writable_dir, exist_ok=True)
-            
-            writable_dir_fwd = writable_dir.replace('\\', '/')
-            logs_dir_fwd = os.path.join(writable_dir, "logs").replace('\\', '/')
-
             data_items = []
+            default_label = list(self.label_map.values())[0] if self.label_map else "Unknown"
+
             for clip in self.target_clips:
                 inputs = []
                 for path in clip['paths']:
@@ -247,7 +257,8 @@ class BatchInferenceWorker(QThread):
                     video_abs_path = os.path.normpath(video_abs_path).replace('\\', '/')
                     inputs.append({"type": "video", "path": video_abs_path})
 
-                safe_gt = clip['gt'] if clip['gt'] else "Tackling"
+                # Fallback to default label instead of hardcoded strings
+                safe_gt = clip['gt'] if clip['gt'] else default_label
                 
                 item = {
                     "id": clip['id'],
@@ -270,42 +281,10 @@ class BatchInferenceWorker(QThread):
                 "data": data_items
             }
             
-            unique_id = uuid.uuid4().hex[:8]
-            temp_json_path = os.path.join(writable_dir, f"temp_batch_infer_{unique_id}.json")
-            
-            with open(temp_json_path, 'w', encoding='utf-8') as f:
-                json.dump(temp_data, f, indent=4)
-
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                config_text = f.read()
-            
-            config_text = config_text.replace('./temp_workspace', writable_dir_fwd)
-            config_text = config_text.replace('./logs', logs_dir_fwd)
-
-            temp_config_path = os.path.join(writable_dir, f"temp_batch_config_{unique_id}.yaml")
-            with open(temp_config_path, 'w', encoding='utf-8') as f:
-                f.write(config_text)
-
-            myModel = model.classification(config=temp_config_path)
-            metrics = myModel.infer(
-                test_set=temp_json_path,
-                pretrained="jeetv/snpro-classification-mvit"
-            )
-            if not metrics: metrics = {}
-
-            checkpoint_dir = os.path.join(writable_dir, "checkpoints")
-            search_pattern = os.path.join(checkpoint_dir, "**", "predictions_test_epoch_*.json")
-            pred_files = glob.glob(search_pattern, recursive=True)
-
-            if not pred_files:
-                raise FileNotFoundError("Could not find the generated prediction JSON file.")
-
-            latest_pred_file = max(pred_files, key=os.path.getctime)
-            with open(latest_pred_file, 'r', encoding='utf-8') as pf:
-                pred_data = json.load(pf)
+            # Use the shared helper function to run inference
+            metrics, pred_data = _run_soccernet_inference(self.config_path, temp_data, "batch_infer")
 
             pred_items = pred_data.get("data", [])
-            
             out_dict = {}
             for item in pred_items:
                 out_id = str(item.get("id"))
@@ -335,14 +314,6 @@ class BatchInferenceWorker(QThread):
 
         except Exception as e:
             self.error_signal.emit(str(e))
-        
-        finally:
-            if os.path.exists(temp_json_path):
-                try: os.remove(temp_json_path)
-                except: pass
-            if os.path.exists(temp_config_path):
-                try: os.remove(temp_config_path)
-                except: pass
 
 
 class InferenceManager(QObject):
@@ -363,6 +334,33 @@ class InferenceManager(QObject):
         self.ui.classification_ui.right_panel.batch_run_requested.connect(self.start_batch_inference)
         self.ui.classification_ui.right_panel.batch_confirm_requested.connect(self.confirm_batch_inference)
 
+    def _get_label_map_from_config(self) -> dict:
+        """
+        [DYNAMIC PARSING] Reads the config.yaml on-the-fly to extract the classes list.
+        Prevents hardcoding so the framework scales effortlessly to new sports/models.
+        """
+        label_map = {}
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f)
+                
+            # Extract classes array safely from YAML structure
+            if config_data and 'DATA' in config_data and 'classes' in config_data['DATA']:
+                classes_list = config_data['DATA']['classes']
+                for i, cls_name in enumerate(classes_list):
+                    label_map[str(i)] = cls_name
+        except Exception as e:
+            print(f"Warning: Could not read classes from config.yaml dynamically: {e}")
+            
+        # Absolute failsafe if the user forgot to write `classes:` in their yaml
+        if not label_map:
+            label_map = {
+                '0': 'Challenge', '1': 'Dive', '2': 'Elbowing', '3': 'High leg', 
+                '4': 'Holding', '5': 'Pushing', '6': 'Standing tackling', '7': 'Tackling'
+            }
+            
+        return label_map
+
     def start_inference(self):
         if not os.path.exists(self.config_path):
             QMessageBox.critical(self.main, "Error", f"config.yaml not found at:\n{self.config_path}")
@@ -378,14 +376,53 @@ class InferenceManager(QObject):
 
         self.ui.classification_ui.right_panel.show_inference_loading(True)
 
-        self.worker = InferenceWorker(self.config_path, self.base_dir, action_id, current_json_path, current_video_path)
+        # 1. Dynamically load labels from config
+        label_map = self._get_label_map_from_config()
+
+        # 2. Pass labels to worker
+        self.worker = InferenceWorker(self.config_path, self.base_dir, action_id, current_json_path, current_video_path, label_map)
         self.worker.finished_signal.connect(self._on_inference_success)
         self.worker.error_signal.connect(self._on_inference_error)
         self.worker.start()
 
     def _on_inference_success(self, target_head, label, conf_dict):
+        # Auto-create the schema (Category) if it's a completely blank/new project
+        if target_head not in self.main.model.label_definitions:
+            if self.worker:
+                # Use dynamically generated labels
+                default_labels = list(self.worker.label_map.values())
+                self.main.model.label_definitions[target_head] = {
+                    "type": "single_label",
+                    "labels": sorted(default_labels)
+                }
+                # Force UI regeneration to display radio buttons
+                self.main.setup_dynamic_ui()
+
+        # [NEW] Save raw inference result to smart_annotations memory
+        current_video_path = self.main.get_current_action_path()
+        # [NEW] Capture old state before overwriting
+        old_data = self.main.model.smart_annotations.get(current_video_path, {})
+        new_data = {
+            target_head: {"label": label, "conf_dict": conf_dict}
+        }
+        
+        # [NEW] Push to Undo History
+        import copy
+        self.main.model.push_undo(
+            CmdType.SMART_ANNOTATION_RUN,
+            path=current_video_path,
+            old_data=copy.deepcopy(old_data),
+            new_data=copy.deepcopy(new_data)
+        )
+
+        # Save new data
+        if current_video_path not in self.main.model.smart_annotations:
+            self.main.model.smart_annotations[current_video_path] = {}
+        self.main.model.smart_annotations[current_video_path] = new_data
+        
+        self.main.model.is_data_dirty = True
         self.ui.classification_ui.right_panel.display_inference_result(target_head, label, conf_dict)
-        self.worker = None 
+        self.worker = None
 
     def _on_inference_error(self, error_msg):
         self.ui.classification_ui.right_panel.show_inference_loading(False)
@@ -420,7 +457,7 @@ class InferenceManager(QObject):
             items = action_groups[base_id]
             paths = [it['path'] for it in items]
             
-            # Ground Truth 
+            # Extract current ground truth
             gt_label = ""
             for it in items:
                 ann = self.main.model.manual_annotations.get(it['path'], {})
@@ -431,36 +468,67 @@ class InferenceManager(QObject):
             target_clips.append({'id': base_id, 'paths': paths, 'gt': gt_label, 'original_items': items})
 
         self.ui.classification_ui.right_panel.show_inference_loading(True)
-        self.batch_worker = BatchInferenceWorker(self.config_path, self.base_dir, self.main.model.current_json_path, target_clips)
+        
+        # 1. Dynamically load labels from config
+        label_map = self._get_label_map_from_config()
+
+        # 2. Pass labels to batch worker
+        self.batch_worker = BatchInferenceWorker(self.config_path, self.base_dir, self.main.model.current_json_path, target_clips, label_map)
         self.batch_worker.finished_signal.connect(self._on_batch_inference_success)
         self.batch_worker.error_signal.connect(self._on_batch_inference_error)
         self.batch_worker.start()
 
     def _on_batch_inference_success(self, metrics: dict, results_list: list):
-        text = "OVERALL ACCURACY METRICS:\n"
-        text += f"- Top_2_accuracy: {metrics.get('top_2_accuracy', 0.0):.4f}\n"
-        text += f"- Accuracy: {metrics.get('accuracy', 0.0):.4f}\n"
-        text += f"- Balanced accuracy: {metrics.get('balanced_accuracy', 0.0):.4f}\n"
-        text += f"- F1: {metrics.get('f1', 0.0):.4f}\n"
-        text += f"- Precision: {metrics.get('precision', 0.0):.4f}\n"
-        text += f"- Recall: {metrics.get('recall', 0.0):.4f}\n\n"
+        # Auto-create the schema (Category) if it's a completely blank/new project
+        target_head = "action"
+        if target_head not in self.main.model.label_definitions:
+            if self.batch_worker:
+                default_labels = list(self.batch_worker.label_map.values())
+                self.main.model.label_definitions[target_head] = {
+                    "type": "single_label",
+                    "labels": sorted(default_labels)
+                }
+                self.main.setup_dynamic_ui()
 
+        # Start building the output text without the accuracy metrics
+        text = "BATCH INFERENCE PREDICTIONS:\n\n"
         batch_predictions = {}
+        
+        old_batch_data = {} # [NEW]
+        new_batch_data = {} # [NEW]
+        import copy
+        
         for r in results_list:
-            gt_str = r['gt'] if r['gt'] else "None"
-            
-            if gt_str == "None":
-                match_str = "N/A"
-            elif gt_str == r['pred']:
-                match_str = "Match ✅"
-            else:
-                match_str = "Mismatch ❌"
-                
-            text += f"Video ID: {r['id']} - Ground Truth: {gt_str} -- Predicted: {r['pred']} (Confidence: {r['conf']*100:.1f}%) ({match_str})\n\n"
+            text += f"Video ID: {r['id']}\nPredicted Class: {r['pred']} (Confidence: {r['conf']*100:.1f}%)\n\n"
             
             for item in r['original_items']:
-                batch_predictions[item['path']] = r['pred']
-
+                path = item['path']
+                batch_predictions[path] = r['pred']
+                
+                # [NEW] Record old data
+                if path not in old_batch_data:
+                    old_batch_data[path] = self.main.model.smart_annotations.get(path, {})
+                
+                conf_dict = {r['pred']: r['conf']}
+                if r['conf'] < 1.0: conf_dict["Other Uncertainties"] = 1.0 - r['conf']
+                
+                # [NEW] Prepare new data
+                new_batch_data[path] = {
+                    target_head: {"label": r['pred'], "conf_dict": conf_dict}
+                }
+                
+        # [NEW] Push Batch to Undo History
+        self.main.model.push_undo(
+            CmdType.BATCH_SMART_ANNOTATION_RUN,
+            old_batch=copy.deepcopy(old_batch_data),
+            new_batch=copy.deepcopy(new_batch_data)
+        )
+        
+        # Apply new data to model
+        for path, data in new_batch_data.items():
+            self.main.model.smart_annotations[path] = data
+            
+        self.main.model.is_data_dirty = True
         self.ui.classification_ui.right_panel.display_batch_inference_result(text, batch_predictions)
         self.batch_worker = None
 
@@ -470,45 +538,24 @@ class InferenceManager(QObject):
         self.batch_worker = None
 
     def confirm_batch_inference(self, results: dict):
-        from models import CmdType
-        import copy
-
-        batch_changes = {}
+        """
+        [MODIFIED] Acknowledge batch inference without polluting Hand Annotations.
+        """
         applied_count = 0
 
-        # 1. Collect old and new states for all affected videos into a single dictionary
+        # Smart annotations were already pushed to memory and Undo stack 
+        # during _on_batch_inference_success. Here we just mark them as confirmed.
         for path, label in results.items():
-            old_data = copy.deepcopy(self.main.model.manual_annotations.get(path))
-            
-            new_data = copy.deepcopy(old_data) if old_data else {}
-            new_data['action'] = label
-            
-            # Only record if there is an actual change
-            if old_data != new_data:
-                batch_changes[path] = {
-                    'old_data': old_data,
-                    'new_data': new_data
-                }
-
-        # If nothing actually changed, just return
-        if not batch_changes:
-            self.main.show_temp_msg("Batch Annotation", "No new labels to apply.")
-            return
-
-        # 2. Push the ENTIRE batch as a SINGLE command to the undo stack
-        self.main.model.push_undo(
-            CmdType.BATCH_ANNOTATION_CONFIRM, 
-            batch_changes=batch_changes
-        )
-
-        # 3. Actually apply the changes to the model
-        for path, changes in batch_changes.items():
-            self.main.model.manual_annotations[path] = changes['new_data']
-            self.main.update_action_item_status(path)
-            applied_count += 1
+            if path in self.main.model.smart_annotations:
+                # [NEW] Set a confirmed flag directly in smart memory
+                self.main.model.smart_annotations[path]["_confirmed"] = True
+                self.main.update_action_item_status(path)
+                applied_count += 1
         
-        # 4. Update UI global states
+        # Update UI global states
         if applied_count > 0:
             self.main.model.is_data_dirty = True
             self.main.update_save_export_button_state()
-            self.main.show_temp_msg("Batch Annotation", f"Applied labels to {applied_count} items. (1 Undo Step)")
+            self.main.show_temp_msg("Batch Annotation", f"Confirmed {applied_count} smart annotations independently.")
+        else:
+            self.main.show_temp_msg("Batch Annotation", "No smart annotations to confirm.")

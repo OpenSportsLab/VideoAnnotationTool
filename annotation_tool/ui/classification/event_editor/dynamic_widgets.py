@@ -15,7 +15,8 @@ class DynamicSingleLabelGroup(QWidget):
         self.definition = definition 
         
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 5, 0, 15)
+        self.layout.setContentsMargins(0, 0, 0, 2)
+        self.layout.setSpacing(2)
         
         # Header
         header_layout = QHBoxLayout()
@@ -37,7 +38,7 @@ class DynamicSingleLabelGroup(QWidget):
         self.radio_group.setExclusive(True)
         self.radio_container = QWidget()
         self.radio_layout = QVBoxLayout(self.radio_container)
-        self.radio_layout.setContentsMargins(10, 0, 0, 0)
+        self.radio_layout.setContentsMargins(5, 0, 0, 0)
         self.layout.addWidget(self.radio_container)
         
         # Input for new label
@@ -68,10 +69,11 @@ class DynamicSingleLabelGroup(QWidget):
         for i, lbl_text in enumerate(labels):
             row_widget = QWidget()
             row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(0, 2, 0, 2)
+            row_layout.setContentsMargins(0, 0, 0, 0)
             
             rb = QRadioButton(lbl_text)
             self.radio_group.addButton(rb, i)
+            rb.setProperty("class", "label_item")
             
             del_label_btn = QPushButton("×")
             del_label_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -113,11 +115,11 @@ class DynamicMultiLabelGroup(QWidget):
         self.definition = definition
         
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 5, 0, 15)
+        self.layout.setContentsMargins(0, 2, 0, 5)
         
         # Header
         header_layout = QHBoxLayout()
-        self.lbl_head = QLabel(head_name + " (Multi)")
+        self.lbl_head = QLabel(head_name)
         self.lbl_head.setProperty("class", "group_head_lbl group_head_multi")
         
         self.btn_del_cat = QPushButton("×")
@@ -131,7 +133,7 @@ class DynamicMultiLabelGroup(QWidget):
         
         self.checkbox_container = QWidget()
         self.checkbox_layout = QVBoxLayout(self.checkbox_container)
-        self.checkbox_layout.setContentsMargins(10, 0, 0, 0)
+        self.checkbox_layout.setContentsMargins(5, 0, 0, 0)
         self.layout.addWidget(self.checkbox_container)
         
         # Input
@@ -158,11 +160,12 @@ class DynamicMultiLabelGroup(QWidget):
         for type_name in sorted(list(set(new_types))): 
             row_widget = QWidget()
             row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(0, 2, 0, 2)
+            row_layout.setContentsMargins(0, 0, 0, 0)
 
             cb = QCheckBox(type_name)
             cb.clicked.connect(self._on_box_clicked)
             self.checkboxes[type_name] = cb
+            cb.setProperty("class", "label_item")
             
             del_label_btn = QPushButton("×")
             del_label_btn.setCursor(Qt.CursorShape.PointingHandCursor)

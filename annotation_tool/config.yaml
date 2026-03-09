@@ -6,7 +6,17 @@ DATA:
   data_dir: ""
   data_modality: video
   view_type: multi 
-  num_classes: 8     
+  num_classes: 8 
+
+  classes:
+    - Challenge
+    - Dive
+    - Elbowing
+    - High leg
+    - Holding
+    - Pushing
+    - Standing tackling
+    - Tackling    
   
   # ⬅️ Added back the dummy train block
   train:
@@ -93,6 +103,6 @@ SYSTEM:
   log_dir: ./logs
   use_seed: false
   seed: 42
-  GPU: 0       
-  device: cpu   
+  GPU: 0         
+  device: cpu    
   gpu_id: 0

@@ -35,6 +35,8 @@ class VideoSurface(QWidget):
         # 3. Add video widget to layout
         self.layout.addWidget(self.video_widget)
 
+        
+
     def load_source(self, path):
         """
         Loads the video source. 

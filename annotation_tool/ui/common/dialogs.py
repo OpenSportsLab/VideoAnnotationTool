@@ -75,6 +75,48 @@ class ProjectTypeDialog(QDialog):
         self.selected_mode = mode
         self.accept()
 
+class ClassificationTypeDialog(QDialog):
+    """
+    [NEW] Dialog to ask the user if the new Classification project 
+    is Single-View or Multi-View.
+    """
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Classification Project Type")
+        self.resize(450, 180)
+        self.is_multi_view = False # Default to Single-View
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(30, 30, 30, 30)
+
+        lbl = QLabel("Is this a Single-View or Multi-View project?")
+        lbl.setProperty("class", "dialog_instruction_lbl")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(20)
+
+        self.btn_sv = QPushButton("Single-View\n(Individual Videos)")
+        self.btn_sv.setMinimumSize(QSize(0, 70))
+        self.btn_sv.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        self.btn_mv = QPushButton("Multi-View\n(Grouped by Folder)")
+        self.btn_mv.setMinimumSize(QSize(0, 70))
+        self.btn_mv.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        btn_layout.addWidget(self.btn_sv)
+        btn_layout.addWidget(self.btn_mv)
+        layout.addLayout(btn_layout)
+
+        # Connect signals
+        self.btn_sv.clicked.connect(lambda: self.finalize_selection(False))
+        self.btn_mv.clicked.connect(lambda: self.finalize_selection(True))
+
+    def finalize_selection(self, is_multi: bool):
+        self.is_multi_view = is_multi
+        self.accept()
 
 class FolderPickerDialog(QDialog):
     """

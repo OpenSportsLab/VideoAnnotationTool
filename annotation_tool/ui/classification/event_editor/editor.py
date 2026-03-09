@@ -1,7 +1,7 @@
 import math
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QGroupBox, QLineEdit, QScrollArea, QFrame, QProgressBar, QToolTip, QTextEdit
+    QGroupBox, QLineEdit, QScrollArea, QFrame, QProgressBar, QToolTip, QTextEdit, QTabWidget, QComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QRectF, QPointF
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QCursor
@@ -11,7 +11,7 @@ from .dynamic_widgets import DynamicSingleLabelGroup, DynamicMultiLabelGroup
 class NativeDonutChart(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(220, 220)
+        self.setMinimumSize(160, 160)
         self.setMouseTracking(True) 
         
         self.data_dict = {}
@@ -133,12 +133,19 @@ class ClassificationEventEditor(QWidget):
     smart_infer_requested = pyqtSignal() 
     confirm_infer_requested = pyqtSignal(dict) 
     
-    batch_run_requested = pyqtSignal(int, int)
     batch_confirm_requested = pyqtSignal(dict)
+
+    annotation_saved = pyqtSignal(dict)
+    smart_confirm_requested = pyqtSignal()  # [NEW] Signal emitted when confirming from the Smart Tab
+    batch_run_requested = pyqtSignal(int, int)
+
+    # [NEW] Signals for tab-aware clearing
+    hand_clear_requested = pyqtSignal()
+    smart_clear_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(350)
+        self.setFixedWidth(320)
         layout = QVBoxLayout(self)
         
         self.is_batch_mode_active = False
@@ -173,8 +180,14 @@ class ClassificationEventEditor(QWidget):
         schema_layout.addWidget(self.add_head_btn)
         layout.addWidget(schema_box)
 
-        # --- 4. Hand Annotation  ---
-        self.manual_box = QGroupBox("Hand Annotations")
+        # [NEW] Create QTabWidget to hold both annotation modes
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("annotation_tabs")
+        layout.addWidget(self.tabs, 1) # Add tabs to main layout with stretch factor 1
+
+        # --- 4. Hand Annotation Tab ---
+        # Changed from QGroupBox to QWidget to fit seamlessly inside the Tab
+        self.manual_box = QWidget() 
         self.manual_box.setEnabled(False) 
         manual_layout = QVBoxLayout(self.manual_box)
         
@@ -188,19 +201,26 @@ class ClassificationEventEditor(QWidget):
         
         scroll.setWidget(self.label_container)
         manual_layout.addWidget(scroll)
-        layout.addWidget(self.manual_box, 1) 
-
-        # --- 5. Smart Annotation ---
-        self.smart_box = QGroupBox("Smart Annotation")
-        smart_layout = QVBoxLayout(self.smart_box)
         
-        # Two Buttons
+        # Add the manual widget as the first tab
+        self.tabs.addTab(self.manual_box, "Hand Annotation")
+
+        # --- 5. Smart Annotation Tab ---
+        # Changed from QGroupBox to QWidget to fit seamlessly inside the Tab
+        self.smart_box = QWidget() 
+        smart_layout = QVBoxLayout(self.smart_box)
+
+        # [NEW] Force all items in the smart tab to align to the top 
+        # This prevents the inference buttons from jumping around
+        smart_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        
+        # Two Buttons for Inference
         btn_h_layout = QHBoxLayout()
-        self.btn_smart_infer = QPushButton("🚀Single Inference")
+        self.btn_smart_infer = QPushButton("Single Inference")
         self.btn_smart_infer.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_smart_infer.clicked.connect(self.smart_infer_requested.emit)
         
-        self.btn_batch_infer = QPushButton("🚀Batch Inference")
+        self.btn_batch_infer = QPushButton("Batch Inference")
         self.btn_batch_infer.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_batch_infer.clicked.connect(lambda: self.batch_input_widget.setVisible(not self.batch_input_widget.isVisible()))
 
@@ -208,21 +228,24 @@ class ClassificationEventEditor(QWidget):
         btn_h_layout.addWidget(self.btn_batch_infer)
         smart_layout.addLayout(btn_h_layout)
 
-        # Input Box
+        # Input Box for Batch Inference
         self.batch_input_widget = QWidget()
         h_batch = QHBoxLayout(self.batch_input_widget)
         h_batch.setContentsMargins(0, 5, 0, 5)
-        self.spin_start = QLineEdit()
-        self.spin_start.setPlaceholderText("Start Idx")
-        self.spin_end = QLineEdit()
-        self.spin_end.setPlaceholderText("End Idx")
-        self.btn_run_batch = QPushButton("Run Batch")
+        self.spin_start = QComboBox()
+        self.spin_end = QComboBox()
+        self.btn_run_batch = QPushButton("Run")
         self.btn_run_batch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_run_batch.clicked.connect(self._on_run_batch_clicked)
         h_batch.addWidget(self.spin_start)
         h_batch.addWidget(self.spin_end)
         h_batch.addWidget(self.btn_run_batch)
         self.batch_input_widget.setVisible(False)
+
+
+        # [NEW] Connect validation signals to enforce i <= j rule
+        self.spin_start.currentIndexChanged.connect(self._validate_batch_range)
+        #self.spin_end.currentIndexChanged.connect(self._validate_batch_range)
         
         self.infer_progress = QProgressBar()
         self.infer_progress.setRange(0, 0) 
@@ -233,28 +256,33 @@ class ClassificationEventEditor(QWidget):
         self.batch_result_text = QTextEdit()
         self.batch_result_text.setReadOnly(True)
         self.batch_result_text.setVisible(False)
-        self.batch_result_text.setMinimumHeight(200)
+        self.batch_result_text.setMinimumHeight(120)
         
         smart_layout.addWidget(self.batch_input_widget)
         smart_layout.addWidget(self.infer_progress)
         smart_layout.addWidget(self.chart_widget, alignment=Qt.AlignmentFlag.AlignCenter)
         smart_layout.addWidget(self.batch_result_text)
-        layout.addWidget(self.smart_box)
+        
+        # Add the smart widget as the second tab
+        self.tabs.addTab(self.smart_box, "Smart Annotation")
 
+        # --- 6. Bottom Confirm Buttons (Fixed Outside Tabs) ---
         btn_row = QHBoxLayout()
-        self.confirm_btn = QPushButton("✅ Confirm Annotation")
-        self.clear_sel_btn = QPushButton("🗑️ Clear Selection")
+        self.confirm_btn = QPushButton("Confirm Annotation")
+        self.clear_sel_btn = QPushButton("Clear Selection")
         self.confirm_btn.setProperty("class", "editor_save_btn")
         self.confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clear_sel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         
         self.confirm_btn.clicked.connect(self.on_confirm_clicked)
+        # [NEW] Route the clear button internally
+        self.clear_sel_btn.clicked.connect(self.on_clear_clicked)
 
         btn_row.addWidget(self.confirm_btn)
         btn_row.addWidget(self.clear_sel_btn)
-        layout.addLayout(btn_row)
+        layout.addLayout(btn_row) # Add strictly to the main vertical layout, remaining at the bottom
         
-        self.label_groups = {} 
+        self.label_groups = {}
 
     def _on_run_batch_clicked(self):
         try:
@@ -264,11 +292,36 @@ class ClassificationEventEditor(QWidget):
         except ValueError:
             pass 
 
-    def on_confirm_clicked(self):
-        if self.is_batch_mode_active:
-            self.batch_confirm_requested.emit(self.pending_batch_results)
-        self.reset_smart_inference()
 
+    def on_confirm_clicked(self):
+        """[MODIFIED] Route confirm action based on the active tab."""
+        active_tab_idx = self.tabs.currentIndex()
+        
+        if active_tab_idx == 0:
+            # --- Hand Annotation Confirmation ---
+            data = {}
+            for head, group in self.label_groups.items():
+                if hasattr(group, 'get_checked_label'):
+                    val = group.get_checked_label()
+                    if val: data[head] = val
+                elif hasattr(group, 'get_checked_labels'):
+                    val = group.get_checked_labels()
+                    if val: data[head] = val
+            self.annotation_saved.emit(data)
+            
+        elif active_tab_idx == 1:
+            # --- Smart Annotation Confirmation ---
+            self.smart_confirm_requested.emit()
+    
+    def on_clear_clicked(self):
+        """[NEW] Route clear action based on the active tab."""
+        active_tab_idx = self.tabs.currentIndex()
+        if active_tab_idx == 0:
+            self.hand_clear_requested.emit()
+        elif active_tab_idx == 1:
+            self.smart_clear_requested.emit()
+
+    # [MODIFIED] Hide the batch input box upon confirmation or action switch
     def reset_smart_inference(self):
         self.is_batch_mode_active = False
         self.chart_widget.setVisible(False)
@@ -276,6 +329,58 @@ class ClassificationEventEditor(QWidget):
         self.btn_smart_infer.setEnabled(True)
         self.btn_batch_infer.setEnabled(True)
         self.infer_progress.setVisible(False)
+        
+        # Ensures Run Batch dropdowns disappear after Confirm or switching videos
+        self.batch_input_widget.setVisible(False)
+
+    # [MODIFIED] Save the full list and initialize the dropdowns
+    def update_action_list(self, action_names: list):
+        self.full_action_names = action_names
+        
+        self.spin_start.blockSignals(True)
+        self.spin_end.blockSignals(True)
+        
+        self.spin_start.clear()
+        self.spin_end.clear()
+        
+        self.spin_start.addItems(self.full_action_names)
+        self.spin_end.addItems(self.full_action_names)
+        
+        self.spin_start.blockSignals(False)
+        self.spin_end.blockSignals(False)
+
+    # [MODIFIED] Dynamically update the second dropdown to only show items from index i onwards
+    def _validate_batch_range(self):
+        start_idx = self.spin_start.currentIndex()
+        if start_idx < 0: return
+        
+        current_end_text = self.spin_end.currentText()
+        
+        self.spin_end.blockSignals(True)
+        self.spin_end.clear()
+        
+        # Only add items starting from the selected 'start_idx'
+        valid_end_items = self.full_action_names[start_idx:]
+        self.spin_end.addItems(valid_end_items)
+        
+        # Attempt to restore the previous selection if it's still in the valid range
+        if current_end_text in valid_end_items:
+            self.spin_end.setCurrentText(current_end_text)
+        else:
+            self.spin_end.setCurrentIndex(0)
+            
+        self.spin_end.blockSignals(False)
+
+    # [MODIFIED] Calculate absolute end index based on dynamic relative index
+    def _on_run_batch_clicked(self):
+        start_idx = self.spin_start.currentIndex()
+        
+        # Since spin_end only contains items from start_idx onwards, 
+        # its absolute index is its relative index + start_idx
+        end_idx = start_idx + self.spin_end.currentIndex()
+        
+        if start_idx >= 0 and end_idx >= start_idx:
+            self.batch_run_requested.emit(start_idx, end_idx)
 
     def show_inference_loading(self, is_loading: bool):
         self.btn_smart_infer.setEnabled(not is_loading)
@@ -289,13 +394,6 @@ class ClassificationEventEditor(QWidget):
         self.show_inference_loading(False)
         self.is_batch_mode_active = False
         self.chart_widget.update_chart(predicted_label, conf_dict)
-        
-        group = self.label_groups.get(target_head)
-        if group:
-            if hasattr(group, 'set_checked_label'):
-                group.set_checked_label(predicted_label)
-            elif hasattr(group, 'set_checked_labels'):
-                group.set_checked_labels([predicted_label])
                 
     def display_batch_inference_result(self, result_text: str, batch_predictions: dict):
         self.show_inference_loading(False)
@@ -347,7 +445,8 @@ class ClassificationEventEditor(QWidget):
         return result
 
     def clear_selection(self):
-        self.reset_smart_inference()
+        # [MODIFIED] Keep the Donut Chart visible even if the user clears hand annotations.
+        # self.reset_smart_inference()        
         for group in self.label_groups.values():
             if hasattr(group, 'set_checked_label'):
                 group.set_checked_label(None)

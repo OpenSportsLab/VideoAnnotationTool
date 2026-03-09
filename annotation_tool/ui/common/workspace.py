@@ -32,7 +32,7 @@ class UnifiedTaskPanel(QWidget):
         # 1. Setup Layout
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)
+        layout.setSpacing(2)
         
         # 2. Instantiate Left Panel (Common)
         # Default to Localization-style naming if not provided

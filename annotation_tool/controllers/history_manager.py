@@ -1,6 +1,8 @@
 import copy
 from models import CmdType
 from ui.classification.event_editor import DynamicSingleLabelGroup, DynamicMultiLabelGroup
+import copy
+from models.app_state import CmdType
 
 class HistoryManager:
     """
@@ -80,9 +82,7 @@ class HistoryManager:
     def _apply_state_change(self, cmd, is_undo):
         ctype = cmd['type']
         
-        # =========================================================
         # 1. Classification Specific
-        # =========================================================
         if ctype == CmdType.ANNOTATION_CONFIRM:
             path = cmd['path']
             data = cmd['old_data'] if is_undo else cmd['new_data']
@@ -91,9 +91,7 @@ class HistoryManager:
             else: self.model.manual_annotations[path] = copy.deepcopy(data)
             self.main.refresh_ui_after_undo_redo(path)
 
-        # ==========================================
         # [NEW] Handle batch annotation confirm
-        # ==========================================
         elif ctype == CmdType.BATCH_ANNOTATION_CONFIRM:
             batch_changes = cmd['batch_changes'] # Retrieve the packed dictionary
             
@@ -113,7 +111,34 @@ class HistoryManager:
                 
             # Refresh the right panel if the currently selected item was affected
             self._refresh_active_view()
-        # ==========================================
+            
+        # [NEW] Handle single smart annotation run (Donut Chart)
+        elif ctype == CmdType.SMART_ANNOTATION_RUN:
+            path = cmd['path']
+            data = cmd['old_data'] if is_undo else cmd['new_data']
+            
+            if data:
+                self.model.smart_annotations[path] = copy.deepcopy(data)
+            else:
+                if path in self.model.smart_annotations:
+                    del self.model.smart_annotations[path]
+            
+            # Refresh the UI to immediately show or hide the Donut Chart
+            self._refresh_active_view()
+
+        # [NEW] Handle batch smart annotation run
+        elif ctype == CmdType.BATCH_SMART_ANNOTATION_RUN:
+            batch_data = cmd['old_batch'] if is_undo else cmd['new_batch']
+            
+            for path, data in batch_data.items():
+                if data:
+                    self.model.smart_annotations[path] = copy.deepcopy(data)
+                else:
+                    if path in self.model.smart_annotations:
+                        del self.model.smart_annotations[path]
+                        
+            # Refresh the UI to reflect batch smart annotations
+            self._refresh_active_view()
 
             
         elif ctype == CmdType.UI_CHANGE:
@@ -124,6 +149,8 @@ class HistoryManager:
                 if grp:
                     if isinstance(grp, DynamicSingleLabelGroup): grp.set_checked_label(val)
                     else: grp.set_checked_labels(val)
+
+       
 
         # =========================================================
         # 2. Localization Specific (Events)

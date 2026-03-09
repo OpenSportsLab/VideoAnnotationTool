@@ -9,11 +9,51 @@ class AnnotationManager:
         self.model = main_window.model
         self.ui = main_window.ui
 
-    def save_manual_annotation(self):
+    def confirm_smart_annotation_as_manual(self):
+        """
+        [MODIFIED] Mark current smart prediction as confirmed WITHOUT polluting Hand Annotation.
+        """
         path = self.main.get_current_action_path()
         if not path: return
         
-        raw = self.ui.classification_ui.right_panel.get_annotation()
+        smart_data = self.model.smart_annotations.get(path)
+        if not smart_data:
+            self.main.show_temp_msg("Notice", "No smart annotation available to confirm.")
+            return
+            
+        # [NEW] Simply flag it as confirmed internally within the smart memory.
+        # We DO NOT call self.save_manual_annotation(new_data) anymore to prevent UI pollution!
+        self.model.smart_annotations[path]["_confirmed"] = True
+        self.model.is_data_dirty = True
+        
+        self.main.show_temp_msg("Saved", "Smart Annotation confirmed independently.", 1000)
+        
+        self.main.update_action_item_status(path)
+        self.main.update_save_export_button_state()
+        
+        # Auto-advance to the next video clip
+        tree = self.ui.classification_ui.left_panel.tree
+        curr_idx = tree.currentIndex()
+        if curr_idx.isValid():
+            nxt_idx = tree.indexBelow(curr_idx)
+            if nxt_idx.isValid():
+                QTimer.singleShot(500, lambda: [tree.setCurrentIndex(nxt_idx), tree.scrollTo(nxt_idx)])
+
+    def save_manual_annotation(self, override_data=None):
+        """
+        [MODIFIED] Added 'override_data' parameter. 
+        If provided (e.g., from Smart Annotation confirm), it uses the provided dict.
+        Otherwise, it falls back to reading the Hand Annotation UI state.
+        """
+        path = self.main.get_current_action_path()
+        if not path: return
+        
+        # Use provided data if available, otherwise read from the UI
+        if override_data is not None:
+            raw = override_data
+        else:
+            raw = self.ui.classification_ui.right_panel.get_annotation()
+            
         cleaned = {k: v for k, v in raw.items() if v}
         if not cleaned: cleaned = None
         
@@ -52,9 +92,49 @@ class AnnotationManager:
             self.main.show_temp_msg("Cleared", "Selection cleared.")
         self.ui.classification_ui.right_panel.clear_selection()
 
+    def clear_current_smart_annotation(self):
+        """[NEW] Clear the smart annotation for the current video, with Undo support."""
+        path = self.main.get_current_action_path()
+        if not path: return
+        
+        old_smart = copy.deepcopy(self.model.smart_annotations.get(path))
+        if old_smart:
+            # Push the clearing action to the Undo stack using the SMART_ANNOTATION_RUN cmd
+            self.model.push_undo(
+                CmdType.SMART_ANNOTATION_RUN, 
+                path=path, 
+                old_data=old_smart, 
+                new_data=None
+            )
+            
+            # Remove from model memory
+            if path in self.model.smart_annotations: 
+                del self.model.smart_annotations[path]
+                
+            self.model.is_data_dirty = True
+            self.main.show_temp_msg("Cleared", "Smart Annotation cleared.", 1000)
+            self.main.update_save_export_button_state()
+            
+        # Visually hide the donut chart and text without affecting the Hand Annotation UI
+        self.ui.classification_ui.right_panel.chart_widget.setVisible(False)
+        self.ui.classification_ui.right_panel.batch_result_text.setVisible(False)
+
     def display_manual_annotation(self, path):
+        # 1. Restore manual annotation (This will reset the UI and hide the chart by default)
         data = self.model.manual_annotations.get(path, {})
         self.ui.classification_ui.right_panel.set_annotation(data)
+
+        # 2. [NEW] Re-display the Smart Annotation Donut Chart if data exists
+        smart_data = self.model.smart_annotations.get(path, {})
+        if smart_data:
+            # We display the chart for the first available head (typically 'action')
+            for head, s_data in smart_data.items():
+                self.ui.classification_ui.right_panel.chart_widget.update_chart(
+                    s_data["label"], 
+                    s_data.get("conf_dict", {})
+                )
+                self.ui.classification_ui.right_panel.chart_widget.setVisible(True)
+                break
 
     def handle_ui_selection_change(self, head, new_val):
         if self.main.history_manager._is_undoing_redoing: 

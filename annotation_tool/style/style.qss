@@ -184,7 +184,7 @@ QSlider::sub-page:horizontal {
 QPushButton[class="project_control_btn"] {
     border-radius: 6px;
     padding: 5px;
-    background-color: #444;
+    background-color: #5a5a5a;
     color: #EEE;
     border: 1px solid #555;
     font-weight: bold;
@@ -270,7 +270,7 @@ QPushButton[class="welcome_secondary_btn"] {
     font-size: 14px;            
     font-weight: bold;
     background-color: transparent; 
-    border: 1px solid #84ff00;     
+    border: 1px solid #84ff00;    
     color: #84ff00;
     border-radius: 6px;
 }
@@ -348,24 +348,40 @@ QPushButton[class="editor_save_btn"]:hover {
 /* Target: ui/classification/event_editor/dynamic_widgets.py */
 
 /* Common Header Style */
-QLabel[class="group_head_lbl"] {
+QLabel.group_head_lbl {
     font-weight: bold;
-    font-size: 13px;
+    font-size: 20px;            
+    padding-top: 4px;
+    padding-bottom: 2px;
+    border-bottom: 1px solid #444; 
+    margin-bottom: 4px;
 }
 
-/* Specific Colors for Single vs Multi Label Headers */
-QLabel[class="group_head_single"] {
-    color: #00BFFF; /* Cyan */
+QLabel.group_head_single {
+    color: #00BFFF;
 }
 
-QLabel[class="group_head_multi"] {
-    color: #32CD32; /* Lime Green */
+QLabel.group_head_multi {
+    color: #00BFFF;
+}
+
+/* --- 2. Label Items (Challenge, Dive, etc.) --- */
+QRadioButton.label_item, 
+QCheckBox.label_item {
+    font-size: 14px;            
+    color: #DDD;                
+    padding: 2px;
+}
+
+QRadioButton.label_item:hover, 
+QCheckBox.label_item:hover {
+    color: #FFF;
 }
 
 /* Small 'X' Remove Buttons (Replaces utils.get_square_remove_btn_style) */
 QPushButton[class="icon_remove_btn"] {
     background-color: transparent;
-    color: #888;
+    color: #adadad;
     border: none;
     font-weight: bold;
     font-size: 16px;
@@ -388,6 +404,28 @@ QLabel[class="player_time_lbl"] {
 }
 
 
+/* --- Smart Annotation Tabs Styling --- */
+QTabBar::tab { 
+    background: #2c2c2d;  
+    color: #969696;        
+    padding: 8px 15px; 
+    border: 1px solid #1E1E1E;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
+QTabBar::tab:selected { 
+    background: #585757;  
+    color: #00BFFF;        
+    border-bottom: 2px solid #00BFFF; 
+    font-weight: bold;
+}
+
+QTabBar::tab:hover:!selected { 
+    background: #3E3E3E;  
+    color: #DCDCDC;
+}
 
 /* =======================================================
    Localization Mode Styles

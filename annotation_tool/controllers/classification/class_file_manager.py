@@ -67,6 +67,14 @@ class ClassFileManager:
                 clean_k = k.strip().replace(' ', '_').lower()
                 self.model.label_definitions[clean_k] = {'type': v['type'], 'labels': sorted(list(set(v.get('labels', []))))}
         self.main.setup_dynamic_ui() 
+
+        # Check if it is multi view
+        is_multi = False
+        for item in data.get('data', []):
+            if len(item.get('inputs', [])) > 1:
+                is_multi = True
+                break
+        self.model.is_multi_view = is_multi
         
         # Load Data
         for item in data.get('data', []):
@@ -107,6 +115,22 @@ class ClassFileManager:
                             if vals: manual[ck] = vals; has_l = True
             if has_l:
                 self.model.manual_annotations[path_key] = manual
+
+            # [NEW] Load Smart Annotations from JSON
+            smart_lbls = item.get('smart_labels', {})
+            smart = {}
+            for h, content in smart_lbls.items():
+                ck = h.strip().replace(' ', '_').lower()
+                if ck in self.model.label_definitions and isinstance(content, dict):
+                    # Reconstruct the prediction and confidence dictionary
+                    smart[ck] = {
+                        "label": content.get("label"),
+                        "conf_dict": content.get("conf_dict", {content.get("label"): content.get("confidence", 1.0)})
+                    }
+            if smart:
+                # [MODIFIED] Mark loaded smart annotations as confirmed so the Filter recognizes them
+                smart["_confirmed"] = True 
+                self.model.smart_annotations[path_key] = smart
 
         self.model.current_json_path = file_path
         self.model.json_loaded = True
@@ -196,6 +220,23 @@ class ClassFileManager:
                 if entry_labels:
                     data_entry["labels"] = entry_labels
             
+            # [NEW] Write smart_labels parallel to manual labels
+            if path_key in self.model.smart_annotations:
+                smart_annots = self.model.smart_annotations[path_key]
+                # [MODIFIED] Only export if they were actually confirmed, and skip the internal flag
+                if smart_annots.get("_confirmed", False):
+                    entry_smart_labels = {}
+                    for head, data_dict in smart_annots.items():
+                        if head == "_confirmed": 
+                            continue # Skip the internal boolean flag to prevent TypeError
+                            
+                        entry_smart_labels[head] = {
+                            "label": data_dict["label"],
+                            "confidence": data_dict.get("conf_dict", {}).get(data_dict["label"], 1.0),
+                            "conf_dict": data_dict.get("conf_dict", {})
+                        }
+                    if entry_smart_labels:
+                        data_entry["smart_labels"] = entry_smart_labels
             out["data"].append(data_entry)
         
         try:
@@ -214,15 +255,27 @@ class ClassFileManager:
         """
         Creates a blank project immediately, allowing the user to 
         build the schema in the right-hand panel.
+        Now asks for SV/MV type before proceeding.
         """
+        # Ask Single-View or Multi-View
+        from ui.common.dialogs import ClassificationTypeDialog
+        dialog = ClassificationTypeDialog(self.main)
+        
+        if not dialog.exec():
+            return 
+            
         # 1. Clear existing data (Full Reset)
         self._clear_workspace(full_reset=True)
 
         # 2. Initialize default "Blank Project" state in the Model
         self.model.current_task_name = "Untitled Task"
         self.model.modalities = ["video"]
-        self.model.label_definitions = {} # Empty Category (Category Editor start blank)
+        self.model.label_definitions = {} # Empty Category
         self.model.project_description = ""
+        
+        # 2. Initialize default "Blank Project" state in the Model
+        # [MODIFIED] Changed from "Untitled Task" to "action_classification".
+        self.model.current_task_name = "action_classification"
         
         # 3. Set flags to allow interaction
         self.model.json_loaded = True 
@@ -250,3 +303,7 @@ class ClassFileManager:
         self.ui.classification_ui.center_panel.show_single_view(None)
         if full_reset: 
             self.main.setup_dynamic_ui()
+
+        # [NEW] Clear the Smart Annotation dropdowns when workspace is reset
+        if hasattr(self.main, 'sync_batch_inference_dropdowns'):
+            self.main.sync_batch_inference_dropdowns()
