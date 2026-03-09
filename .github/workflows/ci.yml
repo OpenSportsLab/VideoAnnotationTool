@@ -58,7 +58,7 @@ jobs:
         shell: pwsh
         run: >
           python -m PyInstaller --noconfirm --clean --windowed --onefile
-          --name "SoccerNetProAnalyzer"
+          --name "VideoAnnotationTool"
           --add-data "style;style"
           --add-data "ui;ui"
           --add-data "controllers;controllers"
@@ -73,15 +73,15 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
-          Move-Item -Force dist\SoccerNetProAnalyzer.exe dist\SoccerNetProAnalyzer-win.exe
-          Compress-Archive -Path dist\SoccerNetProAnalyzer-win.exe -DestinationPath dist\SoccerNetProAnalyzer-win.zip -Force
+          Move-Item -Force dist\VideoAnnotationTool.exe dist\VideoAnnotationTool-win.exe
+          Compress-Archive -Path dist\VideoAnnotationTool-win.exe -DestinationPath dist\VideoAnnotationTool-win.zip -Force
 
       - name: Upload artifact (manual runs only)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: SoccerNetProAnalyzer-Windows
-          path: annotation_tool/dist/SoccerNetProAnalyzer-win.zip
+          name: VideoAnnotationTool-Windows
+          path: annotation_tool/dist/VideoAnnotationTool-win.zip
           retention-days: 3
 
   build-macos:
@@ -122,7 +122,7 @@ jobs:
         shell: bash
         run: >
           python -m PyInstaller --noconfirm --clean --windowed
-          --name "SoccerNetProAnalyzer"
+          --name "VideoAnnotationTool"
           --add-data "style:style"
           --add-data "ui:ui"
           --add-data "controllers:controllers"
@@ -137,14 +137,14 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
-          ditto -c -k --sequesterRsrc --keepParent "dist/SoccerNetProAnalyzer.app" "dist/SoccerNetProAnalyzer-mac.zip"
+          ditto -c -k --sequesterRsrc --keepParent "dist/VideoAnnotationTool.app" "dist/VideoAnnotationTool-mac.zip"
 
       - name: Upload artifact (manual runs only)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: SoccerNetProAnalyzer-macOS
-          path: annotation_tool/dist/SoccerNetProAnalyzer-mac.zip
+          name: VideoAnnotationTool-macOS
+          path: annotation_tool/dist/VideoAnnotationTool-mac.zip
           retention-days: 3
 
   build-linux:
@@ -191,7 +191,7 @@ jobs:
         shell: bash
         run: >
           python -m PyInstaller --noconfirm --clean --windowed --onefile
-          --name "SoccerNetProAnalyzer"
+          --name "VideoAnnotationTool"
           --add-data "style:style"
           --add-data "ui:ui"
           --add-data "controllers:controllers"
@@ -206,15 +206,15 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
-          mv -f dist/SoccerNetProAnalyzer dist/SoccerNetProAnalyzer-linux
+          mv -f dist/VideoAnnotationTool dist/VideoAnnotationTool-linux
           cd dist
-          zip -r SoccerNetProAnalyzer-linux.zip SoccerNetProAnalyzer-linux
+          zip -r VideoAnnotationTool-linux.zip VideoAnnotationTool-linux
           cd ..
 
       - name: Upload artifact (manual runs only)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: SoccerNetProAnalyzer-Linux
-          path: annotation_tool/dist/SoccerNetProAnalyzer-linux.zip
+          name: VideoAnnotationTool-Linux
+          path: annotation_tool/dist/VideoAnnotationTool-linux.zip
           retention-days: 3
