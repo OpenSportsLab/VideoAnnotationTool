@@ -712,11 +712,21 @@ class ActionClassifierApp(QMainWindow):
         Refreshes the UI after an Undo/Redo operation.
         Updates the tree icon, selection, and the active editor content.
         """
+        # [MODIFIED] Batch operations might pass action_path as None.
+        # We must still refresh the filter and button states even if path is None.
         if not action_path:
+            if not self._is_loc_mode() and not self._is_desc_mode() and not self._is_dense_mode():
+                self.nav_manager.apply_action_filter()
+            self.update_save_export_button_state()
             return
 
         # 1. Update the tree icon status
         self.update_action_item_status(action_path)
+
+        # [NEW] 1.5 Refresh the tree filter to immediately show/hide items!
+        # This fixes the bug where Undo/Redo doesn't visually update the list.
+        if not self._is_loc_mode() and not self._is_desc_mode() and not self._is_dense_mode():
+            self.nav_manager.apply_action_filter()
 
         # 2. Ensure the item is selected in the active tree
         active_tree = None
@@ -741,7 +751,6 @@ class ActionClassifierApp(QMainWindow):
         elif self._is_desc_mode():
             self.desc_nav_manager.on_item_selected(item.index(), None)
         elif self._is_dense_mode():
-            # [NEW] Refresh Dense events display
             self.dense_manager._display_events_for_item(action_path)
         else:
             self.annot_manager.display_manual_annotation(action_path)
