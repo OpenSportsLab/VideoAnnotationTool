@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - dev-jintao
+      - smart-annotation
   workflow_dispatch:
 
 
