@@ -176,11 +176,11 @@ class NavigationManager:
 
     def apply_action_filter(self, index=None):
         """
-        [MODIFIED] Filter the tree based on 4 custom states for Classification.
+        Filter the tree based on 4 custom states for Classification.
         0: Show All
-        1: Hand Labelled (Confirmed, purely manual)
-        2: Smart Labelled (Confirmed via smart annotation)
-        3: No Labelled (Not confirmed at all)
+        1: Hand Labelled (Has manual annotation)
+        2: Smart Labelled (Has confirmed smart annotation)
+        3: No Labelled (Neither hand nor smart confirmed)
         """
         tree = self.ui.classification_ui.left_panel.tree
         combo = self.ui.classification_ui.left_panel.filter_combo
@@ -203,8 +203,9 @@ class NavigationManager:
             
             # 2. Is it Smart Labelled? (Has _confirmed flag in smart_annotations)
             smart_data = self.model.smart_annotations.get(path, {})
-            # If manual annotation exists, we prioritize classifying it as Hand Labelled to avoid overlap
-            is_smart_labelled = smart_data.get("_confirmed", False) and not is_hand_labelled
+            # [MODIFIED] Removed the mutually exclusive condition "and not is_hand_labelled".
+            # Now an item can be treated as both Hand Labelled and Smart Labelled simultaneously.
+            is_smart_labelled = smart_data.get("_confirmed", False)
             
             # 3. No Labelled (Neither hand nor smart confirmed)
             is_no_labelled = not is_hand_labelled and not is_smart_labelled
@@ -212,10 +213,13 @@ class NavigationManager:
             # 4. Apply hiding logic based on the selected filter index
             hidden = False
             if filter_idx == 1 and not is_hand_labelled:
+                # Hide if "Hand Labelled" is selected but the item lacks hand labels
                 hidden = True
             elif filter_idx == 2 and not is_smart_labelled:
+                # Hide if "Smart Labelled" is selected but the item lacks smart labels
                 hidden = True
             elif filter_idx == 3 and not is_no_labelled:
+                # Hide if "No Labelled" is selected but the item has ANY label
                 hidden = True
                 
             tree.setRowHidden(row, QModelIndex(), hidden)
