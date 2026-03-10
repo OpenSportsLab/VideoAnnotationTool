@@ -11,25 +11,103 @@ class AnnotationManager:
 
     def confirm_smart_annotation_as_manual(self):
         """
-        [MODIFIED] Mark current smart prediction as confirmed WITHOUT polluting Hand Annotation.
+        [MODIFIED] Mark current smart prediction(s) as confirmed.
+        Added Undo/Redo support for Smart Annotations to fix history bugs.
         """
-        path = self.main.get_current_action_path()
-        if not path: return
+        import copy
+        from models.app_state import CmdType # Ensure CmdType is available
+        right_panel = self.ui.classification_ui.right_panel
         
-        smart_data = self.model.smart_annotations.get(path)
-        if not smart_data:
-            self.main.show_temp_msg("Notice", "No smart annotation available to confirm.")
-            return
+        # Check if we are confirming a batch or a single inference
+        if right_panel.is_batch_mode_active:
+            # --- BATCH CONFIRMATION LOGIC ---
+            batch_preds = right_panel.pending_batch_results
+            if not batch_preds:
+                self.main.show_temp_msg("Notice", "No batch predictions to confirm.")
+                return
             
-        # [NEW] Simply flag it as confirmed internally within the smart memory.
-        # We DO NOT call self.save_manual_annotation(new_data) anymore to prevent UI pollution!
-        self.model.smart_annotations[path]["_confirmed"] = True
-        self.model.is_data_dirty = True
-        
-        self.main.show_temp_msg("Saved", "Smart Annotation confirmed independently.", 1000)
-        
-        self.main.update_action_item_status(path)
+            old_batch_data = {}
+            new_batch_data = {}
+            confirmed_count = 0
+            
+            # Loop through all items in the batch
+            for path, pred_data in batch_preds.items():
+                # Store the old state for Undo
+                old_batch_data[path] = copy.deepcopy(self.model.smart_annotations.get(path))
+                
+                # --- ROBUST DATA FORMATTING ---
+                if isinstance(pred_data, str):
+                    head = next(iter(self.model.label_definitions.keys()), "action")
+                    formatted_data = {head: {"label": pred_data, "conf_dict": {pred_data: 1.0}}}
+                elif isinstance(pred_data, dict) and "label" in pred_data:
+                    head = next(iter(self.model.label_definitions.keys()), "action")
+                    formatted_data = {head: copy.deepcopy(pred_data)}
+                else:
+                    formatted_data = copy.deepcopy(pred_data)
+
+                # [NEW FIX] Ensure 'conf_dict' exists for the Donut Chart rendering!
+                for h, h_data in formatted_data.items():
+                    if isinstance(h_data, dict) and "label" in h_data:
+                        if "conf_dict" not in h_data:
+                            # Safely extract 'confidence', fallback to 1.0 if not found
+                            conf = h_data.get("confidence", 1.0)
+                            h_data["conf_dict"] = {h_data["label"]: conf}
+                            # Also calculate the remaining percentage for the pie chart
+                            rem = 1.0 - conf
+                            if rem > 0.001:
+                                h_data["conf_dict"]["Other Uncertainties"] = rem
+                
+                # Mark as confirmed safely
+                formatted_data["_confirmed"] = True
+                
+                # Store the new state for Redo
+                new_batch_data[path] = copy.deepcopy(formatted_data)
+                
+                # Save to model memory
+                self.model.smart_annotations[path] = formatted_data
+                self.main.update_action_item_status(path)
+                confirmed_count += 1
+            
+            # [NEW] Push the batch confirmation to the Undo stack
+            self.model.push_undo(CmdType.BATCH_SMART_ANNOTATION_RUN, old_data=old_batch_data, new_data=new_batch_data)
+            
+            self.model.is_data_dirty = True
+            self.main.show_temp_msg("Saved", f"Batch Smart Annotations confirmed for {confirmed_count} items.", 2000)
+            
+            # Reset the batch UI back to normal after confirmation
+            right_panel.reset_smart_inference()
+            
+        else:
+            # --- SINGLE CONFIRMATION LOGIC ---
+            path = self.main.get_current_action_path()
+            if not path: return
+            
+            smart_data = self.model.smart_annotations.get(path)
+            if not smart_data:
+                self.main.show_temp_msg("Notice", "No smart annotation available to confirm.")
+                return
+                
+            # Store the old state for Undo
+            old_data = copy.deepcopy(smart_data)
+            
+            # Flag it as confirmed internally within the smart memory
+            self.model.smart_annotations[path]["_confirmed"] = True
+            self.model.is_data_dirty = True
+            
+            # Store the new state for Redo
+            new_data = copy.deepcopy(self.model.smart_annotations[path])
+            
+            # [NEW] Push the single confirmation to the Undo stack
+            self.model.push_undo(CmdType.SMART_ANNOTATION_RUN, path=path, old_data=old_data, new_data=new_data)
+            
+            self.main.update_action_item_status(path)
+            self.main.show_temp_msg("Saved", "Smart Annotation confirmed independently.", 1000)
+
+        # --- COMMON UI UPDATES ---
         self.main.update_save_export_button_state()
+        
+        # Apply filter immediately to reflect the new Smart Labelled status
+        self.main.nav_manager.apply_action_filter()
         
         # Auto-advance to the next video clip
         tree = self.ui.classification_ui.left_panel.tree
@@ -37,8 +115,9 @@ class AnnotationManager:
         if curr_idx.isValid():
             nxt_idx = tree.indexBelow(curr_idx)
             if nxt_idx.isValid():
+                from PyQt6.QtCore import QTimer
                 QTimer.singleShot(500, lambda: [tree.setCurrentIndex(nxt_idx), tree.scrollTo(nxt_idx)])
-
+                
     def save_manual_annotation(self, override_data=None):
         """
         [MODIFIED] Added 'override_data' parameter. 
@@ -69,6 +148,7 @@ class AnnotationManager:
             
         self.main.update_action_item_status(path)
         self.main.update_save_export_button_state()
+        self.main.nav_manager.apply_action_filter()
         
         # [MV Fix] Auto-advance using QTreeView API
         tree = self.ui.classification_ui.left_panel.tree
