@@ -1,6 +1,8 @@
-# SoccerNet Pro Annotation Tool
+# Video Annotation Tool
 
-This project is a professional video annotation desktop application built with **PyQt6**. It features a comprehensive **quad-mode** architecture supporting **Whole-Video Classification**, **Action Spotting (Localization)**, **Video Captioning (Description)**, and the newly integrated **Dense Video Captioning (Dense Description)**.
+This project is a professional video annotation desktop application built with **PyQt6**. It features a comprehensive **quad-mode** architecture supporting **Whole-Video Classification**, **Action Spotting (Localization)**, **Video Captioning (Description)**, and the newly integrated **Dense Video Captioning (Dense Description)**. 
+
+With the latest update, the Classification mode now features **AI-Powered Smart Annotation**, allowing users to leverage state-of-the-art `soccernetpro` models (e.g., MViT) to automatically infer actions via single or batch processing.
 
 The project follows a modular **MVC (Model-View-Controller)** design pattern to ensure strict separation of concerns. It leverages **Qt's Model/View architecture** for resource management and a unified **Media Controller** to ensure stable, high-performance video playback across all modalities.
 
@@ -13,6 +15,7 @@ annotation_tool/
 ├── main.py                     # Application entry point
 ├── viewer.py                   # Main Window controller (Orchestrator)
 ├── utils.py                    # Helper functions and constants
+├── config.yaml                 # [NEW] Inference configuration for soccernetpro models
 ├── __init__.py                 # Package initialization
 │
 ├── models/                     # [Model Layer] Data Structures & State
@@ -21,14 +24,18 @@ annotation_tool/
 │
 ├── controllers/                # [Controller Layer] Business Logic
 │   ├── router.py               # Mode detection & Project lifecycle management
-│   ├── history_manager.py      # Universal Undo/Redo system
+│   ├── history_manager.py      # Universal Undo/Redo system (Supports Batch Annotations)
 │   ├── media_controller.py     # Unified playback logic (Anti-freeze/Visual clearing)
 │   ├── classification/         # Logic for Classification mode
+│   │   ├── class_annotation_manager.py # Manual label state management
+│   │   ├── class_file_manager.py       # JSON I/O for Classification tasks
+│   │   ├── class_navigation_manager.py # Action tree navigation
+│   │   └── inference_manager.py        # [NEW] AI Smart Annotation (Single/Batch Inference)
 │   ├── localization/           # Logic for Action Spotting (Localization) mode
 │   ├── description/            # Logic for Global Captioning (Description) mode
-│   └── dense_description/      # [NEW] Logic for Dense Captioning (Text-at-Timestamp)
+│   └── dense_description/      # Logic for Dense Captioning (Text-at-Timestamp)
 │       ├── dense_manager.py      # Core logic for dense annotations & UI sync
-│       └── dense_file_manager.py   # JSON I/O specifically for Dense tasks
+│       └── dense_file_manager.py # JSON I/O specifically for Dense tasks
 │
 ├── ui/                         # [View Layer] Interface Definitions
 │   ├── common/                 # Shared widgets (Main Window, Sidebar, Video Surface)
@@ -37,9 +44,13 @@ annotation_tool/
 │   │   ├── workspace.py          # Unified 3-column skeleton
 │   │   └── dialogs.py            # Project wizards and mode selectors
 │   ├── classification/         # UI specific to Classification
+│   │   └── event_editor/         # Dynamic Schema Editor & [NEW] Smart Annotation UI
+│   │       ├── dynamic_widgets.py  # Single/Multi label dynamic radio & checkbox groups
+│   │       ├── editor.py           # Includes NativeDonutChart & Batch Progress UI
+│   │       └── controls.py         # Playback control bar
 │   ├── localization/           # UI specific to Localization (Timeline + Tabbed Spotting)
 │   ├── description/            # UI specific to Global Captioning (Full-video text)
-│   └── dense_description/      # [NEW] UI specific to Dense Description
+│   └── dense_description/      # UI specific to Dense Description
 │       └── event_editor/
 │           ├── __init__.py       # Right panel assembler for Dense mode
 │           ├── desc_input_widget.py # Text input & timestamp submission
@@ -47,9 +58,7 @@ annotation_tool/
 │
 └── style/                      # Visual theme assets
     └── style.qss               # Centralized Dark mode stylesheet
-
 ```
-
 ---
 
 ## 📝 Detailed Module Descriptions
