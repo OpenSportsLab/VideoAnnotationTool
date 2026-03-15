@@ -31,6 +31,7 @@ This tool helps you annotate action spotting datasets in sports video. Use the n
 - [Installation](installation.md)
 - [User Guide](gui_overview.md)
 - [FAQ](faq.md)
+- [OSL JSON format](OSL.md)
 
 ---
 
