@@ -87,12 +87,44 @@ python test_data/download_osl_hf.py \
   --output-dir test_data/Classification/mvfouls
 ```
 
-Localization – Action Spotting
+Localization – Action Spotting (SNBAS)
 
 ```bash
 python test_data/download_osl_hf.py \
   --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-snbas/blob/224p/annotations-test.json \
   --output-dir test_data/Localization/snbas
+```
+
+Localization – Action Spotting (Tennis)
+
+```bash
+python test_data/download_osl_hf.py \
+  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-tennis/blob/main/annotations-localization-test.json \
+  --output-dir test_data/Localization/tennis
+```
+
+Localization – Action Spotting (Gymnastics)
+
+```bash
+python test_data/download_osl_hf.py \
+  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-gymnastics/blob/main/annotations-localization-test.json \
+  --output-dir test_data/Localization/gymnastics
+```
+
+Description – Video Captioning (xFoul)
+
+```bash
+python test_data/download_osl_hf.py \
+  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-description-xfoul/blob/main/annotations_test.json \
+  --output-dir test_data/Description/xfoul
+```
+
+Dense Description – Dense Video Captioning (SNDVC)
+
+```bash
+python test_data/download_osl_hf.py \
+  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-densedescription-sndvc/blob/main/annotations-test.json \
+  --output-dir test_data/DenseDescription/sndvc
 ```
 
 **Dry Run Example:**
