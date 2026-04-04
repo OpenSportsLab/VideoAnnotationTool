@@ -2,7 +2,7 @@
 
 This project is a professional video annotation desktop application built with **PyQt6**. It features a comprehensive **quad-mode** architecture supporting **Whole-Video Classification**, **Action Spotting (Localization)**, **Video Captioning (Description)**, and the newly integrated **Dense Video Captioning (Dense Description)**. 
 
-With the latest update, the Classification mode now features **AI-Powered Smart Annotation**, allowing users to leverage state-of-the-art `soccernetpro` models (e.g., MViT) to automatically infer actions via single or batch processing.
+With the latest update, the Classification mode now features **AI-Powered Smart Annotation**, allowing users to leverage state-of-the-art `opensportslib` models (e.g., MViT) to automatically infer actions via single or batch processing.
 
 The project follows a modular **MVC (Model-View-Controller)** design pattern to ensure strict separation of concerns. It leverages **Qt's Model/View architecture** for resource management and a unified **Media Controller** to ensure stable, high-performance video playback across all modalities.
 
@@ -15,7 +15,7 @@ annotation_tool/
 ├── main.py                     # Application entry point
 ├── viewer.py                   # Main Window controller (Orchestrator)
 ├── utils.py                    # Helper functions and constants
-├── config.yaml                 # [NEW] Inference configuration for soccernetpro models
+├── config.yaml                 # [NEW] Inference configuration for opensportslib models
 ├── __init__.py                 # Package initialization
 │
 ├── models/                     # [Model Layer] Data Structures & State

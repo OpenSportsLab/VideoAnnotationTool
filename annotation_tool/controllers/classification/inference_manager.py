@@ -15,13 +15,13 @@ from utils import natural_sort_key
 os.environ["WANDB_MODE"] = "disabled"
 ssl._create_default_https_context = ssl._create_unverified_context
 
-from soccernetpro import model
+from opensportslib import model
 
 
 def _run_soccernet_inference(base_config_path: str, temp_data: dict, prefix: str):
     """
     [REFACTORED] A shared helper function to handle the repetitive setup, 
-    execution, and cleanup of the soccernetpro inference process.
+    execution, and cleanup of the opensportslib inference process.
     Used by both Single Inference and Batch Inference workers.
     """
     writable_dir = os.path.join(os.path.expanduser("~"), ".soccernet_workspace")
