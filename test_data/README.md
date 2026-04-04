@@ -76,7 +76,7 @@ Classification – svfouls
 ```bash
 python test_data/download_osl_hf.py \
   --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-classification-vars/blob/svfouls/annotations_test.json \
-  --output-dir Test_Data/Classification/svfouls
+  --output-dir test_data/Classification/svfouls
 ```
 
 Classification – mvfouls
@@ -84,7 +84,7 @@ Classification – mvfouls
 ```bash
 python test_data/download_osl_hf.py \
   --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-classification-vars/blob/mvfouls/annotations_test.json \
-  --output-dir Test_Data/Classification/mvfouls
+  --output-dir test_data/Classification/mvfouls
 ```
 
 Localization – Action Spotting
@@ -92,7 +92,7 @@ Localization – Action Spotting
 ```bash
 python test_data/download_osl_hf.py \
   --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-snbas/blob/224p/annotations-test.json \
-  --output-dir Test_Data/Localization
+  --output-dir test_data/Localization/snbas
 ```
 
 **Dry Run Example:**
