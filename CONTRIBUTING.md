@@ -1,4 +1,4 @@
-# Contributing to Soccernet Pro Tool
+# Contributing to the OpenSportsLab Video Annotation Tool
 
 Thank you for considering contributing to this project!
 
