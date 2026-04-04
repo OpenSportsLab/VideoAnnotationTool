@@ -604,7 +604,7 @@ class LocalizationManager:
         QMessageBox.critical(self.main, "Inference Error", f"Failed to run model:\n{error_msg}")
 
     def _confirm_smart_events(self):
-        """将智能预测合并到手工标注中"""
+        # Merge smart predictions into hand annotations
         if not self.current_video_path:
             return
             
@@ -612,21 +612,21 @@ class LocalizationManager:
         if not smart_events:
             return
             
-        # 初始化当前视频的手工事件列表（如果没有）
+        # Initialize the hand annotations list for the current video (if it doesn't exist)
         if self.current_video_path not in self.model.localization_events:
             self.model.localization_events[self.current_video_path] = []
             
-        # 合并事件 (此处暂不处理 undo/redo)
+        # Merge events (undo/redo is not handled here currently)
         self.model.localization_events[self.current_video_path].extend(smart_events)
         
-        # 按照时间排序
+        # Sort by time
         self.model.localization_events[self.current_video_path].sort(key=lambda x: x.get('position_ms', 0))
         
-        # 清空当前的 Smart Events
+        # Clear current Smart Events
         self.model.smart_localization_events[self.current_video_path] = []
-        self._display_smart_events(self.current_video_path) # 刷新为空表
+        self._display_smart_events(self.current_video_path) # Refresh with an empty table
         
-        # 提示用户
+        # Notify user
         self.main.show_temp_msg("Smart Spotting", "Predictions confirmed and merged into Hand Annotations.")
         self.model.is_data_dirty = True
         self.main.update_save_export_button_state()
@@ -641,12 +641,12 @@ class LocalizationManager:
     def _display_smart_events(self, video_path: str):
         """Dedicated method to display ONLY smart events in the smart table and timeline."""
         events = self.model.smart_localization_events.get(video_path, [])
-        # 更新 Smart Table
+        # Update Smart Table
         self.right_panel.smart_widget.smart_table.set_data(events)
-        # 更新 Timeline
+        # Update Timeline
         markers = []
         for evt in events:
-            # Smart events 也可以使用不同的颜色，比如蓝色，用来和手工标注（红色）区分
+            # Smart events can also use a different color, like blue, to distinguish them from hand annotations (red)
             from PyQt6.QtGui import QColor
             markers.append({
                 'start_ms': evt.get('position_ms', 0),
@@ -655,13 +655,13 @@ class LocalizationManager:
         self.center_panel.timeline.set_markers(markers)
 
     def _on_tab_switched(self, index: int):
-        """切换 Tab 时隔离视觉状态"""
+        # Isolate visual states when switching tabs
         if not self.current_video_path:
             return
             
         if index == 0:
-            # 回到手工标注，加载原始的手工事件
+            # Go back to hand annotations, load original hand events
             self._display_events_for_item(self.current_video_path)
         elif index == 1:
-            # 去到智能标注，加载智能事件
+            # Go to smart annotations, load smart events
             self._display_smart_events(self.current_video_path)

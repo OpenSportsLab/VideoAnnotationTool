@@ -64,7 +64,7 @@ class LocInferenceWorker(QThread):
                     "data": [{
                         "id": "inf_vid",
                         "inputs": [{"path": self.video_path, "type": "video", "fps": 25.0}],
-                        # 必须放一个 Dummy event 骗过 DataLoader
+                        # Must include a dummy event to bypass the DataLoader
                         "events": [{"head": "ball_action", "label": classes[0] if classes else "Unknown", "position_ms": 0}]
                     }]
                 }
@@ -75,31 +75,31 @@ class LocInferenceWorker(QThread):
                 loc_model = model.localization(config=tmp_config_yaml)
                 
                 try:
-                    # 运行推理。这里一定会抛出 FileNotFoundError，因为框架底层的评估器找不到文件
+                    # Run inference. This will definitely throw a FileNotFoundError because the underlying evaluator cannot find the file
                     loc_model.infer(
                         test_set=tmp_input_json, 
                         pretrained="jeetv/snpro-snbas-2024"
                     )
                 except FileNotFoundError:
-                    # [关键修复 4]：霸气忽略！
-                    # 因为报错发生在推理完成之后的“评估阶段”，所以我们直接 catch 掉这个错误，
-                    # 假装无事发生，直接进入下一步去深层文件夹里捞生成的 JSON。
+                    # [Critical Fix 4]: Bossy ignore!
+                    # Since the error occurs during the evaluation phase after inference is completed, we just catch the error directly,
+                    # pretend nothing happened, and proceed to the next step to extract the generated JSON from the nested folder.
                     pass
                 
                 # --- 4. Parse result JSON ---
-                # 递归搜索临时文件夹下的所有 .json 文件（完美穿透 checkpoints/xxx 嵌套文件夹）
+                # Recursively search for all .json files in the temp folder (perfectly pierces through nested checkpoints/xxx folders)
                 search_pattern = os.path.join(tmp_dir, "**", "*.json")
                 all_jsons = glob.glob(search_pattern, recursive=True)
                 
                 valid_preds = []
                 for f in all_jsons:
                     filename = os.path.basename(f)
-                    # 排除掉我们自己生成的输入数据和配置文件
+                    # Exclude the input data and config files we generated ourselves
                     if "temp_test" not in filename and "temp_config" not in filename:
                         valid_preds.append(f)
                 
                 if valid_preds:
-                    # 找到最新生成的那一个（防止有多个旧文件干扰）
+                    # Find the most recently generated one (to prevent interference from multiple old files)
                     actual_output_json = max(valid_preds, key=os.path.getctime)
                 else:
                     raise FileNotFoundError(f"Could not find any generated prediction JSON in {tmp_dir}/checkpoints/")

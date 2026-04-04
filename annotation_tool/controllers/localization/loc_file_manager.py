@@ -301,24 +301,24 @@ class LocFileManager:
             return False
         
         for video_path in sorted(self.model.localization_events.keys()):
-                # 获取该视频所属的原始 item 定义（包含 inputs 视频源信息）
+                # Get the original item definition containing this video (including inputs video source info)
                 base_item = next((item for item in self.model.action_item_data if item["path"] == video_path), None)
                 if not base_item: continue
                 
-                # 1. 获取手工（或已确认的）标注
+                # 1. Get manual (or confirmed) annotations
                 manual_events = self.model.localization_events.get(video_path, [])
                 
-                # 2. 获取未确认的智能标注
+                # 2. Get unconfirmed smart annotations
                 smart_events = self.model.smart_localization_events.get(video_path, [])
                 
-                # 构建符合 OSL 标准规范的单条数据结构
+                # Build a single data structure conforming to the OSL standard specification
                 out_item = {
                     "id": base_item.get("id", ""),
                     "inputs": [{"path": f, "type": "video"} for f in base_item.get("source_files", [video_path])],
                     "events": manual_events
                 }
                 
-                # 遵循原始结构添加 smart_events 字段（如果有的话）
+                # Follow the original structure to add the smart_events field (if any)
                 if smart_events:
                     out_item["smart_events"] = smart_events
                     

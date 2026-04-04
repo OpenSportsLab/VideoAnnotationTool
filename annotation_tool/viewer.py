@@ -201,7 +201,7 @@ class ActionClassifierApp(QMainWindow):
         cls_right = self.ui.classification_ui.right_panel
         
         # [MODIFIED] Disconnect the direct button click and use our new Tab-aware signals
-        # cls_right.confirm_btn.clicked.connect(self.annot_manager.save_manual_annotation) # <-- 删除或注释掉这行旧代码
+        # cls_right.confirm_btn.clicked.connect(self.annot_manager.save_manual_annotation) # <-- Delete or comment out this old code line
         
         # [NEW] Connect the tab-aware confirm signals to their respective manager functions
         cls_right.annotation_saved.connect(lambda data: self.annot_manager.save_manual_annotation())
