@@ -67,6 +67,7 @@ jobs:
           --collect-all "soccernetpro"
           --collect-all "wandb"
           --collect-all "torch_geometric"
+          --collect-all "opensportslib"
           "main.py"
 
       - name: Zip Windows binary (manual runs only)
@@ -131,6 +132,7 @@ jobs:
           --collect-all "soccernetpro"
           --collect-all "wandb"
           --collect-all "torch_geometric"
+          --collect-all "opensportslib"
           "main.py"
 
       - name: Zip macOS app (manual runs only)
@@ -200,6 +202,7 @@ jobs:
           --collect-all "soccernetpro"
           --collect-all "wandb"
           --collect-all "torch_geometric"
+          --collect-all "opensportslib"
           "main.py"
 
       - name: Zip Linux binary (manual runs only)
