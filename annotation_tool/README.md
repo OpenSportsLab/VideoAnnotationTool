@@ -2,7 +2,7 @@
 
 This project is a professional video annotation desktop application built with **PyQt6**. It features a comprehensive **quad-mode** architecture supporting **Whole-Video Classification**, **Action Spotting (Localization)**, **Video Captioning (Description)**, and the newly integrated **Dense Video Captioning (Dense Description)**. 
 
-With the latest update, the Classification mode now features **AI-Powered Smart Annotation**, allowing users to leverage state-of-the-art `soccernetpro` models (e.g., MViT) to automatically infer actions via single or batch processing.
+With the latest update, both the **Classification** and **Localization** modes now feature **AI-Powered Smart Annotation and Training**. Users can leverage state-of-the-art models (e.g., `soccernetpro`, MViT) to automatically infer actions via single or batch processing, as well as configure model training directly through dedicated YAML configuration files.
 
 The project follows a modular **MVC (Model-View-Controller)** design pattern to ensure strict separation of concerns. It leverages **Qt's Model/View architecture** for resource management and a unified **Media Controller** to ensure stable, high-performance video playback across all modalities.
 
@@ -15,7 +15,8 @@ annotation_tool/
 ├── main.py                     # Application entry point
 ├── viewer.py                   # Main Window controller (Orchestrator)
 ├── utils.py                    # Helper functions and constants
-├── config.yaml                 # [NEW] Inference configuration for soccernetpro models
+├── class_config.yaml           # [NEW] Training & Inference configuration for Classification
+├── loc_config.yaml             # [NEW] Inference configuration for Localization
 ├── __init__.py                 # Package initialization
 │
 ├── models/                     # [Model Layer] Data Structures & State
@@ -30,7 +31,7 @@ annotation_tool/
 │   │   ├── class_annotation_manager.py # Manual label state management
 │   │   ├── class_file_manager.py       # JSON I/O for Classification tasks
 │   │   ├── class_navigation_manager.py # Action tree navigation
-│   │   └── inference_manager.py        # [NEW] AI Smart Annotation (Single/Batch Inference)
+│   │   └── inference_manager.py        # AI Smart Annotation (Single/Batch Inference)
 │   ├── localization/           # Logic for Action Spotting (Localization) mode
 │   ├── description/            # Logic for Global Captioning (Description) mode
 │   └── dense_description/      # Logic for Dense Captioning (Text-at-Timestamp)
@@ -44,7 +45,7 @@ annotation_tool/
 │   │   ├── workspace.py          # Unified 3-column skeleton
 │   │   └── dialogs.py            # Project wizards and mode selectors
 │   ├── classification/         # UI specific to Classification
-│   │   └── event_editor/         # Dynamic Schema Editor & [NEW] Smart Annotation UI
+│   │   └── event_editor/         # Dynamic Schema Editor & Smart Annotation UI
 │   │       ├── dynamic_widgets.py  # Single/Multi label dynamic radio & checkbox groups
 │   │       ├── editor.py           # Includes NativeDonutChart & Batch Progress UI
 │   │       └── controls.py         # Playback control bar
@@ -78,7 +79,7 @@ annotation_tool/
 ### 3. Modality Logic (`/controllers`)
 
 * **`localization_manager.py`**: Logic for "Spotting" (mapping a label to a timestamp).
-* **`dense_manager.py`**: **[NEW]** Logic for mapping free-text descriptions to timestamps. It handles the submission from the `DenseDescriptionInputWidget` and updates the timeline markers.
+* **`dense_manager.py`**: Logic for mapping free-text descriptions to timestamps. It handles the submission from the `DenseDescriptionInputWidget` and updates the timeline markers.
 * **`dense_file_manager.py`**: Handles JSON persistence for dense tasks, ensuring the `text` and `position_ms` fields are properly serialized.
 
 ### 4. The View Layer (`/ui`)
@@ -117,7 +118,7 @@ The application is built on a "Composite Design" strategy. While each mode serve
 1. **Select Mode**: Launch the app and use the "New Project" wizard to select one of the four modes.
 2. **Import**: The `AppRouter` will automatically detect the correct modality if you import an existing JSON.
 3. **Annotate**:
-* In **Dense mode**, navigate to a point in the video, type your description in the right panel, and click "Add Description".
-* Use the **Timeline** to jump between existing text annotations.
-
-
+   * In **Dense mode**, navigate to a point in the video, type your description in the right panel, and click "Add Description".
+   * Use the **Timeline** to jump between existing text annotations.
+4. **AI Inference & Training**:
+   * For **Classification** and **Localization** modes, configure your model parameters in `class_config.yaml` or `loc_config.yaml` respectively to utilize AI-assisted smart annotations and model training functionalities.
