@@ -19,6 +19,7 @@ from controllers.history_manager import HistoryManager
 from controllers.media_controller import MediaController
 
 from controllers.router import AppRouter
+from controllers.common.project_navigator_controller import ProjectNavigatorController
 from models import AppStateModel
 
 # [NEW] Direct UI Imports
@@ -100,6 +101,16 @@ class VideoAnnotationWindow(QMainWindow):
         # Allow nested docking and tabbed docks
         self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AnimatedDocks)
 
+        # [NEW] Project Navigator (Panel-Model-Controller)
+        # Initialized early so other controllers (like Router) can reference it
+        self.project_nav_controller = ProjectNavigatorController(
+            main_window=self,
+            panel=self.left_panel,
+            tree_model=self.tree_model,
+            app_state=self.model,
+            media_controller=None # Placeholder, will be set after MediaController init
+        )
+
         # --- Controllers ---
         self.router = AppRouter(self)
         self.history_manager = HistoryManager(self)
@@ -107,6 +118,7 @@ class VideoAnnotationWindow(QMainWindow):
         # [CENTRALIZED] Create the ONE and ONLY Media Controller here
         preview_panel = self.center_panel.media_preview
         self.media_controller = MediaController(preview_panel.player, preview_panel.video_widget)
+        self.project_nav_controller.media_controller = self.media_controller
         
         self.annot_manager = AnnotationManager(self)
         self.nav_manager = NavigationManager(self, self.media_controller)
@@ -216,11 +228,10 @@ class VideoAnnotationWindow(QMainWindow):
         center_panel = self.center_panel
         
         # --- Left panel (Unified) ---
-        left_panel.addVideoRequested.connect(self._dispatch_add_video)
-        left_panel.clear_btn.clicked.connect(self._dispatch_clear_workspace)
-        left_panel.request_remove_item.connect(self._on_remove_item_requested)
-        left_panel.tree.selectionModel().currentChanged.connect(self._on_tree_selection_changed)
-        left_panel.filter_combo.currentIndexChanged.connect(self._dispatch_filter_change)
+        # Handled by project_nav_controller for clear PMC separation,
+        # but the controller will internally call MainWindow dispatchers
+        # when it needs global context.
+
 
         # --- Center panel (Unified Playback) ---
         center_panel.playback.playPauseRequested.connect(self._dispatch_play_pause)
@@ -396,18 +407,10 @@ class VideoAnnotationWindow(QMainWindow):
         else: self.nav_manager.remove_single_action_item(index)
 
     def _dispatch_save(self) -> None:
-        if self._is_loc_mode(): self.router.loc_fm.overwrite_json()
-        elif self._is_desc_mode():
-            self.desc_annot_manager.save_current_annotation()
-            self.router.desc_fm.save_json() 
-        elif self._is_dense_mode(): self.router.dense_fm.overwrite_json()
-        else: self.router.class_fm.save_json()
+        self.project_nav_controller.save_project()
 
     def _dispatch_export(self) -> None:
-        if self._is_loc_mode(): self.router.loc_fm.export_json()
-        elif self._is_desc_mode(): self.router.desc_fm.export_json()
-        elif self._is_dense_mode(): self.router.dense_fm.export_json()
-        else: self.router.class_fm.export_json()
+        self.project_nav_controller.export_project()
 
     def _dispatch_play_pause(self) -> None:
         # All managers now use the same media controller roughly
@@ -451,7 +454,7 @@ class VideoAnnotationWindow(QMainWindow):
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if msg.exec() == QMessageBox.StandardButton.Yes:
             self.stop_all_players()
-            self.router.class_fm._clear_workspace(full_reset=True)
+            self.project_nav_controller.class_fm._clear_workspace(full_reset=True)
 
     def _on_desc_clear_clicked(self) -> None:
         if not self.model.json_loaded: return
@@ -461,7 +464,7 @@ class VideoAnnotationWindow(QMainWindow):
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if msg.exec() == QMessageBox.StandardButton.Yes:
             self.stop_all_players()
-            self.router.desc_fm._clear_workspace(full_reset=True)
+            self.project_nav_controller.desc_fm._clear_workspace(full_reset=True)
 
     def prepare_new_project_ui(self) -> None:
         self.set_project_ui_enabled(True)
@@ -548,34 +551,12 @@ class VideoAnnotationWindow(QMainWindow):
         ed.update_action_list(action_names)
 
     def populate_action_tree(self) -> None:
-        self.tree_model.clear()
-        self.model.action_item_map.clear()
-        sorted_list = sorted(self.model.action_item_data, key=lambda d: natural_sort_key(d.get("name", "")))
-        self.sync_batch_inference_dropdowns()
-        for data in sorted_list:
-            item = self.tree_model.add_entry(name=data["name"], path=data["path"], source_files=data.get("source_files"))
-            self.model.action_item_map[data["path"]] = item
-            self.update_action_item_status(data["path"])
-        self._dispatch_filter_change(self.left_panel.filter_combo.currentIndex())
-        tree = self.left_panel.tree
-        if self.tree_model.rowCount() > 0:
-            first_index = self.tree_model.index(0, 0)
-            if first_index.isValid(): tree.setCurrentIndex(first_index)
+        """Loads data from the app state into the UI model tree."""
+        self.project_nav_controller.populate_tree()
 
     def update_action_item_status(self, action_path: str) -> None:
-        item: QStandardItem = self.model.action_item_map.get(action_path)
-        if not item: return
-        is_done = False # Mode-specific logic here...
-        if self._is_loc_mode(): is_done = action_path in self.model.localization_events
-        elif self._is_desc_mode(): 
-            # Check captions
-            for d in self.model.action_item_data:
-                if d.get("path") == action_path:
-                    if any(c.get("text", "").strip() for c in d.get("captions", [])): is_done = True
-                    break
-        elif self._is_dense_mode(): is_done = action_path in self.model.dense_description_events
-        else: is_done = action_path in self.model.manual_annotations
-        item.setIcon(self.done_icon if is_done else self.empty_icon)
+        """Updates the icon state for an item (Done/Not Done check)."""
+        self.project_nav_controller.update_item_status(action_path)
 
     def setup_dynamic_ui(self) -> None:
         ed = self.classification_panel

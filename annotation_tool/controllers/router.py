@@ -1,11 +1,6 @@
 import json
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from controllers.classification.class_file_manager import ClassFileManager
-from controllers.localization.loc_file_manager import LocFileManager
-from controllers.description.desc_file_manager import DescFileManager
-from controllers.dense_description.dense_file_manager import DenseFileManager
-
 from ui.common.dialogs import ProjectTypeDialog
 
 class AppRouter:
@@ -18,10 +13,6 @@ class AppRouter:
     """
     def __init__(self, main_window):
         self.main = main_window
-        self.class_fm = ClassFileManager(main_window)
-        self.loc_fm = LocFileManager(main_window)
-        self.desc_fm = DescFileManager(main_window)
-        self.dense_fm = DenseFileManager(main_window)
 
     def create_new_project_flow(self):
         """Unified entry point for creating a new project."""
@@ -32,16 +23,7 @@ class AppRouter:
 
         dlg = ProjectTypeDialog(self.main)
         if dlg.exec():
-            mode = dlg.selected_mode
-            
-            if mode == "classification":
-                self.class_fm.create_new_project()
-            elif mode == "localization":
-                self.loc_fm.create_new_project()
-            elif mode == "description":
-                self.desc_fm.create_new_project()
-            elif mode == "dense_description":
-                self.dense_fm.create_new_project()
+            self.main.project_nav_controller.create_new_project(dlg.selected_mode)
 
     def import_annotations(self):
         """Global entry point for loading a JSON file."""
@@ -67,40 +49,12 @@ class AppRouter:
         # Detect the type using heuristics
         json_type = self._detect_json_type(data)
 
-        if json_type == "classification":
-            if self.class_fm.load_project(data, file_path):
-                self.main.show_classification_view()
-            
-        elif json_type == "localization":
-            if self.loc_fm.load_project(data, file_path):
-                self.main.show_localization_view()
-
-        elif json_type == "description":
-            # [FIXED] Check return value to ensure validation passed before switching view
-            if self.desc_fm.load_project(data, file_path):
-                self.main.show_description_view()
-            
-        elif json_type == "dense_description":
-            if self.dense_fm.load_project(data, file_path):
-                self.main.show_dense_description_view()
-            
-        else:
+        if not self.main.project_nav_controller.load_project(data, file_path, json_type):
             QMessageBox.critical(self.main, "Error", "Unknown JSON format or Task Type.")
 
     def close_project(self):
         """Handles closing the current project."""
-        if not self.main.check_and_close_current_project():
-            return
-
-        self.main.reset_all_managers()
-
-        self.class_fm._clear_workspace(full_reset=True)
-        self.loc_fm._clear_workspace(full_reset=True)
-        self.desc_fm._clear_workspace(full_reset=True)
-        self.dense_fm._clear_workspace(full_reset=True)
-
-        self.main.show_welcome_view()
-        self.main.show_temp_msg("Project Closed", "Returned to Home Screen", duration=1000)
+        self.main.project_nav_controller.close_project()
 
     def _detect_json_type(self, data):
         """

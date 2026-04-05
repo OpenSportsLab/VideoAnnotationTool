@@ -361,8 +361,8 @@ class LocalizationManager:
 
     # --- Video & Project Logic ---
     def _on_load_clicked(self): self.main.router.import_annotations()
-    def _on_save_clicked(self): self.main.router.loc_fm.overwrite_json()
-    def _on_export_clicked(self): self.main.router.loc_fm.export_json()
+    def _on_save_clicked(self): self.main.project_nav_controller.loc_fm.overwrite_json()
+    def _on_export_clicked(self): self.main.project_nav_controller.loc_fm.export_json()
 
     def _on_clear_all_clicked(self):
         if not self.model.action_item_data: return
