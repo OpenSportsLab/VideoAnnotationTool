@@ -100,6 +100,7 @@ jobs:
           --collect-all "wandb"
           --collect-all "torch_geometric"
           --collect-all "opensportslib"
+          --collect-all "imageio_ffmpeg"
           "main.py"
 
       - name: Rename binary
@@ -168,6 +169,7 @@ jobs:
           --collect-all "wandb"
           --collect-all "torch_geometric"
           --collect-all "opensportslib"
+          --collect-all "imageio_ffmpeg"
           "main.py"
 
       - name: Zip macOS app
@@ -237,6 +239,7 @@ jobs:
           --collect-all "wandb"
           --collect-all "torch_geometric"
           --collect-all "opensportslib"
+          --collect-all "imageio_ffmpeg"
           "main.py"
 
       - name: Rename binary
