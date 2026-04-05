@@ -70,7 +70,8 @@ jobs:
           --collect-all "torch_geometric"
           --collect-all "opensportslib"
           --collect-all "imageio_ffmpeg"
-          --collect-all "tabulate"
+          --collect-all "pytorch_lightning"
+          --hidden-import "tabulate"
           "main.py"
 
       - name: Zip Windows binary (manual runs only)
@@ -138,7 +139,9 @@ jobs:
           --collect-all "torch_geometric"
           --collect-all "opensportslib"
           --collect-all "imageio_ffmpeg"
-          --collect-all "tabulate"
+          --collect-all "pytorch_lightning"
+          --hidden-import "tabulate"
+
           "main.py"
 
       - name: Zip macOS app (manual runs only)
@@ -211,7 +214,8 @@ jobs:
           --collect-all "torch_geometric"
           --collect-all "opensportslib"
           --collect-all "imageio_ffmpeg"
-          --collect-all "tabulate"
+          --collect-all "pytorch_lightning"
+          --hidden-import "tabulate"
           "main.py"
 
       - name: Zip Linux binary (manual runs only)
