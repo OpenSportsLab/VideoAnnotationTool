@@ -454,7 +454,7 @@ class VideoAnnotationWindow(QMainWindow):
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if msg.exec() == QMessageBox.StandardButton.Yes:
             self.stop_all_players()
-            self.project_nav_controller.class_fm._clear_workspace(full_reset=True)
+            self.project_nav_controller.clear_classification_workspace()
 
     def _on_desc_clear_clicked(self) -> None:
         if not self.model.json_loaded: return
@@ -464,7 +464,7 @@ class VideoAnnotationWindow(QMainWindow):
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if msg.exec() == QMessageBox.StandardButton.Yes:
             self.stop_all_players()
-            self.project_nav_controller.desc_fm._clear_workspace(full_reset=True)
+            self.project_nav_controller.clear_description_workspace()
 
     def prepare_new_project_ui(self) -> None:
         self.set_project_ui_enabled(True)
