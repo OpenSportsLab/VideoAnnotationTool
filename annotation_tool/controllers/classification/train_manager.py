@@ -227,7 +227,7 @@ class TrainManager(QObject):
             self.base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
             
         # Path to the base classification config file
-        self.config_path = os.path.join(self.base_dir, "config.yaml")
+        self.config_path = os.path.join(self.base_dir, "class_config.yaml")
 
         # Connect UI buttons to start/stop handlers
         self.ui.btn_start_train.clicked.connect(self.start_training)
