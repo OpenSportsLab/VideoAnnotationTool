@@ -141,7 +141,6 @@ jobs:
           --collect-all "imageio_ffmpeg"
           --collect-all "pytorch_lightning"
           --hidden-import "tabulate"
-
           "main.py"
 
       - name: Zip macOS app (manual runs only)
