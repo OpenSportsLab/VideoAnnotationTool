@@ -24,7 +24,7 @@ from models import AppStateModel
 # [NEW] Direct UI Imports
 from ui.common.welcome_widget import WelcomeWidget
 from ui.common.clip_explorer import CommonProjectTreePanel
-from ui.localization.media_player import LocCenterPanel
+from ui.common.media_player import MediaCenterPanel
 from ui.classification.event_editor import ClassificationAnnotationPanel
 from ui.localization.event_editor import LocalizationAnnotationPanel
 from ui.description.event_editor import DescriptionAnnotationPanel
@@ -59,7 +59,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.welcome_widget = WelcomeWidget()
         self.center_stack.addWidget(self.welcome_widget)
         
-        self.center_panel = LocCenterPanel()
+        self.center_panel = MediaCenterPanel()
         self.center_stack.addWidget(self.center_panel)
         
         self.setCentralWidget(self.center_stack)

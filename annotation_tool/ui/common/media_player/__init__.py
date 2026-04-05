@@ -5,9 +5,9 @@ from .player_panel import MediaPreviewWidget
 from .timeline import TimelineWidget
 from .controls import PlaybackControlBar
 
-class LocCenterPanel(QWidget):
+class MediaCenterPanel(QWidget):
     """
-    Center Panel for Localization Mode.
+    Common Center Panel for all Annotation Modes.
     Contains: MediaPreview, Timeline, Playback Controls.
     """
     def __init__(self, parent=None):
