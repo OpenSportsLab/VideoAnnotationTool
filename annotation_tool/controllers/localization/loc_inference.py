@@ -33,6 +33,7 @@ class LocInferenceWorker(QThread):
             # Import library inside thread to avoid blocking main thread at startup
             from opensportslib import model
             import subprocess
+            import imageio_ffmpeg 
             
             with tempfile.TemporaryDirectory() as tmp_dir:
                 # Use FFmpeg to cut clips
@@ -45,7 +46,9 @@ class LocInferenceWorker(QThread):
                 start_time_str = ms_to_ffmpeg(self.start_ms)
                 duration_ms = self.end_ms - self.start_ms if self.end_ms > 0 else 0
                 
-                cmd = ['ffmpeg', '-y', '-ss', start_time_str, '-i', self.video_path]
+                ffmpeg_exe_path = imageio_ffmpeg.get_ffmpeg_exe() 
+                
+                cmd = [ffmpeg_exe_path, '-y', '-ss', start_time_str, '-i', self.video_path]
                 if duration_ms > 0:
                     cmd += ['-t', ms_to_ffmpeg(duration_ms)]
                 cmd += ['-c', 'copy', clip_video_path]
@@ -54,7 +57,6 @@ class LocInferenceWorker(QThread):
 
                 tmp_input_json = os.path.join(tmp_dir, "temp_test.json")
                 tmp_config_yaml = os.path.join(tmp_dir, "temp_config.yaml")
-                
                 # --- 1. Load and dynamically patch the YAML config ---
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     config_dict = yaml.safe_load(f)
