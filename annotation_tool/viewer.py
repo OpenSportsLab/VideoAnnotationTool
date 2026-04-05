@@ -9,11 +9,11 @@ from controllers.classification.class_annotation_manager import AnnotationManage
 from controllers.classification.class_navigation_manager import NavigationManager
 from controllers.classification.inference_manager import InferenceManager
 from controllers.classification.train_manager import TrainManager
-from controllers.history_manager import HistoryManager
 from controllers.localization.localization_manager import LocalizationManager
 from controllers.description.desc_navigation_manager import DescNavigationManager
 from controllers.description.desc_annotation_manager import DescAnnotationManager
 from controllers.dense_description.dense_manager import DenseManager
+from controllers.history_manager import HistoryManager
 from controllers.media_controller import MediaController
 
 from controllers.router import AppRouter
@@ -180,15 +180,14 @@ class ActionClassifierApp(QMainWindow):
         center_panel.timeline.seekRequested.connect(center_panel.media_preview.set_position)
         
         # --- Classification Editor ---
-        cls_ed = workspace.classification_editor
-        cls_ed.annotation_saved.connect(lambda data: self.annot_manager.save_manual_annotation())
-        cls_ed.smart_confirm_requested.connect(self.annot_manager.confirm_smart_annotation_as_manual)
-        cls_ed.hand_clear_requested.connect(self.annot_manager.clear_current_manual_annotation)
-        cls_ed.smart_clear_requested.connect(self.annot_manager.clear_current_smart_annotation)
-        cls_ed.add_head_clicked.connect(self.annot_manager.handle_add_label_head)
-        cls_ed.remove_head_clicked.connect(self.annot_manager.handle_remove_label_head)
-        cls_ed.smart_infer_requested.connect(self.inference_manager.start_inference)
-        cls_ed.confirm_infer_requested.connect(lambda res: self.annot_manager.save_manual_annotation())
+        workspace.classification_editor.annotation_saved.connect(lambda data: self.annot_manager.save_manual_annotation())
+        workspace.classification_editor.smart_confirm_requested.connect(self.annot_manager.confirm_smart_annotation_as_manual)
+        workspace.classification_editor.hand_clear_requested.connect(self.annot_manager.clear_current_manual_annotation)
+        workspace.classification_editor.smart_clear_requested.connect(self.annot_manager.clear_current_smart_annotation)
+        workspace.classification_editor.add_head_clicked.connect(self.annot_manager.handle_add_label_head)
+        workspace.classification_editor.remove_head_clicked.connect(self.annot_manager.handle_remove_label_head)
+        workspace.classification_editor.smart_infer_requested.connect(self.inference_manager.start_inference)
+        workspace.classification_editor.confirm_infer_requested.connect(lambda res: self.annot_manager.save_manual_annotation())
 
         # --- Localization Editor ---
         # Localization manager sets up its own internal connections to self.ui...
