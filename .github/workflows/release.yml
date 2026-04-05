@@ -102,7 +102,8 @@ jobs:
           --collect-all "torch_geometric"
           --collect-all "opensportslib"
           --collect-all "imageio_ffmpeg"
-          --collect-all "tabulate"
+          --collect-all "pytorch_lightning"
+          --hidden-import "tabulate"
           "main.py"
 
       - name: Rename binary
@@ -173,7 +174,8 @@ jobs:
           --collect-all "torch_geometric"
           --collect-all "opensportslib"
           --collect-all "imageio_ffmpeg"
-          --collect-all "tabulate"
+          --collect-all "pytorch_lightning"
+          --hidden-import "tabulate"
           "main.py"
 
       - name: Zip macOS app
@@ -245,7 +247,8 @@ jobs:
           --collect-all "torch_geometric"
           --collect-all "opensportslib"
           --collect-all "imageio_ffmpeg"
-          --collect-all "tabulate"
+          --collect-all "pytorch_lightning"
+          --hidden-import "tabulate"
           "main.py"
 
       - name: Rename binary
