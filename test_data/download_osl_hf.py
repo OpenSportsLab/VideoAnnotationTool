@@ -67,7 +67,7 @@ def parse_types_arg(types_arg: str):
 
 def extract_repo_paths_from_json(osl_json: dict, want_types):
     """
-    Extract file paths from different OSL / SoccerNetPro JSON schemas.
+    Extract file paths from different OSL / opensportslib JSON schemas.
 
     Supported formats:
     - videos[].path (legacy/simple)

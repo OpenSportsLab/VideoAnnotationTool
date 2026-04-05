@@ -24,36 +24,15 @@ class LocRightPanel(QWidget):
         self.setFixedWidth(400)
         layout = QVBoxLayout(self)
         
-        # --- 1. Global Undo/Redo Button Header ---
+        # --- 1. Header (Undo/Redo removed and moved to menu bar) ---
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 5)
         
         lbl = QLabel("Annotation Controls")
         lbl.setStyleSheet("font-weight: bold; color: #BBB; font-size: 13px;")
         
-        self.undo_btn = QPushButton("Undo")
-        self.redo_btn = QPushButton("Redo")
-        
-        btn_style = """
-            QPushButton {
-                background-color: #444; color: #DDD; 
-                border: 1px solid #555; border-radius: 4px; padding: 4px 10px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #555; border-color: #777; }
-            QPushButton:pressed { background-color: #333; }
-            QPushButton:disabled { color: #777; background-color: #333; border-color: #444; }
-        """
-        for btn in [self.undo_btn, self.redo_btn]:
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setStyleSheet(btn_style)
-            btn.setFixedWidth(60)
-            btn.setEnabled(False) 
-            
         header_layout.addWidget(lbl)
         header_layout.addStretch()
-        header_layout.addWidget(self.undo_btn)
-        header_layout.addWidget(self.redo_btn)
         layout.addLayout(header_layout)
         
         # --- 2. Main Tabs ---

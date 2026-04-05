@@ -152,17 +152,7 @@ class ClassificationEventEditor(QWidget):
         self.is_batch_mode_active = False
         self.pending_batch_results = {}
         
-        # 1. Undo/Redo Controls
-        h_undo = QHBoxLayout()
-        self.undo_btn = QPushButton("Undo")
-        self.redo_btn = QPushButton("Redo")
-        for btn in [self.undo_btn, self.redo_btn]:
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setEnabled(False) 
-            btn.setProperty("class", "editor_control_btn")
-        h_undo.addWidget(self.undo_btn)
-        h_undo.addWidget(self.redo_btn)
-        layout.addLayout(h_undo)
+        # 1. Undo/Redo removed (moved to menu bar)
         
         # 2. Task Information
         self.task_label = QLabel("Task: N/A")
@@ -184,25 +174,25 @@ class ClassificationEventEditor(QWidget):
         # [NEW] Create QTabWidget to hold both annotation modes
         self.tabs = QTabWidget()
 
-        # 1. 【核心】彻底禁用省略模式，防止文字变成 "..."
+        # 1. [Core] Completely disable elide mode to prevent text from becoming "..."
         self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
 
-        # 2. 强制标签栏不自动扩展，使其仅占据文字所需的空间
+        # 2. Force the tab bar not to expand automatically, making it only occupy the space required by the text
         self.tabs.tabBar().setExpanding(False)
 
-        # 3. 优化样式表：移除 min-width 限制，并设置极窄 Padding
+        # 3. Optimize stylesheet: remove min-width restrictions and set extremely narrow Padding
         self.tabs.setStyleSheet("""
             QTabBar::tab {
-                /* 设置较小的左右边距，确保文字紧凑且可见 */
+                /* Set small left and right margins to ensure text is compact and visible */
                 padding-left: 3px;
                 padding-right: 3px;
                 padding-top: 5px;
                 padding-bottom: 5px;
                 
-                /* 保持字体大小适中 */
+                /* Keep font size moderate */
                 font-size: 13px; 
                 
-                /* 确保没有最小宽度和最大宽度的硬性限制 */
+                /* Ensure there are no hard limits on minimum and maximum width */
                 min-width: 0px;
                 max-width: 1000px; 
             }
@@ -308,7 +298,7 @@ class ClassificationEventEditor(QWidget):
         train_main_layout.setContentsMargins(5, 5, 5, 5)
         train_main_layout.setSpacing(10)
 
-        # 使用滚动区域，防止参数过多时显示不全
+        # Use a scrolling area to prevent incomplete display when there are too many parameters
         train_scroll = QScrollArea()
         train_scroll.setWidgetResizable(True)
         train_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -316,11 +306,11 @@ class ClassificationEventEditor(QWidget):
         train_layout = QVBoxLayout(train_scroll_content)
         train_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # A. 训练超参数组 (Hyperparameters)
+        # A. Training Hyperparameters Group
         hyper_group = QGroupBox("Hyperparameters")
-        hyper_form = QVBoxLayout(hyper_group) # 使用垂直布局包装表单行
+        hyper_form = QVBoxLayout(hyper_group) # Wrap form rows using a vertical layout
         
-        # 封装一个简单的表单行函数
+        # Encapsulate a simple form row function
         def add_form_row(label_text, widget):
             row = QHBoxLayout()
             lbl = QLabel(label_text)
@@ -344,12 +334,12 @@ class ClassificationEventEditor(QWidget):
 
         train_layout.addWidget(hyper_group)
 
-        # B. 硬件设置组 (Hardware - 针对 Mac M1 优化)
+        # B. Hardware Settings Group (Optimized for Mac M1)
         device_group = QGroupBox("Execution")
         device_form = QVBoxLayout(device_group)
 
         self.combo_device = QComboBox()
-        # 针对 M1 增加 mps 选项
+        # Add mps option for M1
         self.combo_device.addItems(["cpu", "mps (Metal)", "cuda"]) 
         if sys.platform == "darwin": 
             self.combo_device.setCurrentText("mps (Metal)")
@@ -361,10 +351,10 @@ class ClassificationEventEditor(QWidget):
 
         train_layout.addWidget(device_group)
 
-        # C. 训练操作与监控 (Action & Monitor)
-        h_train_btns = QHBoxLayout() # 创建横向布局
+        # C. Training Action & Monitor
+        h_train_btns = QHBoxLayout() # Create horizontal layout
         
-        # 1. Start Training 按钮
+        # 1. Start Training Button
         self.btn_start_train = QPushButton("Start Training")
         self.btn_start_train.setMinimumHeight(40)
         self.btn_start_train.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -379,18 +369,18 @@ class ClassificationEventEditor(QWidget):
             QPushButton:disabled { background-color: #cccccc; color: #666666; }
         """)
 
-        # 2. Stop Training 按钮 [NEW]
+        # 2. Stop Training Button [NEW]
         self.btn_stop_train = QPushButton("Stop Training")
         self.btn_stop_train.setMinimumHeight(40)
         self.btn_stop_train.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_stop_train.setEnabled(False) # 初始不可点击
-        # 样式与 Clear Selection 一致（标准按钮样式）
+        self.btn_stop_train.setEnabled(False) # Initially unclickable
+        # Style consistent with Clear Selection (Standard button style)
         self.btn_stop_train.setProperty("class", "editor_control_btn") 
 
-        h_train_btns.addWidget(self.btn_start_train, 2) # Start 占更多空间
+        h_train_btns.addWidget(self.btn_start_train, 2) # Start takes up more space
         h_train_btns.addWidget(self.btn_stop_train, 1)
         
-        # 后面跟着状态标签和进度条
+        # Followed by status label and progress bar
         self.lbl_train_status = QLabel("Ready to train")
        
 

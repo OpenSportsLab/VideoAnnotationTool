@@ -76,7 +76,7 @@ class WelcomeWidget(QWidget):
         self.github_btn.setFixedSize(160, 40)
         self.github_btn.setProperty("class", "welcome_secondary_btn")
         self.github_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.github_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com/OpenSportsLab/soccernetpro-ui/tree/dev-jintao")))
+        self.github_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com/OpenSportsLab/VideoAnnotationTool")))
 
         links_layout.addWidget(self.tutorial_btn)
         links_layout.addWidget(self.github_btn)

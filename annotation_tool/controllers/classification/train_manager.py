@@ -11,7 +11,7 @@ from PyQt6.QtCore import QThread, pyqtSignal, QObject
 from PyQt6.QtWidgets import QMessageBox
 
 # Assume the model invocation style is the same as inference
-from soccernetpro import model
+from opensportslib import model
 
 class TrainWorker(QThread):
     """
@@ -82,7 +82,7 @@ class TrainWorker(QThread):
             config['TRAIN']['save_every'] = 1  # Save by epoch
 
             # [NEW] Try to inject step-based checkpoint save options
-            # These keys depend on whether soccernetpro supports them internally
+            # These keys depend on whether opensportslib supports them internally
             config['TRAIN']['save_step'] = 500
             config['TRAIN']['checkpoint_interval'] = 500  # Fallback compatibility key
             

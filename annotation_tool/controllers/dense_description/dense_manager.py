@@ -40,7 +40,6 @@ class DenseManager:
     def setup_connections(self):
         """Link UI signals to logic handlers."""
         # --- Left Panel (Clip Tree) ---
-        pc = self.left_panel.project_controls
         
         self.left_panel.tree.selectionModel().currentChanged.connect(self._on_clip_selected)
         self.left_panel.filter_combo.currentIndexChanged.connect(self._apply_clip_filter)
@@ -297,7 +296,6 @@ class DenseManager:
             if i == 0:
                 first_idx = item.index()
         
-        self.left_panel.project_controls.set_project_loaded_state(True)
         self._apply_clip_filter(self.left_panel.filter_combo.currentIndex())
         
         if first_idx and first_idx.isValid():

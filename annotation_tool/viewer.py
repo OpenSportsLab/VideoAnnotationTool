@@ -83,6 +83,7 @@ class ActionClassifierApp(QMainWindow):
         self.ui.classification_ui.right_panel.manual_box.setEnabled(False)
         
         self.setup_dynamic_ui()
+        self._setup_menu_bar()
         self._setup_shortcuts()
 
         self.ui.stack_layout.currentChanged.connect(self._adjust_window_size)
@@ -174,15 +175,7 @@ class ActionClassifierApp(QMainWindow):
         cls_left.filter_combo.clear()
         cls_left.filter_combo.addItems(["Show All", "Hand Labelled", "Smart Labelled", "No Labelled"])
         cls_left.filter_combo.blockSignals(False)
-        cls_controls = cls_left.project_controls
-        
-        cls_controls.createRequested.connect(self._safe_create_project)
-        cls_controls.loadRequested.connect(self._safe_import_annotations)
-        
-        cls_controls.addVideoRequested.connect(self.nav_manager.add_items_via_dialog)
-        cls_controls.closeRequested.connect(self.router.close_project)
-        cls_controls.saveRequested.connect(self.router.class_fm.save_json)
-        cls_controls.exportRequested.connect(self.router.class_fm.export_json)
+        cls_left.addVideoRequested.connect(self.nav_manager.add_items_via_dialog)
 
         cls_left.clear_btn.clicked.connect(self._on_class_clear_clicked)
         cls_left.request_remove_item.connect(self._on_remove_item_requested)
@@ -201,7 +194,7 @@ class ActionClassifierApp(QMainWindow):
         cls_right = self.ui.classification_ui.right_panel
         
         # [MODIFIED] Disconnect the direct button click and use our new Tab-aware signals
-        # cls_right.confirm_btn.clicked.connect(self.annot_manager.save_manual_annotation) # <-- 删除或注释掉这行旧代码
+        # cls_right.confirm_btn.clicked.connect(self.annot_manager.save_manual_annotation) # <-- Delete or comment out this old code line
         
         # [NEW] Connect the tab-aware confirm signals to their respective manager functions
         cls_right.annotation_saved.connect(lambda data: self.annot_manager.save_manual_annotation())
@@ -217,31 +210,18 @@ class ActionClassifierApp(QMainWindow):
         cls_right.smart_infer_requested.connect(self.inference_manager.start_inference)
         cls_right.confirm_infer_requested.connect(lambda result_dict: self.annot_manager.save_manual_annotation())
 
-        # Undo/redo for Class/Loc
-        cls_right.undo_btn.clicked.connect(self.history_manager.perform_undo)
-        cls_right.redo_btn.clicked.connect(self.history_manager.perform_redo)
-        self.ui.localization_ui.right_panel.undo_btn.clicked.connect(self.history_manager.perform_undo)
-        self.ui.localization_ui.right_panel.redo_btn.clicked.connect(self.history_manager.perform_redo)
+        # [NEW] Undo/Redo linked directly to Menu Bar actions (buttons removed from panels)
+        # self.history_manager connections are handled in _setup_menu_bar and _setup_shortcuts
 
         # --- Localization panel ---
-        loc_controls = self.ui.localization_ui.left_panel.project_controls
-        loc_controls.createRequested.connect(self._safe_create_project)
-        loc_controls.loadRequested.connect(self._safe_import_annotations) 
-        loc_controls.closeRequested.connect(self.router.close_project)
+        loc_left = self.ui.localization_ui.left_panel
+        loc_left.addVideoRequested.connect(self.loc_manager._on_add_video_clicked)
 
         self.loc_manager.setup_connections()
 
         # --- Description Panel Wiring ---
         desc_left = self.ui.description_ui.left_panel
-        desc_controls = desc_left.project_controls
-        
-        desc_controls.createRequested.connect(self._safe_create_project)
-        desc_controls.loadRequested.connect(self._safe_import_annotations) 
-        desc_controls.closeRequested.connect(self.router.close_project)
-        
-        desc_controls.addVideoRequested.connect(self.desc_nav_manager.add_items_via_dialog)
-        desc_controls.saveRequested.connect(self.router.desc_fm.save_json)
-        desc_controls.exportRequested.connect(self.router.desc_fm.export_json)
+        desc_left.addVideoRequested.connect(self.desc_nav_manager.add_items_via_dialog)
 
         desc_left.filter_combo.currentIndexChanged.connect(self.desc_nav_manager.apply_action_filter)
         desc_left.clear_btn.clicked.connect(self._on_desc_clear_clicked)
@@ -249,21 +229,11 @@ class ActionClassifierApp(QMainWindow):
         self.desc_nav_manager.setup_connections()
         self.desc_annot_manager.setup_connections()
 
-        desc_right = self.ui.description_ui.right_panel
-        desc_right.undo_btn.clicked.connect(self.history_manager.perform_undo)
-        desc_right.redo_btn.clicked.connect(self.history_manager.perform_redo)
+        # desc_right.undo_btn/redo_btn removed
         
         # --- [NEW] Dense Description Panel Wiring ---
         dense_left = self.ui.dense_description_ui.left_panel
-        dense_controls = dense_left.project_controls
-        
-        dense_controls.createRequested.connect(self._safe_create_project)
-        dense_controls.loadRequested.connect(self._safe_import_annotations) 
-        dense_controls.closeRequested.connect(self.router.close_project)
-        
-        dense_controls.addVideoRequested.connect(self.dense_manager._on_add_video_clicked)
-        dense_controls.saveRequested.connect(self.router.dense_fm.overwrite_json)
-        dense_controls.exportRequested.connect(self.router.dense_fm.export_json)
+        dense_left.addVideoRequested.connect(self.dense_manager._on_add_video_clicked)
         
         dense_left.filter_combo.currentIndexChanged.connect(self.dense_manager._apply_clip_filter)
         dense_left.clear_btn.clicked.connect(self.dense_manager._on_clear_all_clicked)
@@ -272,10 +242,51 @@ class ActionClassifierApp(QMainWindow):
         # Initialize connections for Dense logic
         self.dense_manager.setup_connections()
         
-        # Connect Undo/Redo for Dense Right Panel
-        dense_right = self.ui.dense_description_ui.right_panel
-        dense_right.undo_btn.clicked.connect(self.history_manager.perform_undo)
-        dense_right.redo_btn.clicked.connect(self.history_manager.perform_redo)
+        # dense_right.undo_btn/redo_btn removed
+
+
+    def _setup_menu_bar(self) -> None:
+        from PyQt6.QtGui import QAction
+        
+        menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu("&File")
+
+        self.action_create = QAction("Create New Dataset", self)
+        self.action_create.triggered.connect(self._safe_create_project)
+        file_menu.addAction(self.action_create)
+
+        self.action_load = QAction("Load Dataset", self)
+        self.action_load.triggered.connect(self._safe_import_annotations)
+        file_menu.addAction(self.action_load)
+
+        self.action_close = QAction("Close Dataset", self)
+        self.action_close.triggered.connect(self.router.close_project)
+        file_menu.addAction(self.action_close)
+
+        file_menu.addSeparator()
+
+        self.action_save = QAction("Save Dataset", self)
+        self.action_save.triggered.connect(self._dispatch_save)
+        self.action_save.setEnabled(False)
+        file_menu.addAction(self.action_save)
+
+        self.action_export = QAction("Save Dataset As", self)
+        self.action_export.triggered.connect(self._dispatch_export)
+        self.action_export.setEnabled(False)
+        file_menu.addAction(self.action_export)
+
+        # --- Edit Menu ---
+        edit_menu = menu_bar.addMenu("&Edit")
+        
+        self.action_undo = QAction("Undo", self)
+        self.action_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        self.action_undo.triggered.connect(self.history_manager.perform_undo)
+        edit_menu.addAction(self.action_undo)
+        
+        self.action_redo = QAction("Redo", self)
+        self.action_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        self.action_redo.triggered.connect(self.history_manager.perform_redo)
+        edit_menu.addAction(self.action_redo)
 
     def _setup_shortcuts(self) -> None:
         """Register common keyboard shortcuts."""
@@ -571,24 +582,20 @@ class ActionClassifierApp(QMainWindow):
         can_export = self.model.json_loaded and has_data
         can_save = can_export and (self.model.current_json_path is not None) and self.model.is_data_dirty
 
-        # Update controls across all mode panels
-        for panel in [self.ui.classification_ui, self.ui.localization_ui, 
-                      self.ui.description_ui, self.ui.dense_description_ui]:
-            panel.left_panel.project_controls.btn_save.setEnabled(can_save)
-            panel.left_panel.project_controls.btn_export.setEnabled(can_export)
+        # Update menu actions
+        if hasattr(self, 'action_save'):
+            self.action_save.setEnabled(can_save)
+        if hasattr(self, 'action_export'):
+            self.action_export.setEnabled(can_export)
 
         can_undo = len(self.model.undo_stack) > 0
         can_redo = len(self.model.redo_stack) > 0
 
-        self.ui.classification_ui.right_panel.undo_btn.setEnabled(can_undo)
-        self.ui.classification_ui.right_panel.redo_btn.setEnabled(can_redo)
-        self.ui.localization_ui.right_panel.undo_btn.setEnabled(can_undo)
-        self.ui.localization_ui.right_panel.redo_btn.setEnabled(can_redo)
-        self.ui.description_ui.right_panel.undo_btn.setEnabled(can_undo)
-        self.ui.description_ui.right_panel.redo_btn.setEnabled(can_redo)
-        # [NEW] Dense right panel buttons
-        self.ui.dense_description_ui.right_panel.undo_btn.setEnabled(can_undo)
-        self.ui.dense_description_ui.right_panel.redo_btn.setEnabled(can_redo)
+        # Update menu actions
+        if hasattr(self, 'action_undo'):
+            self.action_undo.setEnabled(can_undo)
+        if hasattr(self, 'action_redo'):
+            self.action_redo.setEnabled(can_redo)
 
     def show_temp_msg(self, title: str, msg: str, duration: int = 1500, **kwargs) -> None:
         one_line = " ".join(str(msg).splitlines()).strip()

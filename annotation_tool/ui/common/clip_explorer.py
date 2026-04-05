@@ -5,8 +5,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QModelIndex
 
-# Import the shared controls
-from ui.common.project_controls import UnifiedProjectControls
+
 
 class CommonProjectTreePanel(QWidget):
     """
@@ -17,6 +16,7 @@ class CommonProjectTreePanel(QWidget):
     # Signal emitted when "Remove Item" is clicked in context menu
     # Emits the QModelIndex of the item to be removed
     request_remove_item = pyqtSignal(QModelIndex)
+    addVideoRequested = pyqtSignal()
 
     def __init__(self, 
                  tree_title="Project Items", 
@@ -32,20 +32,18 @@ class CommonProjectTreePanel(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(5)
         
-        # 1. Project Controls
-        self.project_controls = UnifiedProjectControls()
-        
-        # Expose control buttons for external controller connections
-        self.import_btn = self.project_controls.btn_load
-        self.create_btn = self.project_controls.btn_create
-        self.add_data_btn = self.project_controls.btn_add
-        
-        layout.addWidget(self.project_controls)
-        
-        # 2. Tree Title
+        # 1. Tree Title & Add Data Button
+        header_layout = QHBoxLayout()
         self.lbl_title = QLabel(tree_title)
         self.lbl_title.setProperty("class", "panel_header_lbl")
-        layout.addWidget(self.lbl_title)
+        header_layout.addWidget(self.lbl_title)
+        
+        self.btn_add_data = QPushButton("Add New Data")
+        self.btn_add_data.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_add_data.clicked.connect(self.addVideoRequested.emit)
+        header_layout.addWidget(self.btn_add_data)
+        
+        layout.addLayout(header_layout)
         
         # 3. The Tree View (MV Architecture)
         self.tree = QTreeView()

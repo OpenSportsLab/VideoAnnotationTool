@@ -5,4 +5,4 @@ We welcome contributions! Please:
 - Create a feature branch
 - Submit a pull request
 
-See [CONTRIBUTING.md](https://github.com/OpenSportsLab/soccernetpro-ui/blob/main/CONTRIBUTING.md) for more details.
+See [CONTRIBUTING.md](https://github.com/OpenSportsLab/VideoAnnotationTool/blob/main/CONTRIBUTING.md) for more details.

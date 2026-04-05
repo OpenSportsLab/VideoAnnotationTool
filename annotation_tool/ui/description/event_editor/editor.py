@@ -11,8 +11,6 @@ class DescriptionEventEditor(QWidget):
     """
     
     # Signals
-    undo_clicked = pyqtSignal()
-    redo_clicked = pyqtSignal()
     confirm_clicked = pyqtSignal()      # Save changes
     clear_clicked = pyqtSignal()        # Clear text
 
@@ -24,23 +22,7 @@ class DescriptionEventEditor(QWidget):
         self.layout.setSpacing(10)
         self.layout.setContentsMargins(15, 15, 15, 15)
         
-        # --- 1. Undo/Redo Controls ---
-        h_undo = QHBoxLayout()
-        self.undo_btn = QPushButton("Undo")
-        self.redo_btn = QPushButton("Redo")
-        
-        for btn in [self.undo_btn, self.redo_btn]:
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setEnabled(False)
-            # Use property for styling if needed, or objectName
-            btn.setProperty("class", "editor_control_btn")
-            
-        self.undo_btn.clicked.connect(self.undo_clicked.emit)
-        self.redo_btn.clicked.connect(self.redo_clicked.emit)
-            
-        h_undo.addWidget(self.undo_btn)
-        h_undo.addWidget(self.redo_btn)
-        self.layout.addLayout(h_undo)
+        # 1. Undo/Redo removed (moved to menu bar)
         
         # --- 2. Text Editor Area ---
         lbl_instr = QLabel("Description / Caption:")

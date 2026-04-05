@@ -21,15 +21,10 @@ class DenseRightPanel(QWidget):
 
         layout = QVBoxLayout(self)
 
-        # 1. Header with Undo/Redo (Reusing Localization Style)
+        # 1. Header (Undo/Redo removed and moved to menu bar)
         header_layout = QHBoxLayout()
-        self.undo_btn = QPushButton("Undo")
-        self.redo_btn = QPushButton("Redo")
-
         header_layout.addWidget(QLabel("<b>Dense Annotation</b>"))
         header_layout.addStretch()
-        header_layout.addWidget(self.undo_btn)
-        header_layout.addWidget(self.redo_btn)
         layout.addLayout(header_layout)
 
         # 2. Top: Input Widget
