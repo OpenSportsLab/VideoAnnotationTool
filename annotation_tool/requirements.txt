@@ -6,3 +6,4 @@ wandb
 opensportslib==0.0.1.dev18
 imageio-ffmpeg
 tabulate
+pytorch-lightning
