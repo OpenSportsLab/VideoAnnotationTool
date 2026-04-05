@@ -1,4 +1,4 @@
-from .editor import DescriptionEventEditor
+from .editor import DescriptionAnnotationPanel
 
 # Export the class
-__all__ = ["DescriptionEventEditor"]
+__all__ = ["DescriptionAnnotationPanel"]

@@ -23,7 +23,7 @@ class LocalizationManager:
         
         self.left_panel = main_window.left_panel
         self.center_panel = main_window.center_panel
-        self.right_panel = main_window.localization_editor
+        self.right_panel = main_window.localization_panel
 
         self.inference_manager = LocalizationInferenceManager(self.main)
         self.inference_manager.inference_finished.connect(self._on_inference_success)

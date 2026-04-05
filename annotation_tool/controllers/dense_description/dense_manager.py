@@ -22,7 +22,7 @@ class DenseManager:
         # Access UI components from the Dense Description view
         self.left_panel = main_window.left_panel
         self.center_panel = main_window.center_panel
-        self.right_panel = main_window.dense_editor
+        self.right_panel = main_window.dense_panel
         
         # Media Controller setup
         self.media_controller = media_controller

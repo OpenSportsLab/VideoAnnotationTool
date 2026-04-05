@@ -300,15 +300,15 @@ class ClassFileManager:
         self.main.update_save_export_button_state()
         
         # --- UI Resets ---
-        self.main.classification_editor.manual_box.setEnabled(False)
+        self.main.classification_panel.manual_box.setEnabled(False)
         self.main.center_panel.media_preview.load_video(None)
         
         # [NEW] Explicitly reset the Smart Annotation UI (hide donut chart & batch results)
-        if hasattr(self.main.classification_editor, 'reset_smart_inference'):
-            self.main.classification_editor.reset_smart_inference()
+        if hasattr(self.main.classification_panel, 'reset_smart_inference'):
+            self.main.classification_panel.reset_smart_inference()
             
-        if hasattr(self.main.classification_editor, 'reset_train_ui'):
-            self.main.classification_editor.reset_train_ui()
+        if hasattr(self.main.classification_panel, 'reset_train_ui'):
+            self.main.classification_panel.reset_train_ui()
         if full_reset: 
             self.main.setup_dynamic_ui()
 

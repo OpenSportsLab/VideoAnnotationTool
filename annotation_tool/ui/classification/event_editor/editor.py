@@ -126,7 +126,7 @@ class NativeDonutChart(QWidget):
             QToolTip.hideText()
 
 
-class ClassificationEventEditor(QWidget):
+class ClassificationAnnotationPanel(QWidget):
     add_head_clicked = pyqtSignal(str)
     remove_head_clicked = pyqtSignal(str)
     style_mode_changed = pyqtSignal(str)

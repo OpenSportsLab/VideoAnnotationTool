@@ -9,7 +9,7 @@ from .spotting_controls import AnnotationManagementWidget
 from .annotation_table import AnnotationTableWidget
 from .smart_spotting import SmartSpottingWidget
 
-class LocRightPanel(QWidget):
+class LocalizationAnnotationPanel(QWidget):
     """
     Right Panel for Localization Mode.
     Contains: Undo/Redo Buttons (Global), and a TabWidget separating 

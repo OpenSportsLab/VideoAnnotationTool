@@ -228,8 +228,8 @@ class TrainManager(QObject):
         self.config_path = os.path.join(self.base_dir, "config.yaml")
 
         # Connect UI buttons to start/stop handlers
-        self.main.classification_editor.btn_start_train.clicked.connect(self.start_training)
-        self.main.classification_editor.btn_stop_train.clicked.connect(self.stop_training)
+        self.main.classification_panel.btn_start_train.clicked.connect(self.start_training)
+        self.main.classification_panel.btn_stop_train.clicked.connect(self.stop_training)
 
     def start_training(self):
         # Prevent launching a second training job while one is already running
@@ -246,31 +246,31 @@ class TrainManager(QObject):
 
         # Collect training parameters from the UI controls
         params = {
-            "epochs": self.main.classification_editor.spin_epochs.currentText(),
-            "lr": self.main.classification_editor.edit_lr.text(),
-            "batch": self.main.classification_editor.spin_batch.currentText(),
+            "epochs": self.main.classification_panel.spin_epochs.currentText(),
+            "lr": self.main.classification_panel.edit_lr.text(),
+            "batch": self.main.classification_panel.spin_batch.currentText(),
             # Extract only the raw device token from combo text, e.g. "cuda (GPU)" -> "cuda"
-            "device": self.main.classification_editor.combo_device.currentText().split(" ")[0],
-            "workers": self.main.classification_editor.spin_workers.currentText(),
+            "device": self.main.classification_panel.combo_device.currentText().split(" ")[0],
+            "workers": self.main.classification_panel.spin_workers.currentText(),
             "train_json": train_json,
             # Infer the validation annotation path by filename replacement
             "valid_json": train_json.replace("annotations_train.json", "annotations_valid.json")
         }
 
         # Prepare UI state for an active training session
-        self.main.classification_editor.btn_start_train.setEnabled(False)
-        self.main.classification_editor.btn_stop_train.setEnabled(True)
-        self.main.classification_editor.train_progress.setVisible(True)
-        self.main.classification_editor.train_progress.setValue(0)
-        self.main.classification_editor.lbl_train_status.setVisible(True)
-        self.main.classification_editor.lbl_train_status.setText("🚀 Starting Training Loop...")
-        self.main.classification_editor.train_console.clear()
+        self.main.classification_panel.btn_start_train.setEnabled(False)
+        self.main.classification_panel.btn_stop_train.setEnabled(True)
+        self.main.classification_panel.train_progress.setVisible(True)
+        self.main.classification_panel.train_progress.setValue(0)
+        self.main.classification_panel.lbl_train_status.setVisible(True)
+        self.main.classification_panel.lbl_train_status.setText("🚀 Starting Training Loop...")
+        self.main.classification_panel.train_console.clear()
 
         # Create and wire up the training worker thread
         self.worker = TrainWorker(self.config_path, params)
         self.worker.log_signal.connect(self._append_log)
-        self.worker.progress_signal.connect(self.main.classification_editor.train_progress.setValue)
-        self.worker.status_msg_signal.connect(self.main.classification_editor.lbl_train_status.setText)
+        self.worker.progress_signal.connect(self.main.classification_panel.train_progress.setValue)
+        self.worker.status_msg_signal.connect(self.main.classification_panel.lbl_train_status.setText)
         self.worker.finished_signal.connect(self._on_train_finished)
 
         # Start background training
@@ -278,7 +278,7 @@ class TrainManager(QObject):
 
     def _append_log(self, text):
         # Append a line of log text to the training console widget
-        self.main.classification_editor.train_console.append(text)
+        self.main.classification_panel.train_console.append(text)
 
     def stop_training(self):
         """Force-stop the training thread."""
@@ -292,8 +292,8 @@ class TrainManager(QObject):
             
             if reply == QMessageBox.StandardButton.Yes:
                 # Update UI to reflect aborting state
-                self.main.classification_editor.btn_stop_train.setEnabled(False)
-                self.main.classification_editor.lbl_train_status.setText("🛑 Aborting...")
+                self.main.classification_panel.btn_stop_train.setEnabled(False)
+                self.main.classification_panel.lbl_train_status.setText("🛑 Aborting...")
                 
                 # Forcefully terminate the worker thread
                 self.worker.terminate()
@@ -304,10 +304,10 @@ class TrainManager(QObject):
 
     def _on_train_finished(self, success, message):
         # Restore UI controls after training ends
-        self.main.classification_editor.btn_start_train.setEnabled(True)
-        self.main.classification_editor.btn_stop_train.setEnabled(False)
-        self.main.classification_editor.train_progress.setVisible(False)
-        self.main.classification_editor.lbl_train_status.setVisible(False)
+        self.main.classification_panel.btn_start_train.setEnabled(True)
+        self.main.classification_panel.btn_stop_train.setEnabled(False)
+        self.main.classification_panel.train_progress.setVisible(False)
+        self.main.classification_panel.lbl_train_status.setVisible(False)
 
         # Show result feedback and append a final log line
         if success:

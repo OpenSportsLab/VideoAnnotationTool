@@ -23,8 +23,8 @@ class DescAnnotationManager:
         tree.selectionModel().currentChanged.connect(self.on_item_selected)
         
         # Connect Editor Buttons
-        self.main.description_editor.confirm_clicked.connect(self.save_current_annotation)
-        self.main.description_editor.clear_clicked.connect(self.clear_current_text)
+        self.main.description_panel.confirm_clicked.connect(self.save_current_annotation)
+        self.main.description_panel.clear_clicked.connect(self.clear_current_text)
 
     def on_item_selected(self, current: QModelIndex, previous: QModelIndex):
         """
@@ -32,9 +32,9 @@ class DescAnnotationManager:
         Loads the corresponding data into the text editor.
         """
         if not current.isValid():
-            self.main.description_editor.caption_edit.clear()
+            self.main.description_panel.caption_edit.clear()
             self.current_action_path = None
-            self.main.description_editor.caption_edit.setEnabled(False)
+            self.main.description_panel.caption_edit.setEnabled(False)
             return
 
         # 1. Identify the Action Path
@@ -48,7 +48,7 @@ class DescAnnotationManager:
         
         
         self.current_action_path = path
-        self.main.description_editor.caption_edit.setEnabled(True)
+        self.main.description_panel.caption_edit.setEnabled(True)
         
         # 2. Find Data Object in Model
         # We search by path first, fallback to ID if needed
@@ -58,7 +58,7 @@ class DescAnnotationManager:
              action_data = next((item for item in self.model.action_item_data if item.get("id") == current.data()), None)
 
         if not action_data:
-            self.main.description_editor.caption_edit.setPlaceholderText("No metadata found for this item.")
+            self.main.description_panel.caption_edit.setPlaceholderText("No metadata found for this item.")
             return
 
         # 3. Format and Display Text
@@ -97,7 +97,7 @@ class DescAnnotationManager:
             
             full_text = "\n\n".join(formatted_blocks)
 
-        self.main.description_editor.caption_edit.setPlainText(full_text)
+        self.main.description_panel.caption_edit.setPlainText(full_text)
 
     def save_current_annotation(self):
         """
@@ -108,7 +108,7 @@ class DescAnnotationManager:
         if not self.current_action_path:
             return
 
-        text_content = self.main.description_editor.caption_edit.toPlainText()
+        text_content = self.main.description_panel.caption_edit.toPlainText()
         
         # Find the target data item in the model
         target_item = None
@@ -158,7 +158,7 @@ class DescAnnotationManager:
 
     def clear_current_text(self):
         """Clears the editor text."""
-        self.main.description_editor.caption_edit.clear()
+        self.main.description_panel.caption_edit.clear()
 
     def _update_tree_icon(self, path, is_done):
         """Updates the checkmark icon in the tree view."""

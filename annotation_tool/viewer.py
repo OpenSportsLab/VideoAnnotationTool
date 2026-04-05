@@ -25,10 +25,10 @@ from models import AppStateModel
 from ui.common.welcome_widget import WelcomeWidget
 from ui.common.clip_explorer import CommonProjectTreePanel
 from ui.localization.media_player import LocCenterPanel
-from ui.classification.event_editor import ClassificationEventEditor
-from ui.localization.event_editor import LocRightPanel
-from ui.description.event_editor import DescriptionEventEditor
-from ui.dense_description.event_editor import DenseRightPanel
+from ui.classification.event_editor import ClassificationAnnotationPanel
+from ui.localization.event_editor import LocalizationAnnotationPanel
+from ui.description.event_editor import DescriptionAnnotationPanel
+from ui.dense_description.event_editor import DenseAnnotationPanel
 
 from models.project_tree import ProjectTreeModel
 from utils import create_checkmark_icon, natural_sort_key, resource_path
@@ -82,15 +82,15 @@ class VideoAnnotationWindow(QMainWindow):
         self.right_tabs = QTabWidget()
         self.right_tabs.setDocumentMode(True)
         
-        self.classification_editor = ClassificationEventEditor()
-        self.localization_editor = LocRightPanel()
-        self.description_editor = DescriptionEventEditor()
-        self.dense_editor = DenseRightPanel()
+        self.classification_panel = ClassificationAnnotationPanel()
+        self.localization_panel = LocalizationAnnotationPanel()
+        self.description_panel = DescriptionAnnotationPanel()
+        self.dense_panel = DenseAnnotationPanel()
         
-        self.right_tabs.addTab(self.classification_editor, "CLS")
-        self.right_tabs.addTab(self.localization_editor, "LOC")
-        self.right_tabs.addTab(self.description_editor, "DESC")
-        self.right_tabs.addTab(self.dense_editor, "DENSE")
+        self.right_tabs.addTab(self.classification_panel, "CLS")
+        self.right_tabs.addTab(self.localization_panel, "LOC")
+        self.right_tabs.addTab(self.description_panel, "DESC")
+        self.right_tabs.addTab(self.dense_panel, "DENSE")
         
         self.editor_dock = QDockWidget("Annotation Editor", self)
         self.editor_dock.setObjectName("AnnotationEditorDock")
@@ -195,10 +195,10 @@ class VideoAnnotationWindow(QMainWindow):
         self.editor_dock.setEnabled(enabled)
         
         # Also explicitly disable the sub-editors to be safe
-        self.classification_editor.manual_box.setEnabled(enabled)
-        self.localization_editor.setEnabled(enabled)
-        self.description_editor.setEnabled(enabled)
-        self.dense_editor.setEnabled(enabled)
+        self.classification_panel.manual_box.setEnabled(enabled)
+        self.localization_panel.setEnabled(enabled)
+        self.description_panel.setEnabled(enabled)
+        self.dense_panel.setEnabled(enabled)
 
     # Welcome screen
     def _safe_import_annotations(self): self.router.import_annotations()
@@ -238,14 +238,14 @@ class VideoAnnotationWindow(QMainWindow):
         center_panel.timeline.seekRequested.connect(center_panel.media_preview.set_position)
         
         # --- Classification Editor ---
-        self.classification_editor.annotation_saved.connect(lambda data: self.annot_manager.save_manual_annotation())
-        self.classification_editor.smart_confirm_requested.connect(self.annot_manager.confirm_smart_annotation_as_manual)
-        self.classification_editor.hand_clear_requested.connect(self.annot_manager.clear_current_manual_annotation)
-        self.classification_editor.smart_clear_requested.connect(self.annot_manager.clear_current_smart_annotation)
-        self.classification_editor.add_head_clicked.connect(self.annot_manager.handle_add_label_head)
-        self.classification_editor.remove_head_clicked.connect(self.annot_manager.handle_remove_label_head)
-        self.classification_editor.smart_infer_requested.connect(self.inference_manager.start_inference)
-        self.classification_editor.confirm_infer_requested.connect(lambda res: self.annot_manager.save_manual_annotation())
+        self.classification_panel.annotation_saved.connect(lambda data: self.annot_manager.save_manual_annotation())
+        self.classification_panel.smart_confirm_requested.connect(self.annot_manager.confirm_smart_annotation_as_manual)
+        self.classification_panel.hand_clear_requested.connect(self.annot_manager.clear_current_manual_annotation)
+        self.classification_panel.smart_clear_requested.connect(self.annot_manager.clear_current_smart_annotation)
+        self.classification_panel.add_head_clicked.connect(self.annot_manager.handle_add_label_head)
+        self.classification_panel.remove_head_clicked.connect(self.annot_manager.handle_remove_label_head)
+        self.classification_panel.smart_infer_requested.connect(self.inference_manager.start_inference)
+        self.classification_panel.confirm_infer_requested.connect(lambda res: self.annot_manager.save_manual_annotation())
 
         # --- Localization Editor ---
         self.loc_manager.setup_connections()
@@ -358,10 +358,10 @@ class VideoAnnotationWindow(QMainWindow):
     def _on_tree_selection_changed(self, current: QModelIndex, previous: QModelIndex):
         if current.isValid():
             # [CENTRALIZED] Enable all editors now that a clip is selected
-            self.classification_editor.manual_box.setEnabled(True)
-            self.localization_editor.setEnabled(True)
-            self.description_editor.setEnabled(True)
-            self.dense_editor.setEnabled(True)
+            self.classification_panel.manual_box.setEnabled(True)
+            self.localization_panel.setEnabled(True)
+            self.description_panel.setEnabled(True)
+            self.dense_panel.setEnabled(True)
             
             # 1. Handle Branch (Parent) vs Leaf (Video)
             # If the user clicks a parent (e.g. Action Name), auto-select its first child (the video)
@@ -383,10 +383,10 @@ class VideoAnnotationWindow(QMainWindow):
                 self.nav_manager.on_item_selected(current, previous)
         else:
             # Disable editors if no clip is selected
-            self.classification_editor.manual_box.setEnabled(False)
-            self.localization_editor.setEnabled(False)
-            self.description_editor.setEnabled(False)
-            self.dense_editor.setEnabled(False)
+            self.classification_panel.manual_box.setEnabled(False)
+            self.localization_panel.setEnabled(False)
+            self.description_panel.setEnabled(False)
+            self.dense_panel.setEnabled(False)
 
     def _on_remove_item_requested(self, index: QModelIndex):
         if self._is_dense_mode(): self.dense_manager.remove_single_item(index)
@@ -462,7 +462,7 @@ class VideoAnnotationWindow(QMainWindow):
 
     def prepare_new_project_ui(self) -> None:
         self.set_project_ui_enabled(True)
-        self.classification_editor.task_label.setText(f"Task: {self.model.current_task_name}")
+        self.classification_panel.task_label.setText(f"Task: {self.model.current_task_name}")
         self.show_temp_msg("New Project Created", "Classification ready.")
 
     def prepare_new_localization_ui(self) -> None:
@@ -538,7 +538,7 @@ class VideoAnnotationWindow(QMainWindow):
         return idx.data(ProjectTreeModel.FilePathRole)
 
     def sync_batch_inference_dropdowns(self) -> None:
-        ed = self.classification_editor
+        ed = self.classification_panel
         if not hasattr(ed, 'update_action_list'): return
         sorted_list = sorted(self.model.action_item_data, key=lambda d: natural_sort_key(d.get("name", "")))
         action_names = [d["name"] for d in sorted_list]
@@ -575,13 +575,13 @@ class VideoAnnotationWindow(QMainWindow):
         item.setIcon(self.done_icon if is_done else self.empty_icon)
 
     def setup_dynamic_ui(self) -> None:
-        ed = self.classification_editor
+        ed = self.classification_panel
         ed.setup_dynamic_labels(self.model.label_definitions)
         ed.task_label.setText(f"Task: {self.model.current_task_name}")
         self._connect_dynamic_type_buttons()
 
     def _connect_dynamic_type_buttons(self) -> None:
-        ed = self.classification_editor
+        ed = self.classification_panel
         for head, group in ed.label_groups.items():
             try: group.add_btn.clicked.disconnect()
             except: pass

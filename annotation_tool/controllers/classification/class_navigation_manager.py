@@ -125,7 +125,7 @@ class NavigationManager:
 
         # Update Right Panel (Annotations)
         self.main.annot_manager.display_manual_annotation(path)
-        self.main.classification_editor.manual_box.setEnabled(True)
+        self.main.classification_panel.manual_box.setEnabled(True)
         
         # [CHANGED] Use MediaController for robust loading logic
         # This replaces the manual stop/load/timer sequence.

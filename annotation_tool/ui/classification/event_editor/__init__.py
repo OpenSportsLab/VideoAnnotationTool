@@ -1,4 +1,4 @@
-from .editor import ClassificationEventEditor
+from .editor import ClassificationAnnotationPanel
 from .dynamic_widgets import DynamicSingleLabelGroup, DynamicMultiLabelGroup
 
-ClassRightPanel = ClassificationEventEditor
+ClassificationAnnotationPanel = ClassificationAnnotationPanel

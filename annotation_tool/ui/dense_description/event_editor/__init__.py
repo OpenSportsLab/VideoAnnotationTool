@@ -8,7 +8,7 @@ from .desc_input_widget import DenseDescriptionInputWidget
 from .dense_table import DenseTableModel, AnnotationTableWidget
 
 
-class DenseRightPanel(QWidget):
+class DenseAnnotationPanel(QWidget):
     """
     Right Panel for Dense Description Mode.
     Contains Undo/Redo, Input Field, and Description Table.

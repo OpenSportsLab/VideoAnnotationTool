@@ -23,8 +23,8 @@ class DescNavigationManager:
 
     def reset_ui(self):
         """Reset the description editor UI for a new project."""
-        self.main.description_editor.caption_edit.setPlainText("")
-        self.main.description_editor.setEnabled(False)
+        self.main.description_panel.caption_edit.setPlainText("")
+        self.main.description_panel.setEnabled(False)
 
     def setup_connections(self):
         """Called by viewer.py to wire up signals."""

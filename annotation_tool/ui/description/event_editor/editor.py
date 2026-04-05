@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
-class DescriptionEventEditor(QWidget):
+class DescriptionAnnotationPanel(QWidget):
     """
     Right Panel for Description Mode.
     Single text area for Q&A style descriptions.

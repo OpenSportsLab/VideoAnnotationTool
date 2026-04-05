@@ -268,6 +268,6 @@ class DescFileManager:
             self.model.desc_global_metadata = {}
         
         # Clear Description UI elements
-        if hasattr(self.main, "description_editor"):
-             self.main.description_editor.caption_edit.clear()
-             self.main.description_editor.caption_edit.setEnabled(False)
+        if hasattr(self.main, "description_panel"):
+             self.main.description_panel.caption_edit.clear()
+             self.main.description_panel.caption_edit.setEnabled(False)

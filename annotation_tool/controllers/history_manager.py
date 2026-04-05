@@ -140,7 +140,7 @@ class HistoryManager:
             path = cmd['path']
             if self.main.get_current_action_path() == path:
                 val = cmd['old_val'] if is_undo else cmd['new_val']
-                grp = self.main.classification_editor.label_groups.get(cmd['head'])
+                grp = self.main.classification_panel.label_groups.get(cmd['head'])
                 if grp:
                     if isinstance(grp, DynamicSingleLabelGroup): grp.set_checked_label(val)
                     else: grp.set_checked_labels(val)
