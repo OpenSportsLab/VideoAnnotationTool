@@ -5,3 +5,4 @@ soccernetpro==0.0.1.dev11
 wandb
 opensportslib==0.0.1.dev18
 imageio-ffmpeg
+tabulate
