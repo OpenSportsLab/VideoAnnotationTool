@@ -92,7 +92,7 @@ class InferenceWorker(QThread):
         self.json_path = json_path
         self.video_path = video_path 
         
-        # [DYNAMIC] Assigned from config.yaml, no more hardcoding!
+        # [DYNAMIC] Assigned from class_config.yaml, no more hardcoding!
         self.label_map = label_map
 
     def run(self):
@@ -327,7 +327,7 @@ class InferenceManager(QObject):
         else:
             self.base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
             
-        self.config_path = os.path.join(self.base_dir, "config.yaml")
+        self.config_path = os.path.join(self.base_dir, "class_config.yaml")
         self.worker = None
         self.batch_worker = None
         
@@ -336,7 +336,7 @@ class InferenceManager(QObject):
 
     def _get_label_map_from_config(self) -> dict:
         """
-        [DYNAMIC PARSING] Reads the config.yaml on-the-fly to extract the classes list.
+        [DYNAMIC PARSING] Reads the class_config.yaml on-the-fly to extract the classes list.
         Prevents hardcoding so the framework scales effortlessly to new sports/models.
         """
         label_map = {}
@@ -350,7 +350,7 @@ class InferenceManager(QObject):
                 for i, cls_name in enumerate(classes_list):
                     label_map[str(i)] = cls_name
         except Exception as e:
-            print(f"Warning: Could not read classes from config.yaml dynamically: {e}")
+            print(f"Warning: Could not read classes from class_config.yaml dynamically: {e}")
             
         # Absolute failsafe if the user forgot to write `classes:` in their yaml
         if not label_map:
@@ -363,7 +363,7 @@ class InferenceManager(QObject):
 
     def start_inference(self):
         if not os.path.exists(self.config_path):
-            QMessageBox.critical(self.main, "Error", f"config.yaml not found at:\n{self.config_path}")
+            QMessageBox.critical(self.main, "Error", f"class_config.yaml not found at:\n{self.config_path}")
             return
 
         current_json_path = self.main.model.current_json_path 
@@ -431,7 +431,7 @@ class InferenceManager(QObject):
 
     def start_batch_inference(self, start_idx: int, end_idx: int):
         if not os.path.exists(self.config_path):
-            QMessageBox.critical(self.main, "Error", f"config.yaml not found at:\n{self.config_path}")
+            QMessageBox.critical(self.main, "Error", f"class_config.yaml not found at:\n{self.config_path}")
             return
 
         sorted_items = sorted(self.main.model.action_item_data, key=lambda x: natural_sort_key(x.get('name', '')))
