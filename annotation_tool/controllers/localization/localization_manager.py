@@ -20,7 +20,7 @@ class LocalizationManager:
         self.model = main_window.model
         self.tree_model = main_window.tree_model 
         
-        self.left_panel = main_window.left_panel
+        self.dataset_explorer_panel = main_window.dataset_explorer_panel
         self.center_panel = main_window.center_panel
         self.right_panel = main_window.localization_panel
 
@@ -42,9 +42,9 @@ class LocalizationManager:
     def setup_connections(self):
         # --- Left Panel ---
         # Note: Create/Load/Close/Save/Export are handled by the File menu bar.
-        # Add Data is wired from main_window.py -> left_panel.addVideoRequested
+        # Add Data is wired from main_window.py -> dataset_explorer_panel.addDataRequested
         
-        # Tree context menu remove is owned by ProjectNavigatorPanel/Controller.
+        # Tree context menu remove is owned by DatasetExplorerPanel/Controller.
         
         # --- Right Panel ---
         #Smart Annotation UI
@@ -339,7 +339,7 @@ class LocalizationManager:
         self.center_panel.timeline.set_markers(markers)
 
     def _navigate_clip(self, step):
-        tree = self.left_panel.tree
+        tree = self.dataset_explorer_panel.tree
         curr_idx = tree.currentIndex()
         if not curr_idx.isValid(): return
         next_idx = tree.indexBelow(curr_idx) if step > 0 else tree.indexAbove(curr_idx)

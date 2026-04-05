@@ -18,7 +18,7 @@ class DenseManager:
         self.tree_model = main_window.tree_model 
         
         # Access UI components from the Dense Description view
-        self.left_panel = main_window.left_panel
+        self.dataset_explorer_panel = main_window.dataset_explorer_panel
         self.center_panel = main_window.center_panel
         self.right_panel = main_window.dense_panel
         
@@ -264,7 +264,7 @@ class DenseManager:
         self.right_panel.input_widget.set_text("") # Clear editor on delete
 
     def _navigate_clip(self, step):
-        tree = self.left_panel.tree
+        tree = self.dataset_explorer_panel.tree
         curr = tree.currentIndex()
         if not curr.isValid(): return
         nxt = tree.indexBelow(curr) if step > 0 else tree.indexAbove(curr)

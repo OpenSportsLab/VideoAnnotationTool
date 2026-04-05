@@ -11,7 +11,7 @@ The goal of this module is to adhere to the **DRY (Don't Repeat Yourself)** prin
 * **Class:** `MainWorkspace`
 * **Purpose:** The modern, dock-based architecture providing a unified interface for all annotation modes.
 * **Structure:** A `QMainWindow` featuring:
-1. **Left Dock:** Project Navigator (`ProjectNavigatorPanel`).
+1. **Left Dock:** Dataset Explorer (`DatasetExplorerPanel`).
 2. **Center Panel:** Generic Media Player with unified controls.
 3. **Right Dock:** Tab-based Annotation Editor (CLS, LOC, DESC, DENSE).
 
@@ -32,9 +32,9 @@ The goal of this module is to adhere to the **DRY (Don't Repeat Yourself)** prin
 
 
 
-### 3. `project_navigator_panel.py`
+### 3. `dataset_explorer_panel.py`
 
-* **Class:** `ProjectNavigatorPanel`
+* **Class:** `DatasetExplorerPanel`
 * **Purpose:** The standardized **Left Sidebar** for file navigation.
 * **Key Features:**
 * **Architecture:** Refactored to use **Qt Model/View** (`QTreeView`) instead of `QTreeWidget` for better performance and separation of data.

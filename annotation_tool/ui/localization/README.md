@@ -8,7 +8,7 @@ This directory contains the user interface components specifically designed for 
 localization/
 ├── panels.py           # High-level layout container for the Localization view
 ├── widgets/            # Specialized functional components
-│   ├── project_navigator_panel.py # Left sidebar: Video list & project controls
+│   ├── dataset_explorer_panel.py # Left sidebar: Video list & project controls
 │   ├── media_player.py     # Center area: Video player & timeline
 │   └── event_editor.py     # Right sidebar: Event buttons & data table
 └── __init__.py
@@ -30,7 +30,7 @@ This file defines the `LocalizationUI` class, which acts as the main container. 
 
 It serves as the integration point where these distinct widgets are instantiated and arranged.
 
-### 2. `widgets/project_navigator_panel.py` (Left Sidebar)
+### 2. `widgets/dataset_explorer_panel.py` (Left Sidebar)
 
 **Purpose:** Resource Navigation & Project Management.
 

@@ -23,7 +23,7 @@ class AppRouter:
 
         dlg = ProjectTypeDialog(self.main)
         if dlg.exec():
-            self.main.project_nav_controller.create_new_project(dlg.selected_mode)
+            self.main.dataset_explorer_controller.create_new_project(dlg.selected_mode)
 
     def import_annotations(self):
         """Global entry point for loading a JSON file."""
@@ -46,9 +46,9 @@ class AppRouter:
             QMessageBox.critical(self.main, "Error", f"Invalid JSON: {e}")
             return
 
-        if not self.main.project_nav_controller.load_project(data, file_path):
+        if not self.main.dataset_explorer_controller.load_project(data, file_path):
             QMessageBox.critical(self.main, "Error", "Unknown JSON format or Task Type.")
 
     def close_project(self):
         """Handles closing the current project."""
-        self.main.project_nav_controller.close_project()
+        self.main.dataset_explorer_controller.close_project()

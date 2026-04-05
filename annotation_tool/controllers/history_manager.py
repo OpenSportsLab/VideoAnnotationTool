@@ -58,12 +58,12 @@ class HistoryManager:
             # Refresh Events (Table & Timeline)
             self.main.loc_manager._refresh_current_clip_events()
             # Refresh left side
-            self.main.project_nav_controller.populate_tree()
+            self.main.dataset_explorer_controller.populate_tree()
 
         # 2: Description Mode
         elif tab_idx == 2:
             # Refresh the editor text by re-triggering selection logic
-            tree = self.main.left_panel.tree
+            tree = self.main.dataset_explorer_panel.tree
             current_idx = tree.selectionModel().currentIndex()
             if current_idx.isValid():
                 # Force reload of data from model to UI (pass None as previous index)

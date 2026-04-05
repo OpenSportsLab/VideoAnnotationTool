@@ -287,7 +287,7 @@ QPushButton[class="welcome_secondary_btn"]:pressed {
 
 
 /* --- Common Project Tree Panel --- */
-/* Target: ui/common/project_navigator_panel.py */
+/* Target: ui/common/dataset_explorer_panel.py */
 
 QLabel[class="panel_header_lbl"] {
     font-weight: bold;

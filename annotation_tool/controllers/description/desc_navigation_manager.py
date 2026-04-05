@@ -1,9 +1,6 @@
 import os
 from PyQt6.QtCore import QModelIndex
 
-# [Ref] Import Model Roles
-from models.project_tree import ProjectTreeModel
-
 # [Ref] Import the Unified MediaController
 from controllers.media_controller import MediaController
 
@@ -41,14 +38,14 @@ class DescNavigationManager:
         """
         if not current.isValid(): return
 
-        path = current.data(ProjectTreeModel.FilePathRole)
+        path = current.data(self.main.tree_model.FilePathRole)
         model = self.main.tree_model
         
         # Handle folder selection: try to play first child
         if model.hasChildren(current):
             first_child_idx = model.index(0, 0, current)
             if first_child_idx.isValid():
-                path = first_child_idx.data(ProjectTreeModel.FilePathRole)
+                path = first_child_idx.data(self.main.tree_model.FilePathRole)
             else:
                 return 
 
@@ -75,7 +72,7 @@ class DescNavigationManager:
     def nav_next_clip(self): self._nav_tree(step=1, level='child')
 
     def _nav_tree(self, step, level):
-        tree = self.main.left_panel.tree
+        tree = self.main.dataset_explorer_panel.tree
         curr = tree.currentIndex()
         if not curr.isValid(): return
         

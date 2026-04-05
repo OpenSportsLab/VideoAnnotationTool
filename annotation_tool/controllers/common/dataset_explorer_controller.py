@@ -9,9 +9,9 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox
 from utils import natural_sort_key
 
 
-class ProjectNavigatorController(QObject):
+class DatasetExplorerController(QObject):
     """
-    Controller for the Project Navigator.
+    Controller for the Dataset Explorer.
     Owns project load/save/export/create lifecycle and populates the shared tree model.
     """
 
@@ -24,10 +24,10 @@ class ProjectNavigatorController(QObject):
         self.media_controller = media_controller
 
         self._setup_connections()
-        self._setup_navigator_mode_ops()
+        self._setup_mode_ops()
 
-    def _setup_navigator_mode_ops(self):
-        """Mode registry for navigator actions keyed by right-tab index."""
+    def _setup_mode_ops(self):
+        """Mode registry for Dataset Explorer actions keyed by right-tab index."""
         self._mode_nav_ops = {
             0: {
                 "add": self._add_classification_items,
@@ -57,9 +57,9 @@ class ProjectNavigatorController(QObject):
 
     def _setup_connections(self):
         """Connect Panel signals to Controller slots."""
-        self.panel.addVideoRequested.connect(self.handle_add_video)
+        self.panel.addDataRequested.connect(self.handle_add_video)
         self.panel.clear_btn.clicked.connect(self.handle_clear_workspace)
-        self.panel.request_remove_item.connect(self.handle_remove_item)
+        self.panel.removeItemRequested.connect(self.handle_remove_item)
         self.panel.filter_combo.currentIndexChanged.connect(self.handle_filter_change)
 
         # Selection handling remains centralized in MainWindow dispatch.
@@ -70,7 +70,7 @@ class ProjectNavigatorController(QObject):
     # ---------------------------------------------------------------------
     def populate_tree(self):
         """
-        Populate ProjectTreeModel from AppState.action_item_data.
+        Populate Dataset Explorer tree model from AppState.action_item_data.
         """
         self.tree_model.clear()
         self.app_state.action_item_map.clear()

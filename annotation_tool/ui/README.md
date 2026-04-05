@@ -32,9 +32,9 @@ ui/
 The backbone of the application, ensuring a consistent user experience across all modes.
 
 * **`main_window.py`**: The application entry point. It manages a `QStackedLayout` to switch between the **Welcome Screen** and the four **Workspaces** without destroying state.
-* **`workspace.py`**: Defines the `MainWorkspace`. This is a `QMainWindow` that hosts the Project Navigator (Left Dock), Media Player (Center), and the tabbed Annotation Editor (Right Dock).
+* **`workspace.py`**: Defines the `MainWorkspace`. This is a `QMainWindow` that hosts the Dataset Explorer (Left Dock), Media Player (Center), and the tabbed Annotation Editor (Right Dock).
 * **`video_surface.py`**: A pure rendering widget wrapping `QMediaPlayer` and `QVideoWidget`. It handles video output while leaving playback logic to the controllers.
-* **`project_navigator_panel.py`**: The **Left Sidebar** (Project Navigator). Refactored to use **Qt Model/View** (`QTreeView`) for high performance. It handles file navigation and filtering (e.g., "Show Labelled Only").
+* **`dataset_explorer_panel.py`**: The **Left Sidebar** (Dataset Explorer). Refactored to use **Qt Model/View** (`QTreeView`) for high performance. It handles file navigation and filtering (e.g., "Show Labelled Only").
 * **`dialogs.py`**:
 * `ProjectTypeDialog`: Updated wizard allowing selection of **Classification**, **Localization**, **Description**, or **Dense Description**.
 * `FolderPickerDialog`: A custom file tree allowing multi-folder selection.
@@ -92,7 +92,7 @@ Implements the interface for **Dense Captioning** (text descriptions anchored to
 
 ## 🎨 Design Principles
 
-1. **Passive View:** These classes do not modify data directly. They display data provided by the controller and emit signals (e.g., `confirm_clicked`, `request_remove_item`) when the user acts.
-2. **Unified Workspace:** All modes are now integrated into a single dockable workspace. This ensures that the Project Navigator and Media Player are always consistent across different annotation tasks.
+1. **Passive View:** These classes do not modify data directly. They display data provided by the controller and emit signals (e.g., `confirm_clicked`, `removeItemRequested`) when the user acts.
+2. **Unified Workspace:** All modes are now integrated into a single dockable workspace. This ensures that the Dataset Explorer and Media Player are always consistent across different annotation tasks.
 3. **Composite Design:** Complex widgets (like the Description Player) are built by composing smaller, single-purpose widgets (VideoSurface + Controls + Slider) rather than monolithic classes.
 4. **Dynamic Generation:** Where possible, forms and tables adjust their content dynamically based on the loaded JSON schema or data model.

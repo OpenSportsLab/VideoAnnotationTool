@@ -1,7 +1,6 @@
 import copy
 from PyQt6.QtCore import QModelIndex
 from PyQt6.QtWidgets import QMessageBox
-from models.project_tree import ProjectTreeModel
 # [NEW] Import CmdType for Undo/Redo
 from models.app_state import CmdType
 
@@ -36,13 +35,13 @@ class DescAnnotationManager:
             return
 
         # 1. Identify the Action Path
-        path = current.data(ProjectTreeModel.FilePathRole)
+        path = current.data(self.main.tree_model.FilePathRole)
         model = self.main.tree_model
         
         # If user clicked a child (video), find the parent (action) to show shared annotations
         if not model.hasChildren(current) and current.parent().isValid():
             parent_idx = current.parent()
-            path = parent_idx.data(ProjectTreeModel.FilePathRole)
+            path = parent_idx.data(self.main.tree_model.FilePathRole)
         
         
         self.current_action_path = path

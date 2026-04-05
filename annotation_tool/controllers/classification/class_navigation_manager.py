@@ -1,6 +1,4 @@
 from PyQt6.QtCore import Qt, QModelIndex
-# [Ref] Import from the correct models location
-from models.project_tree import ProjectTreeModel
 from utils import SUPPORTED_EXTENSIONS
 from controllers.media_controller import MediaController
 
@@ -21,7 +19,7 @@ class NavigationManager:
         """
         if not current.isValid(): return
         
-        path = current.data(ProjectTreeModel.FilePathRole)
+        path = current.data(self.main.tree_model.FilePathRole)
 
         # Update Right Panel (Annotations)
         self.main.annot_manager.display_manual_annotation(path)
@@ -43,7 +41,7 @@ class NavigationManager:
 
     def show_all_views(self):
         # [MV] Handle Multi-View
-        tree_view = self.main.left_panel.tree
+        tree_view = self.main.dataset_explorer_panel.tree
         curr_idx = tree_view.currentIndex()
         if not curr_idx.isValid(): return
         
@@ -54,7 +52,7 @@ class NavigationManager:
         paths = []
         for i in range(model.rowCount(curr_idx)):
             child_idx = model.index(i, 0, curr_idx)
-            paths.append(child_idx.data(ProjectTreeModel.FilePathRole))
+            paths.append(child_idx.data(self.main.tree_model.FilePathRole))
             
         self.main.center_panel.media_preview.show_all_views([p for p in paths if p.lower().endswith(SUPPORTED_EXTENSIONS[:3])])
 
@@ -64,7 +62,7 @@ class NavigationManager:
     def nav_next_clip(self): self._nav_tree(step=1, level='child')
     
     def _nav_tree(self, step, level):
-        tree = self.main.left_panel.tree
+        tree = self.main.dataset_explorer_panel.tree
         curr = tree.currentIndex()
         if not curr.isValid(): return
         
