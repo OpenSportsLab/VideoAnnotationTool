@@ -359,11 +359,7 @@ class LocalizationManager:
     def _refresh_current_clip_events(self):
         if self.current_video_path: self._display_events_for_item(self.current_video_path)
 
-    # --- Video & Project Logic ---
-    def _on_load_clicked(self): self.main.router.import_annotations()
-    def _on_save_clicked(self): self.main.project_nav_controller.loc_fm.overwrite_json()
-    def _on_export_clicked(self): self.main.project_nav_controller.loc_fm.export_json()
-
+    # --- Workspace Management ---
     def _on_clear_all_clicked(self):
         if not self.model.action_item_data: return
         res = QMessageBox.question(self.main, "Clear All", "Are you sure?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
