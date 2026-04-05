@@ -345,7 +345,8 @@ class VideoAnnotationWindow(QMainWindow):
         else: self.nav_manager.add_items_via_dialog()
 
     def _dispatch_clear_workspace(self):
-        if self._is_desc_mode(): self._on_desc_clear_clicked()
+        if self._is_loc_mode(): self.loc_manager._on_clear_all_clicked()
+        elif self._is_desc_mode(): self._on_desc_clear_clicked()
         elif self._is_dense_mode(): self.dense_manager._on_clear_all_clicked()
         else: self._on_class_clear_clicked()
 
@@ -376,7 +377,9 @@ class VideoAnnotationWindow(QMainWindow):
             if self._is_loc_mode():
                 self.loc_manager.on_clip_selected(current, previous)
             elif self._is_desc_mode():
+                # [FIXED] Call both navigation (playback) and annotation (text) managers
                 self.desc_nav_manager.on_item_selected(current, previous)
+                self.desc_annot_manager.on_item_selected(current, previous)
             elif self._is_dense_mode():
                 self.dense_manager._on_clip_selected(current, previous)
             else:

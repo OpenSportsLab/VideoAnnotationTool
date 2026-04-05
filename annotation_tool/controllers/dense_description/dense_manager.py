@@ -44,10 +44,7 @@ class DenseManager:
 
     def setup_connections(self):
         """Link UI signals to logic handlers."""
-        # --- Left Panel (Clip Tree) ---
-        
-        self.left_panel.tree.selectionModel().currentChanged.connect(self._on_clip_selected)
-        self.left_panel.filter_combo.currentIndexChanged.connect(self._apply_clip_filter)
+        # --- Left Panel (Clip Tree) handled centrally in main_window.py ---
         
         # --- Center Panel (Playback & Timeline) ---
         media = self.center_panel.media_preview

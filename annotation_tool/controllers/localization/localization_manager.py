@@ -46,11 +46,8 @@ class LocalizationManager:
         # Add Data is wired from main_window.py -> left_panel.addVideoRequested
         
         # Tree Interactions
-        self.left_panel.tree.selectionModel().currentChanged.connect(self.on_clip_selected)
         self.left_panel.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.left_panel.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
-        self.left_panel.filter_combo.currentIndexChanged.connect(self._apply_clip_filter)
-        self.left_panel.clear_btn.clicked.connect(self._on_clear_all_clicked)
         
         # --- Right Panel ---
         #Smart Annotation UI

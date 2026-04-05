@@ -18,9 +18,7 @@ class DescAnnotationManager:
 
     def setup_connections(self):
         """Connect UI signals to controller methods."""
-        # Listen to Tree Selection from the Description Panel
-        tree = self.main.left_panel.tree
-        tree.selectionModel().currentChanged.connect(self.on_item_selected)
+        # [UPDATED] Tree Selection is now handled centrally in main_window.py
         
         # Connect Editor Buttons
         self.main.description_panel.confirm_clicked.connect(self.save_current_annotation)

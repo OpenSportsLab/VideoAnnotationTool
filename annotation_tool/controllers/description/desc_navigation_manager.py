@@ -28,11 +28,7 @@ class DescNavigationManager:
 
     def setup_connections(self):
         """Called by main_window.py to wire up signals."""
-        # Tree Selection
-        tree = self.main.left_panel.tree
-        tree.selectionModel().currentChanged.connect(self.on_item_selected)
-
-        # [UPDATED] Unified Center Panel Controls are now handled centrally in main_window.py
+        # [UPDATED] Tree selection and Unified Center Panel Controls are now handled centrally in main_window.py
         pass
 
     def toggle_play_pause(self):
