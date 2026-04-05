@@ -1,8 +1,6 @@
 import copy
 from models import CmdType
 from ui.classification.event_editor import DynamicSingleLabelGroup, DynamicMultiLabelGroup
-import copy
-from models.app_state import CmdType
 
 class HistoryManager:
     """
@@ -38,6 +36,11 @@ class HistoryManager:
         self.main.update_save_export_button_state()
         self._is_undoing_redoing = False
 
+    def _refresh_active_view(self):
+        """
+        Refreshes the currently active UI tab after a state change.
+        Uses the tab index logic to call the appropriate manager's refresh method.
+        """
         # Use the right_tabs index to determine the mode
         tab_idx = self.main.right_tabs.currentIndex()
         
