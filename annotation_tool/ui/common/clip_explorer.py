@@ -25,7 +25,7 @@ class CommonProjectTreePanel(QWidget):
                  enable_context_menu=True,
                  parent=None):
         super().__init__(parent)
-        self.setFixedWidth(250)
+        # self.setFixedWidth(250) # REMOVED: Let it fit the dock
         
         # Main Layout
         layout = QVBoxLayout(self)

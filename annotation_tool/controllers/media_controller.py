@@ -13,8 +13,8 @@ class MediaController(QObject):
         self.player = player
         self.video_widget = video_widget
         
-        # 1. Connect standard error signals
-        self.player.errorOccurred.connect(self._handle_media_error)
+        # 1. Initialize all member variables and timers FIRST
+        self._frame_received = False
         
         # 2. Setup Play Timer
         self.play_timer = QTimer()
@@ -28,8 +28,10 @@ class MediaController(QObject):
         self.watchdog_timer.setInterval(1500) # Check 1.5 seconds after play starts
         self.watchdog_timer.timeout.connect(self._check_for_black_screen)
         
-        # 4. [NEW] Monitor actual frames being drawn to the screen
-        self._frame_received = False
+        # 3. Connect external player and video signals
+        self.player.errorOccurred.connect(self._handle_media_error)
+        self.player.mediaStatusChanged.connect(self._handle_media_status) # [NEW] Added status check
+        
         if self.video_widget and hasattr(self.video_widget, 'videoSink'):
             sink = self.video_widget.videoSink()
             if sink:

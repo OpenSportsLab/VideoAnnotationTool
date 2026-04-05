@@ -8,12 +8,12 @@ The goal of this module is to adhere to the **DRY (Don't Repeat Yourself)** prin
 
 ### 1. `workspace.py`
 
-* **Class:** `UnifiedTaskPanel`
-* **Purpose:** The fundamental **Skeleton Layout** used by every operating mode.
-* **Structure:** A horizontal layout composed of three distinct sections:
-1. **Left Panel:** Contains the `CommonProjectTreePanel` (Clip Explorer).
-2. **Center Panel:** A stretchable area for the Media Player and Timelines.
-3. **Right Panel:** A task-specific area for Event Editors, Text Inputs, or Class Selectors.
+* **Class:** `MainWorkspace`
+* **Purpose:** The modern, dock-based architecture providing a unified interface for all annotation modes.
+* **Structure:** A `QMainWindow` featuring:
+1. **Left Dock:** Project Navigator (`CommonProjectTreePanel`).
+2. **Center Panel:** Generic Media Player with unified controls.
+3. **Right Dock:** Tab-based Annotation Editor (CLS, LOC, DESC, DENSE).
 
 
 * **Usage:** This widget instantiates the Left Panel automatically, while the Center and Right widgets are injected via the constructor.

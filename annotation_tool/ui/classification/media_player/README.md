@@ -76,12 +76,12 @@ It exposes buttons from the toolbar directly so external Controllers (like `Navi
 
 ## Usage Example
 
-Typically, this widget is instantiated in `ui/common/main_window.py` and passed to the `UnifiedTaskPanel`.
+Typically, this widget is integrated into the `MainWorkspace` dock-based layout.
 
 **Instantiation:**
 
 ```python
-from ui.classification.widgets.media_player import ClassificationMediaPlayer
+from ui.classification.media_player import ClassificationMediaPlayer
 
 # Create the player widget
 player_widget = ClassificationMediaPlayer()

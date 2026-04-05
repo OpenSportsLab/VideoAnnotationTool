@@ -101,6 +101,7 @@ TRAIN:
 
 SYSTEM:
   log_dir: ./logs
+  save_dir: ./temp_workspace/checkpoints
   use_seed: false
   seed: 42
   GPU: 0         

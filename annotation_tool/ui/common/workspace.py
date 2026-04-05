@@ -1,59 +1,61 @@
-from PyQt6.QtWidgets import QWidget, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QTabWidget, QMainWindow, QDockWidget
+from PyQt6.QtCore import Qt
 
-# Import the common tree panel
+# Import common components
 from ui.common.clip_explorer import CommonProjectTreePanel
+from ui.localization.media_player import LocCenterPanel
 
-class UnifiedTaskPanel(QWidget):
+# Import editors for the tabs
+from ui.classification.event_editor import ClassificationEventEditor
+from ui.localization.event_editor import LocRightPanel
+from ui.description.event_editor import DescriptionEventEditor
+from ui.dense_description.event_editor import DenseRightPanel
+
+class MainWorkspace(QMainWindow):
     """
-    A generic 3-column workspace container used for both Classification and Localization.
-    
-    Structure:
-    [ Left: Project Tree ] -- [ Center: Player/Visualizer ] -- [ Right: Editor/Controls ]
-    
-    This unifies the layout logic so both modes look consistent.
+    A unified workspace containing a single data tree, a generic media player,
+    and a tabbed right panel for different annotation modes.
+    Now implemented using QDockWidgets for maximum flexibility.
     """
-    def __init__(self, 
-                 center_widget: QWidget, 
-                 right_widget: QWidget, 
-                 tree_title: str = "Clips / Sequences",
-                 filter_items: list = None,
-                 clear_text: str = "Clear All",
-                 parent=None):
-        """
-        Args:
-            center_widget: The widget to place in the center (expandable).
-            right_widget: The widget to place on the right (fixed width usually).
-            tree_title: Title for the left tree panel (e.g. 'Clips / Sequences').
-            filter_items: Items for the filter dropdown.
-            clear_text: Text for the clear button.
-        """
+    def __init__(self, parent=None):
         super().__init__(parent)
         
-        # 1. Setup Layout
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        # 1. Center Panel: Generic Media Player
+        # "generic central widget that shows me the player with all the playback control"
+        self.center_panel = LocCenterPanel()
+        self.setCentralWidget(self.center_panel)
         
-        # 2. Instantiate Left Panel (Common)
-        # Default to Localization-style naming if not provided
-        if filter_items is None:
-            filter_items = ["Show All", "Show Labelled", "No Labelled"]
-
+        # 2. Left Dock: Unique Data List
         self.left_panel = CommonProjectTreePanel(
-            tree_title=tree_title,
-            filter_items=filter_items,
-            clear_text=clear_text,
+            tree_title="Data",
+            filter_items=["Show All", "Hand Labelled", "Smart Labelled", "No Labelled"],
+            clear_text="Clear All",
             enable_context_menu=True
         )
+        self.data_dock = QDockWidget("Project Navigator", self)
+        self.data_dock.setObjectName("DataNavigatorDock")
+        self.data_dock.setWidget(self.left_panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.data_dock)
         
-        # 3. Assign Center and Right Panels
-        self.center_panel = center_widget
-        self.right_panel = right_widget
+        # 3. Right Dock: Tabbed Editors
+        self.right_tabs = QTabWidget()
+        self.right_tabs.setDocumentMode(True) # Cleaner look for docks
+        self.right_tabs.setTabPosition(QTabWidget.TabPosition.North) # Default top
         
-        # 4. Add to Layout
-        # Left panel is fixed width (handled inside CommonProjectTreePanel)
-        layout.addWidget(self.left_panel)
-        # Center panel gets stretch factor 1 (takes remaining space)
-        layout.addWidget(self.center_panel, 1) 
-        # Right panel is fixed width (handled inside specific right widgets)
-        layout.addWidget(self.right_panel)
+        self.classification_editor = ClassificationEventEditor()
+        self.localization_editor = LocRightPanel()
+        self.description_editor = DescriptionEventEditor()
+        self.dense_editor = DenseRightPanel()
+        
+        self.right_tabs.addTab(self.classification_editor, "CLS")
+        self.right_tabs.addTab(self.localization_editor, "LOC")
+        self.right_tabs.addTab(self.description_editor, "DESC")
+        self.right_tabs.addTab(self.dense_editor, "DENSE")
+        
+        self.editor_dock = QDockWidget("Annotation Editor", self)
+        self.editor_dock.setObjectName("AnnotationEditorDock")
+        self.editor_dock.setWidget(self.right_tabs)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.editor_dock)
+        
+        # Allow nested docking and tabbed docks
+        self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AnimatedDocks)

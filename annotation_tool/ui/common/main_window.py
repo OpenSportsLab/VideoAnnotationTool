@@ -1,29 +1,13 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QStackedLayout
 
-# 1. Import the generic skeleton
+# 1. Import common widgets
 from ui.common.welcome_widget import WelcomeWidget
-from ui.common.workspace import UnifiedTaskPanel
-
-# 2. Import Classification components
-from ui.classification.media_player import ClassificationMediaPlayer
-from ui.classification.event_editor import ClassificationEventEditor
-
-# 3. Import Localization components
-from ui.localization.media_player import LocCenterPanel
-from ui.localization.event_editor import LocRightPanel
-
-# 4. [NEW] Import Description components
-from ui.description.media_player import DescriptionMediaPlayer
-from ui.description.event_editor import DescriptionEventEditor
-
-from ui.dense_description.event_editor import DenseRightPanel
+from ui.common.workspace import MainWorkspace
 
 class MainWindowUI(QWidget):
     """
-    The main container that switches between Welcome, Classification, Localization,
-    and the new Description views.
-    
-    It uses a QStackedLayout to manage the different modes.
+    The main container that switches between the Welcome screen and the 
+    Unified Main Workspace.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -36,50 +20,13 @@ class MainWindowUI(QWidget):
         # --- View 0: Welcome Screen ---
         self.welcome_widget = WelcomeWidget()
         
-        # --- View 1: Classification Workspace ---
-        self.classification_ui = UnifiedTaskPanel(
-            center_widget=ClassificationMediaPlayer(),
-            right_widget=ClassificationEventEditor(),
-            tree_title="Clips / Sequences",
-            filter_items=["Show All", "Show Labelled", "No Labelled"], 
-            clear_text="Clear All"
-        )
+        # --- View 1: Unified Main Workspace ---
+        # "unique left panel, generic central widget, right panel with 4 tabs"
+        self.workspace = MainWorkspace()
         
-        # --- View 2: Localization Workspace ---
-        self.localization_ui = UnifiedTaskPanel(
-            center_widget=LocCenterPanel(),
-            right_widget=LocRightPanel(),
-            tree_title="Clips / Sequences",
-            filter_items=["Show All", "Show Labelled", "No Labelled"],
-            clear_text="Clear All"
-        )
-
-        # --- View 3: [NEW] Description Workspace ---
-        # This panel uses the shared tree structure but loads the Description-specific
-        # media player and event editor.
-        self.description_ui = UnifiedTaskPanel(
-            center_widget=DescriptionMediaPlayer(),
-            right_widget=DescriptionEventEditor(),
-            tree_title="Action / Inputs", # Adapted title for Description structure
-            filter_items=["Show All", "Show Completed", "Show Incomplete"],
-            clear_text="Clear All"
-        )
-
-        # --- View 4: Dense Description Workspace ---
-        self.dense_description_ui = UnifiedTaskPanel(
-            center_widget=LocCenterPanel(), # Reuse Localization's player + timeline
-            right_widget=DenseRightPanel(), # Our new custom panel
-            tree_title="Videos",
-            filter_items=["Show All", "Show Annotated", "Not Annotated"],
-            clear_text="Clear All"
-        )
-        
-        # Add all views to the Stack
-        self.stack_layout.addWidget(self.welcome_widget)      # Index 0
-        self.stack_layout.addWidget(self.classification_ui)   # Index 1
-        self.stack_layout.addWidget(self.localization_ui)     # Index 2
-        self.stack_layout.addWidget(self.description_ui)      # Index 3 
-        self.stack_layout.addWidget(self.dense_description_ui) # Index 4 [NEW]
+        # Add views to the Stack
+        self.stack_layout.addWidget(self.welcome_widget) # Index 0
+        self.stack_layout.addWidget(self.workspace)      # Index 1
         
         self.main_layout.addLayout(self.stack_layout)
         
@@ -90,17 +37,25 @@ class MainWindowUI(QWidget):
         """Switch to the Welcome Screen (Index 0)."""
         self.stack_layout.setCurrentIndex(0)
 
-    def show_classification_view(self):
-        """Switch to the Classification Workspace (Index 1)."""
+    def show_workspace(self):
+        """Switch to the Main Workspace (Index 1)."""
         self.stack_layout.setCurrentIndex(1)
 
+    # --- Mode-specific tab switching helpers ---
+    # These helpers ensure the correct tab is selected in the Right Panel.
+
+    def show_classification_view(self):
+        self.show_workspace()
+        self.workspace.right_tabs.setCurrentIndex(0)
+
     def show_localization_view(self):
-        """Switch to the Localization Workspace (Index 2)."""
-        self.stack_layout.setCurrentIndex(2)
+        self.show_workspace()
+        self.workspace.right_tabs.setCurrentIndex(1)
 
     def show_description_view(self):
-        """[NEW] Switch to the Description Workspace (Index 3)."""
-        self.stack_layout.setCurrentIndex(3)
+        self.show_workspace()
+        self.workspace.right_tabs.setCurrentIndex(2)
 
     def show_dense_description_view(self):
-        self.stack_layout.setCurrentIndex(4)
+        self.show_workspace()
+        self.workspace.right_tabs.setCurrentIndex(3)

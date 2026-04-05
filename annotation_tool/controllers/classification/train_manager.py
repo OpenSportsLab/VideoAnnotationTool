@@ -216,7 +216,7 @@ class TrainManager(QObject):
         # Reference to the main window
         self.main = main_window
         # Shortcut to the classification UI panel on the right side
-        self.ui = main_window.ui.classification_ui.right_panel
+        self.ui = main_window.ui.workspace.classification_editor
         # Background worker thread instance
         self.worker = None
 

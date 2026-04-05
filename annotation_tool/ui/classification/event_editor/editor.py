@@ -146,8 +146,9 @@ class ClassificationEventEditor(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(320)
+        # self.setFixedWidth(320) # REMOVED: Let it fit the dock
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
         
         self.is_batch_mode_active = False
         self.pending_batch_results = {}
@@ -557,6 +558,10 @@ class ClassificationEventEditor(QWidget):
         self.chart_widget.setVisible(False)
         self.batch_result_text.setText(result_text)
         self.batch_result_text.setVisible(True)
+
+    def clear_dynamic_labels(self):
+        """Removes all dynamically generated label groups from the UI."""
+        self.setup_dynamic_labels({})
 
     def setup_dynamic_labels(self, label_definitions):
         while self.label_container_layout.count():

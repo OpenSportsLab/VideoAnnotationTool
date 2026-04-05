@@ -14,13 +14,13 @@ class DescAnnotationManager:
     def __init__(self, main_window):
         self.main = main_window
         self.model = main_window.model
-        self.ui = main_window.ui.description_ui.right_panel
+        self.ui = main_window.ui.workspace.description_editor
         self.current_action_path = None
 
     def setup_connections(self):
         """Connect UI signals to controller methods."""
         # Listen to Tree Selection from the Description Panel
-        tree = self.main.ui.description_ui.left_panel.tree
+        tree = self.main.ui.workspace.left_panel.tree
         tree.selectionModel().currentChanged.connect(self.on_item_selected)
         
         # Connect Editor Buttons

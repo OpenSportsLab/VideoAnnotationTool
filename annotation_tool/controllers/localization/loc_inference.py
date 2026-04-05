@@ -43,6 +43,7 @@ class LocInferenceWorker(QThread):
                 config_dict["SYSTEM"]["device"] = "cpu"
                 config_dict["SYSTEM"]["GPU"] = 0
                 config_dict["SYSTEM"]["gpu_id"] = 0
+                config_dict["SYSTEM"]["save_dir"] = os.path.join(tmp_dir, "checkpoints")
                 
                 if "MODEL" not in config_dict: config_dict["MODEL"] = {}
                 config_dict["MODEL"]["multi_gpu"] = False

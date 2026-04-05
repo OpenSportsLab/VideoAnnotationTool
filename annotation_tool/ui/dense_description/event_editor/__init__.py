@@ -16,10 +16,9 @@ class DenseRightPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # This panel has a fixed width; column ratio will be computed within this width.
-        self.setFixedWidth(400)
-
+        # self.setFixedWidth(400) # REMOVED: Let it fit the dock
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
 
         # 1. Header (Undo/Redo removed and moved to menu bar)
         header_layout = QHBoxLayout()

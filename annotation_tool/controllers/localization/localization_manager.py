@@ -16,30 +16,28 @@ class LocalizationManager:
     Manages logic for the UI2 Localization Interface.
     Refactored to support QTreeView + QStandardItemModel (MV Architecture).
     """
-    def __init__(self, main_window):
+    def __init__(self, main_window, media_controller: MediaController):
         self.main = main_window
         self.model = main_window.model
         self.tree_model = main_window.tree_model 
         
-        self.ui_root = main_window.ui.localization_ui
+        self.ui_root = main_window.ui.workspace
         self.left_panel = self.ui_root.left_panel
         self.center_panel = self.ui_root.center_panel
-        self.right_panel = self.ui_root.right_panel
+        self.right_panel = self.ui_root.localization_editor
 
         self.inference_manager = LocalizationInferenceManager(self.main)
         self.inference_manager.inference_finished.connect(self._on_inference_success)
         self.inference_manager.inference_error.connect(self._on_inference_error)
-        
-        # [NEW] Initialize Media Controller
-        # We access the underlying QMediaPlayer from the UI wrapper
-        preview_widget = self.center_panel.media_preview
-        player = preview_widget.player
-        
-        # [CRITICAL FIX] Retrieve the actual QVideoWidget to allow forced repaints
-        # This fixes the "stuck frame" issue when switching modes
-        video_widget = preview_widget.video_widget
-        
-        self.media_controller = MediaController(player, video_widget)
+        self.ui = main_window.ui
+        self.media_controller = media_controller
+
+    def reset_ui(self):
+        """Reset the localization editor UI for a new project."""
+        self.right_panel.annot_mgmt.update_schema({})
+        self.right_panel.table.set_data([])
+        self.right_panel.setEnabled(False)
+        self.current_video_path = None
         
         self.current_video_path = None
         self.current_head = None 
@@ -56,25 +54,6 @@ class LocalizationManager:
         self.left_panel.filter_combo.currentIndexChanged.connect(self._apply_clip_filter)
         self.left_panel.clear_btn.clicked.connect(self._on_clear_all_clicked)
         
-        # --- Center Panel ---
-        media = self.center_panel.media_preview
-        timeline = self.center_panel.timeline
-        pb = self.center_panel.playback
-        
-        media.positionChanged.connect(self._on_media_position_changed)
-        media.durationChanged.connect(timeline.set_duration)
-        timeline.seekRequested.connect(media.set_position)
-        
-        # Use MediaController for playback control
-        pb.stopRequested.connect(self.media_controller.stop)
-        pb.playPauseRequested.connect(self.media_controller.toggle_play_pause)
-        
-        pb.playbackRateRequested.connect(media.set_playback_rate)
-        pb.seekRelativeRequested.connect(lambda d: media.set_position(media.player.position() + d))
-        
-        pb.nextPrevClipRequested.connect(self._navigate_clip)
-        pb.nextPrevAnnotRequested.connect(self._navigate_annotation)
-        
         # --- Right Panel ---
         #Smart Annotation UI
         if hasattr(self.right_panel, 'smart_widget'):
@@ -86,6 +65,9 @@ class LocalizationManager:
             
             # Tab switch to toggle timeline markers
             self.right_panel.tabs.currentChanged.connect(self._on_tab_switched)
+        
+        # [NEW] Keep local position sync for LOC labeling UI
+        self.center_panel.media_preview.positionChanged.connect(self._on_media_position_changed)
 
 
         tabs = self.right_panel.annot_mgmt.tabs
@@ -101,7 +83,7 @@ class LocalizationManager:
         tabs.labelRenameReq.connect(self._on_label_rename_req)
         tabs.labelDeleteReq.connect(self._on_label_delete_req)
         
-        table.annotationSelected.connect(lambda ms: media.set_position(ms))
+        table.annotationSelected.connect(lambda ms: self.center_panel.media_preview.set_position(ms))
         table.annotationDeleted.connect(self._on_delete_single_annotation)
         table.annotationModified.connect(self._on_annotation_modified)
 
@@ -233,7 +215,11 @@ class LocalizationManager:
             if affected_evts: loc_affected[vid_path] = affected_evts
         definition = copy.deepcopy(self.model.label_definitions.get(head_name))
         self.model.push_undo(CmdType.SCHEMA_DEL_CAT, head=head_name, definition=definition, loc_affected_events=loc_affected)
-        del self.model.label_definitions[head_name]
+        
+        # [SAFETY] Ensure head exists in current model before deleting
+        if head_name in self.model.label_definitions:
+            del self.model.label_definitions[head_name]
+            
         for vid_path in self.model.localization_events:
             self.model.localization_events[vid_path] = [e for e in self.model.localization_events[vid_path] if e.get('head') != head_name]
         self.model.is_data_dirty = True

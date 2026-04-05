@@ -331,8 +331,8 @@ class InferenceManager(QObject):
         self.worker = None
         self.batch_worker = None
         
-        self.ui.classification_ui.right_panel.batch_run_requested.connect(self.start_batch_inference)
-        self.ui.classification_ui.right_panel.batch_confirm_requested.connect(self.confirm_batch_inference)
+        self.ui.workspace.classification_editor.batch_run_requested.connect(self.start_batch_inference)
+        self.ui.workspace.classification_editor.batch_confirm_requested.connect(self.confirm_batch_inference)
 
     def _get_label_map_from_config(self) -> dict:
         """
@@ -374,7 +374,7 @@ class InferenceManager(QObject):
 
         action_id = self.main.model.action_path_to_name.get(current_video_path, os.path.basename(current_video_path))
 
-        self.ui.classification_ui.right_panel.show_inference_loading(True)
+        self.ui.workspace.classification_editor.show_inference_loading(True)
 
         # 1. Dynamically load labels from config
         label_map = self._get_label_map_from_config()
@@ -421,11 +421,11 @@ class InferenceManager(QObject):
         self.main.model.smart_annotations[current_video_path] = new_data
         
         self.main.model.is_data_dirty = True
-        self.ui.classification_ui.right_panel.display_inference_result(target_head, label, conf_dict)
+        self.ui.workspace.classification_editor.display_inference_result(target_head, label, conf_dict)
         self.worker = None
 
     def _on_inference_error(self, error_msg):
-        self.ui.classification_ui.right_panel.show_inference_loading(False)
+        self.ui.workspace.classification_editor.show_inference_loading(False)
         QMessageBox.critical(self.main, "Inference Error", f"An error occurred during inference:\n\n{error_msg}")
         self.worker = None
 
@@ -467,7 +467,7 @@ class InferenceManager(QObject):
                     
             target_clips.append({'id': base_id, 'paths': paths, 'gt': gt_label, 'original_items': items})
 
-        self.ui.classification_ui.right_panel.show_inference_loading(True)
+        self.ui.workspace.classification_editor.show_inference_loading(True)
         
         # 1. Dynamically load labels from config
         label_map = self._get_label_map_from_config()
@@ -537,11 +537,11 @@ class InferenceManager(QObject):
             self.main.model.smart_annotations[path] = data
             
         self.main.model.is_data_dirty = True
-        self.ui.classification_ui.right_panel.display_batch_inference_result(text, batch_predictions)
+        self.ui.workspace.classification_editor.display_batch_inference_result(text, batch_predictions)
         self.batch_worker = None
 
     def _on_batch_inference_error(self, error_msg):
-        self.ui.classification_ui.right_panel.show_inference_loading(False)
+        self.ui.workspace.classification_editor.show_inference_loading(False)
         QMessageBox.critical(self.main, "Batch Inference Error", f"An error occurred during batch inference:\n\n{error_msg}")
         self.batch_worker = None
 

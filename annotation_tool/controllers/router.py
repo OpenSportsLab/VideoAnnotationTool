@@ -27,6 +27,8 @@ class AppRouter:
         """Unified entry point for creating a new project."""
         if not self.main.check_and_close_current_project():
             return
+        
+        self.main.reset_all_managers()
 
         dlg = ProjectTypeDialog(self.main)
         if dlg.exec():
@@ -45,6 +47,9 @@ class AppRouter:
         """Global entry point for loading a JSON file."""
         if not self.main.check_and_close_current_project():
             return
+        
+        # [NEW] Reset all mode UIs before loading new data to prevent "Ghost UI" bugs
+        self.main.reset_all_managers()
         
         file_path, _ = QFileDialog.getOpenFileName(
             self.main, "Select Project JSON", "", "JSON Files (*.json)"
@@ -86,6 +91,8 @@ class AppRouter:
         """Handles closing the current project."""
         if not self.main.check_and_close_current_project():
             return
+
+        self.main.reset_all_managers()
 
         self.class_fm._clear_workspace(full_reset=True)
         self.loc_fm._clear_workspace(full_reset=True)

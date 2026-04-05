@@ -77,10 +77,10 @@ from .dynamic_widgets import DynamicSingleLabelGroup, DynamicMultiLabelGroup
 
 ## Usage Example
 
-This module is typically instantiated by the `UnifiedTaskPanel` in the Main Window.
+This module is typically instantiated within the `MainWorkspace` dockable layout.
 
 ```python
-# In ui/common/main_window.py
+# In ui/common/workspace.py
 from ui.classification.widgets.event_editor import ClassificationEventEditor
 
 self.right_panel = ClassificationEventEditor()

@@ -21,8 +21,9 @@ class LocRightPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(400)
+        # self.setFixedWidth(400) # REMOVED: To allow expansion in enlarged dock
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
         
         # --- 1. Header (Undo/Redo removed and moved to menu bar) ---
         header_layout = QHBoxLayout()

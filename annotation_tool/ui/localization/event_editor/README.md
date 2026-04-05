@@ -24,14 +24,14 @@ ui/localization/event_editor/
 
 **Main Class:** `LocRightPanel`
 
-* **Role**: The main container widget that acts as the "Right Panel" in the Localization layout.
+* **Role**: The editor widget for Localization Mode, hosted as a tab in the main workspace.
 * **Composition**:
 * **Header**: Contains the "Annotation Controls" label and the **Undo/Redo** buttons.
 * **Top Widget**: `AnnotationManagementWidget` (imported from `spotting_controls.py`).
 * **Bottom Widget**: `AnnotationTableWidget` (imported from `annotation_table.py`).
 
 
-* **Usage**: This class is instantiated by the `UnifiedTaskPanel` (or `MainWindowUI`) to construct the UI.
+* **Usage**: This class is instantiated within the `MainWorkspace` dockable layout as the "LOC" tab.
 
 ### 2. `spotting_controls.py`
 

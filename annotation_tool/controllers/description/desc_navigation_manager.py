@@ -13,56 +13,28 @@ class DescNavigationManager:
     Handles file navigation, video playback, data addition, and filtering for Description Mode.
     Refactored to STRICTLY follow Classification playback logic (No Looping) and pass video_widget for proper clearing.
     """
-    def __init__(self, main_window):
+    def __init__(self, main_window, media_controller: MediaController):
         self.main = main_window
         self.ui = main_window.ui
         self.model = main_window.model
-
-        # [UPDATED] Initialize Media Controller with Player AND VideoWidget
-        # 1. Access the UI components
-        center_panel = self.ui.description_ui.center_panel
-        preview_panel = center_panel.preview # This is DescriptionMediaPreview
-        
-        player = center_panel.player # Exposed in DescriptionMediaPlayer
-
-        # 2. Locate the QVideoWidget for forced repainting
-        # This is critical for the MediaController.stop() to work correctly (clearing the black screen)
-        video_widget = None
-        
-        # Check standard paths based on recent refactoring
-        if hasattr(preview_panel, 'surface') and hasattr(preview_panel.surface, 'video_widget'):
-            # If using the shared VideoSurface wrapper
-            video_widget = preview_panel.surface.video_widget
-        elif hasattr(preview_panel, 'video_widget'):
-            # If directly attached
-            video_widget = preview_panel.video_widget
-        else:
-            # Fallback search by object name/type
-            video_widget = preview_panel.findChild(QWidget, "video_preview_widget")
-            
-        # 3. Instantiate the controller
-        self.media_controller = MediaController(player, video_widget)
+        self.media_controller = media_controller
         
         # [CRITICAL] Disable looping to match Classification stability
         # self.media_controller.set_looping(True) 
 
+    def reset_ui(self):
+        """Reset the description editor UI for a new project."""
+        self.ui.workspace.description_editor.caption_edit.setPlainText("")
+        self.ui.workspace.description_editor.setEnabled(False)
+
     def setup_connections(self):
         """Called by viewer.py to wire up signals."""
         # Tree Selection
-        tree = self.ui.description_ui.left_panel.tree
+        tree = self.ui.workspace.left_panel.tree
         tree.selectionModel().currentChanged.connect(self.on_item_selected)
 
-        # Center Panel Controls
-        center = self.ui.description_ui.center_panel
-        
-        # Connect Play button via Controller
-        center.play_btn.clicked.connect(self.toggle_play_pause)
-        
-        # Navigation Buttons
-        center.prev_action.clicked.connect(self.nav_prev_action)
-        center.prev_clip.clicked.connect(self.nav_prev_clip)
-        center.next_clip.clicked.connect(self.nav_next_clip)
-        center.next_action.clicked.connect(self.nav_next_action)
+        # [UPDATED] Unified Center Panel Controls are now handled centrally in viewer.py
+        pass
 
     def toggle_play_pause(self):
         """Delegate play/pause to the controller."""
@@ -157,14 +129,14 @@ class DescNavigationManager:
             # [CRITICAL FIX] Auto-select and play the first added video
             # This triggers on_item_selected -> media_controller.load_and_play
             if first_new_idx and first_new_idx.isValid():
-                tree = self.ui.description_ui.left_panel.tree
+                tree = self.ui.workspace.left_panel.tree
                 tree.setCurrentIndex(first_new_idx)
                 tree.setFocus() # Ensure keyboard shortcuts work immediately
 
     def apply_action_filter(self):
         """Filters the tree items based on Done/Not Done status."""
-        idx = self.ui.description_ui.left_panel.filter_combo.currentIndex()
-        tree_view = self.ui.description_ui.left_panel.tree
+        idx = self.ui.workspace.left_panel.filter_combo.currentIndex()
+        tree_view = self.ui.workspace.left_panel.tree
         model = self.main.tree_model
         
         FILTER_DONE = self.main.FILTER_DONE
@@ -209,7 +181,7 @@ class DescNavigationManager:
     def nav_next_clip(self): self._nav_tree(step=1, level='child')
 
     def _nav_tree(self, step, level):
-        tree = self.ui.description_ui.left_panel.tree
+        tree = self.ui.workspace.left_panel.tree
         curr = tree.currentIndex()
         if not curr.isValid(): return
         

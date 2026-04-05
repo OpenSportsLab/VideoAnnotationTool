@@ -12,7 +12,7 @@ The UI is organized by functional domain, with a robust **Common** library suppo
 ui/
 ├── common/               # Shared architecture (Main Window, Workspace Skeleton, Dialogs)
 │   ├── main_window.py    # Top-level Stacked Layout orchestrator
-│   ├── workspace.py      # Unified 3-column layout skeleton
+│   ├── workspace.py      # Unified Dock-based Workspace (QMainWindow)
 │   ├── video_surface.py  # Shared video rendering widget
 │   └── ...
 │
@@ -32,7 +32,7 @@ ui/
 The backbone of the application, ensuring a consistent user experience across all modes.
 
 * **`main_window.py`**: The application entry point. It manages a `QStackedLayout` to switch between the **Welcome Screen** and the four **Workspaces** without destroying state.
-* **`workspace.py`**: Defines the `UnifiedTaskPanel`. This is the generic 3-column skeleton (Left Tree | Center Player | Right Editor) used by **every** mode to maintain layout consistency.
+* **`workspace.py`**: Defines the `MainWorkspace`. This is a `QMainWindow` that hosts the Project Navigator (Left Dock), Media Player (Center), and the tabbed Annotation Editor (Right Dock).
 * **`video_surface.py`**: A pure rendering widget wrapping `QMediaPlayer` and `QVideoWidget`. It handles video output while leaving playback logic to the controllers.
 * **`clip_explorer.py`**: The **Left Sidebar**. Refactored to use **Qt Model/View** (`QTreeView`) for high performance. It handles file navigation and filtering (e.g., "Show Labelled Only").
 * **`dialogs.py`**:
@@ -93,6 +93,6 @@ Implements the interface for **Dense Captioning** (text descriptions anchored to
 ## 🎨 Design Principles
 
 1. **Passive View:** These classes do not modify data directly. They display data provided by the controller and emit signals (e.g., `confirm_clicked`, `request_remove_item`) when the user acts.
-2. **Unified Skeleton:** All modes inherit the same `UnifiedTaskPanel` structure. This ensures that the Sidebar and Media Player always appear in the same relative locations, reducing cognitive load for the user.
+2. **Unified Workspace:** All modes are now integrated into a single dockable workspace. This ensures that the Project Navigator and Media Player are always consistent across different annotation tasks.
 3. **Composite Design:** Complex widgets (like the Description Player) are built by composing smaller, single-purpose widgets (VideoSurface + Controls + Slider) rather than monolithic classes.
 4. **Dynamic Generation:** Where possible, forms and tables adjust their content dynamically based on the loaded JSON schema or data model.

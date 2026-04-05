@@ -14,28 +14,34 @@ class DenseManager:
     Controller for Dense Description mode.
     Handles free-text annotation at specific timestamps, synchronized with video and timeline.
     """
-    def __init__(self, main_window):
+    def __init__(self, main_window, media_controller: MediaController):
         self.main = main_window
         self.model = main_window.model
         self.tree_model = main_window.tree_model 
         
         # Access UI components from the Dense Description view
-        self.ui_root = main_window.ui.dense_description_ui
+        self.ui_root = main_window.ui.workspace
         self.left_panel = self.ui_root.left_panel
         self.center_panel = self.ui_root.center_panel
-        self.right_panel = self.ui_root.right_panel
+        self.right_panel = self.ui_root.dense_editor
         
         # Media Controller setup
-        preview_widget = self.center_panel.media_preview
-        self.media_controller = MediaController(preview_widget.player, preview_widget.video_widget)
+        self.media_controller = media_controller
         
         self.current_video_path = None
         
         # Timer to throttle text updates during playback/scrubbing
-        self.sync_timer = QTimer()
+        self.sync_timer = QTimer(self.main)
         self.sync_timer.setSingleShot(True)
         self.sync_timer.setInterval(100)
         self.sync_timer.timeout.connect(self._sync_editor_to_timeline)
+
+    def reset_ui(self):
+        """Reset the dense description editor UI for a new project."""
+        self.right_panel.table.set_data([])
+        self.right_panel.input_widget.set_text("")
+        self.right_panel.setEnabled(False)
+        self.current_video_path = None
 
     def setup_connections(self):
         """Link UI signals to logic handlers."""
@@ -50,18 +56,6 @@ class DenseManager:
         pb = self.center_panel.playback
         
         media.positionChanged.connect(self._on_media_position_changed)
-        media.durationChanged.connect(timeline.set_duration)
-        timeline.seekRequested.connect(media.set_position)
-        
-        # Playback Controls
-        pb.playPauseRequested.connect(self.media_controller.toggle_play_pause)
-        pb.seekRelativeRequested.connect(lambda d: media.set_position(media.player.position() + d))
-        # Connect playback rate signal
-        pb.playbackRateRequested.connect(media.set_playback_rate)
-        
-        # Navigation
-        pb.nextPrevClipRequested.connect(self._navigate_clip)
-        pb.nextPrevAnnotRequested.connect(self._navigate_annotation)
         
         # --- Right Panel (Text Input & Table) ---
         input_w = self.right_panel.input_widget
