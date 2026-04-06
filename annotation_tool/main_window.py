@@ -331,15 +331,6 @@ class VideoAnnotationWindow(QMainWindow):
     def _is_desc_mode(self) -> bool: return self._get_active_mode_index() == 2
     def _is_dense_mode(self) -> bool: return self._get_active_mode_index() == 3
 
-    def _dispatch_add_video(self):
-        self.dataset_explorer_controller.handle_add_video()
-
-    def _dispatch_clear_workspace(self):
-        self.dataset_explorer_controller.handle_clear_workspace()
-
-    def _dispatch_filter_change(self, index):
-        self.dataset_explorer_controller.handle_filter_change(index)
-
     def _on_tree_selection_changed(self, current: QModelIndex, previous: QModelIndex):
         if current.isValid():
             # [CENTRALIZED] Enable all editors now that a clip is selected
