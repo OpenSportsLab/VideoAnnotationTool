@@ -32,6 +32,7 @@ class DenseEditorController:
         self.sync_timer.setInterval(100)
         self.sync_timer.timeout.connect(self._sync_editor_to_timeline)
 
+
     # -------------------------------------------------------------------------
     # Lifecycle / Wiring
     # -------------------------------------------------------------------------
@@ -45,6 +46,7 @@ class DenseEditorController:
         table.annotationSelected.connect(self._on_event_selected_from_table)
         table.annotationDeleted.connect(self._on_delete_single_annotation)
         table.annotationModified.connect(self._on_annotation_modified)
+        table.updateTimeForSelectedRequested.connect(self._on_update_time_for_selected)
 
     def reset_ui(self):
         self.right_panel.table.set_data([])
@@ -324,6 +326,15 @@ class DenseEditorController:
         self.main.update_action_item_status(self.current_video_path)
         self.main.update_save_export_button_state()
         self.right_panel.input_widget.set_text("")
+
+    def _on_update_time_for_selected(self, old_event: dict):
+        if not self.current_video_path:
+            return
+
+        current_ms = self.center_panel.player.position()
+        new_event = old_event.copy()
+        new_event["position_ms"] = current_ms
+        self._on_annotation_modified(old_event, new_event)
 
     def display_events_for_item(self, path: str):
         current_selection_ms = None

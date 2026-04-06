@@ -3,7 +3,7 @@ import datetime
 import json
 from collections import defaultdict
 
-from PyQt6.QtCore import QModelIndex, QObject, QUrl
+from PyQt6.QtCore import QModelIndex, QObject
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from utils import natural_sort_key
@@ -217,37 +217,7 @@ class DatasetExplorerController(QObject):
                 self.main.sync_batch_inference_dropdowns()
 
     def _add_localization_items(self):
-        start_dir = self.app_state.current_working_directory or ""
-        files, _ = QFileDialog.getOpenFileNames(
-            self.main, "Select Video(s)", start_dir, "Video (*.mp4 *.avi *.mov *.mkv)"
-        )
-        if not files:
-            return
-
-        if not self.app_state.current_working_directory:
-            self.app_state.current_working_directory = os.path.dirname(files[0])
-
-        added_count = 0
-        first_idx = None
-        for file_path in files:
-            if self.app_state.has_action_path(file_path):
-                continue
-
-            name = os.path.basename(file_path)
-            self.app_state.add_action_item(name=name, path=file_path, source_files=[file_path])
-            item = self.tree_model.add_entry(name=name, path=file_path, source_files=[file_path])
-            self.app_state.action_item_map[file_path] = item
-            self.update_item_status(file_path)
-            if first_idx is None:
-                first_idx = item.index()
-            added_count += 1
-
-        if added_count > 0:
-            self._mark_dirty_and_refresh()
-            self.main.show_temp_msg("Videos Added", f"Added {added_count} clips.")
-            if first_idx and first_idx.isValid():
-                self.panel.tree.setCurrentIndex(first_idx)
-                self.main.loc_manager.on_clip_selected(first_idx, None)
+        self.main.localization_editor_controller.add_dataset_items()
 
     def _add_description_items(self):
         self.main.desc_editor_controller.add_dataset_items()
@@ -273,39 +243,7 @@ class DatasetExplorerController(QObject):
         self.main.desc_editor_controller.clear_dataset_items()
 
     def _clear_localization_items(self):
-        if not self.app_state.action_item_data:
-            return
-        res = QMessageBox.question(
-            self.main,
-            "Clear All",
-            "Are you sure?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if res != QMessageBox.StandardButton.Yes:
-            return
-
-        self.app_state.action_item_data = []
-        self.app_state.action_path_to_name = {}
-        self.app_state.action_item_map.clear()
-        self.app_state.localization_events = {}
-        self.app_state.smart_localization_events = {}
-        self.app_state.label_definitions = {}
-        self.app_state.is_data_dirty = False
-        self.main.loc_manager.current_video_path = None
-        self.main.loc_manager.current_head = None
-        self.app_state.undo_stack.clear()
-        self.app_state.redo_stack.clear()
-
-        self.media_controller.stop()
-        self.main.center_panel.player.setSource(QUrl())
-        self.main.center_panel.video_widget.update()
-        self.main.center_panel.set_markers([])
-
-        self.tree_model.clear()
-        self.main.loc_manager._refresh_schema_ui()
-        self.main.loc_manager.right_panel.table.set_data([])
-        self.main.show_temp_msg("Cleared", "Workspace reset.")
-        self.main.update_save_export_button_state()
+        self.main.localization_editor_controller.clear_dataset_items()
 
     def _clear_dense_items(self):
         self.main.dense_editor_controller.clear_dataset_items()
@@ -328,24 +266,7 @@ class DatasetExplorerController(QObject):
             self.main.sync_batch_inference_dropdowns()
 
     def _remove_localization_item(self, index: QModelIndex):
-        path, action_idx = self._path_from_index(index)
-        if not path:
-            return
-
-        removed = self.app_state.remove_action_item_by_path(path)
-        if not removed:
-            return
-
-        if self.main.loc_manager.current_video_path == path:
-            self.main.loc_manager.current_video_path = None
-            self.media_controller.stop()
-            self.main.center_panel.player.setSource(QUrl())
-            self.main.loc_manager.right_panel.table.set_data([])
-            self.main.center_panel.set_markers([])
-
-        self._remove_tree_row(action_idx)
-        self._mark_dirty_and_refresh()
-        self.main.show_temp_msg("Removed", "Video removed from list.")
+        self.main.localization_editor_controller.remove_dataset_item(index)
 
     def _remove_description_item(self, index: QModelIndex):
         self.main.desc_editor_controller.remove_dataset_item(index)
@@ -385,17 +306,7 @@ class DatasetExplorerController(QObject):
             self.panel.tree.setRowHidden(row, QModelIndex(), hidden)
 
     def _filter_localization_items(self, index):
-        root = self.tree_model.invisibleRootItem()
-        for row in range(root.rowCount()):
-            item = root.child(row)
-            path = item.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-            has_anno = len(self.app_state.localization_events.get(path, [])) > 0
-            hide = False
-            if index == 1 and not has_anno:
-                hide = True
-            elif index == 2 and has_anno:
-                hide = True
-            self.panel.tree.setRowHidden(row, QModelIndex(), hide)
+        self.main.localization_editor_controller.filter_dataset_items(index)
 
     def _filter_description_items(self, index):
         self.main.desc_editor_controller.filter_dataset_items(index)
@@ -724,7 +635,9 @@ class DatasetExplorerController(QObject):
 
         if "labels" in data:
             self.app_state.label_definitions = data["labels"]
-            self.main.loc_manager.right_panel.annot_mgmt.update_schema(self.app_state.label_definitions)
+            self.main.localization_editor_controller.right_panel.annot_mgmt.update_schema(
+                self.app_state.label_definitions
+            )
 
             default_head = None
             if "ball_action" in self.app_state.label_definitions:
@@ -735,8 +648,10 @@ class DatasetExplorerController(QObject):
                 default_head = list(self.app_state.label_definitions.keys())[0]
 
             if default_head:
-                self.main.loc_manager.current_head = default_head
-                self.main.loc_manager.right_panel.annot_mgmt.tabs.set_current_head(default_head)
+                self.main.localization_editor_controller.current_head = default_head
+                self.main.localization_editor_controller.right_panel.annot_mgmt.tabs.set_current_head(
+                    default_head
+                )
 
         missing_files = []
         loaded_count = 0
@@ -799,7 +714,7 @@ class DatasetExplorerController(QObject):
         self.app_state.json_loaded = True
 
         self.populate_tree()
-        self.main.loc_manager._refresh_schema_ui()
+        self.main.localization_editor_controller._refresh_schema_ui()
         self.main.update_save_export_button_state()
 
         if missing_files:
@@ -1060,8 +975,10 @@ class DatasetExplorerController(QObject):
         self.app_state.json_loaded = True
         self.app_state.is_data_dirty = True
 
-        self.main.loc_manager.current_head = None
-        self.main.loc_manager.right_panel.annot_mgmt.update_schema(self.app_state.label_definitions)
+        self.main.localization_editor_controller.current_head = None
+        self.main.localization_editor_controller.right_panel.annot_mgmt.update_schema(
+            self.app_state.label_definitions
+        )
 
         self.populate_tree()
 

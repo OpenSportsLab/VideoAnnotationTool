@@ -6,6 +6,7 @@ This directory contains shared UI components used by the main application worksp
 
 ```text
 ui/common/
+├── annotation_table.py      # Shared event table model/widget (Localization + Dense)
 ├── dataset_explorer_panel/   # Left dock panel (UI + view logic)
 ├── media_player/             # Center media panel (UI + view logic)
 ├── welcome_widget/           # Landing screen view (UI + view logic)
@@ -52,6 +53,12 @@ ui/common/
 ### `dialogs.py`
 
 - Shared dialogs used by controllers/router flows (project mode selection, picker dialogs, and media error dialog).
+
+### `annotation_table.py`
+
+- Shared `AnnotationTableModel` + `AnnotationTableWidget`.
+- Reused by `ui/localization/annotation_panel` and `ui/dense_description/annotation_panel`.
+- Keeps table behavior in one place while avoiding cross-mode imports.
 
 ## Architecture Notes
 

@@ -66,10 +66,14 @@ Logic dedicated to the **Whole-Video Classification** task (assigning attributes
 
 Logic dedicated to the **Action Spotting** task (pinpointing specific timestamps).
 
-* **`loc_file_manager.py`**: Handles JSON I/O with path fallback logic (checking local directories if absolute paths fail).
-* **`localization_manager.py`**:
-* Synchronizes the **Video Player**, **Timeline Widget**, and **Event Table**.
-* Captures timestamps for spotting events and manages the multi-tab interface.
+* **`localization_editor_controller.py`**:
+* Owns localization editor behavior: tree selection/media load, schema/head/label operations, spotting CRUD, table sync, and smart inference flows.
+* Owns localization navigation helpers (next/previous clip and annotation).
+* Owns localization Dataset Explorer delegation for add/remove/filter/clear and clear-workspace reset.
+* Keeps localization table/timeline/tree refresh aligned with shared undo/redo pathways.
+
+Localization JSON lifecycle load/create/save/export remains routed through
+`controllers/common/dataset_explorer_controller.py` in the current staged design.
 
 
 

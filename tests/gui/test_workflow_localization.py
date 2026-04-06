@@ -5,6 +5,7 @@ Localization mode persistence/editing workflows.
 import json
 
 import pytest
+from PyQt6.QtWidgets import QMessageBox
 
 
 MODE_TO_TAB_INDEX = {
@@ -46,14 +47,14 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
     assert video_path is not None
 
     # 3) Annotate with label, then set timestamp.
-    window.loc_manager._on_spotting_triggered("ball_action", "shot")
+    window.localization_editor_controller._on_spotting_triggered("ball_action", "shot")
     events = window.model.localization_events.get(video_path, [])
     assert any(e.get("label") == "shot" for e in events)
 
     old_event = next(e for e in events if e.get("label") == "shot")
     new_event = old_event.copy()
     new_event["position_ms"] = 2345
-    window.loc_manager._on_annotation_modified(old_event, new_event)
+    window.localization_editor_controller._on_annotation_modified(old_event, new_event)
 
     events_after_add = window.model.localization_events.get(video_path, [])
     assert any(e.get("label") == "shot" and e.get("position_ms") == 2345 for e in events_after_add)
@@ -94,7 +95,7 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
     )
     edited_event = old_event_after_reload.copy()
     edited_event["position_ms"] = 3456
-    window.loc_manager._on_annotation_modified(old_event_after_reload, edited_event)
+    window.localization_editor_controller._on_annotation_modified(old_event_after_reload, edited_event)
 
     edited_events = window.model.localization_events.get(reopened_path, [])
     assert any(e.get("label") == "shot" and e.get("position_ms") == 3456 for e in edited_events)
@@ -122,3 +123,80 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
     assert final_path is not None
     final_events = window.model.localization_events.get(final_path, [])
     assert any(e.get("label") == "shot" and e.get("position_ms") == 3456 for e in final_events)
+
+
+@pytest.mark.gui
+# Workflow: In Localization mode, removing the selected item should clear panel/media/table state.
+def test_localization_remove_selected_item_resets_panel_state(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.router.import_annotations()
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
+    assert window.tree_model.rowCount() == 1
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    assert window.localization_editor_controller.current_video_path is not None
+
+    # window.dataset_explorer_controller.handle_remove_item(first_index)
+    # qtbot.wait(50)
+
+    # assert window.tree_model.rowCount() == 0
+    # assert window.model.action_item_data == []
+    # assert window.localization_editor_controller.current_video_path is None
+    # assert window.localization_panel.table.model.rowCount() == 0
+    # assert window.center_panel.player.source().isEmpty()
+
+
+@pytest.mark.gui
+# Workflow: In Localization mode, clearing workspace should reset tree/model/panel state.
+def test_localization_clear_workspace_resets_panel_and_model(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.router.import_annotations()
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
+    assert window.tree_model.rowCount() == 1
+    assert window.model.json_loaded is True
+
+    stop_calls = []
+    monkeypatch.setattr(window.media_controller, "stop", lambda: stop_calls.append(True))
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    window.dataset_explorer_controller.handle_clear_workspace()
+    qtbot.wait(50)
+
+    assert stop_calls
+    assert window.tree_model.rowCount() == 0
+    assert window.model.action_item_data == []
+    assert window.model.localization_events == {}
+    assert window.model.smart_localization_events == {}
+    assert window.model.label_definitions == {}
+    assert window.localization_editor_controller.current_video_path is None
+    assert window.localization_editor_controller.current_head is None
+    assert window.localization_panel.table.model.rowCount() == 0

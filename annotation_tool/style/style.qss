@@ -580,7 +580,7 @@ QSlider[class="timeline_slider"]::sub-page:horizontal {
 }
 
 /* --- Spotting Controls (Tabs & Labels) --- */
-/* Target: ui/localization/event_editor/spotting_controls.py */
+/* Target: ui/localization/annotation_panel/ */
 
 /* Label Grid Buttons */
 QPushButton[class="spotting_label_btn"] {
@@ -649,7 +649,7 @@ QTabWidget[class="spotting_tabs"] > QTabBar::tab:hover {
 }
 
 /* --- Annotation Table --- */
-/* Target: ui/localization/event_editor/annotation_table.py */
+/* Target: ui/localization/annotation_panel/ */
 
 QTableView[class="annotation_table"] {
     background-color: #2E2E2E;

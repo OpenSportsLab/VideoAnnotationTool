@@ -1,15 +1,21 @@
+from PyQt6.QtCore import QAbstractTableModel, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QTableView, QHeaderView, QMenu,
-    QAbstractItemView, QPushButton
+    QAbstractItemView,
+    QHeaderView,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QTableView,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QAbstractTableModel
 
-# ==================== Table Model ====================
+
 class AnnotationTableModel(QAbstractTableModel):
     """
-    Data model for the events table.
+    Shared event table model for time/head/label rows.
     """
-    # Signal emitted when a cell is edited: old_data, new_data
+
     itemChanged = pyqtSignal(dict, dict)
 
     def __init__(self, annotations=None):
@@ -26,64 +32,58 @@ class AnnotationTableModel(QAbstractTableModel):
     def flags(self, index):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
-        # Enable selection and editing
-        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable
+        return (
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsEditable
+        )
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
-        
+
         row = index.row()
         item = self._data[row]
 
-        if role == Qt.ItemDataRole.DisplayRole or role == Qt.ItemDataRole.EditRole:
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             col = index.column()
             if col == 0:
-                return self._fmt_ms(item.get('position_ms', 0))
-            elif col == 1:
-                return item.get('head', '').replace('_', ' ')
-            elif col == 2:
-                return item.get('label', '').replace('_', ' ')
-        
+                return self._fmt_ms(item.get("position_ms", 0))
+            if col == 1:
+                return item.get("head", "").replace("_", " ")
+            if col == 2:
+                return item.get("label", "").replace("_", " ")
         elif role == Qt.ItemDataRole.UserRole:
             return item
-            
+
         return None
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
-        """
-        Handle user edits directly from the table cells.
-        """
         if not index.isValid() or role != Qt.ItemDataRole.EditRole:
             return False
 
         row = index.row()
         col = index.column()
-        
-        # Get the original object
-        old_item = self._data[row]
-        # Create a shallow copy to modify
-        new_item = old_item.copy()
 
+        old_item = self._data[row]
+        new_item = old_item.copy()
         text_val = str(value).strip()
 
-        if col == 0:  # Time Column
+        if col == 0:
             try:
                 ms = self._parse_time_str(text_val)
-                new_item['position_ms'] = ms
+                new_item["position_ms"] = ms
             except ValueError:
-                # Invalid time format, reject the edit
                 return False
-        elif col == 1:  # Head Column
-            new_item['head'] = text_val
-        elif col == 2:  # Label Column
-            new_item['label'] = text_val
+        elif col == 1:
+            new_item["head"] = text_val
+        elif col == 2:
+            new_item["label"] = text_val
 
-        # If data changed, emit signal for the Manager to handle (Undo Stack)
         if new_item != old_item:
             self.itemChanged.emit(old_item, new_item)
             return True
-            
+
         return False
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
@@ -102,76 +102,77 @@ class AnnotationTableModel(QAbstractTableModel):
         return None
 
     def _fmt_ms(self, ms):
-        s = ms // 1000
-        m = s // 60
-        return f"{m:02}:{s%60:02}.{ms%1000:03}"
+        seconds = ms // 1000
+        minutes = seconds // 60
+        return f"{minutes:02}:{seconds % 60:02}.{ms % 1000:03}"
 
     def _parse_time_str(self, time_str):
         if not time_str:
             return 0
-        parts = time_str.split(':')
+        parts = time_str.split(":")
         total_seconds = 0.0
-        if len(parts) == 3: # HH:MM:SS.mmm
+        if len(parts) == 3:  # HH:MM:SS.mmm
             total_seconds += float(parts[0]) * 3600
             total_seconds += float(parts[1]) * 60
             total_seconds += float(parts[2])
-        elif len(parts) == 2: # MM:SS.mmm
+        elif len(parts) == 2:  # MM:SS.mmm
             total_seconds += float(parts[0]) * 60
             total_seconds += float(parts[1])
-        elif len(parts) == 1: # SS.mmm
+        elif len(parts) == 1:  # SS.mmm
             total_seconds += float(parts[0])
         return int(total_seconds * 1000)
 
 
-# ==================== Table Widget ====================
 class AnnotationTableWidget(QWidget):
     """
-    Widget containing the list of events (QTableView).
+    Shared table surface for event browsing/editing.
     """
-    annotationSelected = pyqtSignal(int) 
-    annotationModified = pyqtSignal(dict, dict) # old_event, new_event
+
+    annotationSelected = pyqtSignal(int)
+    annotationModified = pyqtSignal(dict, dict)
     annotationDeleted = pyqtSignal(dict)
     updateTimeForSelectedRequested = pyqtSignal(dict)
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
 
-        # [NEW] 1.  Edit Annotation
         self.edit_lbl = QLabel("Edit Annotation")
         self.edit_lbl.setProperty("class", "panel_header_lbl")
         layout.addWidget(self.edit_lbl)
-        
+
         self.btn_set_time = QPushButton("Set to Current Video Time")
         self.btn_set_time.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_set_time.setEnabled(False) 
+        self.btn_set_time.setEnabled(False)
         self.btn_set_time.clicked.connect(self._on_set_time_clicked)
         layout.addWidget(self.btn_set_time)
 
-        # 2. Events List 
         self.list_lbl = QLabel("Events List")
         self.list_lbl.setProperty("class", "panel_header_lbl")
         layout.addWidget(self.list_lbl)
-        
+
         self.table = QTableView()
         self.table.setProperty("class", "annotation_table")
-        
+
         self.model = AnnotationTableModel()
         self.model.itemChanged.connect(self.annotationModified.emit)
-        
+
         self.table.setModel(self.model)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.table.setAlternatingRowColors(True)
         self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
-        
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
-        
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+            | QAbstractItemView.EditTrigger.AnyKeyPressed
+        )
         layout.addWidget(self.table)
-        
-        self.current_schema = {} 
+
+        self.current_schema = {}
 
     def set_data(self, annotations):
         self.model.set_annotations(annotations)
@@ -179,17 +180,16 @@ class AnnotationTableWidget(QWidget):
     def set_schema(self, schema):
         self.current_schema = schema
 
-
     def _on_selection_changed(self, selected, deselected):
         indexes = selected.indexes()
         if indexes:
-            self.btn_set_time.setEnabled(True)  
+            self.btn_set_time.setEnabled(True)
             row = indexes[0].row()
             item = self.model.get_annotation_at(row)
             if item:
-                self.annotationSelected.emit(item.get('position_ms', 0))
+                self.annotationSelected.emit(item.get("position_ms", 0))
         else:
-            self.btn_set_time.setEnabled(False) 
+            self.btn_set_time.setEnabled(False)
 
     def _on_set_time_clicked(self):
         indexes = self.table.selectionModel().selectedRows()
@@ -201,15 +201,18 @@ class AnnotationTableWidget(QWidget):
 
     def _show_context_menu(self, pos):
         index = self.table.indexAt(pos)
-        if not index.isValid(): return
-        
+        if not index.isValid():
+            return
+
         row = index.row()
         item = self.model.get_annotation_at(row)
-        if not item: return
-        
+        if not item:
+            return
+
         menu = QMenu(self)
         act_delete = menu.addAction("Delete Event")
         selected_action = menu.exec(self.table.mapToGlobal(pos))
-        
+
         if selected_action == act_delete:
             self.annotationDeleted.emit(item)
+

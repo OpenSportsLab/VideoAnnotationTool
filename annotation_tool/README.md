@@ -75,7 +75,7 @@ annotation_tool/
 
 ### 3. Modality Logic (`/controllers`)
 
-* **`localization_manager.py`**: Logic for "Spotting" (mapping a label to a timestamp).
+* **`localization_editor_controller.py`**: Logic for "Spotting" (mapping a label to a timestamp), schema management, table/timeline sync, and localization explorer delegation.
 * **`dense_editor_controller.py`**: Logic for mapping free-text descriptions to timestamps, timeline sync, CRUD + undo/redo, and Dense-mode explorer add/remove/filter/clear delegation.
 
 ### 4. The View Layer (`/ui`)
@@ -115,4 +115,3 @@ The application is built on a "Composite Design" strategy. While each mode serve
 3. **Annotate**:
 * In **Dense mode**, navigate to a point in the video, type your description in the right panel, and click "Add Description".
 * Use the **Timeline** to jump between existing text annotations.
-

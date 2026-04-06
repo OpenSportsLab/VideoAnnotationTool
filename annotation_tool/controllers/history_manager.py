@@ -54,9 +54,9 @@ class HistoryManager:
         # 1: Localization Mode
         elif tab_idx == 1:
             # Refresh Schema (Tabs)
-            self.main.loc_manager._refresh_schema_ui()
+            self.main.localization_editor_controller._refresh_schema_ui()
             # Refresh Events (Table & Timeline)
-            self.main.loc_manager._refresh_current_clip_events()
+            self.main.localization_editor_controller._refresh_current_clip_events()
             # Refresh left side
             self.main.dataset_explorer_controller.populate_tree()
 

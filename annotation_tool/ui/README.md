@@ -53,6 +53,11 @@ ui/
 
 - Shared dialogs used by router/controllers (project mode selection, picker dialogs, media error dialog).
 
+### `common/annotation_table.py`
+
+- Shared event-table model/widget used by Localization and Dense annotation panels.
+- Prevents mode-to-mode UI imports by placing reusable table logic in `ui/common/`.
+
 ## Mode Modules Summary
 
 ### `classification/`
@@ -63,7 +68,7 @@ ui/
 ### `localization/`
 
 - UI for action spotting workflows.
-- Main content lives in `event_editor/` (spotting controls, tables, smart spotting UI).
+- Main content lives in `annotation_panel/` (`LocalizationAnnotationPanel` + `.ui`).
 
 ### `description/`
 

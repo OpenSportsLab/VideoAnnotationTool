@@ -4,7 +4,7 @@ from PyQt6 import uic
 from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QVBoxLayout, QWidget
 
-from ui.localization.event_editor.annotation_table import AnnotationTableModel, AnnotationTableWidget
+from ui.common.annotation_table import AnnotationTableModel, AnnotationTableWidget
 from utils import resource_path
 
 
