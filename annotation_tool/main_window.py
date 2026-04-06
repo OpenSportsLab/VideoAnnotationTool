@@ -277,12 +277,12 @@ class VideoAnnotationWindow(QMainWindow):
         file_menu.addSeparator()
 
         self.action_save = QAction("Save Dataset", self)
-        self.action_save.triggered.connect(self._dispatch_save)
+        self.action_save.triggered.connect(self.dataset_explorer_controller.save_project)
         self.action_save.setEnabled(False)
         file_menu.addAction(self.action_save)
 
         self.action_export = QAction("Save Dataset As", self)
-        self.action_export.triggered.connect(self._dispatch_export)
+        self.action_export.triggered.connect(self.dataset_explorer_controller.export_project)
         self.action_export.setEnabled(False)
         file_menu.addAction(self.action_export)
 
@@ -309,8 +309,10 @@ class VideoAnnotationWindow(QMainWindow):
         """Register common keyboard shortcuts."""
         QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self._safe_import_annotations)
         
-        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._dispatch_save)
-        QShortcut(QKeySequence("Ctrl+Shift+S"), self).activated.connect(self._dispatch_export)
+        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self.dataset_explorer_controller.save_project)
+        QShortcut(QKeySequence("Ctrl+Shift+S"), self).activated.connect(
+            self.dataset_explorer_controller.export_project
+        )
 
         QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(
             lambda: self.show_temp_msg("Settings", "Settings dialog not implemented yet.")
@@ -383,12 +385,6 @@ class VideoAnnotationWindow(QMainWindow):
 
     def _on_remove_item_requested(self, index: QModelIndex):
         self.dataset_explorer_controller.handle_remove_item(index)
-
-    def _dispatch_save(self) -> None:
-        self.dataset_explorer_controller.save_project()
-
-    def _dispatch_export(self) -> None:
-        self.dataset_explorer_controller.export_project()
 
     def _dispatch_play_pause(self) -> None:
         # All managers now use the same media controller roughly
@@ -493,7 +489,7 @@ class VideoAnnotationWindow(QMainWindow):
         msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         msg.exec()
         if msg.clickedButton() == save_btn:
-            self._dispatch_save()
+            self.dataset_explorer_controller.save_project()
             self.media_controller.stop()
             event.accept()
         elif msg.clickedButton() == discard_btn:
