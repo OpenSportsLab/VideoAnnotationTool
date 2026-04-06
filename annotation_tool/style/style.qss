@@ -377,8 +377,8 @@ QPushButton#panel_clear_btn {
    Classification Mode Styles
    ======================================================= */
 
-/* --- Event Editor Panel --- */
-/* Target: ui/classification/event_editor/editor.py */
+/* --- Classification Annotation Panel --- */
+/* Target: ui/classification/annotation_panel/__init__.py */
 
 /* Undo/Redo Buttons */
 QPushButton[class="editor_control_btn"] {
@@ -419,7 +419,7 @@ QPushButton[class="editor_save_btn"]:hover {
 }
 
 /* --- Dynamic Widgets (Label Groups) --- */
-/* Target: ui/classification/event_editor/dynamic_widgets.py */
+/* Target: ui/classification/annotation_panel/__init__.py */
 
 /* Common Header Style */
 QLabel.group_head_lbl {

@@ -1,6 +1,5 @@
 import copy
 from models import CmdType
-from ui.classification.event_editor import DynamicSingleLabelGroup, DynamicMultiLabelGroup
 
 class HistoryManager:
     """
@@ -47,7 +46,7 @@ class HistoryManager:
         # 0: Classification Mode
         if tab_idx == 0:
             # Rebuild the right-side dynamic control
-            self.main.setup_dynamic_ui()
+            self.main.classification_editor_controller.setup_dynamic_ui()
             # Refresh the left and annotation status
             self.main.refresh_ui_after_undo_redo(self.main.get_current_action_path())
 
@@ -145,8 +144,10 @@ class HistoryManager:
                 val = cmd['old_val'] if is_undo else cmd['new_val']
                 grp = self.main.classification_panel.label_groups.get(cmd['head'])
                 if grp:
-                    if isinstance(grp, DynamicSingleLabelGroup): grp.set_checked_label(val)
-                    else: grp.set_checked_labels(val)
+                    if hasattr(grp, "set_checked_label"):
+                        grp.set_checked_label(val)
+                    elif hasattr(grp, "set_checked_labels"):
+                        grp.set_checked_labels(val)
 
        
 

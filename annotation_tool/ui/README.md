@@ -58,7 +58,7 @@ ui/
 ### `classification/`
 
 - UI for whole-video classification.
-- Main content lives in `event_editor/`.
+- Main content lives in `annotation_panel/` (`ClassificationAnnotationPanel` + `.ui`).
 
 ### `localization/`
 

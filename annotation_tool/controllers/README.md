@@ -58,9 +58,16 @@ These controllers provide foundational functionality used across the entire appl
 
 Logic dedicated to the **Whole-Video Classification** task (assigning attributes to an entire video clip).
 
-* **`class_file_manager.py`**: Handles JSON I/O and relative path calculations.
-* **`navigation_manager.py`**: Manages the "Action List" (Left Panel), auto-play logic, and filtering.
-* **`annotation_manager.py`**: Manages dynamic schema logic (Radio/Checkbox generation) and saves class selections.
+* **`classification_editor_controller.py`**:
+* Single Classification mode controller.
+* Owns selection/media load, annotation save/clear, schema CRUD, clip navigation, and dynamic-label wiring.
+* Owns Classification Dataset Explorer delegation (`add/remove/filter/clear/clear_workspace`).
+
+* **`inference_manager.py`**:
+* Smart inference helper service used by `ClassificationEditorController`.
+
+* **`train_manager.py`**:
+* Training helper service used by `ClassificationEditorController`.
 
 ### 3. Localization Controllers (`controllers/localization/`)
 

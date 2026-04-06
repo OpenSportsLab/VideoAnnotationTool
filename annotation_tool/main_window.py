@@ -1,16 +1,10 @@
 import os
 
-from PyQt6.QtCore import Qt, QTimer, QModelIndex, QUrl
-from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut, QStandardItem
-from PyQt6.QtMultimedia import QMediaPlayer
-from PyQt6.QtWidgets import (
-    QMainWindow, QMessageBox, QSizePolicy, QStackedWidget, QDockWidget, QTabWidget, QWidget, QVBoxLayout
-)
+from PyQt6.QtCore import Qt, QModelIndex
+from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
+from PyQt6.QtWidgets import QMainWindow, QMessageBox, QStackedWidget, QDockWidget, QTabWidget
 
-from controllers.classification.class_annotation_manager import AnnotationManager
-from controllers.classification.class_navigation_manager import NavigationManager
-from controllers.classification.inference_manager import InferenceManager
-from controllers.classification.train_manager import TrainManager
+from controllers.classification.classification_editor_controller import ClassificationEditorController
 from controllers.localization.localization_editor_controller import LocalizationEditorController
 from controllers.description.desc_editor_controller import DescEditorController
 from controllers.dense_description.dense_editor_controller import DenseEditorController
@@ -26,12 +20,12 @@ from models import AppStateModel
 from ui.common.welcome_widget import WelcomeWidget
 from ui.common.dataset_explorer_panel import DatasetExplorerPanel
 from ui.common.media_player import MediaCenterPanel
-from ui.classification.event_editor import ClassificationAnnotationPanel
+from ui.classification.annotation_panel import ClassificationAnnotationPanel
 from ui.localization.annotation_panel import LocalizationAnnotationPanel
 from ui.description.annotation_panel import DescriptionAnnotationPanel
 from ui.dense_description.annotation_panel import DenseAnnotationPanel
 
-from utils import create_checkmark_icon, natural_sort_key, resource_path
+from utils import create_checkmark_icon, resource_path
 
 
 class VideoAnnotationWindow(QMainWindow):
@@ -119,8 +113,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.media_controller = MediaController(self.center_panel.player, self.center_panel.video_widget)
         self.dataset_explorer_controller.media_controller = self.media_controller
         
-        self.annot_manager = AnnotationManager(self)
-        self.nav_manager = NavigationManager(self, self.media_controller)
+        self.classification_editor_controller = ClassificationEditorController(
+            self, self.media_controller
+        )
         self.localization_editor_controller = LocalizationEditorController(self, self.media_controller)
         
         # Description Mode Controller
@@ -128,9 +123,6 @@ class VideoAnnotationWindow(QMainWindow):
         
         # Dense Description Controller
         self.dense_editor_controller = DenseEditorController(self, self.media_controller)
-        self.inference_manager = InferenceManager(self)
-        self.train_manager = TrainManager(self)
-
         # --- Local UI state (icons, etc.) ---
         bright_blue = QColor("#00BFFF")
         self.done_icon = create_checkmark_icon(bright_blue)
@@ -140,7 +132,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.connect_signals()
         self.load_stylesheet()
         
-        self.setup_dynamic_ui()
+        self.classification_editor_controller.setup_dynamic_ui()
         self._setup_menu_bar()
         self._setup_shortcuts()
 
@@ -180,7 +172,7 @@ class VideoAnnotationWindow(QMainWindow):
 
     def reset_all_managers(self):
         """ Clears all mode-specific UIs and returns to Welcome screen. """
-        self.annot_manager.reset_ui()
+        self.classification_editor_controller.reset_ui()
         self.localization_editor_controller.reset_ui()
         self.desc_editor_controller.reset_ui()
         self.dense_editor_controller.reset_ui()
@@ -237,14 +229,7 @@ class VideoAnnotationWindow(QMainWindow):
         center_panel.nextPrevAnnotRequested.connect(self._dispatch_next_prev_annot)
         
         # --- Classification Editor ---
-        self.classification_panel.annotation_saved.connect(lambda data: self.annot_manager.save_manual_annotation())
-        self.classification_panel.smart_confirm_requested.connect(self.annot_manager.confirm_smart_annotation_as_manual)
-        self.classification_panel.hand_clear_requested.connect(self.annot_manager.clear_current_manual_annotation)
-        self.classification_panel.smart_clear_requested.connect(self.annot_manager.clear_current_smart_annotation)
-        self.classification_panel.add_head_clicked.connect(self.annot_manager.handle_add_label_head)
-        self.classification_panel.remove_head_clicked.connect(self.annot_manager.handle_remove_label_head)
-        self.classification_panel.smart_infer_requested.connect(self.inference_manager.start_inference)
-        self.classification_panel.confirm_infer_requested.connect(lambda res: self.annot_manager.save_manual_annotation())
+        self.classification_editor_controller.setup_connections()
 
         # --- Localization Editor ---
         self.localization_editor_controller.setup_connections()
@@ -371,7 +356,7 @@ class VideoAnnotationWindow(QMainWindow):
             elif self._is_dense_mode():
                 self.dense_editor_controller.on_item_selected(current, previous)
             else:
-                self.nav_manager.on_item_selected(current, previous)
+                self.classification_editor_controller.on_item_selected(current, previous)
         else:
             # Disable editors if no clip is selected
             self.classification_panel.manual_box.setEnabled(False)
@@ -383,12 +368,10 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.handle_remove_item(index)
 
     def _dispatch_play_pause(self) -> None:
-        # All managers now use the same media controller roughly
-        self.nav_manager.media_controller.toggle_play_pause()
+        self.media_controller.toggle_play_pause()
 
     def _dispatch_seek(self, delta_ms: int) -> None:
-        # Use our unified media_controller for seeking if available
-        self.nav_manager.media_controller.seek_relative(delta_ms)
+        self.media_controller.seek_relative(delta_ms)
 
     def _dispatch_next_prev_clip(self, step: int):
         if self._is_loc_mode(): self.localization_editor_controller._navigate_clip(step)
@@ -399,8 +382,10 @@ class VideoAnnotationWindow(QMainWindow):
                 self.desc_editor_controller.nav_prev_clip()
         elif self._is_dense_mode(): self.dense_editor_controller._navigate_clip(step)
         else:
-            if step > 0: self.nav_manager.nav_next_clip()
-            else: self.nav_manager.nav_prev_clip()
+            if step > 0:
+                self.classification_editor_controller.nav_next_clip()
+            else:
+                self.classification_editor_controller.nav_prev_clip()
 
     def _dispatch_next_prev_annot(self, step: int):
         if self._is_loc_mode(): self.localization_editor_controller._navigate_annotation(step)
@@ -413,7 +398,7 @@ class VideoAnnotationWindow(QMainWindow):
             self.localization_editor_controller._on_label_add_req(head)
         elif self._is_desc_mode(): self.desc_editor_controller.save_current_annotation()
         elif self._is_dense_mode(): self.dense_editor_controller.submit_current_annotation()
-        else: self.annot_manager.save_manual_annotation()
+        else: self.classification_editor_controller.save_manual_annotation()
 
     # ---------------------------------------------------------------------
     # UI Helpers
@@ -426,7 +411,7 @@ class VideoAnnotationWindow(QMainWindow):
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if msg.exec() == QMessageBox.StandardButton.Yes:
             self.media_controller.stop()
-            self.dataset_explorer_controller.clear_classification_workspace()
+            self.classification_editor_controller.clear_workspace()
 
     def _on_desc_clear_clicked(self) -> None:
         if not self.model.json_loaded: return
@@ -440,7 +425,7 @@ class VideoAnnotationWindow(QMainWindow):
 
     def prepare_new_project_ui(self) -> None:
         self.set_project_ui_enabled(True)
-        self.classification_panel.task_label.setText(f"Task: {self.model.current_task_name}")
+        self.classification_editor_controller.setup_dynamic_ui()
         self.show_temp_msg("New Project Created", "Classification ready.")
 
     def prepare_new_localization_ui(self) -> None:
@@ -546,11 +531,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.desc_editor_controller.on_item_selected(current, previous)
 
     def sync_batch_inference_dropdowns(self) -> None:
-        ed = self.classification_panel
-        if not hasattr(ed, 'update_action_list'): return
-        sorted_list = sorted(self.model.action_item_data, key=lambda d: natural_sort_key(d.get("name", "")))
-        action_names = [d["name"] for d in sorted_list]
-        ed.update_action_list(action_names)
+        self.classification_editor_controller.sync_batch_inference_dropdowns()
 
     def populate_action_tree(self) -> None:
         """Loads data from the app state into the UI model tree."""
@@ -561,19 +542,10 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.update_item_status(action_path)
 
     def setup_dynamic_ui(self) -> None:
-        ed = self.classification_panel
-        ed.setup_dynamic_labels(self.model.label_definitions)
-        ed.task_label.setText(f"Task: {self.model.current_task_name}")
-        self._connect_dynamic_type_buttons()
+        self.classification_editor_controller.setup_dynamic_ui()
 
     def _connect_dynamic_type_buttons(self) -> None:
-        ed = self.classification_panel
-        for head, group in ed.label_groups.items():
-            try: group.add_btn.clicked.disconnect()
-            except: pass
-            group.add_btn.clicked.connect(lambda _, h=head: self.annot_manager.add_custom_type(h))
-            group.remove_label_signal.connect(lambda lbl, h=head: self.annot_manager.remove_custom_type(h, lbl))
-            group.value_changed.connect(lambda h, v: self.annot_manager.handle_ui_selection_change(h, v))
+        self.classification_editor_controller._connect_dynamic_type_buttons()
 
     def refresh_ui_after_undo_redo(self, action_path: str) -> None:
         if not action_path:
@@ -588,7 +560,8 @@ class VideoAnnotationWindow(QMainWindow):
             self.dataset_explorer_panel.tree.setCurrentIndex(idx)
         if self._is_loc_mode(): self.localization_editor_controller._display_events_for_item(action_path)
         elif self._is_desc_mode():
-            self.desc_editor_controller.on_item_selected(item.index(), None)
+            if item:
+                self.desc_editor_controller.on_item_selected(item.index(), None)
         elif self._is_dense_mode(): self.dense_editor_controller.display_events_for_item(action_path)
-        else: self.annot_manager.display_manual_annotation(action_path)
+        else: self.classification_editor_controller.display_manual_annotation(action_path)
         self.update_save_export_button_state()

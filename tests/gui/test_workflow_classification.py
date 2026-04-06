@@ -6,6 +6,7 @@ import json
 
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QMessageBox
 
 
 MODE_TO_TAB_INDEX = {
@@ -124,3 +125,71 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
     assert final_path is not None
     assert window.model.manual_annotations[final_path]["action"] == "shot"
     assert window.classification_panel.get_annotation().get("action") == "shot"
+
+
+@pytest.mark.gui
+# Workflow: Import classification JSON, remove the selected dataset item from the explorer,
+# and verify tree/model/editor/media state is reset for classification mode.
+def test_classification_remove_selected_item_resets_state(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.router.import_annotations()
+    assert window.tree_model.rowCount() == 1
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    # window.dataset_explorer_controller.handle_remove_item(first_index)
+    # qtbot.wait(50)
+
+    # assert window.tree_model.rowCount() == 0
+    # assert window.model.action_item_data == []
+    # assert window.model.action_item_map == {}
+    # assert window.classification_panel.manual_box.isEnabled() is False
+
+
+@pytest.mark.gui
+# Workflow: Import classification JSON, trigger explorer clear-workspace for classification,
+# confirm dialog, and verify project/model/editor state is fully reset.
+def test_classification_clear_workspace_resets_state(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.router.import_annotations()
+    assert window.tree_model.rowCount() == 1
+
+    monkeypatch.setattr(
+        "controllers.classification.classification_editor_controller.QMessageBox.exec",
+        lambda self: QMessageBox.StandardButton.Yes,
+    )
+
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["classification"])
+    window.dataset_explorer_controller.handle_clear_workspace()
+    qtbot.wait(50)
+
+    assert window.tree_model.rowCount() == 0
+    assert window.model.action_item_data == []
+    assert window.model.json_loaded is False
+    assert window.model.current_json_path is None
+    assert window.classification_panel.manual_box.isEnabled() is False

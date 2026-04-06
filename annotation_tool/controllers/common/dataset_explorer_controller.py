@@ -1,7 +1,6 @@
 import os
 import datetime
 import json
-from collections import defaultdict
 
 from PyQt6.QtCore import QModelIndex, QObject
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
@@ -80,8 +79,8 @@ class DatasetExplorerController(QObject):
             key=lambda d: natural_sort_key(d.get("name", ""))
         )
 
-        if hasattr(self.main, "sync_batch_inference_dropdowns"):
-            self.main.sync_batch_inference_dropdowns()
+        if hasattr(self.main, "classification_editor_controller"):
+            self.main.classification_editor_controller.sync_batch_inference_dropdowns()
 
         for data in sorted_list:
             path = data["path"]
@@ -164,57 +163,7 @@ class DatasetExplorerController(QObject):
     # Add Actions
     # ------------------------------------------------------------------
     def _add_classification_items(self):
-        if not self.app_state.json_loaded:
-            QMessageBox.warning(self.main, "Warning", "Please create or load a project first.")
-            return
-
-        filters = "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp);;All Files (*)"
-        start_dir = self.app_state.current_working_directory or ""
-        files, _ = QFileDialog.getOpenFileNames(self.main, "Select Data to Add", start_dir, filters)
-        if not files:
-            return
-
-        if not self.app_state.current_working_directory:
-            self.app_state.current_working_directory = os.path.dirname(files[0])
-
-        added_count = 0
-        is_mv = getattr(self.app_state, "is_multi_view", False)
-
-        if is_mv:
-            grouped = defaultdict(list)
-            for file_path in files:
-                grouped[os.path.dirname(file_path)].append(file_path)
-
-            for dir_path, paths in grouped.items():
-                paths.sort()
-                name = os.path.basename(dir_path) if len(paths) > 1 else os.path.basename(paths[0])
-                if self.app_state.has_action_name(name):
-                    continue
-
-                main_path = paths[0]
-                self.app_state.add_action_item(name=name, path=main_path, source_files=paths)
-                item = self.tree_model.add_entry(name=name, path=main_path, source_files=paths)
-                self.app_state.action_item_map[main_path] = item
-                self.update_item_status(main_path)
-                added_count += 1
-        else:
-            for file_path in files:
-                if self.app_state.has_action_path(file_path):
-                    continue
-
-                name = os.path.basename(file_path)
-                self.app_state.add_action_item(name=name, path=file_path, source_files=[file_path])
-                item = self.tree_model.add_entry(name=name, path=file_path, source_files=[file_path])
-                self.app_state.action_item_map[file_path] = item
-                self.update_item_status(file_path)
-                added_count += 1
-
-        if added_count > 0:
-            self._mark_dirty_and_refresh()
-            self.handle_filter_change(self.panel.filter_combo.currentIndex())
-            self.main.show_temp_msg("Added", f"Added {added_count} items.")
-            if hasattr(self.main, "sync_batch_inference_dropdowns"):
-                self.main.sync_batch_inference_dropdowns()
+        self.main.classification_editor_controller.add_dataset_items()
 
     def _add_localization_items(self):
         self.main.localization_editor_controller.add_dataset_items()
@@ -229,15 +178,7 @@ class DatasetExplorerController(QObject):
     # Clear Actions
     # ------------------------------------------------------------------
     def _clear_classification_items(self):
-        if not self.app_state.json_loaded:
-            return
-        msg = QMessageBox(self.main)
-        msg.setWindowTitle("Clear Workspace")
-        msg.setText("Clear workspace? Unsaved changes will be lost.")
-        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        if msg.exec() == QMessageBox.StandardButton.Yes:
-            self.media_controller.stop()
-            self.clear_classification_workspace()
+        self.main.classification_editor_controller.clear_dataset_items()
 
     def _clear_description_items(self):
         self.main.desc_editor_controller.clear_dataset_items()
@@ -252,18 +193,7 @@ class DatasetExplorerController(QObject):
     # Remove Actions
     # ------------------------------------------------------------------
     def _remove_classification_item(self, index: QModelIndex):
-        path, action_idx = self._path_from_index(index)
-        if not path:
-            return
-
-        removed = self.app_state.remove_action_item_by_path(path)
-        if not removed:
-            return
-        self._remove_tree_row(action_idx)
-        self._mark_dirty_and_refresh()
-        self.main.show_temp_msg("Removed", "Item removed.")
-        if hasattr(self.main, "sync_batch_inference_dropdowns"):
-            self.main.sync_batch_inference_dropdowns()
+        self.main.classification_editor_controller.remove_dataset_item(index)
 
     def _remove_localization_item(self, index: QModelIndex):
         self.main.localization_editor_controller.remove_dataset_item(index)
@@ -280,30 +210,7 @@ class DatasetExplorerController(QObject):
     # Filter Actions
     # ------------------------------------------------------------------
     def _filter_classification_items(self, index):
-        filter_idx = self.panel.filter_combo.currentIndex() if index is None else index
-        if filter_idx < 0:
-            return
-
-        for row in range(self.tree_model.rowCount()):
-            idx = self.tree_model.index(row, 0)
-            item = self.tree_model.itemFromIndex(idx)
-            if not item:
-                continue
-
-            path = item.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-            is_hand = path in self.app_state.manual_annotations and bool(self.app_state.manual_annotations[path])
-            is_smart = self.app_state.smart_annotations.get(path, {}).get("_confirmed", False)
-            is_none = not is_hand and not is_smart
-
-            hidden = False
-            if filter_idx == 1 and not is_hand:
-                hidden = True
-            elif filter_idx == 2 and not is_smart:
-                hidden = True
-            elif filter_idx == 3 and not is_none:
-                hidden = True
-
-            self.panel.tree.setRowHidden(row, QModelIndex(), hidden)
+        self.main.classification_editor_controller.filter_dataset_items(index)
 
     def _filter_localization_items(self, index):
         self.main.localization_editor_controller.filter_dataset_items(index)
@@ -430,21 +337,7 @@ class DatasetExplorerController(QObject):
 
     def clear_classification_workspace(self):
         """Clear classification workspace (used by MainWindow clear action)."""
-        self.tree_model.clear()
-        self.app_state.reset(full_reset=True)
-        self.main.update_save_export_button_state()
-
-        self.main.classification_panel.manual_box.setEnabled(False)
-        self.main.center_panel.load_video(None)
-
-        if hasattr(self.main.classification_panel, "reset_smart_inference"):
-            self.main.classification_panel.reset_smart_inference()
-        if hasattr(self.main.classification_panel, "reset_train_ui"):
-            self.main.classification_panel.reset_train_ui()
-
-        self.main.setup_dynamic_ui()
-        if hasattr(self.main, "sync_batch_inference_dropdowns"):
-            self.main.sync_batch_inference_dropdowns()
+        self.main.classification_editor_controller.clear_workspace()
 
     def clear_description_workspace(self):
         """Clear description workspace (used by MainWindow clear action)."""
@@ -518,7 +411,7 @@ class DatasetExplorerController(QObject):
                     "labels": sorted(list(set(value.get("labels", []))))
                 }
 
-        self.main.setup_dynamic_ui()
+        self.main.classification_editor_controller.setup_dynamic_ui()
 
         self.app_state.is_multi_view = any(
             len(item.get("inputs", [])) > 1
@@ -956,7 +849,6 @@ class DatasetExplorerController(QObject):
         self.app_state.current_json_path = None
         self.app_state.current_working_directory = None
 
-        self.main.setup_dynamic_ui()
         self.main.update_save_export_button_state()
         self.main.show_classification_view()
         self.main.prepare_new_project_ui()
@@ -1010,7 +902,6 @@ class DatasetExplorerController(QObject):
         self.app_state.current_json_path = None
         self.app_state.current_working_directory = None
 
-        self.main.setup_dynamic_ui()
         self.main.show_description_view()
         self.main.update_save_export_button_state()
 

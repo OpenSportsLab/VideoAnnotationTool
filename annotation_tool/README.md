@@ -27,10 +27,9 @@ annotation_tool/
 │   ├── history_manager.py      # Universal Undo/Redo system (Supports Batch Annotations)
 │   ├── media_controller.py     # Unified playback logic (Anti-freeze/Visual clearing)
 │   ├── classification/         # Logic for Classification mode
-│   │   ├── class_annotation_manager.py # Manual label state management
-│   │   ├── class_file_manager.py       # JSON I/O for Classification tasks
-│   │   ├── class_navigation_manager.py # Action tree navigation
-│   │   └── inference_manager.py        # [NEW] AI Smart Annotation (Single/Batch Inference)
+│   │   ├── classification_editor_controller.py # Unified classification mode controller
+│   │   ├── inference_manager.py                # AI Smart Annotation helper
+│   │   └── train_manager.py                    # Training helper
 │   ├── localization/           # Logic for Action Spotting (Localization) mode
 │   ├── description/            # Logic for Global Captioning (Description) mode
 │   └── dense_description/      # Logic for Dense Captioning (Text-at-Timestamp)
@@ -43,10 +42,9 @@ annotation_tool/
 │   │   ├── workspace.py          # Unified 3-column skeleton
 │   │   └── dialogs.py            # Project wizards and mode selectors
 │   ├── classification/         # UI specific to Classification
-│   │   └── event_editor/         # Dynamic Schema Editor & [NEW] Smart Annotation UI
-│   │       ├── dynamic_widgets.py  # Single/Multi label dynamic radio & checkbox groups
-│   │       ├── editor.py           # Includes NativeDonutChart & Batch Progress UI
-│   │       └── controls.py         # Playback control bar
+│   │   └── annotation_panel/      # Qt Designer driven classification editor panel
+│   │       ├── __init__.py
+│   │       └── classification_annotation_panel.ui
 │   ├── localization/           # UI specific to Localization (Timeline + Tabbed Spotting)
 │   ├── description/            # UI specific to Global Captioning (Full-video text)
 │   └── dense_description/      # UI specific to Dense Description

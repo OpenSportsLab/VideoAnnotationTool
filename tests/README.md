@@ -28,6 +28,7 @@ This folder contains GUI smoke/persistence tests for the PyQt application.
   - Add/remove dataset items + save/reopen list persistence.
 - `tests/gui/test_workflow_classification.py`
   - Classification annotate/save/reload/edit workflow.
+  - Classification remove-item reset and clear-workspace reset workflows.
 - `tests/gui/test_workflow_localization.py`
   - Localization event/time annotate/save/reload/edit workflow.
   - Localization remove-item and clear-workspace reset workflows.
@@ -83,6 +84,8 @@ pytest --collect-only tests/gui
 - `test_recent_projects_remove_button_removes_entry`
 - `test_add_five_items_remove_one_save_and_reopen_persists_changes`
 - `test_classification_annotate_save_reload_edit_labels_and_persist`
+- `test_classification_remove_selected_item_resets_state`
+- `test_classification_clear_workspace_resets_state`
 - `test_localization_annotate_save_reload_edit_time_and_persist`
 - `test_localization_remove_selected_item_resets_panel_state`
 - `test_localization_clear_workspace_resets_panel_and_model`

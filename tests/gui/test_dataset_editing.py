@@ -42,7 +42,7 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
         added_video_paths.append(added_video)
 
     monkeypatch.setattr(
-        "controllers.common.dataset_explorer_controller.QFileDialog.getOpenFileNames",
+        "controllers.classification.classification_editor_controller.QFileDialog.getOpenFileNames",
         lambda *args, **kwargs: ([str(path) for path in added_video_paths], "Media Files (*.mp4)"),
     )
     qtbot.mouseClick(window.dataset_explorer_panel.btn_add_data, Qt.MouseButton.LeftButton)
