@@ -1,6 +1,11 @@
 # GUI Overview
 
-The OSL Annotation Tool supports two distinct annotation modes: **Classification** and **Localization (Action Spotting)**. The interface adapts based on the project type selected at startup.
+The OSL Annotation Tool supports four distinct annotation modes: **Classification**, **Localization (Action Spotting)**,**Description** and **Dense Description**.. The interface adapts based on the project type selected at startup.
+
+### Quick Demo for the whole tool
+<iframe src="https://drive.google.com/file/d/1EgQXGMQya06vNMuX_7-OlAUjF_Je-ye_/preview" width="1280" height="600" allow="autoplay" allowfullscreen></iframe>
+
+
 
 ---
 # 1. Welcome Page (Startup Interface)
@@ -8,8 +13,6 @@ The OSL Annotation Tool supports two distinct annotation modes: **Classification
 The Welcome Page is the entry point of the OSL Annotation Tool. It allows users to create or import projects and access additional resources.
 
 ![Welcome Interface](assets/landing-page.png)
-### Quick Demo
-<iframe src="https://drive.google.com/file/d/1EgQXGMQya06vNMuX_7-OlAUjF_Je-ye_/view?usp=sharing" width="1280" height="600" allow="autoplay" allowfullscreen></iframe>
 
 ### Main Actions
 
