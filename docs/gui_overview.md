@@ -8,6 +8,8 @@ The OSL Annotation Tool supports two distinct annotation modes: **Classification
 The Welcome Page is the entry point of the OSL Annotation Tool. It allows users to create or import projects and access additional resources.
 
 ![Welcome Interface](assets/landing-page.png)
+### Quick Demo
+<iframe src="https://drive.google.com/file/d/1HoI8sAEJuOldmS8jM7Di4z3AMJgwdtMZ/preview" width="640" height="480" allow="autoplay" allowfullscreen></iframe>
 
 ### Main Actions
 
