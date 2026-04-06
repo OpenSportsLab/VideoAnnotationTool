@@ -94,6 +94,7 @@ def test_close_project_returns_to_welcome(window, monkeypatch):
 @pytest.mark.gui
 # Workflow: Import a dataset, return to welcome, and verify it appears in the recent projects list.
 def test_recent_projects_list_updates_after_successful_import(window, monkeypatch, synthetic_project_json):
+    window.router.remove_all_recent_project()
     project_json_path = synthetic_project_json("classification").resolve()
 
     monkeypatch.setattr(
@@ -141,11 +142,13 @@ def test_recent_project_click_opens_dataset(window, monkeypatch, qtbot, syntheti
 @pytest.mark.gui
 # Workflow: Add 6 unique opens, verify full deduped history is stored while UI-facing recents are newest-first top-5.
 def test_recent_projects_dedupe_order_and_limit(window, monkeypatch, tmp_path, synthetic_project_json):
+    window.router.remove_all_recent_project()
+    MAX_RECENT_DATASETS_DISPLAY = window.router.get_max_recent_datasets_displayed()
     base_project = synthetic_project_json("classification")
     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
 
     project_paths = []
-    for idx in range(6):
+    for idx in range(MAX_RECENT_DATASETS_DISPLAY+5):
         project_path = tmp_path / f"classification_project_{idx}.json"
         shutil.copyfile(base_project, project_path)
         project_paths.append(project_path.resolve())
@@ -153,27 +156,28 @@ def test_recent_projects_dedupe_order_and_limit(window, monkeypatch, tmp_path, s
 
     stored_history = window.router.settings.value(window.router.RECENT_DATASETS_KEY, [])
     assert isinstance(stored_history, list)
-    assert len(stored_history) == 6
+    assert len(stored_history) == MAX_RECENT_DATASETS_DISPLAY + 5
 
     recents = window.router.get_recent_projects()
-    assert len(recents) == 5
-    assert recents == [str(path) for path in reversed(project_paths[1:])]
+    assert len(recents) == MAX_RECENT_DATASETS_DISPLAY
+    assert recents == [str(path) for path in reversed(project_paths[-10:])]
 
     reopened_path = project_paths[2]
     assert window.router.open_project_from_path(str(reopened_path)) is True
     recents_after_reopen = window.router.get_recent_projects()
     assert recents_after_reopen[0] == str(reopened_path)
-    assert len(recents_after_reopen) == 5
+    assert len(recents_after_reopen) == MAX_RECENT_DATASETS_DISPLAY
     assert recents_after_reopen.count(str(reopened_path)) == 1
 
     stored_history_after_reopen = window.router.settings.value(window.router.RECENT_DATASETS_KEY, [])
     assert isinstance(stored_history_after_reopen, list)
-    assert len(stored_history_after_reopen) == 6
+    assert len(stored_history_after_reopen) == MAX_RECENT_DATASETS_DISPLAY + 5
 
 
 @pytest.mark.gui
 # Workflow: Try to open an invalid JSON project and verify it is not added to recents.
 def test_recent_projects_failed_open_does_not_add(window, monkeypatch, tmp_path):
+    window.router.remove_all_recent_project()
     invalid_project = tmp_path / "invalid_project.json"
     invalid_project.write_text(json.dumps({"foo": "bar"}), encoding="utf-8")
 
@@ -191,6 +195,7 @@ def test_recent_projects_failed_open_does_not_add(window, monkeypatch, tmp_path)
 @pytest.mark.gui
 # Workflow: Click a missing recent path, verify warning appears, and ensure the stale entry is removed.
 def test_recent_projects_missing_path_removed_on_click(window, monkeypatch, qtbot, tmp_path):
+    window.router.remove_all_recent_project()
     missing_project = (tmp_path / "missing_project.json").resolve()
     window.router._add_recent_project(str(missing_project))
     window.welcome_controller.refresh_recent_projects()
@@ -216,6 +221,7 @@ def test_recent_projects_missing_path_removed_on_click(window, monkeypatch, qtbo
 @pytest.mark.gui
 # Workflow: Use the per-row remove button (×) and verify the recent entry is removed without attempting open.
 def test_recent_projects_remove_button_removes_entry(window, monkeypatch, qtbot, synthetic_project_json):
+    window.router.remove_all_recent_project()
     project_json_path = synthetic_project_json("classification").resolve()
     monkeypatch.setattr(
         "controllers.router.QFileDialog.getOpenFileName",

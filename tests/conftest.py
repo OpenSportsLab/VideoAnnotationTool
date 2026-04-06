@@ -57,33 +57,6 @@ def _install_opensportslib_stub() -> None:
 _install_opensportslib_stub()
 
 
-@pytest.fixture(autouse=True)
-def isolated_qsettings(tmp_path):
-    """
-    Redirect app QSettings writes to a per-test temp directory.
-
-    This avoids cross-test pollution from persisted recent dataset entries.
-    """
-    settings_root = tmp_path / "qsettings"
-    settings_root.mkdir(parents=True, exist_ok=True)
-
-    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(
-        QSettings.Format.IniFormat,
-        QSettings.Scope.UserScope,
-        str(settings_root),
-    )
-
-    settings = QSettings(
-        "OpenSportsLab",
-        "VideoAnnotationTool",
-    )
-    settings.clear()
-    settings.sync()
-    yield settings
-    settings.clear()
-    settings.sync()
-
 
 @pytest.fixture
 def window(qtbot, monkeypatch):
@@ -107,6 +80,12 @@ def window(qtbot, monkeypatch):
     qtbot.addWidget(main_window)
     main_window.show()
     qtbot.wait(50)
+
+    # Use a test-specific QSettings to isolate from real user data and ensure a clean slate.
+    main_window.router.settings = QSettings(
+        "OpenSportsLab_test",
+        "VideoAnnotationTool_test",
+    )
 
     yield main_window
 

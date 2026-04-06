@@ -19,7 +19,7 @@ class AppRouter:
     SETTINGS_ORG = "OpenSportsLab"
     SETTINGS_APP = "VideoAnnotationTool"
     RECENT_DATASETS_KEY = "welcome/recent_datasets"
-    MAX_RECENT_DATASETS_DISPLAY = 5
+    MAX_RECENT_DATASETS_DISPLAY = 10
 
     def __init__(self, main_window):
         self.main = main_window
@@ -97,6 +97,16 @@ class AppRouter:
         Return recent datasets for UI display (newest first, max 5).
         """
         return self._read_recent_projects()[: self.MAX_RECENT_DATASETS_DISPLAY]
+
+    def get_max_recent_datasets_displayed(self) -> int:
+        """
+        Return the maximum number of recent datasets to display in the UI.
+        """
+        return self.MAX_RECENT_DATASETS_DISPLAY
+
+    def remove_all_recent_project(self):
+        self.settings.setValue(self.RECENT_DATASETS_KEY, [])
+        self.settings.sync()
 
     def remove_recent_project(self, path: str):
         """Public API for removing one recent dataset entry."""
