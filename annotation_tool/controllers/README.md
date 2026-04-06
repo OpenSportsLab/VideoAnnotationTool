@@ -77,14 +77,11 @@ Logic dedicated to the **Action Spotting** task (pinpointing specific timestamps
 
 Logic dedicated to the **Global Captioning** task (one text description per video action).
 
-* **`desc_navigation_manager.py`**:
-* Manages **Multi-Clip Actions** (navigating logical "Actions" that may contain multiple video files).
-* Wraps the `MediaController` to ensure smooth loading of large video files.
-
-
 * **`desc_annotation_manager.py`**:
 * Handles **Q&A Formatting**: Parses JSON "questions" into a readable Q&A format in the editor.
 * **Flattening**: Consolidates text into a single description block upon save.
+* Handles Description-specific tree navigation helpers (previous/next action and clip).
+* Resets Description editor state during project clear/close flows.
 
 
 * **`desc_file_manager.py`**:

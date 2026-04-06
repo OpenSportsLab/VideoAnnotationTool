@@ -12,7 +12,6 @@ from controllers.classification.class_navigation_manager import NavigationManage
 from controllers.classification.inference_manager import InferenceManager
 from controllers.classification.train_manager import TrainManager
 from controllers.localization.localization_manager import LocalizationManager
-from controllers.description.desc_navigation_manager import DescNavigationManager
 from controllers.description.desc_annotation_manager import DescAnnotationManager
 from controllers.dense_description.dense_manager import DenseManager
 from controllers.history_manager import HistoryManager
@@ -33,6 +32,7 @@ from ui.description.event_editor import DescriptionAnnotationPanel
 from ui.dense_description.event_editor import DenseAnnotationPanel
 
 from utils import create_checkmark_icon, natural_sort_key, resource_path
+
 
 class VideoAnnotationWindow(QMainWindow):
     """
@@ -123,8 +123,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.nav_manager = NavigationManager(self, self.media_controller)
         self.loc_manager = LocalizationManager(self, self.media_controller)
         
-        # Description Mode Controllers
-        self.desc_nav_manager = DescNavigationManager(self, self.media_controller)
+        # Description Mode Controller
         self.desc_annot_manager = DescAnnotationManager(self)
         
         # Dense Description Controller
@@ -183,7 +182,7 @@ class VideoAnnotationWindow(QMainWindow):
         """ Clears all mode-specific UIs and returns to Welcome screen. """
         self.annot_manager.reset_ui()
         self.loc_manager.reset_ui()
-        self.desc_nav_manager.reset_ui()
+        self.desc_annot_manager.reset_ui()
         self.dense_manager.reset_ui()
         
         # Also clear the tree model
@@ -251,7 +250,6 @@ class VideoAnnotationWindow(QMainWindow):
         self.loc_manager.setup_connections()
 
         # --- Description Editor ---
-        self.desc_nav_manager.setup_connections()
         self.desc_annot_manager.setup_connections()
 
         # --- Dense Editor ---
@@ -369,9 +367,7 @@ class VideoAnnotationWindow(QMainWindow):
             if self._is_loc_mode():
                 self.loc_manager.on_clip_selected(current, previous)
             elif self._is_desc_mode():
-                # [FIXED] Call both navigation (playback) and annotation (text) managers
-                self.desc_nav_manager.on_item_selected(current, previous)
-                self.desc_annot_manager.on_item_selected(current, previous)
+                self.desc_annot_manager.handle_description_selection(current, previous)
             elif self._is_dense_mode():
                 self.dense_manager._on_clip_selected(current, previous)
             else:
@@ -397,8 +393,10 @@ class VideoAnnotationWindow(QMainWindow):
     def _dispatch_next_prev_clip(self, step: int):
         if self._is_loc_mode(): self.loc_manager._navigate_clip(step)
         elif self._is_desc_mode(): 
-            if step > 0: self.desc_nav_manager.nav_next_clip()
-            else: self.desc_nav_manager.nav_prev_clip()
+            if step > 0:
+                self.desc_annot_manager.nav_next_clip()
+            else:
+                self.desc_annot_manager.nav_prev_clip()
         elif self._is_dense_mode(): self.dense_manager._navigate_clip(step)
         else:
             if step > 0: self.nav_manager.nav_next_clip()
@@ -559,7 +557,8 @@ class VideoAnnotationWindow(QMainWindow):
             idx = item.index()
             self.dataset_explorer_panel.tree.setCurrentIndex(idx)
         if self._is_loc_mode(): self.loc_manager._display_events_for_item(action_path)
-        elif self._is_desc_mode(): self.desc_nav_manager.on_item_selected(item.index(), None)
+        elif self._is_desc_mode():
+            self.desc_annot_manager.handle_description_selection(item.index(), None)
         elif self._is_dense_mode(): self.dense_manager._display_events_for_item(action_path)
         else: self.annot_manager.display_manual_annotation(action_path)
         self.update_save_export_button_state()

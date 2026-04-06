@@ -20,8 +20,20 @@ This folder contains GUI smoke/persistence tests for the PyQt application.
   - Stubs `opensportslib` import.
   - Isolates `QSettings` to a temp directory per test.
   - Defines shared fixtures (`window`, `synthetic_project_json`).
-- `tests/gui/test_main_window_lifecycle.py`
-  - Main lifecycle and persistence workflows.
+- `tests/gui/test_core_lifecycle.py`
+  - Launch/import/close smoke coverage.
+- `tests/gui/test_recent_datasets.py`
+  - Recent-datasets persistence/open/remove behavior.
+- `tests/gui/test_dataset_editing.py`
+  - Add-data + save/reopen list persistence.
+- `tests/gui/test_classification_workflow.py`
+  - Classification annotate/save/reload/edit workflow.
+- `tests/gui/test_localization_workflow.py`
+  - Localization event/time annotate/save/reload/edit workflow.
+- `tests/gui/test_description_workflow.py`
+  - Description selection/media refresh + undo/redo text-only + annotate/save/reload/edit workflow.
+- `tests/gui/test_dense_description_workflow.py`
+  - Dense Description event edit/save/reload workflow.
 - `tests/data/`
   - Real media files used by synthetic JSON fixtures (`test_video_1.mp4`, `test_video_2.mp4`).
 
@@ -36,27 +48,27 @@ pip install pytest pytest-qt PyQt6
 Run full lifecycle suite:
 
 ```bash
-pytest -q tests/gui/test_main_window_lifecycle.py
+pytest -q tests/gui
 ```
 
 Run only one workflow:
 
 ```bash
-pytest -q tests/gui/test_main_window_lifecycle.py -k classification
-pytest -q tests/gui/test_main_window_lifecycle.py -k localization
-pytest -q tests/gui/test_main_window_lifecycle.py -k description
-pytest -q tests/gui/test_main_window_lifecycle.py -k dense
+pytest -q tests/gui/test_classification_workflow.py
+pytest -q tests/gui/test_localization_workflow.py
+pytest -q tests/gui/test_description_workflow.py
+pytest -q tests/gui/test_dense_description_workflow.py
 ```
 
 Collection/sanity check:
 
 ```bash
-pytest --collect-only tests/gui/test_main_window_lifecycle.py
+pytest --collect-only tests/gui
 ```
 
 ## Current Workflow Inventory
 
-`tests/gui/test_main_window_lifecycle.py` currently covers:
+`tests/gui/` currently covers:
 
 - `test_launches_to_welcome_view`
 - `test_import_project_routed_flow_all_modes`
@@ -70,6 +82,8 @@ pytest --collect-only tests/gui/test_main_window_lifecycle.py
 - `test_add_data_save_and_reopen_keeps_new_item`
 - `test_classification_annotate_save_reload_edit_labels_and_persist`
 - `test_localization_annotate_save_reload_edit_time_and_persist`
+- `test_description_selection_loads_media_and_refreshes_editor`
+- `test_description_undo_redo_refreshes_text_without_media_reload`
 - `test_description_annotate_save_reload_edit_and_persist`
 - `test_dense_description_annotate_save_reload_edit_and_persist`
 

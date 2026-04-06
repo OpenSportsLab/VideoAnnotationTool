@@ -62,12 +62,12 @@ class HistoryManager:
 
         # 2: Description Mode
         elif tab_idx == 2:
-            # Refresh the editor text by re-triggering selection logic
+            # Refresh editor text only (no media reload/replay on undo/redo).
             tree = self.main.dataset_explorer_panel.tree
             current_idx = tree.selectionModel().currentIndex()
             if current_idx.isValid():
                 # Force reload of data from model to UI (pass None as previous index)
-                self.main.desc_nav_manager.on_item_selected(current_idx, None)
+                self.main.desc_annot_manager.on_item_selected(current_idx, None)
         
         # 3: Dense Description Mode
         elif tab_idx == 3:

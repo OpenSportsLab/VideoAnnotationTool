@@ -1,8 +1,10 @@
 import copy
+import os
 from PyQt6.QtCore import QModelIndex
 from PyQt6.QtWidgets import QMessageBox
 # [NEW] Import CmdType for Undo/Redo
 from models.app_state import CmdType
+
 
 class DescAnnotationManager:
     """
@@ -15,6 +17,11 @@ class DescAnnotationManager:
         self.model = main_window.model
         self.current_action_path = None
 
+    def reset_ui(self):
+        """Reset the description editor UI for a new project."""
+        self.main.description_panel.caption_edit.setPlainText("")
+        self.main.description_panel.setEnabled(False)
+
     def setup_connections(self):
         """Connect UI signals to controller methods."""
         # [UPDATED] Tree Selection is now handled centrally in main_window.py
@@ -22,6 +29,38 @@ class DescAnnotationManager:
         # Connect Editor Buttons
         self.main.description_panel.confirm_clicked.connect(self.save_current_annotation)
         self.main.description_panel.clear_clicked.connect(self.clear_current_text)
+
+    def handle_description_selection(self, current: QModelIndex, previous: QModelIndex):
+        """
+        Handle Description selection from the tree:
+        1) Resolve media path from selection and load/play it when valid.
+        2) Refresh description editor content for the selected item.
+        """
+        media_path = None
+        if current.isValid():
+            model = self.main.tree_model
+            path = current.data(self.main.tree_model.FilePathRole)
+
+            if model.hasChildren(current):
+                first_child = model.index(0, 0, current)
+                if first_child.isValid():
+                    path = first_child.data(self.main.tree_model.FilePathRole)
+                else:
+                    path = None
+
+            cwd = self.model.current_working_directory
+            if path and cwd and not os.path.isabs(path):
+                media_path = os.path.normpath(os.path.join(cwd, path))
+            else:
+                media_path = path
+
+            if media_path and not os.path.exists(media_path):
+                media_path = None
+
+        if media_path:
+            self.main.media_controller.load_and_play(media_path)
+
+        self.on_item_selected(current, previous)
 
     def on_item_selected(self, current: QModelIndex, previous: QModelIndex):
         """
@@ -150,8 +189,6 @@ class DescAnnotationManager:
             
             self.main.show_temp_msg("Saved", "Description updated.")
             
-            # Auto-advance to next item
-            self._auto_advance()
 
     def clear_current_text(self):
         """Clears the editor text."""
@@ -163,6 +200,47 @@ class DescAnnotationManager:
         if item:
             item.setIcon(self.main.done_icon if is_done else self.main.empty_icon)
 
-    def _auto_advance(self):
-        """Moves selection to the next Action in the tree automatically."""
-        self.main.desc_nav_manager.nav_next_action()
+    # -------------------------------------------------------------------------
+    #  Tree Navigation Helpers
+    # -------------------------------------------------------------------------
+    def nav_prev_action(self): self._nav_tree(step=-1, level='top')
+    def nav_next_action(self): self._nav_tree(step=1, level='top')
+    def nav_prev_clip(self): self._nav_tree(step=-1, level='child')
+    def nav_next_clip(self): self._nav_tree(step=1, level='child')
+
+    def _nav_tree(self, step, level):
+        tree = self.main.dataset_explorer_panel.tree
+        curr = tree.currentIndex()
+        if not curr.isValid():
+            return
+
+        model = self.main.tree_model
+
+        if level == 'top':
+            if curr.parent().isValid():
+                curr = curr.parent()
+            new_row = curr.row() + step
+
+            if 0 <= new_row < model.rowCount(QModelIndex()):
+                new_idx = model.index(new_row, 0, QModelIndex())
+                tree.setCurrentIndex(new_idx)
+                tree.scrollTo(new_idx)
+
+        elif level == 'child':
+            parent = curr.parent()
+            if not parent.isValid():
+                if step == 1 and model.rowCount(curr) > 0:
+                    child = model.index(0, 0, curr)
+                    tree.setCurrentIndex(child)
+                elif step == -1:
+                    self.nav_prev_action()
+            else:
+                new_row = curr.row() + step
+                if 0 <= new_row < model.rowCount(parent):
+                    new_idx = model.index(new_row, 0, parent)
+                    tree.setCurrentIndex(new_idx)
+                else:
+                    if step == 1:
+                        self.nav_next_action()
+                    else:
+                        self.nav_prev_action()
