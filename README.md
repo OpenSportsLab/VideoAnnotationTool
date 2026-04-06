@@ -1,6 +1,6 @@
 # Video Annotation Tool (UI)
 
-[![Documentation Status](https://img.shields.io/badge/docs-online-brightgreen)](https://opensportslab.github.io/VideoAnnotationTool/)
+[![Documentation Status](https://img.shields.io/badge/docs-smart--annotation-brightgreen)](https://opensportslab.github.io/VideoAnnotationTool/smart-annotation/)
 
 A **PyQt6-based GUI** for analyzing and annotating **[OSL format](https://opensportslab.github.io/VideoAnnotationTool/OSL/)** datasets (OpenSportsLab).
 
