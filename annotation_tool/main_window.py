@@ -20,6 +20,7 @@ from controllers.media_controller import MediaController
 
 from controllers.router import AppRouter
 from controllers.common.dataset_explorer_controller import DatasetExplorerController
+from controllers.common.welcome_controller import WelcomeController
 from models import AppStateModel
 
 # [NEW] Direct UI Imports
@@ -111,6 +112,7 @@ class VideoAnnotationWindow(QMainWindow):
 
         # --- Controllers ---
         self.router = AppRouter(self)
+        self.welcome_controller = WelcomeController(self.welcome_widget, self.router, self)
         self.history_manager = HistoryManager(self)
         
         # [CENTRALIZED] Create the ONE and ONLY Media Controller here
@@ -215,10 +217,6 @@ class VideoAnnotationWindow(QMainWindow):
 
     def connect_signals(self) -> None:
         """Connect UI signals to controller actions."""
-
-        # Welcome screen
-        self.welcome_widget.import_btn.clicked.connect(self._safe_import_annotations)
-        self.welcome_widget.create_btn.clicked.connect(self._safe_create_project)
 
         # --- COMPONENT REFS ---
         center_panel = self.center_panel

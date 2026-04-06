@@ -72,10 +72,12 @@ The goal of this module is to adhere to the **DRY (Don't Repeat Yourself)** prin
 
 
 
-### 7. `welcome_widget.py`
+### 7. `welcome_widget/`
 
 * **Class:** `WelcomeWidget`
 * **Purpose:** The landing screen displayed on application startup.
 * **Actions:** Provides large, accessible entry points to "Create New Project" or "Import Project JSON".
+* **Structure:** Package-style module with `__init__.py`, `welcome_widget.ui`, and local README docs.
+* **Controller Pair:** `controllers/common/welcome_controller.py` owns routing and external-link actions.
 
 ---
