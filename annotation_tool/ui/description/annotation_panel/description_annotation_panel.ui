@@ -2,14 +2,6 @@
 <ui version="4.0">
  <class>DescriptionAnnotationPanel</class>
  <widget class="QWidget" name="DescriptionAnnotationPanel">
-  <property name="geometry">
-   <rect>
-    <x>0</x>
-    <y>0</y>
-    <width>360</width>
-    <height>460</height>
-   </rect>
-  </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="spacing">
     <number>5</number>
@@ -28,11 +20,11 @@
    </property>
    <item>
     <widget class="QLabel" name="lbl_instr">
-     <property name="text">
-      <string>Description / Caption:</string>
-     </property>
      <property name="styleSheet">
       <string notr="true">font-weight: bold; color: #ccc;</string>
+     </property>
+     <property name="text">
+      <string>Description / Caption:</string>
      </property>
     </widget>
    </item>
@@ -44,7 +36,7 @@
     </widget>
    </item>
    <item>
-   <layout class="QHBoxLayout" name="buttonsLayout">
+    <layout class="QHBoxLayout" name="buttonsLayout">
      <property name="spacing">
       <number>10</number>
      </property>

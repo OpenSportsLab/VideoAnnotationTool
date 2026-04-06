@@ -2,14 +2,6 @@
 <ui version="4.0">
  <class>LocalizationAnnotationPanel</class>
  <widget class="QWidget" name="LocalizationAnnotationPanel">
-  <property name="geometry">
-   <rect>
-    <x>0</x>
-    <y>0</y>
-    <width>420</width>
-    <height>720</height>
-   </rect>
-  </property>
   <layout class="QVBoxLayout" name="mainLayout">
    <property name="spacing">
     <number>6</number>
