@@ -253,37 +253,7 @@ class DatasetExplorerController(QObject):
         self.main.desc_editor_controller.add_dataset_items()
 
     def _add_dense_items(self):
-        start_dir = self.app_state.current_working_directory or ""
-        files, _ = QFileDialog.getOpenFileNames(
-            self.main, "Select Video(s)", start_dir, "Video (*.mp4 *.avi *.mov *.mkv)"
-        )
-        if not files:
-            return
-
-        if not self.app_state.current_working_directory:
-            self.app_state.current_working_directory = os.path.dirname(files[0])
-
-        added_count = 0
-        first_idx = None
-        for file_path in files:
-            if self.app_state.has_action_path(file_path):
-                continue
-
-            name = os.path.basename(file_path)
-            self.app_state.add_action_item(name=name, path=file_path, source_files=[file_path])
-            item = self.tree_model.add_entry(name=name, path=file_path, source_files=[file_path])
-            self.app_state.action_item_map[file_path] = item
-            self.update_item_status(file_path)
-            if first_idx is None:
-                first_idx = item.index()
-            added_count += 1
-
-        if added_count > 0:
-            self._mark_dirty_and_refresh()
-            self.main.show_temp_msg("Videos Added", f"Added {added_count} clips.")
-            if first_idx and first_idx.isValid():
-                self.panel.tree.setCurrentIndex(first_idx)
-                self.main.dense_manager._on_clip_selected(first_idx, None)
+        self.main.dense_editor_controller.add_dataset_items()
 
     # ------------------------------------------------------------------
     # Clear Actions
@@ -338,27 +308,7 @@ class DatasetExplorerController(QObject):
         self.main.update_save_export_button_state()
 
     def _clear_dense_items(self):
-        if not self.app_state.action_item_data:
-            return
-        res = QMessageBox.question(
-            self.main,
-            "Clear All",
-            "Are you sure you want to clear the workspace? Unsaved changes will be lost.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if res != QMessageBox.StandardButton.Yes:
-            return
-
-        self.media_controller.stop()
-        self.app_state.reset(full_reset=True)
-        self.main.dense_manager.current_video_path = None
-        self.tree_model.clear()
-        self.main.dense_manager.right_panel.table.set_data([])
-        self.main.center_panel.set_markers([])
-        self.main.dense_manager.right_panel.input_widget.set_text("")
-        self.main.show_welcome_view()
-        self.main.show_temp_msg("Cleared", "Workspace reset.")
-        self.main.update_save_export_button_state()
+        self.main.dense_editor_controller.clear_dataset_items()
 
     # ------------------------------------------------------------------
     # Remove Actions
@@ -403,32 +353,7 @@ class DatasetExplorerController(QObject):
 
 
     def _remove_dense_item(self, index: QModelIndex):
-        path, action_idx = self._path_from_index(index)
-        if not path:
-            return
-
-        reply = QMessageBox.question(
-            self.main,
-            "Remove Video",
-            f"Are you sure you want to remove this video and its annotations?\n\n{os.path.basename(path)}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        if path == self.main.dense_manager.current_video_path:
-            self.media_controller.stop()
-            self.main.dense_manager.current_video_path = None
-            self.main.dense_manager.right_panel.table.set_data([])
-            self.main.center_panel.set_markers([])
-            self.main.dense_manager.right_panel.input_widget.set_text("")
-
-        removed = self.app_state.remove_action_item_by_path(path)
-        if not removed:
-            return
-        self._remove_tree_row(action_idx)
-        self._mark_dirty_and_refresh()
-        self.main.show_temp_msg("Removed", "Video removed from project.")
+        self.main.dense_editor_controller.remove_dataset_item(index)
 
     # ------------------------------------------------------------------
     # Filter Actions
@@ -476,17 +401,7 @@ class DatasetExplorerController(QObject):
         self.main.desc_editor_controller.filter_dataset_items(index)
 
     def _filter_dense_items(self, index):
-        root = self.tree_model.invisibleRootItem()
-        for row in range(root.rowCount()):
-            item = root.child(row)
-            path = item.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-            has_anno = len(self.app_state.dense_description_events.get(path, [])) > 0
-            hide = False
-            if index == 1 and not has_anno:
-                hide = True
-            elif index == 2 and has_anno:
-                hide = True
-            self.panel.tree.setRowHidden(row, QModelIndex(), hide)
+        self.main.dense_editor_controller.filter_dataset_items(index)
 
     # ---------------------------------------------------------------------
     # Project Lifecycle

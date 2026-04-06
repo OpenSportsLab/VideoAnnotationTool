@@ -34,8 +34,7 @@ annotation_tool/
 │   ├── localization/           # Logic for Action Spotting (Localization) mode
 │   ├── description/            # Logic for Global Captioning (Description) mode
 │   └── dense_description/      # Logic for Dense Captioning (Text-at-Timestamp)
-│       ├── dense_manager.py      # Core logic for dense annotations & UI sync
-│       └── dense_file_manager.py # JSON I/O specifically for Dense tasks
+│       └── dense_editor_controller.py # Dense editor logic + explorer delegation
 │
 ├── ui/                         # [View Layer] Interface Definitions
 │   ├── common/                 # Shared widgets (Main Window, Sidebar, Video Surface)
@@ -51,10 +50,9 @@ annotation_tool/
 │   ├── localization/           # UI specific to Localization (Timeline + Tabbed Spotting)
 │   ├── description/            # UI specific to Global Captioning (Full-video text)
 │   └── dense_description/      # UI specific to Dense Description
-│       └── event_editor/
-│           ├── __init__.py       # Right panel assembler for Dense mode
-│           ├── desc_input_widget.py # Text input & timestamp submission
-│           └── dense_table.py    # Specialized Table Model for Lang/Text columns
+│       └── annotation_panel/
+│           ├── __init__.py       # Loads DenseAnnotationPanel UI + table/input composition
+│           └── dense_annotation_panel.ui
 │
 └── style/                      # Visual theme assets
     └── style.qss               # Centralized Dark mode stylesheet
@@ -78,14 +76,12 @@ annotation_tool/
 ### 3. Modality Logic (`/controllers`)
 
 * **`localization_manager.py`**: Logic for "Spotting" (mapping a label to a timestamp).
-* **`dense_manager.py`**: **[NEW]** Logic for mapping free-text descriptions to timestamps. It handles the submission from the `DenseDescriptionInputWidget` and updates the timeline markers.
-* **`dense_file_manager.py`**: Handles JSON persistence for dense tasks, ensuring the `text` and `position_ms` fields are properly serialized.
+* **`dense_editor_controller.py`**: Logic for mapping free-text descriptions to timestamps, timeline sync, CRUD + undo/redo, and Dense-mode explorer add/remove/filter/clear delegation.
 
 ### 4. The View Layer (`/ui`)
 
 * **`video_surface.py`**: A shared rendering component used by **every** mode to ensure consistent video performance.
-* **`dense_table.py`**: A specialized view inheriting from the Localization table model. It replaces the "Label/Head" columns with "Lang/Description" while maintaining the same timestamp-jump functionality.
-* **`desc_input_widget.py`**: Provides a `QTextEdit` for long-form text and an "Add" button that captures the exact current playback frame.
+* **`dense_annotation_panel.ui`**: Qt Designer file for Dense right-panel layout and editable table area.
 
 ---
 
@@ -119,5 +115,4 @@ The application is built on a "Composite Design" strategy. While each mode serve
 3. **Annotate**:
 * In **Dense mode**, navigate to a point in the video, type your description in the right panel, and click "Add Description".
 * Use the **Timeline** to jump between existing text annotations.
-
 

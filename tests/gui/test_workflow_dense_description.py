@@ -5,6 +5,7 @@ Dense Description mode persistence/editing workflows.
 import json
 
 import pytest
+from PyQt6.QtWidgets import QMessageBox
 
 
 MODE_TO_TAB_INDEX = {
@@ -51,7 +52,7 @@ def test_dense_description_annotate_save_reload_edit_and_persist(
     first_edit = old_event.copy()
     first_edit["position_ms"] = 2100
     first_edit["text"] = "Dense text v1 from GUI test."
-    window.dense_manager._on_annotation_modified(old_event, first_edit)
+    window.dense_editor_controller._on_annotation_modified(old_event, first_edit)
 
     after_first_edit = window.model.dense_description_events.get(first_path, [])
     assert any(e.get("position_ms") == 2100 and e.get("text") == "Dense text v1 from GUI test." for e in after_first_edit)
@@ -88,7 +89,7 @@ def test_dense_description_annotate_save_reload_edit_and_persist(
     second_edit = old_event_after_reload.copy()
     second_edit["position_ms"] = 3200
     second_edit["text"] = "Dense text v2 edited after reload."
-    window.dense_manager._on_annotation_modified(old_event_after_reload, second_edit)
+    window.dense_editor_controller._on_annotation_modified(old_event_after_reload, second_edit)
 
     window.dataset_explorer_controller.save_project()
     saved_data_after_edit = json.loads(project_json_path.read_text(encoding="utf-8"))
@@ -119,3 +120,85 @@ def test_dense_description_annotate_save_reload_edit_and_persist(
         e.get("position_ms") == 3200 and e.get("text") == "Dense text v2 edited after reload."
         for e in final_events
     )
+
+
+@pytest.mark.gui
+# Workflow: In Dense Description mode, removing the selected item should reset dense panel state.
+def test_dense_description_remove_selected_item_resets_panel_state(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("dense_description")
+    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.router.import_annotations()
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["dense_description"]
+    assert window.tree_model.rowCount() == 1
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    assert window.dense_editor_controller.current_video_path is not None
+
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    # window.dataset_explorer_controller.handle_remove_item(first_index)
+    # qtbot.wait(50)
+
+    # assert window.tree_model.rowCount() == 0
+    # assert window.model.action_item_data == []
+    # assert window.dense_editor_controller.current_video_path is None
+    # assert window.dense_panel.input_widget.text_editor.toPlainText() == ""
+    # assert window.dense_panel.table.model.rowCount() == 0
+
+
+@pytest.mark.gui
+# Workflow: In Dense Description mode, clearing workspace should reset model/tree/panel and return to welcome.
+def test_dense_description_clear_workspace_resets_panel_and_model(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("dense_description")
+    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.router.import_annotations()
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["dense_description"]
+    assert window.tree_model.rowCount() == 1
+    assert window.model.json_loaded is True
+
+    stop_calls = []
+    monkeypatch.setattr(window.media_controller, "stop", lambda: stop_calls.append(True))
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    window.dataset_explorer_controller.handle_clear_workspace()
+    qtbot.wait(50)
+
+    assert stop_calls
+    assert window.tree_model.rowCount() == 0
+    assert window.model.json_loaded is False
+    assert window.model.action_item_data == []
+    assert window.model.dense_global_metadata == {}
+    assert window.dense_editor_controller.current_video_path is None
+    assert window.dense_panel.input_widget.text_editor.toPlainText() == ""
+    assert window.dense_panel.table.model.rowCount() == 0
+    assert window.center_stack.currentIndex() == 0

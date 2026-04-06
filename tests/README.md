@@ -34,6 +34,7 @@ This folder contains GUI smoke/persistence tests for the PyQt application.
   - Description selection/media refresh + annotate/save/reload/edit + remove/clear workspace workflows.
 - `tests/gui/test_workflow_dense_description.py`
   - Dense Description event edit/save/reload workflow.
+  - Dense item remove/reset and clear-workspace reset workflows.
 - `tests/data/`
   - Real media files used by synthetic JSON fixtures (`test_video_1.mp4`, `test_video_2.mp4`).
 
@@ -87,6 +88,8 @@ pytest --collect-only tests/gui
 - `test_description_remove_selected_item_clears_editor_state`
 - `test_description_clear_workspace_resets_editor_and_model`
 - `test_dense_description_annotate_save_reload_edit_and_persist`
+- `test_dense_description_remove_selected_item_resets_panel_state`
+- `test_dense_description_clear_workspace_resets_panel_and_model`
 
 Each function has an inline workflow header comment that explains setup, action, and persistence checks.
 

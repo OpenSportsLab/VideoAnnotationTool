@@ -724,7 +724,7 @@ QLabel#descTimeLabel {
 
 /* =======================================================
    Dense Description - Right Panel Widgets
-   Target: ui/dense_description/event_editor/desc_input_widget.py
+   Target: ui/dense_description/annotation_panel/
    ======================================================= */
 
 QLabel[class="dense_time_display"] {

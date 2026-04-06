@@ -72,10 +72,10 @@ class HistoryManager:
         # 3: Dense Description Mode
         elif tab_idx == 3:
             # Refresh the table and timeline markers
-            # Using the path stored in dense_manager
-            path = self.main.dense_manager.current_video_path
+            # Using the path stored in dense editor controller
+            path = self.main.dense_editor_controller.current_video_path
             if path:
-                self.main.dense_manager._display_events_for_item(path)
+                self.main.dense_editor_controller.display_events_for_item(path)
 
     def _apply_state_change(self, cmd, is_undo):
         ctype = cmd['type']

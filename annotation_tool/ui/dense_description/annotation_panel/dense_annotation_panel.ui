@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>DenseAnnotationPanel</class>
+ <widget class="QWidget" name="DenseAnnotationPanel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>380</width>
+    <height>560</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="denseMainLayout">
+   <property name="spacing">
+    <number>8</number>
+   </property>
+   <property name="leftMargin">
+    <number>6</number>
+   </property>
+   <property name="topMargin">
+    <number>6</number>
+   </property>
+   <property name="rightMargin">
+    <number>6</number>
+   </property>
+   <property name="bottomMargin">
+    <number>6</number>
+   </property>
+   <item>
+    <widget class="QLabel" name="denseTitleLabel">
+     <property name="text">
+      <string>Dense Annotation</string>
+     </property>
+     <property name="styleSheet">
+      <string notr="true">font-weight: bold; color: #ccc;</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="denseCurrentTimeLabel">
+     <property name="text">
+      <string>Current Time: 00:00:00.000</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignmentFlag::AlignCenter</set>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">dense_time_display</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTextEdit" name="denseDescriptionEdit">
+     <property name="placeholderText">
+      <string>Enter the description of the event here...</string>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>120</height>
+      </size>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">dense_desc_editor</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="denseConfirmBtn">
+     <property name="text">
+      <string>Confirm Description</string>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>40</height>
+      </size>
+     </property>
+     <property name="cursor">
+      <cursorShape>PointingHandCursor</cursorShape>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">dense_confirm_btn</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="denseTableContainer">
+     <layout class="QVBoxLayout" name="denseTableContainerLayout">
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <property name="spacing">
+       <number>0</number>
+      </property>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

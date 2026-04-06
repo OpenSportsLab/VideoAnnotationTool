@@ -93,11 +93,10 @@ Logic dedicated to the **Global Captioning** task (one text description per vide
 
 Logic dedicated to the **Dense Captioning** task (text descriptions anchored to specific timestamps).
 
-* **`dense_manager.py`**:
-* **Editor-Timeline Sync**: Continuously synchronizes the text input field with the video playback position. If the video hits an event, the text loads automatically.
-* **CRUD**: Handles creating, updating, and deleting timestamped text events.
+* **`dense_editor_controller.py`**:
+* Owns Dense editor behavior: timestamp/text sync, event create/update/delete, and undo command creation.
+* Owns Dense tree-selection and navigation helpers (next/previous clip and event).
+* Owns Dense-mode Dataset Explorer delegation for add/remove/filter/clear and clear-workspace reset.
 
-
-* **`dense_file_manager.py`**:
-* **Metadata Preservation**: Ensures global and item-level metadata is retained during Load/Save cycles.
-* **Data Mapping**: Maps the flat `dense_captions` JSON list to the internal application model.
+Dense JSON lifecycle load/save/export remains routed through the shared
+`controllers/common/dataset_explorer_controller.py` in the current staged design.

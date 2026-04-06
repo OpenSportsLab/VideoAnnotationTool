@@ -73,7 +73,7 @@ ui/
 ### `dense_description/`
 
 - UI for timestamped text description workflows.
-- Main content lives in `event_editor/` (input widget + dense table).
+- Main content lives in `annotation_panel/` (`DenseAnnotationPanel` + `.ui`).
 
 ## Design Principles
 
