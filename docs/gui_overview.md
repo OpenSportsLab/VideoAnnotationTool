@@ -125,27 +125,24 @@ Designed for marking specific timestamps (spotting) with event labels.
   - **Markers:** Blue ticks indicate spotted events on the timeline.
 - **Playback Controls:** Includes standard transport controls and variable speed playback.
 
-### Right Panel: Annotation & Spotting
-This panel is divided into a header, a spotting area, and an event list.
+### Right Panel: Command Center
+This panel is now divided into two distinct tabs to separate manual workflow from AI assistance.
 
-#### **Header**
-- **Undo/Redo:** Dedicated buttons to undo or redo spotting actions and schema changes.
+#### **Tab 1: Hand Annotation**
+* **Top: Spotting Controls (Tabs)**
+  * **Multi-Head Tabs:** Organize labels by categories (Heads) such as "Action", "Card", "Goal".
+  * **Label Grid:** Click any label button to instantly **spot an event** at the current playhead time. Uses an optimized bin-packing layout.
+  * **Context Menu:** Right-click a label to **Rename** or **Delete** it.
+  * **Add New Label:** Add a new label to the current category and automatically stamp it to the current time.
+* **Bottom: Event List (Table)**
+  * **In-place Editing:** Double-click a cell to directly modify the timestamp or label text.
+  * **Time Sync Tool:** Select an existing event and click **"Set to Current Video Time"** to instantly snap the event's timestamp to the player's active frame.
 
-#### **Top: Spotting Controls (Tabs)**
-- **Multi-Head Tabs:** Organize labels by categories (Heads) such as "Action", "Card", "Goal".
-- **Label Grid:** Click any label button to instantly **spot an event** at the current playhead time.
-- **Context Menu:** Right-click a label button to **Rename** or **Delete** it.
-- **Add New Label:** - Click **"+ Add new label at current time"** to pause the video, define a new label name, and automatically spot it at the paused timestamp. The video resumes automatically after confirmation.
-
-#### **Bottom: Event List (Table)**
-- **Table Columns:**
-  - **Time:** The timestamp of the event.
-  - **Head:** The category of the event.
-  - **Label:** The specific label name.
-- **Interaction:**
-  - **Double-click:** Jumps the video player to the event's timestamp.
-  - **Right-click:** Opens a context menu to **Edit Time**, **Change Head/Label**, or **Delete Event**.
-
+#### **Tab 2: Smart Annotation**
+* **Inference Range:** Use custom time inputs (or the "Set to Current" buttons) to define precise start and end boundaries for AI action spotting.
+* **Dual Tables:** * **Predicted Events:** Review AI-generated events (with confidence scores) before they are merged into your dataset.
+  * **Confirmed Events:** Displays events that have been successfully verified and saved.
+* **Confirmation Workflow:** Users can visually verify gold markers on the timeline, click a row to jump to that timestamp, and finally click "Confirm Predictions" to officially merge them.
 
 ### 🎥 Feature Demonstrations 
 
