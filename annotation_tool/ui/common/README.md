@@ -32,12 +32,13 @@ The goal of this module is to adhere to the **DRY (Don't Repeat Yourself)** prin
 
 
 
-### 3. `dataset_explorer_panel.py`
+### 3. `dataset_explorer_panel/`
 
 * **Class:** `DatasetExplorerPanel`
 * **Purpose:** The standardized **Left Sidebar** for file navigation.
 * **Key Features:**
 * **Architecture:** Refactored to use **Qt Model/View** (`QTreeView`) instead of `QTreeWidget` for better performance and separation of data.
+* **Structure:** Package-style module with `__init__.py`, `dataset_explorer_panel.ui`, and local README docs.
 * **Integrated Controls:** Embeds `UnifiedProjectControls` at the top.
 * **Filtering:** Provides a "Show All / Labelled / Unlabelled" filter combo box.
 * **Context Menu:** Supports right-click actions (e.g., "Remove Item").

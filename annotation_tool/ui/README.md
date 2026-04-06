@@ -34,7 +34,7 @@ The backbone of the application, ensuring a consistent user experience across al
 * **`main_window.py`**: The application entry point. It manages a `QStackedLayout` to switch between the **Welcome Screen** and the four **Workspaces** without destroying state.
 * **`workspace.py`**: Defines the `MainWorkspace`. This is a `QMainWindow` that hosts the Dataset Explorer (Left Dock), Media Player (Center), and the tabbed Annotation Editor (Right Dock).
 * **`video_surface.py`**: A pure rendering widget wrapping `QMediaPlayer` and `QVideoWidget`. It handles video output while leaving playback logic to the controllers.
-* **`dataset_explorer_panel.py`**: The **Left Sidebar** (Dataset Explorer). Refactored to use **Qt Model/View** (`QTreeView`) for high performance. It handles file navigation and filtering (e.g., "Show Labelled Only").
+* **`dataset_explorer_panel/`**: The **Left Sidebar** (Dataset Explorer). Refactored to use **Qt Model/View** (`QTreeView`) for high performance, packaged with `__init__.py` + `.ui` for layout control.
 * **`dialogs.py`**:
 * `ProjectTypeDialog`: Updated wizard allowing selection of **Classification**, **Localization**, **Description**, or **Dense Description**.
 * `FolderPickerDialog`: A custom file tree allowing multi-folder selection.

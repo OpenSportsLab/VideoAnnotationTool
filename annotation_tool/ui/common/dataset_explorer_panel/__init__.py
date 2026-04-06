@@ -56,7 +56,9 @@ class DatasetExplorerPanel(QWidget):
     ):
         super().__init__(parent)
 
-        ui_path = resource_path(os.path.join("ui", "common", "dataset_explorer_panel.ui"))
+        ui_path = resource_path(
+            os.path.join("ui", "common", "dataset_explorer_panel", "dataset_explorer_panel.ui")
+        )
         try:
             uic.loadUi(ui_path, self)
         except Exception as exc:
