@@ -457,11 +457,7 @@ class DatasetExplorerController(QObject):
             return
         self._remove_tree_row(action_idx)
         self._mark_dirty_and_refresh()
-
-        if getattr(self.main.desc_annot_manager, "current_action_path", None) == path:
-            self.main.desc_annot_manager.current_action_path = None
-            self.main.description_panel.caption_edit.clear()
-            self.main.description_panel.caption_edit.setEnabled(False)
+        self.main.desc_editor_controller.on_item_removed(path)
 
         self.main.show_temp_msg("Removed", "Item removed.")
 
@@ -628,7 +624,7 @@ class DatasetExplorerController(QObject):
 
         if mode_idx == 2 and save_path:
             # Description keeps editor text in-memory through this explicit save step.
-            self.main.desc_annot_manager.save_current_annotation()
+            self.main.desc_editor_controller.save_current_annotation()
 
         if not save_path:
             return self.export_project()
@@ -646,7 +642,7 @@ class DatasetExplorerController(QObject):
         mode_idx = self.main.right_tabs.currentIndex()
 
         if mode_idx == 2:
-            self.main.desc_annot_manager.save_current_annotation()
+            self.main.desc_editor_controller.save_current_annotation()
 
         if mode_idx == 1:
             path, _ = QFileDialog.getSaveFileName(
@@ -712,8 +708,7 @@ class DatasetExplorerController(QObject):
         self.app_state.desc_global_metadata = {}
 
         if hasattr(self.main, "description_panel"):
-            self.main.description_panel.caption_edit.clear()
-            self.main.description_panel.caption_edit.setEnabled(False)
+            self.main.desc_editor_controller.reset_ui()
 
         self.main.update_save_export_button_state()
 

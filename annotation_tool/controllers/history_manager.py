@@ -67,7 +67,7 @@ class HistoryManager:
             current_idx = tree.selectionModel().currentIndex()
             if current_idx.isValid():
                 # Force reload of data from model to UI (pass None as previous index)
-                self.main.desc_annot_manager.on_item_selected(current_idx, None)
+                self.main.desc_editor_controller.on_item_selected(current_idx, None)
         
         # 3: Dense Description Mode
         elif tab_idx == 3:
@@ -225,9 +225,7 @@ class HistoryManager:
                     if text_val and text_val.strip():
                         has_text = True
                 
-                tree_item = self.model.action_item_map.get(path)
-                if tree_item:
-                    tree_item.setIcon(self.main.done_icon if has_text else self.main.empty_icon)
+                self.main.update_action_item_status(path)
 
             self._refresh_active_view()
 

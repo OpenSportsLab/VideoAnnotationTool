@@ -12,7 +12,7 @@ from controllers.classification.class_navigation_manager import NavigationManage
 from controllers.classification.inference_manager import InferenceManager
 from controllers.classification.train_manager import TrainManager
 from controllers.localization.localization_manager import LocalizationManager
-from controllers.description.desc_annotation_manager import DescAnnotationManager
+from controllers.description.desc_editor_controller import DescEditorController
 from controllers.dense_description.dense_manager import DenseManager
 from controllers.history_manager import HistoryManager
 from controllers.media_controller import MediaController
@@ -28,7 +28,7 @@ from ui.common.dataset_explorer_panel import DatasetExplorerPanel
 from ui.common.media_player import MediaCenterPanel
 from ui.classification.event_editor import ClassificationAnnotationPanel
 from ui.localization.event_editor import LocalizationAnnotationPanel
-from ui.description.event_editor import DescriptionAnnotationPanel
+from ui.description.annotation_panel import DescriptionAnnotationPanel
 from ui.dense_description.event_editor import DenseAnnotationPanel
 
 from utils import create_checkmark_icon, natural_sort_key, resource_path
@@ -124,7 +124,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.loc_manager = LocalizationManager(self, self.media_controller)
         
         # Description Mode Controller
-        self.desc_annot_manager = DescAnnotationManager(self)
+        self.desc_editor_controller = DescEditorController(self)
         
         # Dense Description Controller
         self.dense_manager = DenseManager(self, self.media_controller)
@@ -182,7 +182,7 @@ class VideoAnnotationWindow(QMainWindow):
         """ Clears all mode-specific UIs and returns to Welcome screen. """
         self.annot_manager.reset_ui()
         self.loc_manager.reset_ui()
-        self.desc_annot_manager.reset_ui()
+        self.desc_editor_controller.reset_ui()
         self.dense_manager.reset_ui()
         
         # Also clear the tree model
@@ -250,7 +250,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.loc_manager.setup_connections()
 
         # --- Description Editor ---
-        self.desc_annot_manager.setup_connections()
+        self.desc_editor_controller.setup_connections()
 
         # --- Dense Editor ---
         self.dense_manager.setup_connections()
@@ -367,7 +367,7 @@ class VideoAnnotationWindow(QMainWindow):
             if self._is_loc_mode():
                 self.loc_manager.on_clip_selected(current, previous)
             elif self._is_desc_mode():
-                self.desc_annot_manager.handle_description_selection(current, previous)
+                self._handle_description_selection(current, previous)
             elif self._is_dense_mode():
                 self.dense_manager._on_clip_selected(current, previous)
             else:
@@ -394,9 +394,9 @@ class VideoAnnotationWindow(QMainWindow):
         if self._is_loc_mode(): self.loc_manager._navigate_clip(step)
         elif self._is_desc_mode(): 
             if step > 0:
-                self.desc_annot_manager.nav_next_clip()
+                self.desc_editor_controller.nav_next_clip()
             else:
-                self.desc_annot_manager.nav_prev_clip()
+                self.desc_editor_controller.nav_prev_clip()
         elif self._is_dense_mode(): self.dense_manager._navigate_clip(step)
         else:
             if step > 0: self.nav_manager.nav_next_clip()
@@ -411,7 +411,7 @@ class VideoAnnotationWindow(QMainWindow):
             head = self.loc_manager.current_head
             if not head: return
             self.loc_manager._on_label_add_req(head)
-        elif self._is_desc_mode(): self.desc_annot_manager.save_current_annotation()
+        elif self._is_desc_mode(): self.desc_editor_controller.save_current_annotation()
         elif self._is_dense_mode(): self.dense_manager.right_panel.input_widget._on_submit()
         else: self.annot_manager.save_manual_annotation()
 
@@ -515,6 +515,36 @@ class VideoAnnotationWindow(QMainWindow):
         if idx.parent().isValid(): return idx.parent().data(self.tree_model.FilePathRole)
         return idx.data(self.tree_model.FilePathRole)
 
+    def _resolve_description_media_path(self, current: QModelIndex):
+        """Resolve selected description tree index to a playable media path."""
+        if not current.isValid():
+            return None
+
+        path = current.data(self.tree_model.FilePathRole)
+        if self.tree_model.hasChildren(current):
+            first_child = self.tree_model.index(0, 0, current)
+            if first_child.isValid():
+                path = first_child.data(self.tree_model.FilePathRole)
+            else:
+                path = None
+
+        cwd = self.model.current_working_directory
+        if path and cwd and not os.path.isabs(path):
+            media_path = os.path.normpath(os.path.join(cwd, path))
+        else:
+            media_path = path
+
+        if media_path and os.path.exists(media_path):
+            return media_path
+        return None
+
+    def _handle_description_selection(self, current: QModelIndex, previous: QModelIndex):
+        """MainWindow-owned Description selection path: media load + editor refresh."""
+        media_path = self._resolve_description_media_path(current)
+        if media_path:
+            self.media_controller.load_and_play(media_path)
+        self.desc_editor_controller.on_item_selected(current, previous)
+
     def sync_batch_inference_dropdowns(self) -> None:
         ed = self.classification_panel
         if not hasattr(ed, 'update_action_list'): return
@@ -558,7 +588,7 @@ class VideoAnnotationWindow(QMainWindow):
             self.dataset_explorer_panel.tree.setCurrentIndex(idx)
         if self._is_loc_mode(): self.loc_manager._display_events_for_item(action_path)
         elif self._is_desc_mode():
-            self.desc_annot_manager.handle_description_selection(item.index(), None)
+            self.desc_editor_controller.on_item_selected(item.index(), None)
         elif self._is_dense_mode(): self.dense_manager._display_events_for_item(action_path)
         else: self.annot_manager.display_manual_annotation(action_path)
         self.update_save_export_button_state()

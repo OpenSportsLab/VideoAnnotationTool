@@ -77,11 +77,10 @@ Logic dedicated to the **Action Spotting** task (pinpointing specific timestamps
 
 Logic dedicated to the **Global Captioning** task (one text description per video action).
 
-* **`desc_annotation_manager.py`**:
-* Handles **Q&A Formatting**: Parses JSON "questions" into a readable Q&A format in the editor.
-* **Flattening**: Consolidates text into a single description block upon save.
-* Handles Description-specific tree navigation helpers (previous/next action and clip).
-* Resets Description editor state during project clear/close flows.
+* **`desc_editor_controller.py`**:
+* Owns Description editor behavior: selection-to-text refresh, save/clear actions, reset, and undo command creation.
+* Owns Description navigation helpers: previous/next action and previous/next clip traversal.
+* Keeps tree done-status updates aligned with shared status refresh pathways.
 
 
 * **`desc_file_manager.py`**:

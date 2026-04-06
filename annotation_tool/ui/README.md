@@ -68,7 +68,7 @@ ui/
 ### `description/`
 
 - UI for global description workflows.
-- Main content lives in `event_editor/`.
+- Main content lives in `annotation_panel/` (`DescriptionAnnotationPanel` + `.ui`).
 
 ### `dense_description/`
 
