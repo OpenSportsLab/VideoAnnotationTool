@@ -177,13 +177,6 @@ class VideoAnnotationWindow(QMainWindow):
         self.show_workspace()
         self.right_tabs.setCurrentIndex(3)
 
-    # ---------------------------------------------------------------------
-    # Global Media Control
-    # ---------------------------------------------------------------------
-    def stop_all_players(self):
-        """ Stops the single unified player and clears sources. """
-        self.media_controller.stop()
-
     def reset_all_managers(self):
         """ Clears all mode-specific UIs and returns to Welcome screen. """
         self.annot_manager.reset_ui()
@@ -230,7 +223,7 @@ class VideoAnnotationWindow(QMainWindow):
         # --- Center panel (Unified Playback) ---
         center_panel.playPauseRequested.connect(self._dispatch_play_pause)
         center_panel.seekRelativeRequested.connect(self._dispatch_seek)
-        center_panel.stopRequested.connect(self.stop_all_players)
+        center_panel.stopRequested.connect(self.media_controller.stop)
         center_panel.playbackRateRequested.connect(center_panel.set_playback_rate)
         
         # Navigation signals from the unified bar
@@ -432,7 +425,7 @@ class VideoAnnotationWindow(QMainWindow):
         msg.setText("Clear workspace? Unsaved changes will be lost.")
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if msg.exec() == QMessageBox.StandardButton.Yes:
-            self.stop_all_players()
+            self.media_controller.stop()
             self.dataset_explorer_controller.clear_classification_workspace()
 
     def _on_desc_clear_clicked(self) -> None:
@@ -442,7 +435,7 @@ class VideoAnnotationWindow(QMainWindow):
         msg.setText("Clear description workspace? Unsaved changes will be lost.")
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if msg.exec() == QMessageBox.StandardButton.Yes:
-            self.stop_all_players()
+            self.media_controller.stop()
             self.dataset_explorer_controller.clear_description_workspace()
 
     def prepare_new_project_ui(self) -> None:
@@ -478,12 +471,12 @@ class VideoAnnotationWindow(QMainWindow):
         btn_yes = msg_box.addButton("Yes", QMessageBox.ButtonRole.AcceptRole)
         msg_box.addButton("No", QMessageBox.ButtonRole.RejectRole)
         msg_box.exec()
-        if msg_box.clickedButton() == btn_yes: self.stop_all_players()
+        if msg_box.clickedButton() == btn_yes: self.media_controller.stop()
         return msg_box.clickedButton() == btn_yes
 
     def closeEvent(self, event) -> None:
         if not self.model.is_data_dirty or not self.model.json_loaded:
-            self.stop_all_players()
+            self.media_controller.stop()
             event.accept()
             return
         msg = QMessageBox(self)
@@ -495,10 +488,10 @@ class VideoAnnotationWindow(QMainWindow):
         msg.exec()
         if msg.clickedButton() == save_btn:
             self._dispatch_save()
-            self.stop_all_players()
+            self.media_controller.stop()
             event.accept()
         elif msg.clickedButton() == discard_btn:
-            self.stop_all_players()
+            self.media_controller.stop()
             event.accept()
         else: event.ignore()
 

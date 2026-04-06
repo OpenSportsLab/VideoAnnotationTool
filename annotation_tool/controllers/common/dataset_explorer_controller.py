@@ -338,7 +338,7 @@ class DatasetExplorerController(QObject):
         msg.setText("Clear workspace? Unsaved changes will be lost.")
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if msg.exec() == QMessageBox.StandardButton.Yes:
-            self.main.stop_all_players()
+            self.media_controller.stop()
             self.clear_classification_workspace()
 
     def _clear_description_items(self):
@@ -349,7 +349,7 @@ class DatasetExplorerController(QObject):
         msg.setText("Clear description workspace? Unsaved changes will be lost.")
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if msg.exec() == QMessageBox.StandardButton.Yes:
-            self.main.stop_all_players()
+            self.media_controller.stop()
             self.clear_description_workspace()
 
     def _clear_localization_items(self):
