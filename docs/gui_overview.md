@@ -9,7 +9,7 @@ The Welcome Page is the entry point of the OSL Annotation Tool. It allows users 
 
 ![Welcome Interface](assets/landing-page.png)
 ### Quick Demo
-<iframe src="https://drive.google.com/file/d/1HoI8sAEJuOldmS8jM7Di4z3AMJgwdtMZ/preview" width="640" height="480" allow="autoplay" allowfullscreen></iframe>
+<iframe src="https://drive.google.com/file/d/1EgQXGMQya06vNMuX_7-OlAUjF_Je-ye_/view?usp=sharing" width="1280" height="600" allow="autoplay" allowfullscreen></iframe>
 
 ### Main Actions
 
