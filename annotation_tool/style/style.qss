@@ -232,7 +232,7 @@ QPushButton[class="dialog_mode_btn"]:hover {
 }
 
 /* --- Welcome Screen --- */
-/* Target: ui/common/welcome_widget.py */
+/* Target: ui/common/welcome_widget/ */
 
 QWidget#welcome_page {
     background-color: #555; 
@@ -246,6 +246,80 @@ QLabel#welcome_title_lbl {
     font-size: 24px;
     font-weight: bold;
     color: #00ff2f;
+}
+
+QLabel#welcome_recent_title_lbl {
+    font-size: 14px;
+    font-weight: bold;
+    color: #e7e7e7;
+}
+
+QListWidget#recent_projects_list {
+    background-color: #2e2e2e;
+    color: #f0f0f0;
+    border: 1px solid #111;
+    border-radius: 6px;
+    padding: 2px;
+}
+
+QListWidget#recent_projects_list::item {
+    min-height: 30px;
+    padding: 0px;
+}
+
+QListWidget#recent_projects_list::item:hover {
+    background-color: #3c3c3c;
+}
+
+QListWidget#recent_projects_list::item:selected {
+    background-color: #2e2e2e;
+    color: #f0f0f0;
+}
+
+QWidget#welcome_recent_item {
+    background-color: transparent;
+}
+
+QPushButton#welcome_recent_file_btn {
+    border: none;
+    background: transparent;
+    color: #84ff00;
+    text-align: left;
+    padding: 0px;
+    font-weight: bold;
+}
+
+QPushButton#welcome_recent_file_btn:hover {
+    color: #b7ff6f;
+    text-decoration: underline;
+}
+
+QPushButton#welcome_recent_file_btn:pressed {
+    color: #78d200;
+}
+
+QLabel#welcome_recent_path_lbl {
+    color: #c4c4c4;
+    font-size: 12px;
+}
+
+QToolButton#welcome_recent_remove_btn {
+    border: none;
+    background: transparent;
+    color: #b8b8b8;
+    min-width: 16px;
+    max-width: 16px;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 0px;
+}
+
+QToolButton#welcome_recent_remove_btn:hover {
+    color: #ff7b7b;
+}
+
+QToolButton#welcome_recent_remove_btn:pressed {
+    color: #ff4b4b;
 }
 
 QPushButton[class="welcome_action_btn"] {

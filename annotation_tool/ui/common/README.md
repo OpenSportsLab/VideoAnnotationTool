@@ -39,13 +39,15 @@ ui/common/
 ### `welcome_widget/`
 
 - **Primary class:** `WelcomeWidget`
-- **Purpose:** Landing screen with project entry actions (create/import) and external links.
+- **Purpose:** Landing screen with project entry actions (create/import), recent datasets, and external links.
 - **Implementation:** Package-style module with:
   - `__init__.py`
   - `welcome_widget.ui`
   - local `README.md`
 - **Controller pair:** `controllers/common/welcome_controller.py`
 - **Notes:** View emits signals only; routing/open-link behavior is controller-owned.
+- **Recent datasets:** Welcome rows show clickable JSON filename + non-clickable folder path + remove button.
+- **Persistence:** Router stores full deduplicated opened-dataset history via `QSettings` (`welcome/recent_datasets`); welcome list displays newest 5.
 
 ### `dialogs.py`
 

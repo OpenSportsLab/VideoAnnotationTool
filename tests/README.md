@@ -18,6 +18,7 @@ This folder contains GUI smoke/persistence tests for the PyQt application.
   - Configures headless Qt (`QT_QPA_PLATFORM=offscreen`).
   - Adds `annotation_tool/` to `sys.path`.
   - Stubs `opensportslib` import.
+  - Isolates `QSettings` to a temp directory per test.
   - Defines shared fixtures (`window`, `synthetic_project_json`).
 - `tests/gui/test_main_window_lifecycle.py`
   - Main lifecycle and persistence workflows.
@@ -60,6 +61,12 @@ pytest --collect-only tests/gui/test_main_window_lifecycle.py
 - `test_launches_to_welcome_view`
 - `test_import_project_routed_flow_all_modes`
 - `test_close_project_returns_to_welcome`
+- `test_recent_projects_list_updates_after_successful_import`
+- `test_recent_project_click_opens_dataset`
+- `test_recent_projects_dedupe_order_and_limit`
+- `test_recent_projects_failed_open_does_not_add`
+- `test_recent_projects_missing_path_removed_on_click`
+- `test_recent_projects_remove_button_removes_entry`
 - `test_add_data_save_and_reopen_keeps_new_item`
 - `test_classification_annotate_save_reload_edit_labels_and_persist`
 - `test_localization_annotate_save_reload_edit_time_and_persist`
@@ -72,6 +79,8 @@ Each function has an inline workflow header comment that explains setup, action,
 
 - Dialogs are monkeypatched (`QFileDialog`) to avoid manual interaction.
 - Playback startup is patched in `window` fixture to avoid multimedia backend issues in headless runs.
+- Recent-dataset storage uses `QSettings` and is redirected to a temp folder by an autouse fixture.
+- Recents persistence behavior: full deduplicated history is stored; welcome UI shows only newest 5.
 - Assertions check both:
   - in-memory state (`AppStateModel` and UI widgets), and
   - serialized JSON output on disk.

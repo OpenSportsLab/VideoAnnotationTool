@@ -155,6 +155,8 @@ class VideoAnnotationWindow(QMainWindow):
         """Switch to the Welcome Screen (Index 0 in central stack)."""
         self.center_stack.setCurrentIndex(0)
         self.set_project_ui_enabled(False)
+        if hasattr(self, "welcome_controller"):
+            self.welcome_controller.refresh_recent_projects()
 
     def show_workspace(self):
         """Switch to the Media Player (Index 1 in central stack)."""
@@ -207,6 +209,11 @@ class VideoAnnotationWindow(QMainWindow):
     # Welcome screen
     def _safe_import_annotations(self): self.router.import_annotations()
     def _safe_create_project(self): self.router.create_new_project_flow()
+    def _safe_close_dataset_or_quit(self):
+        if self.model.json_loaded:
+            self.router.close_project()
+        else:
+            self.close()
 
     def connect_signals(self) -> None:
         """Connect UI signals to controller actions."""
@@ -278,6 +285,14 @@ class VideoAnnotationWindow(QMainWindow):
         self.action_export.triggered.connect(self._dispatch_export)
         self.action_export.setEnabled(False)
         file_menu.addAction(self.action_export)
+
+        file_menu.addSeparator()
+
+        self.action_quit = QAction("Quit", self)
+        self.action_quit.setShortcut(QKeySequence.StandardKey.Quit)
+        self.action_quit.setMenuRole(QAction.MenuRole.QuitRole)
+        self.action_quit.triggered.connect(self._safe_close_dataset_or_quit)
+        file_menu.addAction(self.action_quit)
 
         edit_menu = menu_bar.addMenu("&Edit")
         self.action_undo = QAction("Undo", self)

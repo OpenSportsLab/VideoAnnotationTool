@@ -5,6 +5,7 @@ Key responsibilities:
 - Force headless Qt (`QT_QPA_PLATFORM=offscreen`) for local/CI runs.
 - Ensure app imports work from repo root by injecting `annotation_tool/` into `sys.path`.
 - Stub `opensportslib` so lifecycle tests do not depend on ML runtime packages.
+- Isolate `QSettings` storage to a per-test temp directory.
 - Provide:
   - `window`: a ready `VideoAnnotationWindow` attached to `qtbot`
   - `synthetic_project_json`: tiny valid JSON payloads for each app mode
@@ -17,6 +18,7 @@ import types
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import QSettings
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -53,6 +55,36 @@ def _install_opensportslib_stub() -> None:
 
 
 _install_opensportslib_stub()
+
+
+@pytest.fixture(autouse=True)
+def isolated_qsettings(tmp_path):
+    """
+    Redirect app QSettings writes to a per-test temp directory.
+
+    This avoids cross-test pollution from persisted recent dataset entries.
+    """
+    settings_root = tmp_path / "qsettings"
+    settings_root.mkdir(parents=True, exist_ok=True)
+
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        str(settings_root),
+    )
+
+    settings = QSettings(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        "OpenSportsLab",
+        "VideoAnnotationTool",
+    )
+    settings.clear()
+    settings.sync()
+    yield settings
+    settings.clear()
+    settings.sync()
 
 
 @pytest.fixture
