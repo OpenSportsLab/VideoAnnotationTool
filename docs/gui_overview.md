@@ -145,7 +145,23 @@ This panel is divided into a header, a spotting area, and an event list.
 - **Interaction:**
   - **Double-click:** Jumps the video player to the event's timestamp.
   - **Right-click:** Opens a context menu to **Edit Time**, **Change Head/Label**, or **Delete Event**.
- 
+
+
+### 🎥 Feature Demonstrations 
+
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px;">
+
+  <div style="flex: 1; min-width: 300px;">
+    <h4 align="center">1.  (Hand Spotting)</h4>
+    <iframe src="https://drive.google.com/file/d/1nUW8-mnjaz267djeAoOlA1lhFwsmhQTL/preview" width="100%" height="280" allow="autoplay" allowfullscreen style="border:none; border-radius: 8px;"></iframe>
+  </div>
+
+  <div style="flex: 1; min-width: 300px;">
+    <h4 align="center">2.  (Smart Spotting)</h4>
+    <iframe src="https://drive.google.com/file/d/1mWSe_2VgAWhtQR-mzetPaWnYbCA0wHW7/preview" width="100%" height="280" allow="autoplay" allowfullscreen style="border:none; border-radius: 8px;"></iframe>
+  </div>
+
+</div>
 ---
 
 # 4. Description Mode (Clip-level Description / Captioning)
