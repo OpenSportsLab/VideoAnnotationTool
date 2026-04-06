@@ -63,18 +63,48 @@ Designed for assigning global labels (Single or Multi-label) to video clips.
   - Frame stepping and seeking (1s, 5s).
   - Playback speed control (0.25x to 4.0x).
 
-### Right Panel: Labeling
-- **Task Info:** Displays the current task name.
-- **Label Groups:**
-  - **Single Label:** Radio buttons for mutually exclusive categories (e.g., Weather).
-  - **Multi Label:** Checkboxes for non-exclusive attributes (e.g., Objects present).
-  - **Dynamic Editing:** Users can add new label options on the fly using the input field within each group.
-- **Controls:**
-  - **Confirm Annotation:** Saves the current selection to the clip.
-  - **Undo/Redo:** Controls to undo or redo annotation actions.
-  - **Clear Selection:** Resets the current selection.
-  - **Save/Export:** Options to save the project JSON.
+### Right Panel: Command Center
+The right sidebar has been upgraded into a tabbed interface to separate manual work from AI features.
 
+* **Global Tools:** Hosts the Undo/Redo history controls, current Task name, and a "Category Editor" to dynamically add new labeling heads.
+
+* **Tab 1: Hand Annotation**
+  * **Dynamic Label Groups:** Automatically renders Radio buttons for mutually exclusive categories (Single Label) or Checkboxes for non-exclusive attributes (Multi Label) based on the JSON schema.
+  * **On-the-fly Editing:** Users can add or delete individual label options directly within each group using the `+` and `×` buttons.
+
+* **Tab 2: Smart Annotation**
+  * **AI Inference:** Users can run predictions on the current video ("Single Inference") or across a selected range of videos ("Batch Inference").
+  * **Visual Confidence:** Displays an interactive, custom-built Donut Chart that visualizes the AI's predicted label and its confidence probability percentages.
+  * **Batch Review:** Provides a text console summarizing the predicted classes for multiple videos before they are confirmed.
+
+* **Tab 3: Train**
+  * **Hyperparameter Configuration:** Allows users to set Epochs, Learning Rate (LR), Batch Size, Device (CPU, CUDA, MPS), and Workers.
+  * **Live Monitoring:** Features "Start/Stop" controls, a live progress bar, and a real-time console that intercepts PyTorch logs directly within the application.
+
+* **Bottom Actions (Tab-Aware):**
+  * **Confirm Annotation:** Saves the selection to the clip. Its behavior adapts based on the active tab (saving hand inputs vs. merging AI predictions).
+  * **Clear Selection:** Resets the active inputs or clears pending smart predictions.
+  * 
+### 🎥 Feature Demonstrations 
+
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px;">
+
+  <div style="flex: 1; min-width: 300px;">
+    <h4 align="center">1.  (Hand Annotation)</h4>
+    <iframe src="https://drive.google.com/file/d/15u9y5uPMyrOZ3RBSiwfTJjwxrhsSzeS-/preview" width="100%" height="250" allow="autoplay" allowfullscreen style="border:none; border-radius: 8px;"></iframe>
+  </div>
+
+  <div style="flex: 1; min-width: 300px;">
+    <h4 align="center">2. (Smart Annotation)</h4>
+    <iframe src="https://drive.google.com/file/d/1hSu0QChEFz4xlKnKBUSpD7wEBXp17oq3/preview" width="100%" height="250" allow="autoplay" allowfullscreen style="border:none; border-radius: 8px;"></iframe>
+  </div>
+
+  <div style="flex: 1; min-width: 300px;">
+    <h4 align="center">3.  (Model Training)</h4>
+    <iframe src="https://drive.google.com/file/d/1oqqyua8KEkc5ijxyf5NywpZtk7NbM-9C/preview" width="100%" height="250" allow="autoplay" allowfullscreen style="border:none; border-radius: 8px;"></iframe>
+  </div>
+
+</div>
 ---
 
 ## 3. Localization Mode (Action Spotting)
