@@ -25,14 +25,14 @@ This folder contains GUI smoke/persistence tests for the PyQt application.
 - `tests/gui/test_recent_datasets.py`
   - Recent-datasets persistence/open/remove behavior.
 - `tests/gui/test_dataset_editing.py`
-  - Add-data + save/reopen list persistence.
-- `tests/gui/test_classification_workflow.py`
+  - Add/remove dataset items + save/reopen list persistence.
+- `tests/gui/test_workflow_classification.py`
   - Classification annotate/save/reload/edit workflow.
-- `tests/gui/test_localization_workflow.py`
+- `tests/gui/test_workflow_localization.py`
   - Localization event/time annotate/save/reload/edit workflow.
-- `tests/gui/test_description_workflow.py`
-  - Description selection/media refresh + undo/redo text-only + annotate/save/reload/edit workflow.
-- `tests/gui/test_dense_description_workflow.py`
+- `tests/gui/test_workflow_description.py`
+  - Description selection/media refresh + annotate/save/reload/edit + remove/clear workspace workflows.
+- `tests/gui/test_workflow_dense_description.py`
   - Dense Description event edit/save/reload workflow.
 - `tests/data/`
   - Real media files used by synthetic JSON fixtures (`test_video_1.mp4`, `test_video_2.mp4`).
@@ -54,10 +54,10 @@ pytest -q tests/gui
 Run only one workflow:
 
 ```bash
-pytest -q tests/gui/test_classification_workflow.py
-pytest -q tests/gui/test_localization_workflow.py
-pytest -q tests/gui/test_description_workflow.py
-pytest -q tests/gui/test_dense_description_workflow.py
+pytest -q tests/gui/test_workflow_classification.py
+pytest -q tests/gui/test_workflow_localization.py
+pytest -q tests/gui/test_workflow_description.py
+pytest -q tests/gui/test_workflow_dense_description.py
 ```
 
 Collection/sanity check:
@@ -79,12 +79,13 @@ pytest --collect-only tests/gui
 - `test_recent_projects_failed_open_does_not_add`
 - `test_recent_projects_missing_path_removed_on_click`
 - `test_recent_projects_remove_button_removes_entry`
-- `test_add_data_save_and_reopen_keeps_new_item`
+- `test_add_five_items_remove_one_save_and_reopen_persists_changes`
 - `test_classification_annotate_save_reload_edit_labels_and_persist`
 - `test_localization_annotate_save_reload_edit_time_and_persist`
 - `test_description_selection_loads_media_and_refreshes_editor`
-- `test_description_undo_redo_refreshes_text_without_media_reload`
 - `test_description_annotate_save_reload_edit_and_persist`
+- `test_description_remove_selected_item_clears_editor_state`
+- `test_description_clear_workspace_resets_editor_and_model`
 - `test_dense_description_annotate_save_reload_edit_and_persist`
 
 Each function has an inline workflow header comment that explains setup, action, and persistence checks.

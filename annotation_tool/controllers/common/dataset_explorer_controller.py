@@ -250,49 +250,7 @@ class DatasetExplorerController(QObject):
                 self.main.loc_manager.on_clip_selected(first_idx, None)
 
     def _add_description_items(self):
-        if not self.app_state.json_loaded:
-            QMessageBox.warning(self.main, "Warning", "Please create or load a project first.")
-            return
-
-        filters = "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp);;All Files (*)"
-        start_dir = self.app_state.current_working_directory or ""
-        files, _ = QFileDialog.getOpenFileNames(self.main, "Select Videos to Add", start_dir, filters)
-        if not files:
-            return
-
-        if not self.app_state.current_working_directory:
-            self.app_state.current_working_directory = os.path.dirname(files[0])
-
-        added_count = 0
-        first_idx = None
-        for file_path in files:
-            if self.app_state.has_description_path(file_path):
-                continue
-
-            name = os.path.basename(file_path)
-            self.app_state.add_action_item(
-                name=name,
-                path=file_path,
-                source_files=[file_path],
-                id=name,
-                metadata={"path": file_path, "questions": []},
-                inputs=[{"type": "video", "name": name, "path": file_path}],
-                captions=[],
-            )
-            item = self.tree_model.add_entry(name=name, path=file_path, source_files=[file_path])
-            self.app_state.action_item_map[file_path] = item
-            self.update_item_status(file_path)
-            if first_idx is None:
-                first_idx = item.index()
-            added_count += 1
-
-        if added_count > 0:
-            self._mark_dirty_and_refresh()
-            self.handle_filter_change(self.panel.filter_combo.currentIndex())
-            self.main.show_temp_msg("Added", f"Added {added_count} items.")
-            if first_idx and first_idx.isValid():
-                self.panel.tree.setCurrentIndex(first_idx)
-                self.panel.tree.setFocus()
+        self.main.desc_editor_controller.add_dataset_items()
 
     def _add_dense_items(self):
         start_dir = self.app_state.current_working_directory or ""
@@ -342,15 +300,7 @@ class DatasetExplorerController(QObject):
             self.clear_classification_workspace()
 
     def _clear_description_items(self):
-        if not self.app_state.json_loaded:
-            return
-        msg = QMessageBox(self.main)
-        msg.setWindowTitle("Clear Workspace")
-        msg.setText("Clear description workspace? Unsaved changes will be lost.")
-        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        if msg.exec() == QMessageBox.StandardButton.Yes:
-            self.media_controller.stop()
-            self.clear_description_workspace()
+        self.main.desc_editor_controller.clear_dataset_items()
 
     def _clear_localization_items(self):
         if not self.app_state.action_item_data:
@@ -448,18 +398,9 @@ class DatasetExplorerController(QObject):
         self.main.show_temp_msg("Removed", "Video removed from list.")
 
     def _remove_description_item(self, index: QModelIndex):
-        path, action_idx = self._path_from_index(index)
-        if not path:
-            return
+        self.main.desc_editor_controller.remove_dataset_item(index)
+        # self.app_state.is_data_dirty = True
 
-        removed_items = self.app_state.remove_description_action_by_path(path)
-        if not removed_items:
-            return
-        self._remove_tree_row(action_idx)
-        self._mark_dirty_and_refresh()
-        self.main.desc_editor_controller.on_item_removed(path)
-
-        self.main.show_temp_msg("Removed", "Item removed.")
 
     def _remove_dense_item(self, index: QModelIndex):
         path, action_idx = self._path_from_index(index)
@@ -532,29 +473,7 @@ class DatasetExplorerController(QObject):
             self.panel.tree.setRowHidden(row, QModelIndex(), hide)
 
     def _filter_description_items(self, index):
-        root = self.tree_model.invisibleRootItem()
-        for row in range(root.rowCount()):
-            item = root.child(row)
-            path = item.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-            data_item = next(
-                (
-                    d for d in self.app_state.action_item_data
-                    if d.get("path") == path or d.get("metadata", {}).get("path") == path or d.get("id") == item.text()
-                ),
-                None,
-            )
-
-            has_text = False
-            if data_item:
-                captions = data_item.get("captions", [])
-                has_text = any(c.get("text", "").strip() for c in captions if isinstance(c, dict))
-
-            hide = False
-            if index == self.main.FILTER_DONE and not has_text:
-                hide = True
-            elif index == self.main.FILTER_NOT_DONE and has_text:
-                hide = True
-            self.panel.tree.setRowHidden(row, QModelIndex(), hide)
+        self.main.desc_editor_controller.filter_dataset_items(index)
 
     def _filter_dense_items(self, index):
         root = self.tree_model.invisibleRootItem()
@@ -703,14 +622,7 @@ class DatasetExplorerController(QObject):
 
     def clear_description_workspace(self):
         """Clear description workspace (used by MainWindow clear action)."""
-        self.tree_model.clear()
-        self.app_state.reset(full_reset=True)
-        self.app_state.desc_global_metadata = {}
-
-        if hasattr(self.main, "description_panel"):
-            self.main.desc_editor_controller.reset_ui()
-
-        self.main.update_save_export_button_state()
+        self.main.desc_editor_controller.clear_workspace()
 
     def close_project(self):
         """Close current project and return to welcome view."""

@@ -80,6 +80,7 @@ Logic dedicated to the **Global Captioning** task (one text description per vide
 * **`desc_editor_controller.py`**:
 * Owns Description editor behavior: selection-to-text refresh, save/clear actions, reset, and undo command creation.
 * Owns Description navigation helpers: previous/next action and previous/next clip traversal.
+* Owns Description-mode dataset explorer actions: add/remove/filter/clear and clear-workspace reset.
 * Keeps tree done-status updates aligned with shared status refresh pathways.
 
 

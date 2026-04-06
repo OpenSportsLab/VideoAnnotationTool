@@ -436,7 +436,7 @@ class VideoAnnotationWindow(QMainWindow):
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if msg.exec() == QMessageBox.StandardButton.Yes:
             self.media_controller.stop()
-            self.dataset_explorer_controller.clear_description_workspace()
+            self.desc_editor_controller.clear_workspace()
 
     def prepare_new_project_ui(self) -> None:
         self.set_project_ui_enabled(True)
