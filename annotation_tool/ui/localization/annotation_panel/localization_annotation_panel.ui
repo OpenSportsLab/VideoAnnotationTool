@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>420</width>
-    <height>620</height>
+    <height>720</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="mainLayout">
@@ -59,45 +59,77 @@
         <number>0</number>
        </property>
        <item>
-        <widget class="QWidget" name="handAnnotationMgmtContainer">
-         <layout class="QVBoxLayout" name="handAnnotationMgmtLayout">
-          <property name="leftMargin">
-           <number>0</number>
-          </property>
-          <property name="topMargin">
-           <number>0</number>
-          </property>
-          <property name="rightMargin">
-           <number>0</number>
-          </property>
-          <property name="bottomMargin">
-           <number>0</number>
-          </property>
-          <property name="spacing">
-           <number>0</number>
-          </property>
-         </layout>
+        <widget class="QLabel" name="handCreateAnnotationLabel">
+         <property name="text">
+          <string>Create Annotation</string>
+         </property>
+         <property name="class" stdset="0">
+          <string notr="true">panel_header_lbl</string>
+         </property>
         </widget>
        </item>
        <item>
-        <widget class="QWidget" name="handEventsTableContainer">
-         <layout class="QVBoxLayout" name="handEventsTableLayout">
-          <property name="leftMargin">
-           <number>0</number>
-          </property>
-          <property name="topMargin">
-           <number>0</number>
-          </property>
-          <property name="rightMargin">
-           <number>0</number>
-          </property>
-          <property name="bottomMargin">
-           <number>0</number>
-          </property>
-          <property name="spacing">
-           <number>0</number>
-          </property>
-         </layout>
+        <widget class="QTabWidget" name="spottingTabs">
+         <property name="currentIndex">
+          <number>0</number>
+         </property>
+         <property name="class" stdset="0">
+          <string notr="true">spotting_tabs</string>
+         </property>
+         <widget class="QWidget" name="spottingPlaceholderTab">
+          <attribute name="title">
+           <string>Action</string>
+          </attribute>
+         </widget>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="handEditLabel">
+         <property name="text">
+          <string>Edit Annotation</string>
+         </property>
+         <property name="class" stdset="0">
+          <string notr="true">panel_header_lbl</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="handSetCurrentTimeBtn">
+         <property name="text">
+          <string>Set to Current Video Time</string>
+         </property>
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+         <property name="cursor">
+          <cursorShape>PointingHandCursor</cursorShape>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="handEventsListLabel">
+         <property name="text">
+          <string>Events List</string>
+         </property>
+         <property name="class" stdset="0">
+          <string notr="true">panel_header_lbl</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QTableView" name="handEventsTableView">
+         <property name="class" stdset="0">
+          <string notr="true">annotation_table</string>
+         </property>
+         <property name="alternatingRowColors">
+          <bool>true</bool>
+         </property>
+         <property name="selectionBehavior">
+          <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+         </property>
+         <property name="selectionMode">
+          <enum>QAbstractItemView::SelectionMode::SingleSelection</enum>
+         </property>
         </widget>
        </item>
       </layout>
@@ -120,25 +152,194 @@
         <number>0</number>
        </property>
        <item>
-        <widget class="QWidget" name="smartWidgetContainer">
-         <layout class="QVBoxLayout" name="smartWidgetLayout">
-          <property name="leftMargin">
-           <number>0</number>
-          </property>
-          <property name="topMargin">
-           <number>0</number>
-          </property>
-          <property name="rightMargin">
-           <number>0</number>
-          </property>
-          <property name="bottomMargin">
-           <number>0</number>
-          </property>
-          <property name="spacing">
-           <number>0</number>
-          </property>
+        <widget class="QGroupBox" name="smartInferenceGroup">
+         <property name="title">
+          <string>Smart Inference Range</string>
+         </property>
+         <property name="class" stdset="0">
+          <string notr="true">smart_inference_box</string>
+         </property>
+         <layout class="QVBoxLayout" name="smartInferenceLayout">
+          <item>
+           <layout class="QHBoxLayout" name="smartStartRowLayout">
+            <item>
+             <widget class="QLabel" name="smartStartLabel">
+              <property name="text">
+               <string>Start Time:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="smartStartTimeEdit">
+              <property name="minimumSize">
+               <size>
+                <width>100</width>
+                <height>0</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>120</width>
+                <height>16777215</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>00:00.000</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignmentFlag::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="smartStartSpacer">
+              <property name="orientation">
+               <enum>Qt::Orientation::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QPushButton" name="smartSetStartBtn">
+              <property name="text">
+               <string>Set to Current</string>
+              </property>
+              <property name="cursor">
+               <cursorShape>PointingHandCursor</cursorShape>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="smartEndRowLayout">
+            <item>
+             <widget class="QLabel" name="smartEndLabel">
+              <property name="text">
+               <string>End Time:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="smartEndTimeEdit">
+              <property name="minimumSize">
+               <size>
+                <width>100</width>
+                <height>0</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>120</width>
+                <height>16777215</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>00:00.000</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignmentFlag::AlignCenter</set>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="smartEndSpacer">
+              <property name="orientation">
+               <enum>Qt::Orientation::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QPushButton" name="smartSetEndBtn">
+              <property name="text">
+               <string>Set to Current</string>
+              </property>
+              <property name="cursor">
+               <cursorShape>PointingHandCursor</cursorShape>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QPushButton" name="smartRunInferenceBtn">
+            <property name="text">
+             <string>Run Smart Inference</string>
+            </property>
+            <property name="cursor">
+             <cursorShape>PointingHandCursor</cursorShape>
+            </property>
+            <property name="class" stdset="0">
+             <string notr="true">run_inference_btn</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="smartEventsListLabel">
+         <property name="text">
+          <string>Predicted Events List</string>
+         </property>
+         <property name="class" stdset="0">
+          <string notr="true">panel_header_lbl</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QTableView" name="smartEventsTableView">
+         <property name="class" stdset="0">
+          <string notr="true">annotation_table</string>
+         </property>
+         <property name="alternatingRowColors">
+          <bool>true</bool>
+         </property>
+         <property name="selectionBehavior">
+          <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+         </property>
+         <property name="selectionMode">
+          <enum>QAbstractItemView::SelectionMode::SingleSelection</enum>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="smartBottomButtonsLayout">
+         <item>
+          <widget class="QPushButton" name="smartConfirmBtn">
+           <property name="text">
+            <string>Confirm Predictions</string>
+           </property>
+           <property name="cursor">
+            <cursorShape>PointingHandCursor</cursorShape>
+           </property>
+           <property name="class" stdset="0">
+            <string notr="true">editor_save_btn</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="smartClearBtn">
+           <property name="text">
+            <string>Clear Predictions</string>
+           </property>
+           <property name="cursor">
+            <cursorShape>PointingHandCursor</cursorShape>
+           </property>
+          </widget>
+         </item>
+        </layout>
        </item>
       </layout>
      </widget>

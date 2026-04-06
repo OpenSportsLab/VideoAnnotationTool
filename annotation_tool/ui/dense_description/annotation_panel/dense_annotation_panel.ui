@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>380</width>
-    <height>560</height>
+    <height>620</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="denseMainLayout">
@@ -85,24 +85,52 @@
     </widget>
    </item>
    <item>
-    <widget class="QWidget" name="denseTableContainer">
-     <layout class="QVBoxLayout" name="denseTableContainerLayout">
-      <property name="leftMargin">
-       <number>0</number>
-      </property>
-      <property name="topMargin">
-       <number>0</number>
-      </property>
-      <property name="rightMargin">
-       <number>0</number>
-      </property>
-      <property name="bottomMargin">
-       <number>0</number>
-      </property>
-      <property name="spacing">
-       <number>0</number>
-      </property>
-     </layout>
+    <widget class="QLabel" name="denseEditLabel">
+     <property name="text">
+      <string>Edit Annotation</string>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">panel_header_lbl</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="denseSetCurrentTimeBtn">
+     <property name="text">
+      <string>Set to Current Video Time</string>
+     </property>
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
+     <property name="cursor">
+      <cursorShape>PointingHandCursor</cursorShape>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="denseEventsListLabel">
+     <property name="text">
+      <string>Events List</string>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">panel_header_lbl</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTableView" name="denseEventsTableView">
+     <property name="class" stdset="0">
+      <string notr="true">annotation_table</string>
+     </property>
+     <property name="alternatingRowColors">
+      <bool>true</bool>
+     </property>
+     <property name="selectionBehavior">
+      <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+     </property>
+     <property name="selectionMode">
+      <enum>QAbstractItemView::SelectionMode::SingleSelection</enum>
+     </property>
     </widget>
    </item>
   </layout>

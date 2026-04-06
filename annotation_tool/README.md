@@ -85,29 +85,6 @@ annotation_tool/
 
 ---
 
-## 🔄 Reusability & Modality Comparison
-
-The application is built on a "Composite Design" strategy. While each mode serves a different task, they share significant architectural DNA.
-
-### Is Dense Description a reuse of Localization?
-
-**Yes.** The Dense Description modality is essentially a **specialized evolution** of the Localization mode.
-
-* **Shared Center Panel**: Both use the `LocCenterPanel`, which includes the zoomable `TimelineWidget` and `VideoSurface`.
-* **Shared Data Logic**: Both are "Event-based" (data is tied to a `position_ms`) rather than "Clip-based".
-* **Shared Table Interface**: The `DenseTableModel` is a direct subclass of `AnnotationTableModel`, inheriting all natural sorting and timestamp-parsing logic.
-
-### Modality Feature Matrix
-
-| Feature | Classification | Localization | Global Description | Dense Description |
-| --- | --- | --- | --- | --- |
-| **Primary Data** | Multi-choice Labels | Timestamped Labels | Global Video Text | Timestamped Text |
-| **Center UI** | Multi-view Player | Timeline + Player | Slider + Player | Timeline + Player |
-| **Right UI** | Schema Editor | Tabbed Spotting | Text Editor | Text Input + Table |
-| **Code Base** | Unique | Shared with Dense | Unique | Shared with Loc |
-
----
-
 ## 🚀 Getting Started
 
 1. **Select Mode**: Launch the app and use the "New Project" wizard to select one of the four modes.

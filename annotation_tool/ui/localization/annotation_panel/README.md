@@ -14,7 +14,11 @@ ui/localization/annotation_panel/
 ## Responsibilities
 
 - Load the Qt Designer UI (`localization_annotation_panel.ui`).
-- Compose hand/smart localization widgets in the panel containers.
+- Keep the panel fully standard-widget based in `.ui` (no custom promoted subwidgets).
+- Attach adapter behavior for:
+  - hand spotting tabs/schema interactions,
+  - hand events table actions,
+  - smart inference range + predicted events table.
 - Expose controller-facing API:
   - `tabs`
   - `annot_mgmt`

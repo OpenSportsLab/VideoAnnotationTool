@@ -1,22 +1,67 @@
 import os
 
 from PyQt6 import uic
-from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
-from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QVBoxLayout, QWidget
+from PyQt6.QtCore import QAbstractTableModel, QObject, QTimer, Qt, pyqtSignal
+from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QMenu, QPushButton, QTableView, QWidget
 
-from ui.common.annotation_table import AnnotationTableModel, AnnotationTableWidget
 from utils import resource_path
 
 
-class DenseTableModel(AnnotationTableModel):
+def _format_mmss_msec(ms: int) -> str:
+    ms = max(0, int(ms))
+    seconds = ms // 1000
+    minutes = seconds // 60
+    return f"{minutes:02}:{seconds % 60:02}.{ms % 1000:03}"
+
+
+def _parse_time_to_ms(text: str, fallback: int = 0) -> int:
+    value = (text or "").strip()
+    if not value:
+        return max(0, int(fallback))
+
+    try:
+        parts = value.split(":")
+        if len(parts) == 3:
+            hours = int(parts[0])
+            minutes = int(parts[1])
+            sec_parts = parts[2].split(".")
+            seconds = int(sec_parts[0])
+            millis = int(sec_parts[1]) if len(sec_parts) > 1 else 0
+            return max(0, ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis)
+
+        if len(parts) == 2:
+            minutes = int(parts[0])
+            sec_parts = parts[1].split(".")
+            seconds = int(sec_parts[0])
+            millis = int(sec_parts[1]) if len(sec_parts) > 1 else 0
+            return max(0, (minutes * 60 + seconds) * 1000 + millis)
+
+        if len(parts) == 1:
+            return max(0, int(float(parts[0]) * 1000))
+    except Exception:
+        pass
+
+    return max(0, int(fallback))
+
+
+class DenseTableModel(QAbstractTableModel):
     """
     Dense-description table model.
     Columns: Time, Lang, Description.
     """
 
+    itemChanged = pyqtSignal(dict, dict)
+
     def __init__(self, annotations=None):
-        super().__init__(annotations)
+        super().__init__()
+        self._data = annotations or []
         self._headers = ["Time", "Lang", "Description"]
+
+    def rowCount(self, parent=None):
+        return len(self._data)
+
+    def columnCount(self, parent=None):
+        return len(self._headers)
 
     def flags(self, index):
         if not index.isValid():
@@ -35,15 +80,18 @@ class DenseTableModel(AnnotationTableModel):
         item = self._data[row]
         col = index.column()
 
-        if role in [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole]:
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             if col == 0:
-                return self._fmt_ms(item.get("position_ms", 0))
+                return _format_mmss_msec(item.get("position_ms", 0))
             if col == 1:
                 return item.get("lang", "en")
             if col == 2:
                 return item.get("text", "")
 
-        return super().data(index, role)
+        if role == Qt.ItemDataRole.UserRole:
+            return item
+
+        return None
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if not index.isValid() or role != Qt.ItemDataRole.EditRole:
@@ -57,21 +105,138 @@ class DenseTableModel(AnnotationTableModel):
         value_str = str(value).strip()
 
         if col == 0:
-            try:
-                new_item["position_ms"] = self._parse_time_str(value_str)
-            except ValueError:
-                return False
+            new_item["position_ms"] = _parse_time_to_ms(value_str, old_item.get("position_ms", 0))
         elif col == 1:
             new_item["lang"] = value_str
         elif col == 2:
             new_item["text"] = value_str
+        else:
+            return False
 
-        if new_item != old_item:
-            self._data[row] = new_item
-            self.itemChanged.emit(old_item, new_item)
-            return True
+        if new_item == old_item:
+            return False
 
-        return False
+        self._data[row] = new_item
+        self.itemChanged.emit(old_item, new_item)
+        self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole])
+        return True
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            return self._headers[section]
+        return None
+
+    def set_annotations(self, annotations):
+        self.beginResetModel()
+        self._data = annotations
+        self.endResetModel()
+
+    def get_annotation_at(self, row):
+        if 0 <= row < len(self._data):
+            return self._data[row]
+        return None
+
+
+class _DenseTableAdapter(QObject):
+    """
+    Adapter exposing the previous `table` API expected by DenseEditorController.
+    Uses standard widgets from dense_annotation_panel.ui.
+    """
+
+    annotationSelected = pyqtSignal(int)
+    annotationModified = pyqtSignal(dict, dict)
+    annotationDeleted = pyqtSignal(dict)
+    updateTimeForSelectedRequested = pyqtSignal(dict)
+
+    def __init__(
+        self,
+        table_view: QTableView,
+        *,
+        edit_label: QLabel | None = None,
+        set_time_btn: QPushButton | None = None,
+        list_label: QLabel | None = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+
+        self.edit_lbl = edit_label
+        self.btn_set_time = set_time_btn
+        self.list_lbl = list_label
+        self.table = table_view
+
+        self.table.setProperty("class", "annotation_table")
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+            | QAbstractItemView.EditTrigger.AnyKeyPressed
+        )
+
+        self.model = DenseTableModel()
+        self.model.itemChanged.connect(self.annotationModified.emit)
+        self.table.setModel(self.model)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        selection_model = self.table.selectionModel()
+        if selection_model:
+            selection_model.selectionChanged.connect(self._on_selection_changed)
+
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
+
+        if self.btn_set_time is not None:
+            self.btn_set_time.setEnabled(False)
+            self.btn_set_time.clicked.connect(self._on_set_time_clicked)
+
+    def set_data(self, annotations):
+        self.model.set_annotations(annotations)
+
+    def _on_selection_changed(self, selected, deselected):
+        indexes = selected.indexes()
+        has_selection = bool(indexes)
+
+        if self.btn_set_time is not None:
+            self.btn_set_time.setEnabled(has_selection)
+
+        if not has_selection:
+            return
+
+        row = indexes[0].row()
+        item = self.model.get_annotation_at(row)
+        if item:
+            self.annotationSelected.emit(item.get("position_ms", 0))
+
+    def _on_set_time_clicked(self):
+        if self.btn_set_time is None:
+            return
+
+        indexes = self.table.selectionModel().selectedRows()
+        if not indexes:
+            return
+
+        row = indexes[0].row()
+        item = self.model.get_annotation_at(row)
+        if item:
+            self.updateTimeForSelectedRequested.emit(item)
+
+    def _show_context_menu(self, pos):
+        index = self.table.indexAt(pos)
+        if not index.isValid():
+            return
+
+        row = index.row()
+        item = self.model.get_annotation_at(row)
+        if not item:
+            return
+
+        menu = QMenu(self.table)
+        act_delete = menu.addAction("Delete Event")
+        selected_action = menu.exec(self.table.mapToGlobal(pos))
+
+        if selected_action == act_delete:
+            self.annotationDeleted.emit(item)
 
 
 class _DenseInputAdapter(QObject):
@@ -103,7 +268,7 @@ class _DenseInputAdapter(QObject):
 class DenseAnnotationPanel(QWidget):
     """
     Dense annotation editor panel view loaded from Qt Designer UI.
-    Exposes `input_widget` and `table` APIs used by DenseEditorController.
+    Uses only standard widgets in .ui and adapter objects in Python.
     """
 
     def __init__(self, parent=None):
@@ -130,16 +295,15 @@ class DenseAnnotationPanel(QWidget):
             submit_btn=self.denseConfirmBtn,
         )
 
-        self.table = AnnotationTableWidget(self.denseTableContainer)
+        self.table = _DenseTableAdapter(
+            self.denseEventsTableView,
+            edit_label=self.denseEditLabel,
+            set_time_btn=self.denseSetCurrentTimeBtn,
+            list_label=self.denseEventsListLabel,
+            parent=self,
+        )
 
-        table_layout = self.denseTableContainer.layout()
-        if table_layout is None:
-            table_layout = QVBoxLayout(self.denseTableContainer)
-            table_layout.setContentsMargins(0, 0, 0, 0)
-            table_layout.setSpacing(0)
-        table_layout.addWidget(self.table)
-
-        # Swap in dense model and reconnect the table signal wiring.
+        # Swap in dense model and reconnect table signal wiring.
         self.dense_model = DenseTableModel()
         self.table.model = self.dense_model
         self.table.table.setModel(self.dense_model)
@@ -161,7 +325,7 @@ class DenseAnnotationPanel(QWidget):
 
         # Top editor + bottom table ratio.
         self.denseMainLayout.setStretch(2, 1)
-        self.denseMainLayout.setStretch(4, 2)
+        self.denseMainLayout.setStretch(7, 2)
 
         QTimer.singleShot(0, self._apply_dense_column_ratio)
 

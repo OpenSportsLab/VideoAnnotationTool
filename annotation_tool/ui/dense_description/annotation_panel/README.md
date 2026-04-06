@@ -14,7 +14,8 @@ ui/dense_description/annotation_panel/
 ## Responsibilities
 
 - Load the Qt Designer UI (`dense_annotation_panel.ui`).
-- Compose the dense editor input + table surface.
+- Keep the panel fully standard-widget based in `.ui` (no custom promoted subwidgets).
+- Attach adapter behavior for dense input submission and table interactions.
 - Expose controller-facing attributes:
   - `input_widget` (`update_time`, `set_text`, `descriptionSubmitted`, `text_editor`)
   - `table` (`set_data`, `annotationSelected`, `annotationDeleted`, `annotationModified`)
