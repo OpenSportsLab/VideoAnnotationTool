@@ -223,6 +223,10 @@ A: "..."
 * **Undo / Redo**
 
   * Reverts recent text changes.
+ 
+
+### Quick Demo for Description Mode
+<iframe src="https://drive.google.com/file/d/1tiqEyY9DTJo12u41y_1TFHeXtWLIfI86/preview" width="1280" height="600" allow="autoplay" allowfullscreen></iframe>
 ---
 
 # 5. Dense Description Mode (Event-level Captioning)
@@ -306,4 +310,6 @@ Displays all annotated events in chronological order.
 * **Editing** – Modify description text and confirm to update.
 * **Delete** – Remove event from table and timeline.
 
+### Quick Demo for Dense Description Mode
+<iframe src="https://drive.google.com/file/d/1MLAVYg1_uVhIUR4AjRjLwiEIuL8GE3xc/preview" width="1280" height="600" allow="autoplay" allowfullscreen></iframe>
 ---
