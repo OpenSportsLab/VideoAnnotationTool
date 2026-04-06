@@ -75,8 +75,6 @@ def isolated_qsettings(tmp_path):
     )
 
     settings = QSettings(
-        QSettings.Format.IniFormat,
-        QSettings.Scope.UserScope,
         "OpenSportsLab",
         "VideoAnnotationTool",
     )
