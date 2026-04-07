@@ -180,7 +180,7 @@ def test_classification_clear_workspace_resets_state(
     assert window.tree_model.rowCount() == 1
 
     monkeypatch.setattr(
-        "controllers.classification.classification_editor_controller.QMessageBox.exec",
+        "controllers.dataset_explorer_controller.QMessageBox.exec",
         lambda self: QMessageBox.StandardButton.Yes,
     )
 
@@ -190,8 +190,8 @@ def test_classification_clear_workspace_resets_state(
 
     assert window.tree_model.rowCount() == 0
     assert window.model.action_item_data == []
-    assert window.model.json_loaded is False
-    assert window.model.current_json_path is None
+    assert window.model.json_loaded is True
+    assert window.model.current_json_path == str(project_json_path)
     assert window.classification_panel.manual_box.isEnabled() is False
 
 

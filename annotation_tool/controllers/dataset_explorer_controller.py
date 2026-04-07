@@ -2,7 +2,7 @@ import os
 import datetime
 import json
 
-from PyQt6.QtCore import QModelIndex, QObject
+from PyQt6.QtCore import QModelIndex, QObject, pyqtSignal, QUrl
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from utils import natural_sort_key
@@ -13,6 +13,7 @@ class DatasetExplorerController(QObject):
     Controller for the Dataset Explorer.
     Owns project load/save/export/create lifecycle and populates the shared tree model.
     """
+    dataSelected = pyqtSignal(str)
 
     def __init__(self, main_window, panel, tree_model, app_state, media_controller):
         super().__init__()
@@ -23,46 +24,23 @@ class DatasetExplorerController(QObject):
         self.media_controller = media_controller
 
         self._setup_connections()
-        self._setup_mode_ops()
-
-    def _setup_mode_ops(self):
-        """Mode registry for Dataset Explorer actions keyed by right-tab index."""
-        self._mode_nav_ops = {
-            0: {
-                "add": self._add_classification_items,
-                "clear": self._clear_classification_items,
-                "remove": self._remove_classification_item,
-                "filter": self._filter_classification_items,
-            },
-            1: {
-                "add": self._add_localization_items,
-                "clear": self._clear_localization_items,
-                "remove": self._remove_localization_item,
-                "filter": self._filter_localization_items,
-            },
-            2: {
-                "add": self._add_description_items,
-                "clear": self._clear_description_items,
-                "remove": self._remove_description_item,
-                "filter": self._filter_description_items,
-            },
-            3: {
-                "add": self._add_dense_items,
-                "clear": self._clear_dense_items,
-                "remove": self._remove_dense_item,
-                "filter": self._filter_dense_items,
-            },
-        }
 
     def _setup_connections(self):
         """Connect Panel signals to Controller slots."""
-        self.panel.addDataRequested.connect(self.handle_add_video)
+        self.panel.addDataRequested.connect(self.handle_add_sample)
         self.panel.clear_btn.clicked.connect(self.handle_clear_workspace)
         self.panel.removeItemRequested.connect(self.handle_remove_item)
         self.panel.filter_combo.currentIndexChanged.connect(self.handle_filter_change)
+        self.panel.sampleNavigateRequested.connect(self.navigate_samples)
 
-        # Selection handling remains centralized in MainWindow dispatch.
+        # Dataset Explorer owns selection normalization/media routing and emits Data IDs.
         self.panel.tree.selectionModel().currentChanged.connect(self._on_selection_changed)
+
+    def _set_annotation_panels_enabled(self, enabled: bool):
+        self.main.classification_panel.manual_box.setEnabled(enabled)
+        self.main.localization_panel.setEnabled(enabled)
+        self.main.description_panel.setEnabled(enabled)
+        self.main.dense_panel.setEnabled(enabled)
 
     # ---------------------------------------------------------------------
     # Tree Population
@@ -71,6 +49,7 @@ class DatasetExplorerController(QObject):
         """
         Populate Dataset Explorer tree model from AppState.action_item_data.
         """
+        self.app_state.ensure_data_ids()
         self.tree_model.clear()
         self.app_state.action_item_map.clear()
 
@@ -86,8 +65,14 @@ class DatasetExplorerController(QObject):
             path = data["path"]
             name = data["name"]
             sources = data.get("source_files")
+            data_id = data.get("data_id")
 
-            item = self.tree_model.add_entry(name=name, path=path, source_files=sources)
+            item = self.tree_model.add_entry(
+                name=name,
+                path=path,
+                source_files=sources,
+                data_id=data_id,
+            )
             self.app_state.action_item_map[path] = item
             self.update_item_status(path)
 
@@ -118,23 +103,203 @@ class DatasetExplorerController(QObject):
     def _active_mode_idx(self) -> int:
         return self.main.right_tabs.currentIndex()
 
-    def _active_mode_ops(self):
-        return self._mode_nav_ops.get(self._active_mode_idx(), self._mode_nav_ops[0])
+    def handle_add_sample(self):
+        if not self.app_state.json_loaded:
+            QMessageBox.warning(self.main, "Warning", "Please create or load a project first.")
+            return
 
-    def handle_add_video(self):
-        self._active_mode_ops()["add"]()
+        start_dir = self.app_state.current_working_directory or ""
+        files, _ = QFileDialog.getOpenFileNames(
+            self.main,
+            "Select Samples to Add",
+            start_dir,
+            self._sample_file_filter_for_mode(self._active_mode_idx()),
+        )
+        if not files:
+            return
+
+        if not self.app_state.current_working_directory:
+            self.app_state.current_working_directory = os.path.dirname(files[0])
+
+        groups = self._group_selected_files(files)
+        added_count = 0
+        first_idx = None
+
+        for source_group in groups:
+            sample = self._build_sample_for_mode(source_group)
+            if not sample:
+                continue
+
+            entry = self.app_state.add_action_item(**sample)
+            data_id = entry.get("data_id")
+            item = self.tree_model.add_entry(
+                name=entry["name"],
+                path=entry["path"],
+                source_files=entry.get("source_files"),
+                data_id=data_id,
+            )
+            self.app_state.action_item_map[entry["path"]] = item
+            self.update_item_status(entry["path"])
+            if first_idx is None:
+                first_idx = item.index()
+            added_count += 1
+
+        if added_count <= 0:
+            return
+
+        self._mark_dirty_and_refresh()
+        self.handle_filter_change(self.panel.filter_combo.currentIndex())
+        self.main.show_temp_msg("Added", f"Added {added_count} samples.")
+
+        if self._active_mode_idx() == 0 and hasattr(self.main, "classification_editor_controller"):
+            self.main.classification_editor_controller.sync_batch_inference_dropdowns()
+
+        if first_idx and first_idx.isValid():
+            self.panel.tree.setCurrentIndex(first_idx)
+            self.panel.tree.setFocus()
 
     def handle_clear_workspace(self):
-        self._active_mode_ops()["clear"]()
+        if not self.app_state.json_loaded:
+            return
+
+        msg = QMessageBox(self.main)
+        msg.setWindowTitle("Clear Workspace")
+        msg.setText("Clear workspace? Unsaved changes will be lost.")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        if msg.exec() != QMessageBox.StandardButton.Yes:
+            return
+
+        self.media_controller.stop()
+        self._clear_all_samples_keep_project()
+        self.main.show_temp_msg("Cleared", "Workspace reset.")
 
     def handle_remove_item(self, index: QModelIndex):
-        self._active_mode_ops()["remove"](index)
+        path, action_idx = self._path_from_index(index)
+        if not path:
+            return
+
+        if self._active_mode_idx() == 3:
+            reply = QMessageBox.question(
+                self.main,
+                "Remove Sample",
+                f"Are you sure you want to remove this sample and its annotations?\n\n{os.path.basename(path)}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        removed = self._remove_sample_by_mode(path)
+        if not removed:
+            return
+
+        self._remove_tree_row(action_idx)
+        self._reset_panels_after_removed_path(path)
+        self._mark_dirty_and_refresh()
+        self.main.show_temp_msg("Removed", "Sample removed.")
+        self.handle_filter_change(self.panel.filter_combo.currentIndex())
+
+        if self._active_mode_idx() == 0 and hasattr(self.main, "classification_editor_controller"):
+            self.main.classification_editor_controller.sync_batch_inference_dropdowns()
 
     def handle_filter_change(self, index):
-        self._active_mode_ops()["filter"](index)
+        root = self.tree_model.invisibleRootItem()
+        first_visible_idx = QModelIndex()
+        for row in range(root.rowCount()):
+            item = root.child(row)
+            if item is None:
+                continue
+
+            path = item.data(getattr(self.tree_model, "FilePathRole", 0x0100))
+            data_id = item.data(getattr(self.tree_model, "DataIdRole", 0x0101))
+            hand_labelled, smart_labelled = self._label_state_for_mode(path, data_id)
+
+            hide = False
+            if index == 1 and not hand_labelled:
+                hide = True
+            elif index == 2 and not smart_labelled:
+                hide = True
+            elif index == 3 and (hand_labelled or smart_labelled):
+                hide = True
+
+            self.panel.tree.setRowHidden(row, QModelIndex(), hide)
+            if not hide and not first_visible_idx.isValid():
+                first_visible_idx = self.tree_model.index(row, 0, QModelIndex())
+
+        if first_visible_idx.isValid():
+            current_idx = self._get_action_index(self.panel.tree.currentIndex())
+            current_visible = (
+                current_idx.isValid()
+                and not self.panel.tree.isRowHidden(current_idx.row(), QModelIndex())
+            )
+            if not current_visible:
+                self.panel.tree.setCurrentIndex(first_visible_idx)
+                self.panel.tree.scrollTo(first_visible_idx)
+            return
+
+        self._clear_selection_for_empty_filtered_view()
+
+    def _clear_selection_for_empty_filtered_view(self):
+        self.media_controller.stop()
+        self.main.center_panel.player.setSource(QUrl())
+        self.main.center_panel.set_markers([])
+
+        current_idx = self.panel.tree.currentIndex()
+        if current_idx.isValid():
+            self.panel.tree.setCurrentIndex(QModelIndex())
+        else:
+            self._set_annotation_panels_enabled(False)
+            self.dataSelected.emit("")
 
     def _on_selection_changed(self, current, previous):
-        self.main._on_tree_selection_changed(current, previous)
+        self._set_annotation_panels_enabled(current.isValid())
+        if not current.isValid():
+            self.dataSelected.emit("")
+            return
+
+        action_idx = self._get_action_index(current)
+        if not action_idx.isValid():
+            self.dataSelected.emit("")
+            return
+
+        data_id = action_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
+        if not data_id:
+            path = action_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
+            data_id = self.app_state.get_data_id_by_path(path)
+        if not data_id:
+            self.dataSelected.emit("")
+            return
+
+        self._route_media_for_selection(current, data_id)
+        self.dataSelected.emit(data_id)
+
+    def _route_media_for_selection(self, selected_idx: QModelIndex, data_id: str):
+        media_paths = [
+            p for p in (self._resolve_media_path(path) for path in self.app_state.get_sources_by_id(data_id)) if p
+        ]
+        if not media_paths:
+            return
+
+        mode_idx = self._active_mode_idx()
+        is_multiview = mode_idx == 0 and len(media_paths) > 1 and bool(self.app_state.is_multi_view)
+        if is_multiview:
+            self.main.center_panel.show_all_views(media_paths)
+
+        selected_path = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
+        preferred = self._resolve_media_path(selected_path) if selected_idx.isValid() else None
+        if preferred and not os.path.isfile(preferred):
+            preferred = None
+        primary_path = preferred or media_paths[0]
+        self.main.media_controller.load_and_play(primary_path)
+
+    def _resolve_media_path(self, path):
+        if not path:
+            return None
+        cwd = self.app_state.current_working_directory
+        if cwd and not os.path.isabs(path):
+            path = os.path.normpath(os.path.join(cwd, path))
+        if path and os.path.exists(path):
+            return path
+        return None
 
     def _get_action_index(self, index: QModelIndex) -> QModelIndex:
         """Normalize child selection to its top-level action index."""
@@ -159,67 +324,199 @@ class DatasetExplorerController(QObject):
         self.app_state.is_data_dirty = True
         self.main.update_save_export_button_state()
 
-    # ------------------------------------------------------------------
-    # Add Actions
-    # ------------------------------------------------------------------
-    def _add_classification_items(self):
-        self.main.classification_editor_controller.add_dataset_items()
+    def navigate_samples(self, step: int):
+        """
+        Move selection across top-level dataset items only.
+        Respects active row hiding (filters) and normalizes child selection to parent.
+        """
+        tree = self.panel.tree
+        current = tree.currentIndex()
+        if not current.isValid():
+            return
 
-    def _add_localization_items(self):
-        self.main.localization_editor_controller.add_dataset_items()
+        current_top = self._get_action_index(current)
+        if not current_top.isValid():
+            return
 
-    def _add_description_items(self):
-        self.main.desc_editor_controller.add_dataset_items()
+        row = current_top.row() + (1 if step > 0 else -1)
+        root = QModelIndex()
 
-    def _add_dense_items(self):
-        self.main.dense_editor_controller.add_dataset_items()
+        while 0 <= row < self.tree_model.rowCount(root):
+            if not tree.isRowHidden(row, root):
+                next_idx = self.tree_model.index(row, 0, root)
+                if next_idx.isValid():
+                    tree.setCurrentIndex(next_idx)
+                    tree.scrollTo(next_idx)
+                    return
+            row += 1 if step > 0 else -1
 
-    # ------------------------------------------------------------------
-    # Clear Actions
-    # ------------------------------------------------------------------
-    def _clear_classification_items(self):
-        self.main.classification_editor_controller.clear_dataset_items()
+    def _sample_file_filter_for_mode(self, mode_idx: int) -> str:
+        if mode_idx in (1, 3):
+            return "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)"
+        return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp);;All Files (*)"
 
-    def _clear_description_items(self):
-        self.main.desc_editor_controller.clear_dataset_items()
+    def _group_selected_files(self, files):
+        if self._active_mode_idx() == 0 and bool(self.app_state.is_multi_view):
+            grouped = {}
+            for file_path in files:
+                grouped.setdefault(os.path.dirname(file_path), []).append(file_path)
+            groups = []
+            for _, group_paths in grouped.items():
+                group_paths.sort()
+                groups.append(group_paths)
+            return groups
+        return [[path] for path in files]
 
-    def _clear_localization_items(self):
-        self.main.localization_editor_controller.clear_dataset_items()
+    def _build_sample_for_mode(self, source_group):
+        mode_idx = self._active_mode_idx()
+        primary = source_group[0]
 
-    def _clear_dense_items(self):
-        self.main.dense_editor_controller.clear_dataset_items()
+        if mode_idx == 0 and bool(self.app_state.is_multi_view):
+            sample_name = (
+                os.path.basename(os.path.dirname(primary))
+                if len(source_group) > 1
+                else os.path.basename(primary)
+            )
+            if self.app_state.has_action_name(sample_name):
+                return None
+            return {
+                "name": sample_name,
+                "path": primary,
+                "source_files": source_group,
+            }
 
-    # ------------------------------------------------------------------
-    # Remove Actions
-    # ------------------------------------------------------------------
-    def _remove_classification_item(self, index: QModelIndex):
-        self.main.classification_editor_controller.remove_dataset_item(index)
+        if mode_idx == 2:
+            if self.app_state.has_description_path(primary):
+                return None
+            sample_name = os.path.basename(primary)
+            return {
+                "name": sample_name,
+                "path": primary,
+                "source_files": [primary],
+                "id": sample_name,
+                "metadata": {"path": primary, "questions": []},
+                "inputs": [{"type": "video", "name": sample_name, "path": primary}],
+                "captions": [],
+            }
 
-    def _remove_localization_item(self, index: QModelIndex):
-        self.main.localization_editor_controller.remove_dataset_item(index)
+        if self.app_state.has_action_path(primary):
+            return None
 
-    def _remove_description_item(self, index: QModelIndex):
-        self.main.desc_editor_controller.remove_dataset_item(index)
-        # self.app_state.is_data_dirty = True
+        sample_name = os.path.basename(primary)
+        return {
+            "name": sample_name,
+            "path": primary,
+            "source_files": [primary],
+        }
 
+    def _remove_sample_by_mode(self, path: str) -> bool:
+        if self._active_mode_idx() == 2:
+            removed = self.app_state.remove_description_action_by_path(path)
+            return bool(removed)
+        return self.app_state.remove_action_item_by_path(path)
 
-    def _remove_dense_item(self, index: QModelIndex):
-        self.main.dense_editor_controller.remove_dataset_item(index)
+    def _label_state_for_mode(self, path: str, data_id: str):
+        mode_idx = self._active_mode_idx()
+        if mode_idx == 0:
+            hand = bool(self.app_state.manual_annotations.get(path))
+            smart = bool(self.app_state.smart_annotations.get(path, {}).get("_confirmed", False))
+            return hand, smart
+        if mode_idx == 1:
+            hand = bool(self.app_state.localization_events.get(path))
+            smart = bool(self.app_state.smart_localization_events.get(path))
+            return hand, smart
+        if mode_idx == 2:
+            data = self.app_state.get_item_by_id(data_id)
+            captions = data.get("captions", []) if data else []
+            hand = any(c.get("text", "").strip() for c in captions if isinstance(c, dict))
+            return hand, False
+        if mode_idx == 3:
+            hand = bool(self.app_state.dense_description_events.get(path))
+            return hand, False
+        return False, False
 
-    # ------------------------------------------------------------------
-    # Filter Actions
-    # ------------------------------------------------------------------
-    def _filter_classification_items(self, index):
-        self.main.classification_editor_controller.filter_dataset_items(index)
+    def _reset_panels_after_removed_path(self, removed_path: str):
+        current_id = self.panel.tree.currentIndex()
+        current_path = self._path_from_index(current_id)[0] if current_id.isValid() else None
+        if current_path and current_path != removed_path:
+            return
 
-    def _filter_localization_items(self, index):
-        self.main.localization_editor_controller.filter_dataset_items(index)
+        self.media_controller.stop()
+        self.main.center_panel.player.setSource(QUrl())
+        self.main.center_panel.set_markers([])
 
-    def _filter_description_items(self, index):
-        self.main.desc_editor_controller.filter_dataset_items(index)
+        self.main.classification_panel.clear_selection()
+        self.main.classification_panel.reset_smart_inference()
+        self.main.classification_panel.manual_box.setEnabled(False)
 
-    def _filter_dense_items(self, index):
-        self.main.dense_editor_controller.filter_dataset_items(index)
+        self.main.localization_editor_controller.current_video_path = None
+        self.main.localization_editor_controller.current_head = None
+        self.main.localization_panel.table.set_data([])
+        if hasattr(self.main.localization_panel, "smart_widget"):
+            self.main.localization_panel.smart_widget.smart_table.set_data([])
+        self.main.localization_panel.setEnabled(False)
+
+        self.main.desc_editor_controller.current_action_path = None
+        self.main.description_panel.caption_edit.clear()
+        self.main.description_panel.caption_edit.setEnabled(False)
+        self.main.description_panel.setEnabled(False)
+
+        self.main.dense_editor_controller.current_video_path = None
+        self.main.dense_panel.table.set_data([])
+        self.main.dense_panel.input_widget.set_text("")
+        self.main.dense_panel.setEnabled(False)
+        self.dataSelected.emit("")
+
+    def _clear_all_samples_keep_project(self):
+        self.app_state.action_item_data = []
+        self.app_state.action_path_to_name = {}
+        self.app_state.action_item_map.clear()
+        self.app_state.action_id_to_path = {}
+        self.app_state.action_id_to_item = {}
+
+        self.app_state.manual_annotations = {}
+        self.app_state.smart_annotations = {}
+        self.app_state.localization_events = {}
+        self.app_state.smart_localization_events = {}
+        self.app_state.dense_description_events = {}
+        self.app_state.imported_input_metadata = {}
+        self.app_state.imported_action_metadata = {}
+        self.app_state.undo_stack.clear()
+        self.app_state.redo_stack.clear()
+
+        self.tree_model.clear()
+        self.app_state.is_data_dirty = True
+        self.app_state.json_loaded = True
+
+        self.main.classification_panel.clear_selection()
+        self.main.classification_panel.reset_smart_inference()
+        self.main.classification_panel.reset_train_ui()
+        self.main.classification_panel.manual_box.setEnabled(False)
+        self.main.classification_editor_controller.sync_batch_inference_dropdowns()
+
+        self.main.localization_editor_controller.current_video_path = None
+        self.main.localization_editor_controller.current_head = None
+        self.main.localization_panel.annot_mgmt.update_schema(self.app_state.label_definitions)
+        self.main.localization_panel.table.set_data([])
+        if hasattr(self.main.localization_panel, "smart_widget"):
+            self.main.localization_panel.smart_widget.smart_table.set_data([])
+        self.main.localization_panel.setEnabled(False)
+
+        self.main.desc_editor_controller.current_action_path = None
+        self.main.description_panel.caption_edit.clear()
+        self.main.description_panel.caption_edit.setEnabled(False)
+        self.main.description_panel.setEnabled(False)
+
+        self.main.dense_editor_controller.current_video_path = None
+        self.main.dense_panel.table.set_data([])
+        self.main.dense_panel.input_widget.set_text("")
+        self.main.dense_panel.setEnabled(False)
+
+        self.main.center_panel.player.setSource(QUrl())
+        self.main.center_panel.video_widget.update()
+        self.main.center_panel.set_markers([])
+        self.dataSelected.emit("")
+        self.main.update_save_export_button_state()
 
     # ---------------------------------------------------------------------
     # Project Lifecycle
@@ -334,14 +631,6 @@ class DatasetExplorerController(QObject):
             self.app_state.current_json_path = path
             self.main.update_save_export_button_state()
         return result
-
-    def clear_classification_workspace(self):
-        """Clear classification workspace (used by MainWindow clear action)."""
-        self.main.classification_editor_controller.clear_workspace()
-
-    def clear_description_workspace(self):
-        """Clear description workspace (used by MainWindow clear action)."""
-        self.main.desc_editor_controller.clear_workspace()
 
     def close_project(self):
         """Close current project and return to welcome view."""
@@ -613,8 +902,8 @@ class DatasetExplorerController(QObject):
         if missing_files:
             shown_missing = missing_files[:5]
             msg = (
-                f"Loaded {loaded_count} clips.\n\n"
-                f"WARNING: {len(missing_files)} videos not found locally:\n"
+                f"Loaded {loaded_count} samples.\n\n"
+                f"WARNING: {len(missing_files)} samples not found locally:\n"
                 + "\n".join(shown_missing)
             )
             if len(missing_files) > 5:
@@ -622,7 +911,7 @@ class DatasetExplorerController(QObject):
             QMessageBox.warning(self.main, "Load Warning", msg)
         else:
             self.main.statusBar().showMessage(
-                f"Mode Switched — Loaded {loaded_count} clips. Current Mode: LOCALIZATION",
+                f"Mode Switched — Loaded {loaded_count} samples. Current Mode: LOCALIZATION",
                 1500,
             )
 
@@ -723,7 +1012,7 @@ class DatasetExplorerController(QObject):
             QMessageBox.warning(
                 self.main,
                 "Load Warning",
-                f"Could not find video files for {len(missing_files)} actions locally.",
+                f"Could not find source files for {len(missing_files)} samples locally.",
             )
         else:
             self.main.statusBar().showMessage(
@@ -815,11 +1104,11 @@ class DatasetExplorerController(QObject):
             QMessageBox.warning(
                 self.main,
                 "Load Warning",
-                f"Could not find {len(missing_files)} video files locally.",
+                f"Could not find source files for {len(missing_files)} samples locally.",
             )
         else:
             self.main.statusBar().showMessage(
-                f"Dense Mode: Loaded {loaded_count} clips.",
+                f"Dense Mode: Loaded {loaded_count} samples.",
                 2000,
             )
 

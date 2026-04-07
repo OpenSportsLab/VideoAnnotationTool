@@ -14,15 +14,24 @@ class DatasetExplorerTreeModel(QStandardItemModel):
     """
 
     FilePathRole = Qt.ItemDataRole.UserRole
+    DataIdRole = Qt.ItemDataRole.UserRole + 1
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setColumnCount(1)
 
-    def add_entry(self, name: str, path: str, source_files: list = None, icon=None) -> QStandardItem:
+    def add_entry(
+        self,
+        name: str,
+        path: str,
+        source_files: list = None,
+        icon=None,
+        data_id: str = None,
+    ) -> QStandardItem:
         item = QStandardItem(name)
         item.setEditable(False)
         item.setData(path, self.FilePathRole)
+        item.setData(data_id, self.DataIdRole)
 
         if icon:
             item.setIcon(icon)
@@ -32,6 +41,7 @@ class DatasetExplorerTreeModel(QStandardItemModel):
                 child = QStandardItem(os.path.basename(src))
                 child.setEditable(False)
                 child.setData(src, self.FilePathRole)
+                child.setData(data_id, self.DataIdRole)
                 item.appendRow(child)
 
         self.appendRow(item)
@@ -45,6 +55,7 @@ class DatasetExplorerPanel(QWidget):
 
     removeItemRequested = pyqtSignal(QModelIndex)
     addDataRequested = pyqtSignal()
+    sampleNavigateRequested = pyqtSignal(int)
 
     def __init__(
         self,
@@ -71,6 +82,8 @@ class DatasetExplorerPanel(QWidget):
 
         self._configure_widgets(tree_title, filter_items, clear_text)
         self.btn_add_data.clicked.connect(self.addDataRequested.emit)
+        self.btn_prev_sample.clicked.connect(lambda: self.sampleNavigateRequested.emit(-1))
+        self.btn_next_sample.clicked.connect(lambda: self.sampleNavigateRequested.emit(1))
         self._set_context_menu_enabled(enable_context_menu)
 
     def _configure_widgets(self, tree_title, filter_items, clear_text):

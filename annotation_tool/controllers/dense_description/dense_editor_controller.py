@@ -1,9 +1,7 @@
 import copy
-import os
-
-from PyQt6.QtCore import QModelIndex, Qt, QTimer, QUrl
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from controllers.media_controller import MediaController
 from models import CmdType
@@ -12,15 +10,14 @@ from models import CmdType
 class DenseEditorController:
     """
     Dense Description controller.
-    Owns dense editor behavior, navigation, tree-selection handling, and
-    Dense-mode Dataset Explorer add/remove/filter/clear delegation.
+    Owns dense editor behavior, navigation, and data-ID driven selection handling.
+    Dataset add/remove/filter/clear is handled centrally by DatasetExplorerController.
     """
 
     def __init__(self, main_window, media_controller: MediaController):
         self.main = main_window
         self.model = main_window.model
         self.tree_model = main_window.tree_model
-        self.dataset_explorer_panel = main_window.dataset_explorer_panel
         self.center_panel = main_window.center_panel
         self.right_panel = main_window.dense_panel
         self.media_controller = media_controller
@@ -38,6 +35,7 @@ class DenseEditorController:
     # -------------------------------------------------------------------------
     def setup_connections(self):
         self.center_panel.positionChanged.connect(self._on_media_position_changed)
+        self.right_panel.eventNavigateRequested.connect(self._navigate_annotation)
 
         input_widget = self.right_panel.input_widget
         table = self.right_panel.table
@@ -58,143 +56,13 @@ class DenseEditorController:
         self.right_panel.input_widget._on_submit()
 
     # -------------------------------------------------------------------------
-    # Dataset Explorer Delegated Actions (Dense mode)
-    # -------------------------------------------------------------------------
-    def add_dataset_items(self):
-        if not self.model.json_loaded:
-            QMessageBox.warning(self.main, "Warning", "Please create or load a project first.")
-            return
-
-        start_dir = self.model.current_working_directory or ""
-        files, _ = QFileDialog.getOpenFileNames(
-            self.main, "Select Video(s)", start_dir, "Video (*.mp4 *.avi *.mov *.mkv)"
-        )
-        if not files:
-            return
-
-        if not self.model.current_working_directory:
-            self.model.current_working_directory = os.path.dirname(files[0])
-
-        added_count = 0
-        first_idx = None
-
-        for file_path in files:
-            if self.model.has_action_path(file_path):
-                continue
-
-            name = os.path.basename(file_path)
-            self.model.add_action_item(name=name, path=file_path, source_files=[file_path])
-            item = self.tree_model.add_entry(name=name, path=file_path, source_files=[file_path])
-            self.model.action_item_map[file_path] = item
-            self.main.dataset_explorer_controller.update_item_status(file_path)
-
-            if first_idx is None:
-                first_idx = item.index()
-            added_count += 1
-
-        if added_count > 0:
-            self._mark_dirty_and_refresh()
-            self.filter_dataset_items(self.dataset_explorer_panel.filter_combo.currentIndex())
-            self.main.show_temp_msg("Videos Added", f"Added {added_count} clips.")
-            if first_idx and first_idx.isValid():
-                self.dataset_explorer_panel.tree.setCurrentIndex(first_idx)
-                self.dataset_explorer_panel.tree.setFocus()
-
-    def clear_dataset_items(self):
-        if not self.model.action_item_data:
-            return
-
-        res = QMessageBox.question(
-            self.main,
-            "Clear All",
-            "Are you sure you want to clear the workspace? Unsaved changes will be lost.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if res != QMessageBox.StandardButton.Yes:
-            return
-
-        self.clear_workspace()
-        self.main.show_welcome_view()
-        self.main.show_temp_msg("Cleared", "Workspace reset.")
-
-    def remove_dataset_item(self, index: QModelIndex):
-        path, action_idx = self._path_from_index(index)
-        if not path:
-            return
-
-        reply = QMessageBox.question(
-            self.main,
-            "Remove Video",
-            f"Are you sure you want to remove this video and its annotations?\n\n{os.path.basename(path)}",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        self.on_item_removed(path)
-
-        removed = self.model.remove_action_item_by_path(path)
-        if not removed:
-            return
-
-        self._remove_tree_row(action_idx)
-        self._mark_dirty_and_refresh()
-        self.main.show_temp_msg("Removed", "Video removed from project.")
-
-    def filter_dataset_items(self, index: int):
-        root = self.tree_model.invisibleRootItem()
-        for row in range(root.rowCount()):
-            item = root.child(row)
-            path = item.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-            has_anno = len(self.model.dense_description_events.get(path, [])) > 0
-
-            hide = False
-            if index == 1 and not has_anno:
-                hide = True
-            elif index == 2 and has_anno:
-                hide = True
-
-            self.dataset_explorer_panel.tree.setRowHidden(row, QModelIndex(), hide)
-
-    def clear_workspace(self):
-        """
-        Dense non-dialog reset path.
-        Callers own confirmation/show-welcome behavior.
-        """
-        self.media_controller.stop()
-        self.model.reset(full_reset=True)
-        self.model.dense_global_metadata = {}
-        self.current_video_path = None
-
-        self.tree_model.clear()
-        self.right_panel.table.set_data([])
-        self.right_panel.input_widget.set_text("")
-        self.right_panel.setEnabled(False)
-
-        self.center_panel.player.setSource(QUrl())
-        self.center_panel.video_widget.update()
-        self.center_panel.set_markers([])
-
-        self.main.update_save_export_button_state()
-
-    def on_item_removed(self, path: str):
-        if path != self.current_video_path:
-            return
-
-        self.media_controller.stop()
-        self.current_video_path = None
-        self.right_panel.table.set_data([])
-        self.center_panel.set_markers([])
-        self.right_panel.input_widget.set_text("")
-        self.right_panel.setEnabled(False)
-        self.center_panel.player.setSource(QUrl())
-        self.center_panel.video_widget.update()
-
-    # -------------------------------------------------------------------------
     # Selection + Dense Editing
     # -------------------------------------------------------------------------
-    def on_item_selected(self, current_idx: QModelIndex, previous_idx: QModelIndex):
-        if not current_idx.isValid():
+    def on_data_selected(self, data_id: str):
+        if self.main.right_tabs.currentIndex() != 3:
+            return
+
+        if not data_id:
             self.current_video_path = None
             self.right_panel.setEnabled(False)
             self.right_panel.table.set_data([])
@@ -202,19 +70,16 @@ class DenseEditorController:
             self.center_panel.set_markers([])
             return
 
-        path, _ = self._path_from_index(current_idx)
+        path = self.model.get_path_by_id(data_id)
         if path == self.current_video_path:
             return
 
-        if not path or not os.path.exists(path):
-            if path:
-                QMessageBox.warning(self.main, "Error", f"File not found: {path}")
+        if not path:
             return
 
         self.current_video_path = path
         self.right_panel.setEnabled(True)
         self.right_panel.input_widget.set_text("")
-        self.media_controller.load_and_play(path)
         self.display_events_for_item(path)
 
     def _on_media_position_changed(self, ms: int):
@@ -228,7 +93,7 @@ class DenseEditorController:
 
     def _on_description_submitted(self, text: str):
         if not self.current_video_path:
-            QMessageBox.warning(self.main, "Warning", "Please select a video first.")
+            QMessageBox.warning(self.main, "Warning", "Please select a sample first.")
             return
 
         pos_ms = self.center_panel.player.position()
@@ -388,16 +253,6 @@ class DenseEditorController:
     # -------------------------------------------------------------------------
     # Navigation
     # -------------------------------------------------------------------------
-    def _navigate_clip(self, step: int):
-        tree = self.dataset_explorer_panel.tree
-        current = tree.currentIndex()
-        if not current.isValid():
-            return
-
-        next_idx = tree.indexBelow(current) if step > 0 else tree.indexAbove(current)
-        if next_idx.isValid():
-            tree.setCurrentIndex(next_idx)
-
     def _navigate_annotation(self, step: int):
         events = self.model.dense_description_events.get(self.current_video_path, [])
         if not events:
@@ -439,25 +294,3 @@ class DenseEditorController:
         minutes = seconds // 60
         hours = minutes // 60
         return f"{hours:02}:{minutes % 60:02}:{seconds % 60:02}.{ms % 1000:03}"
-
-    def _mark_dirty_and_refresh(self):
-        self.model.is_data_dirty = True
-        self.main.update_save_export_button_state()
-
-    def _get_action_index(self, index: QModelIndex) -> QModelIndex:
-        if not index.isValid():
-            return QModelIndex()
-        if index.parent().isValid():
-            return index.parent()
-        return index
-
-    def _path_from_index(self, index: QModelIndex):
-        action_idx = self._get_action_index(index)
-        if not action_idx.isValid():
-            return None, QModelIndex()
-        path = action_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-        return path, action_idx
-
-    def _remove_tree_row(self, action_idx: QModelIndex):
-        if action_idx.isValid():
-            self.tree_model.removeRow(action_idx.row(), action_idx.parent())

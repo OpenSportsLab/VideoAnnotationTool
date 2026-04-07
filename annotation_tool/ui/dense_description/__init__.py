@@ -270,6 +270,7 @@ class DenseAnnotationPanel(QWidget):
     Dense annotation editor panel view loaded from Qt Designer UI.
     Uses only standard widgets in .ui and adapter objects in Python.
     """
+    eventNavigateRequested = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -312,6 +313,9 @@ class DenseAnnotationPanel(QWidget):
         selection_model = self.table.table.selectionModel()
         if selection_model:
             selection_model.selectionChanged.connect(self.table._on_selection_changed)
+
+        self.btn_prev_event.clicked.connect(lambda: self.eventNavigateRequested.emit(-1))
+        self.btn_next_event.clicked.connect(lambda: self.eventNavigateRequested.emit(1))
 
         self.table.table.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked

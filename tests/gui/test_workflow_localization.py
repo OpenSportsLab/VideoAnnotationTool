@@ -184,8 +184,8 @@ def test_localization_clear_workspace_resets_panel_and_model(
     stop_calls = []
     monkeypatch.setattr(window.media_controller, "stop", lambda: stop_calls.append(True))
     monkeypatch.setattr(
-        "controllers.localization.localization_editor_controller.QMessageBox.question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+        "controllers.dataset_explorer_controller.QMessageBox.exec",
+        lambda self: QMessageBox.StandardButton.Yes,
     )
 
     window.dataset_explorer_controller.handle_clear_workspace()
@@ -196,7 +196,9 @@ def test_localization_clear_workspace_resets_panel_and_model(
     assert window.model.action_item_data == []
     assert window.model.localization_events == {}
     assert window.model.smart_localization_events == {}
-    assert window.model.label_definitions == {}
+    assert window.model.label_definitions != {}
+    assert window.model.json_loaded is True
+    assert window.model.current_json_path == str(project_json_path)
     assert window.localization_editor_controller.current_video_path is None
     assert window.localization_editor_controller.current_head is None
     assert window.localization_panel.table.model.rowCount() == 0

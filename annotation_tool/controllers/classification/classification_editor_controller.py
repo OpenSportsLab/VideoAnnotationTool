@@ -1,13 +1,10 @@
 import copy
-import os
-from collections import defaultdict
 
-from PyQt6.QtCore import QModelIndex, QTimer
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from controllers.media_controller import MediaController
 from models import CmdType
-from utils import SUPPORTED_EXTENSIONS, natural_sort_key
+from utils import natural_sort_key
 
 from .inference_manager import InferenceManager
 from .train_manager import TrainManager
@@ -16,15 +13,14 @@ from .train_manager import TrainManager
 class ClassificationEditorController:
     """
     Single controller for Classification mode.
-    Owns annotation logic, tree navigation, smart/train helper wiring,
-    and Classification-mode Dataset Explorer add/remove/filter/clear actions.
+    Owns annotation logic and smart/train helper wiring.
+    Dataset add/remove/filter/clear is handled centrally by DatasetExplorerController.
     """
 
     def __init__(self, main_window, media_controller: MediaController):
         self.main = main_window
         self.model = main_window.model
         self.media_controller = media_controller
-        self.tree_model = main_window.tree_model
         self.panel = main_window.classification_panel
         self.dataset_explorer_panel = main_window.dataset_explorer_panel
 
@@ -87,87 +83,28 @@ class ClassificationEditorController:
             )
 
     # ---------------------------------------------------------------------
-    # Selection / Playback / Navigation
+    # Selection / Display
     # ---------------------------------------------------------------------
-    def on_item_selected(self, current, previous):
-        if not current.isValid():
+    def on_data_selected(self, data_id: str):
+        if self.main.right_tabs.currentIndex() != 0:
             return
 
-        path = current.data(self.main.tree_model.FilePathRole)
+        if not data_id:
+            self.panel.manual_box.setEnabled(False)
+            self.panel.clear_selection()
+            return
+
+        path = self.model.get_path_by_id(data_id)
+        if not path:
+            self.panel.manual_box.setEnabled(False)
+            self.panel.clear_selection()
+            return
+
         self.display_manual_annotation(path)
         self.panel.manual_box.setEnabled(True)
-        self.media_controller.load_and_play(path)
-
         center_panel = self.main.center_panel
         if hasattr(center_panel, "view_layout"):
             center_panel.view_layout.setCurrentWidget(center_panel.single_view_widget)
-
-    def show_all_views(self):
-        tree_view = self.dataset_explorer_panel.tree
-        curr_idx = tree_view.currentIndex()
-        if not curr_idx.isValid():
-            return
-
-        model = self.tree_model
-        if model.rowCount(curr_idx) == 0:
-            return
-
-        paths = []
-        for idx in range(model.rowCount(curr_idx)):
-            child_idx = model.index(idx, 0, curr_idx)
-            paths.append(child_idx.data(self.main.tree_model.FilePathRole))
-
-        supported = [path for path in paths if path.lower().endswith(SUPPORTED_EXTENSIONS[:3])]
-        self.main.center_panel.show_all_views(supported)
-
-    def nav_prev_action(self):
-        self._nav_tree(step=-1, level="top")
-
-    def nav_next_action(self):
-        self._nav_tree(step=1, level="top")
-
-    def nav_prev_clip(self):
-        self._nav_tree(step=-1, level="child")
-
-    def nav_next_clip(self):
-        self._nav_tree(step=1, level="child")
-
-    def _nav_tree(self, step, level):
-        tree = self.dataset_explorer_panel.tree
-        curr = tree.currentIndex()
-        if not curr.isValid():
-            return
-
-        model = self.tree_model
-
-        if level == "top":
-            if curr.parent().isValid():
-                curr = curr.parent()
-
-            new_row = curr.row() + step
-            if 0 <= new_row < model.rowCount(QModelIndex()):
-                while 0 <= new_row < model.rowCount(QModelIndex()):
-                    if not tree.isRowHidden(new_row, QModelIndex()):
-                        new_idx = model.index(new_row, 0, QModelIndex())
-                        tree.setCurrentIndex(new_idx)
-                        tree.scrollTo(new_idx)
-                        break
-                    new_row += step
-            return
-
-        parent = curr.parent()
-        if not parent.isValid():
-            if step == 1 and model.rowCount(curr) > 0:
-                nxt = model.index(0, 0, curr)
-                tree.setCurrentIndex(nxt)
-                tree.scrollTo(nxt)
-            return
-
-        new_row = curr.row() + step
-        if 0 <= new_row < model.rowCount(parent):
-            nxt = model.index(new_row, 0, parent)
-            tree.setCurrentIndex(nxt)
-            tree.scrollTo(nxt)
 
     # ---------------------------------------------------------------------
     # Classification Annotation + Schema
@@ -248,13 +185,6 @@ class ClassificationEditorController:
             self.dataset_explorer_panel.filter_combo.currentIndex()
         )
 
-        tree = self.dataset_explorer_panel.tree
-        curr_idx = tree.currentIndex()
-        if curr_idx.isValid():
-            nxt_idx = tree.indexBelow(curr_idx)
-            if nxt_idx.isValid():
-                QTimer.singleShot(500, lambda: [tree.setCurrentIndex(nxt_idx), tree.scrollTo(nxt_idx)])
-
     def save_manual_annotation(self, override_data=None):
         path = self.main.get_current_action_path()
         if not path:
@@ -285,13 +215,6 @@ class ClassificationEditorController:
         self.main.dataset_explorer_controller.handle_filter_change(
             self.dataset_explorer_panel.filter_combo.currentIndex()
         )
-
-        tree = self.dataset_explorer_panel.tree
-        curr_idx = tree.currentIndex()
-        if curr_idx.isValid():
-            nxt_idx = tree.indexBelow(curr_idx)
-            if nxt_idx.isValid():
-                QTimer.singleShot(500, lambda: [tree.setCurrentIndex(nxt_idx), tree.scrollTo(nxt_idx)])
 
     def clear_current_manual_annotation(self):
         path = self.main.get_current_action_path()
@@ -491,157 +414,3 @@ class ClassificationEditorController:
                 group.update_checkboxes(definition["labels"])
 
         self.display_manual_annotation(self.main.get_current_action_path())
-
-    # ---------------------------------------------------------------------
-    # Dataset Explorer Delegated Actions (Classification mode)
-    # ---------------------------------------------------------------------
-    def add_dataset_items(self):
-        if not self.model.json_loaded:
-            QMessageBox.warning(self.main, "Warning", "Please create or load a project first.")
-            return
-
-        filters = "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp);;All Files (*)"
-        start_dir = self.model.current_working_directory or ""
-        files, _ = QFileDialog.getOpenFileNames(self.main, "Select Data to Add", start_dir, filters)
-        if not files:
-            return
-
-        if not self.model.current_working_directory:
-            self.model.current_working_directory = os.path.dirname(files[0])
-
-        added_count = 0
-        is_multi_view = getattr(self.model, "is_multi_view", False)
-
-        if is_multi_view:
-            grouped = defaultdict(list)
-            for file_path in files:
-                grouped[os.path.dirname(file_path)].append(file_path)
-
-            for _, paths in grouped.items():
-                paths.sort()
-                name = os.path.basename(os.path.dirname(paths[0])) if len(paths) > 1 else os.path.basename(paths[0])
-                if self.model.has_action_name(name):
-                    continue
-
-                main_path = paths[0]
-                self.model.add_action_item(name=name, path=main_path, source_files=paths)
-                item = self.tree_model.add_entry(name=name, path=main_path, source_files=paths)
-                self.model.action_item_map[main_path] = item
-                self.main.update_action_item_status(main_path)
-                added_count += 1
-        else:
-            for file_path in files:
-                if self.model.has_action_path(file_path):
-                    continue
-
-                name = os.path.basename(file_path)
-                self.model.add_action_item(name=name, path=file_path, source_files=[file_path])
-                item = self.tree_model.add_entry(name=name, path=file_path, source_files=[file_path])
-                self.model.action_item_map[file_path] = item
-                self.main.update_action_item_status(file_path)
-                added_count += 1
-
-        if added_count > 0:
-            self._mark_dirty_and_refresh()
-            self.filter_dataset_items(self.dataset_explorer_panel.filter_combo.currentIndex())
-            self.main.show_temp_msg("Added", f"Added {added_count} items.")
-            self.sync_batch_inference_dropdowns()
-
-    def clear_dataset_items(self):
-        if not self.model.json_loaded:
-            return
-
-        msg = QMessageBox(self.main)
-        msg.setWindowTitle("Clear Workspace")
-        msg.setText("Clear workspace? Unsaved changes will be lost.")
-        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        if msg.exec() == QMessageBox.StandardButton.Yes:
-            self.media_controller.stop()
-            self.clear_workspace()
-
-    def remove_dataset_item(self, index: QModelIndex):
-        path, action_idx = self._path_from_index(index)
-        if not path:
-            return
-
-        is_current_selection = self.main.get_current_action_path() == path
-
-        removed = self.model.remove_action_item_by_path(path)
-        if not removed:
-            return
-
-        self._remove_tree_row(action_idx)
-
-        if is_current_selection:
-            self.media_controller.stop()
-            self.main.center_panel.load_video(None)
-            self.panel.clear_selection()
-            self.panel.reset_smart_inference()
-            self.panel.manual_box.setEnabled(False)
-
-        self._mark_dirty_and_refresh()
-        self.main.show_temp_msg("Removed", "Item removed.")
-        self.sync_batch_inference_dropdowns()
-
-    def filter_dataset_items(self, index):
-        filter_idx = self.dataset_explorer_panel.filter_combo.currentIndex() if index is None else index
-        if filter_idx < 0:
-            return
-
-        for row in range(self.tree_model.rowCount()):
-            idx = self.tree_model.index(row, 0)
-            item = self.tree_model.itemFromIndex(idx)
-            if not item:
-                continue
-
-            path = item.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-            is_hand = path in self.model.manual_annotations and bool(self.model.manual_annotations[path])
-            is_smart = self.model.smart_annotations.get(path, {}).get("_confirmed", False)
-            is_none = not is_hand and not is_smart
-
-            hidden = False
-            if filter_idx == 1 and not is_hand:
-                hidden = True
-            elif filter_idx == 2 and not is_smart:
-                hidden = True
-            elif filter_idx == 3 and not is_none:
-                hidden = True
-
-            self.dataset_explorer_panel.tree.setRowHidden(row, QModelIndex(), hidden)
-
-    def clear_workspace(self):
-        self.tree_model.clear()
-        self.model.reset(full_reset=True)
-        self.main.update_save_export_button_state()
-
-        self.panel.manual_box.setEnabled(False)
-        self.main.center_panel.load_video(None)
-        self.panel.reset_smart_inference()
-        self.panel.reset_train_ui()
-        self.setup_dynamic_ui()
-        self.sync_batch_inference_dropdowns()
-
-    # ---------------------------------------------------------------------
-    # Internal Helpers
-    # ---------------------------------------------------------------------
-    def _mark_dirty_and_refresh(self):
-        self.model.is_data_dirty = True
-        self.main.update_save_export_button_state()
-
-    def _get_action_index(self, index: QModelIndex) -> QModelIndex:
-        if not index.isValid():
-            return QModelIndex()
-        if index.parent().isValid():
-            return index.parent()
-        return index
-
-    def _path_from_index(self, index: QModelIndex):
-        action_idx = self._get_action_index(index)
-        if not action_idx.isValid():
-            return None, QModelIndex()
-        path = action_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-        return path, action_idx
-
-    def _remove_tree_row(self, action_idx: QModelIndex):
-        if action_idx.isValid():
-            self.tree_model.removeRow(action_idx.row(), action_idx.parent())

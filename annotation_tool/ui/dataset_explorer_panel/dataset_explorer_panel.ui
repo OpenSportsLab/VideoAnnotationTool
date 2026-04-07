@@ -2,14 +2,6 @@
 <ui version="4.0">
  <class>DatasetExplorerPanelForm</class>
  <widget class="QWidget" name="DatasetExplorerPanelForm">
-  <property name="geometry">
-   <rect>
-    <x>0</x>
-    <y>0</y>
-    <width>320</width>
-    <height>640</height>
-   </rect>
-  </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="spacing">
     <number>5</number>
@@ -51,7 +43,7 @@
     <widget class="QTreeView" name="tree"/>
    </item>
    <item>
-   <layout class="QHBoxLayout" name="bottomLayout">
+    <layout class="QHBoxLayout" name="bottomLayout">
      <property name="leftMargin">
       <number>0</number>
      </property>
@@ -81,6 +73,30 @@
        </property>
        <property name="text">
         <string>Clear All</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="horizontalLayout_2">
+     <item>
+      <widget class="QPushButton" name="btn_prev_sample">
+       <property name="cursor">
+        <cursorShape>PointingHandCursor</cursorShape>
+       </property>
+       <property name="text">
+        <string>Prev Sample</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btn_next_sample">
+       <property name="cursor">
+        <cursorShape>PointingHandCursor</cursorShape>
+       </property>
+       <property name="text">
+        <string>Next Sample</string>
        </property>
       </widget>
      </item>

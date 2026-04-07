@@ -1,10 +1,10 @@
 import copy
 import os
 
-from PyQt6.QtCore import QModelIndex, Qt, QUrl
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtMultimedia import QMediaPlayer
-from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
+from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from controllers.media_controller import MediaController
 from models import CmdType
@@ -15,8 +15,9 @@ from .loc_inference import LocalizationInferenceManager
 class LocalizationEditorController:
     """
     Localization controller.
-    Owns localization editor logic, tree/media selection handling, navigation,
-    smart inference actions, and localization Dataset Explorer delegation.
+    Owns localization editor logic, data-ID driven selection handling, navigation,
+    and smart inference actions.
+    Dataset add/remove/filter/clear is handled centrally by DatasetExplorerController.
     """
 
     def __init__(self, main_window, media_controller: MediaController):
@@ -24,7 +25,6 @@ class LocalizationEditorController:
         self.model = main_window.model
         self.tree_model = main_window.tree_model
 
-        self.dataset_explorer_panel = main_window.dataset_explorer_panel
         self.center_panel = main_window.center_panel
         self.right_panel = main_window.localization_panel
 
@@ -49,6 +49,8 @@ class LocalizationEditorController:
         self.current_head = None
 
     def setup_connections(self):
+        self.right_panel.eventNavigateRequested.connect(self._navigate_annotation)
+
         if hasattr(self.right_panel, "smart_widget"):
             smart_ui = self.right_panel.smart_widget
             smart_ui.setTimeRequested.connect(self._on_smart_set_time)
@@ -78,117 +80,6 @@ class LocalizationEditorController:
         table.updateTimeForSelectedRequested.connect(self._on_update_time_for_selected)
 
     # -------------------------------------------------------------------------
-    # Dataset Explorer Delegated Actions (Localization mode)
-    # -------------------------------------------------------------------------
-    def add_dataset_items(self):
-        start_dir = self.model.current_working_directory or ""
-        files, _ = QFileDialog.getOpenFileNames(
-            self.main, "Select Video(s)", start_dir, "Video (*.mp4 *.avi *.mov *.mkv)"
-        )
-        if not files:
-            return
-
-        if not self.model.current_working_directory:
-            self.model.current_working_directory = os.path.dirname(files[0])
-
-        added_count = 0
-        first_idx = None
-        for file_path in files:
-            if self.model.has_action_path(file_path):
-                continue
-
-            name = os.path.basename(file_path)
-            self.model.add_action_item(name=name, path=file_path, source_files=[file_path])
-            item = self.tree_model.add_entry(name=name, path=file_path, source_files=[file_path])
-            self.model.action_item_map[file_path] = item
-            self.main.dataset_explorer_controller.update_item_status(file_path)
-            if first_idx is None:
-                first_idx = item.index()
-            added_count += 1
-
-        if added_count > 0:
-            self._mark_dirty_and_refresh()
-            self.filter_dataset_items(self.dataset_explorer_panel.filter_combo.currentIndex())
-            self.main.show_temp_msg("Videos Added", f"Added {added_count} clips.")
-            if first_idx and first_idx.isValid():
-                self.dataset_explorer_panel.tree.setCurrentIndex(first_idx)
-                self.on_clip_selected(first_idx, None)
-
-    def remove_dataset_item(self, index: QModelIndex):
-        path, action_idx = self._path_from_index(index)
-        if not path:
-            return
-
-        removed = self.model.remove_action_item_by_path(path)
-        if not removed:
-            return
-
-        if self.current_video_path == path:
-            self.current_video_path = None
-            self.media_controller.stop()
-            self.center_panel.player.setSource(QUrl())
-            self.right_panel.table.set_data([])
-            if hasattr(self.right_panel, "smart_widget"):
-                self.right_panel.smart_widget.smart_table.set_data([])
-            self.center_panel.set_markers([])
-
-        self._remove_tree_row(action_idx)
-        self._mark_dirty_and_refresh()
-        self.main.show_temp_msg("Removed", "Video removed from list.")
-
-    def filter_dataset_items(self, index: int):
-        root = self.tree_model.invisibleRootItem()
-        for row in range(root.rowCount()):
-            item = root.child(row)
-            path = item.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-            has_anno = len(self.model.localization_events.get(path, [])) > 0
-            hide = False
-            if index == 1 and not has_anno:
-                hide = True
-            elif index == 2 and has_anno:
-                hide = True
-            self.dataset_explorer_panel.tree.setRowHidden(row, QModelIndex(), hide)
-
-    def clear_dataset_items(self):
-        if not self.model.action_item_data:
-            return
-        res = QMessageBox.question(
-            self.main,
-            "Clear All",
-            "Are you sure?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if res != QMessageBox.StandardButton.Yes:
-            return
-
-        self.clear_workspace()
-        self.main.show_temp_msg("Cleared", "Workspace reset.")
-
-    def clear_workspace(self):
-        self.model.action_item_data = []
-        self.model.action_path_to_name = {}
-        self.model.action_item_map.clear()
-        self.model.localization_events = {}
-        self.model.smart_localization_events = {}
-        self.model.label_definitions = {}
-        self.model.is_data_dirty = False
-        self.current_video_path = None
-        self.current_head = None
-        self.model.undo_stack.clear()
-        self.model.redo_stack.clear()
-
-        self.media_controller.stop()
-        self.center_panel.player.setSource(QUrl())
-        self.center_panel.video_widget.update()
-        self.center_panel.set_markers([])
-
-        self.tree_model.clear()
-        self._refresh_schema_ui()
-        self.right_panel.table.set_data([])
-        if hasattr(self.right_panel, "smart_widget"):
-            self.right_panel.smart_widget.smart_table.set_data([])
-        self.main.update_save_export_button_state()
-
     # -------------------------------------------------------------------------
     # Selection / Playback / Annotation logic
     # -------------------------------------------------------------------------
@@ -204,18 +95,30 @@ class LocalizationEditorController:
         new_event["position_ms"] = current_ms
         self._on_annotation_modified(old_event, new_event)
 
-    def on_clip_selected(self, current_idx, previous_idx):
-        if not current_idx.isValid():
-            self.current_video_path = None
+    def on_data_selected(self, data_id: str):
+        if self.main.right_tabs.currentIndex() != 1:
             return
 
-        path = current_idx.data(Qt.ItemDataRole.UserRole)
+        if not data_id:
+            self.current_video_path = None
+            self.right_panel.table.set_data([])
+            if hasattr(self.right_panel, "smart_widget"):
+                self.right_panel.smart_widget.smart_table.set_data([])
+            self.right_panel.setEnabled(False)
+            return
+
+        path = self.model.get_path_by_id(data_id)
+        if not path:
+            self.current_video_path = None
+            self.right_panel.setEnabled(False)
+            return
+
         if path == self.current_video_path:
             return
 
         if path and os.path.exists(path):
             self.current_video_path = path
-            self.media_controller.load_and_play(path)
+            self.right_panel.setEnabled(True)
             self._display_events_for_item(path)
         elif path:
             QMessageBox.warning(self.main, "Error", f"File not found: {path}")
@@ -427,7 +330,7 @@ class LocalizationEditorController:
     # --- Spotting (Data Creation) ---
     def _on_spotting_triggered(self, head, label):
         if not self.current_video_path:
-            QMessageBox.warning(self.main, "Warning", "No video selected.")
+            QMessageBox.warning(self.main, "Warning", "No sample selected.")
             return
 
         pos_ms = self.center_panel.player.position()
@@ -557,21 +460,16 @@ class LocalizationEditorController:
                 return idx
         return -1
 
-    def _navigate_clip(self, step):
-        tree = self.dataset_explorer_panel.tree
-        curr_idx = tree.currentIndex()
-        if not curr_idx.isValid():
-            return
-        next_idx = tree.indexBelow(curr_idx) if step > 0 else tree.indexAbove(curr_idx)
-        if next_idx.isValid():
-            tree.setCurrentIndex(next_idx)
-
     def _navigate_annotation(self, step):
         if not self.current_video_path:
             return
-        events = self.model.localization_events.get(self.current_video_path, [])
+
+        hand_events = self.model.localization_events.get(self.current_video_path, [])
+        smart_events = self.model.smart_localization_events.get(self.current_video_path, [])
+        events = [*hand_events, *smart_events]
         if not events:
             return
+
         sorted_events = sorted(events, key=lambda x: x.get("position_ms", 0))
         current_pos = self.center_panel.player.position()
         target_time = None
@@ -587,16 +485,25 @@ class LocalizationEditorController:
                     break
         if target_time is not None:
             self.center_panel.set_position(target_time)
-            self._select_row_by_time(target_time)
+            # Keep current tab unchanged. If the event is not in the active table,
+            # we still seek video but do not force tab-switching.
+            active_tab = self.right_panel.tabs.currentIndex()
+            if active_tab == 1:
+                self._select_row_by_time_in_table(self.right_panel.smart_widget.smart_table, target_time)
+            else:
+                self._select_row_by_time_in_table(self.right_panel.table, target_time)
 
     def _select_row_by_time(self, time_ms):
-        model = self.right_panel.table.model
+        self._select_row_by_time_in_table(self.right_panel.table, time_ms)
+
+    def _select_row_by_time_in_table(self, table_adapter, time_ms):
+        model = table_adapter.model
         for row in range(model.rowCount()):
             item = model.get_annotation_at(row)
             if item and abs(item.get("position_ms", 0) - time_ms) < 10:
                 idx = model.index(row, 0)
-                self.right_panel.table.table.selectRow(row)
-                self.right_panel.table.table.scrollTo(idx)
+                table_adapter.table.selectRow(row)
+                table_adapter.table.scrollTo(idx)
                 break
 
     def _reselect_event(self, target_event):
@@ -713,28 +620,3 @@ class LocalizationEditorController:
             self._display_events_for_item(self.current_video_path)
         elif index == 1:
             self._display_smart_events(self.current_video_path)
-
-    # -------------------------------------------------------------------------
-    # Internal helpers
-    # -------------------------------------------------------------------------
-    def _mark_dirty_and_refresh(self):
-        self.model.is_data_dirty = True
-        self.main.update_save_export_button_state()
-
-    def _get_action_index(self, index: QModelIndex) -> QModelIndex:
-        if not index.isValid():
-            return QModelIndex()
-        if index.parent().isValid():
-            return index.parent()
-        return index
-
-    def _path_from_index(self, index: QModelIndex):
-        action_idx = self._get_action_index(index)
-        if not action_idx.isValid():
-            return None, QModelIndex()
-        path = action_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-        return path, action_idx
-
-    def _remove_tree_row(self, action_idx: QModelIndex):
-        if action_idx.isValid():
-            self.tree_model.removeRow(action_idx.row(), action_idx.parent())

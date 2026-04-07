@@ -29,7 +29,7 @@ media_player/
 
 - Media: `player`, `video_widget`, `load_video(path)`, `play()`, `pause()`, `stop()`, `set_position(ms)`, `set_playback_rate(rate)`
 - Timeline: `set_duration(ms)`, `set_markers(markers)`, `seekRequested`
-- Playback signals: `playPauseRequested`, `seekRelativeRequested`, `stopRequested`, `nextPrevClipRequested`, `nextPrevAnnotRequested`, `playbackRateRequested`
+- Playback signals: `playPauseRequested`, `seekRelativeRequested`, `stopRequested`, `playbackRateRequested`
 - Media signals: `positionChanged`, `durationChanged`, `stateChanged`
 
 ## Notes

@@ -66,8 +66,6 @@ class MediaCenterPanel(QWidget):
     seekRelativeRequested = pyqtSignal(int)
     stopRequested = pyqtSignal()
     playPauseRequested = pyqtSignal()
-    nextPrevClipRequested = pyqtSignal(int)
-    nextPrevAnnotRequested = pyqtSignal(int)
     playbackRateRequested = pyqtSignal(float)
 
     # Timeline/media signals
@@ -136,21 +134,17 @@ class MediaCenterPanel(QWidget):
         self.btn_zoom_in.clicked.connect(lambda: self._change_zoom(1))
 
     def _setup_controls(self):
-        self.btn_prev_clip.clicked.connect(lambda: self.nextPrevClipRequested.emit(-1))
         self.btn_seek_back_5.clicked.connect(lambda: self.seekRelativeRequested.emit(-5000))
         self.btn_seek_back_1.clicked.connect(lambda: self.seekRelativeRequested.emit(-1000))
         self.btn_play_pause.clicked.connect(self.playPauseRequested.emit)
         self.btn_seek_fwd_1.clicked.connect(lambda: self.seekRelativeRequested.emit(1000))
         self.btn_seek_fwd_5.clicked.connect(lambda: self.seekRelativeRequested.emit(5000))
-        self.btn_next_clip.clicked.connect(lambda: self.nextPrevClipRequested.emit(1))
 
-        self.btn_prev_event.clicked.connect(lambda: self.nextPrevAnnotRequested.emit(-1))
         self.btn_speed_025.clicked.connect(lambda: self.playbackRateRequested.emit(0.25))
         self.btn_speed_050.clicked.connect(lambda: self.playbackRateRequested.emit(0.5))
         self.btn_speed_100.clicked.connect(lambda: self.playbackRateRequested.emit(1.0))
         self.btn_speed_200.clicked.connect(lambda: self.playbackRateRequested.emit(2.0))
         self.btn_speed_400.clicked.connect(lambda: self.playbackRateRequested.emit(4.0))
-        self.btn_next_event.clicked.connect(lambda: self.nextPrevAnnotRequested.emit(1))
 
     # ------------------------------------------------------------------
     # Public media API

@@ -218,16 +218,6 @@
       <item>
        <layout class="QHBoxLayout" name="playbackRowOneLayout">
         <item>
-         <widget class="QPushButton" name="btn_prev_clip">
-          <property name="cursor">
-           <cursorShape>PointingHandCursor</cursorShape>
-          </property>
-          <property name="text">
-           <string>Prev Clip</string>
-          </property>
-         </widget>
-        </item>
-        <item>
          <widget class="QPushButton" name="btn_seek_back_5">
           <property name="cursor">
            <cursorShape>PointingHandCursor</cursorShape>
@@ -277,30 +267,10 @@
           </property>
          </widget>
         </item>
-        <item>
-         <widget class="QPushButton" name="btn_next_clip">
-          <property name="cursor">
-           <cursorShape>PointingHandCursor</cursorShape>
-          </property>
-          <property name="text">
-           <string>Next Clip</string>
-          </property>
-         </widget>
-        </item>
        </layout>
       </item>
       <item>
        <layout class="QHBoxLayout" name="playbackRowTwoLayout">
-        <item>
-         <widget class="QPushButton" name="btn_prev_event">
-          <property name="cursor">
-           <cursorShape>PointingHandCursor</cursorShape>
-          </property>
-          <property name="text">
-           <string>Prev Event</string>
-          </property>
-         </widget>
-        </item>
         <item>
          <widget class="QPushButton" name="btn_speed_025">
           <property name="cursor">
@@ -348,16 +318,6 @@
           </property>
           <property name="text">
            <string>4.0x</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QPushButton" name="btn_next_event">
-          <property name="cursor">
-           <cursorShape>PointingHandCursor</cursorShape>
-          </property>
-          <property name="text">
-           <string>Next Event</string>
           </property>
          </widget>
         </item>

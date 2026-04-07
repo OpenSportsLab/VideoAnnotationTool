@@ -23,7 +23,9 @@ def count_lines(path: Path) -> int:
     except Exception:
         return -1
 
-def walk_tree(root: Path, prefix: str = ""):
+def walk_tree(root: Path, prefix: str = "") -> int:
+    total_lines = 0
+
     entries = sorted(
         [p for p in root.iterdir() if p.name not in IGNORE_DIRS],
         key=lambda p: (p.is_file(), p.name.lower())
@@ -36,18 +38,25 @@ def walk_tree(root: Path, prefix: str = ""):
 
         if entry.is_dir():
             print(f"{prefix}{connector}{entry.name}/")
-            walk_tree(entry, next_prefix)
+            total_lines += walk_tree(entry, next_prefix)
+
         elif entry.suffix == ".py":
             n = count_lines(entry)
             label = f"{n} lines" if n >= 0 else "unreadable"
             print(f"{prefix}{connector}{entry.name} [{label}]")
+
+            if n >= 0:
+                total_lines += n
+
+    return total_lines
 
 def main():
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
     root = root.resolve()
 
     print(f"{root.name}/")
-    walk_tree(root)
+    total = walk_tree(root)
+    print(f"\nTotal Python lines: {total}")
 
 if __name__ == "__main__":
     main()

@@ -624,6 +624,7 @@ class LocalizationAnnotationPanel(QWidget):
     """
 
     tabSwitched = pyqtSignal(int)
+    eventNavigateRequested = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -651,6 +652,8 @@ class LocalizationAnnotationPanel(QWidget):
         self.smart_widget = _SmartWidgetAdapter(self, self)
 
         self.tabs.currentChanged.connect(self.tabSwitched.emit)
+        self.btn_prev_event.clicked.connect(lambda: self.eventNavigateRequested.emit(-1))
+        self.btn_next_event.clicked.connect(lambda: self.eventNavigateRequested.emit(1))
 
 
 __all__ = ["LocalizationAnnotationPanel"]

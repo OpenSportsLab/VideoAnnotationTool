@@ -3,6 +3,7 @@ Description mode workflows.
 """
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -55,6 +56,87 @@ def test_description_selection_loads_media_and_refreshes_editor(
     assert len(load_calls) == 1
     assert Path(load_calls[0]).name == "test_video_1.mp4"
     assert window.description_panel.caption_edit.toPlainText().strip() == "A short test caption."
+
+
+@pytest.mark.gui
+# Workflow: In Description mode, selecting a multiview parent item should route media
+# to the first child file instead of trying to open the parent directory path.
+def test_description_multiview_parent_selection_loads_first_child_media(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    repo_root = Path(__file__).resolve().parents[2]
+    source_video = repo_root / "tests" / "data" / "test_video_1.mp4"
+    assert source_video.exists(), f"Missing test asset: {source_video}"
+
+    scene_dir = tmp_path / "scene_001"
+    scene_dir.mkdir()
+    view_a = scene_dir / "view_1.mp4"
+    view_b = scene_dir / "view_2.mp4"
+    video_bytes = source_video.read_bytes()
+    view_a.write_bytes(video_bytes)
+    view_b.write_bytes(video_bytes)
+
+    rel_parent = os.path.relpath(scene_dir, start=tmp_path).replace("\\", "/")
+    rel_view_a = os.path.relpath(view_a, start=tmp_path).replace("\\", "/")
+    rel_view_b = os.path.relpath(view_b, start=tmp_path).replace("\\", "/")
+
+    project_json_path = tmp_path / "description_multiview_project.json"
+    project_json_path.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "date": "2026-04-07",
+                "task": "video_captioning",
+                "dataset_name": "synthetic_description_multiview",
+                "metadata": {"source": "pytest-qt"},
+                "data": [
+                    {
+                        "id": "scene_001",
+                        "inputs": [
+                            {"path": rel_view_a, "type": "video", "fps": 25.0},
+                            {"path": rel_view_b, "type": "video", "fps": 25.0},
+                        ],
+                        "captions": [{"lang": "en", "text": "Scene-level caption."}],
+                        "metadata": {"path": rel_parent},
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    load_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda file_path, auto_play=True: load_calls.append(file_path),
+    )
+
+    window.router.import_annotations()
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
+    assert window.tree_model.rowCount() == 1
+
+    parent_index = window.tree_model.index(0, 0)
+    assert parent_index.isValid()
+    assert window.tree_model.rowCount(parent_index) == 2
+
+    window.dataset_explorer_panel.tree.setCurrentIndex(QModelIndex())
+    window.dataset_explorer_panel.tree.setCurrentIndex(parent_index)
+    qtbot.wait(50)
+
+    assert load_calls
+    assert Path(load_calls[-1]).resolve() == view_a.resolve()
+    assert window.description_panel.caption_edit.toPlainText().strip() == "Scene-level caption."
 
 
 @pytest.mark.gui
@@ -177,7 +259,7 @@ def test_description_remove_selected_item_clears_editor_state(
     # Simulate user confirming the remove action.
     # For some reason, testing get stuck there, so we patch QMessageBox.exec to auto-confirm.
     monkeypatch.setattr(
-        "controllers.description.desc_editor_controller.QMessageBox.exec",
+        "controllers.dataset_explorer_controller.QMessageBox.exec",
         lambda self: QMessageBox.StandardButton.Yes,
     )
     window.dataset_explorer_controller.handle_remove_item(first_index)
@@ -218,7 +300,7 @@ def test_description_clear_workspace_resets_editor_and_model(
     stop_calls = []
     monkeypatch.setattr(window.media_controller, "stop", lambda: stop_calls.append(True))
     monkeypatch.setattr(
-        "controllers.description.desc_editor_controller.QMessageBox.exec",
+        "controllers.dataset_explorer_controller.QMessageBox.exec",
         lambda self: QMessageBox.StandardButton.Yes,
     )
 
@@ -227,9 +309,10 @@ def test_description_clear_workspace_resets_editor_and_model(
 
     assert stop_calls
     assert window.tree_model.rowCount() == 0
-    assert window.model.json_loaded is False
+    assert window.model.json_loaded is True
+    assert window.model.current_json_path == str(project_json_path)
     assert window.model.action_item_data == []
-    assert window.model.desc_global_metadata == {}
+    assert window.model.desc_global_metadata != {}
     assert window.desc_editor_controller.current_action_path is None
     assert window.description_panel.caption_edit.toPlainText() == ""
     assert window.description_panel.caption_edit.isEnabled() is False

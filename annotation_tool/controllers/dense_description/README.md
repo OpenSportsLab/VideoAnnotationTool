@@ -8,15 +8,12 @@ Dense Description mode now uses a single controller:
 
 - Dense editor signal wiring and timeline sync
 - Dense event CRUD with undo/redo command pushes
-- Tree selection handling for Dense clips
-- Dense clip/event navigation
+- Data-ID based selection handling for Dense samples
+- Dense sample/event navigation (media routed centrally by Dataset Explorer)
 - Dense panel reset lifecycle
-- Dense-mode Dataset Explorer delegation:
-  - `add_dataset_items()`
-  - `remove_dataset_item(index)`
-  - `filter_dataset_items(index)`
-  - `clear_dataset_items()`
-  - `clear_workspace()`
 
 This replaces the old `DenseManager` split and keeps Dense mode aligned with
 the Description controller architecture.
+
+Dense sample lifecycle (add/remove/filter/clear) and JSON lifecycle
+(load/save/export) are routed through `controllers/dataset_explorer_controller.py`.
