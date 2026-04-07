@@ -2,7 +2,7 @@ import copy
 import os
 from collections import defaultdict
 
-from PyQt6.QtCore import QModelIndex, QTimer
+from PyQt6.QtCore import QModelIndex
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from controllers.media_controller import MediaController
@@ -248,13 +248,6 @@ class ClassificationEditorController:
             self.dataset_explorer_panel.filter_combo.currentIndex()
         )
 
-        tree = self.dataset_explorer_panel.tree
-        curr_idx = tree.currentIndex()
-        if curr_idx.isValid():
-            nxt_idx = tree.indexBelow(curr_idx)
-            if nxt_idx.isValid():
-                QTimer.singleShot(500, lambda: [tree.setCurrentIndex(nxt_idx), tree.scrollTo(nxt_idx)])
-
     def save_manual_annotation(self, override_data=None):
         path = self.main.get_current_action_path()
         if not path:
@@ -285,13 +278,6 @@ class ClassificationEditorController:
         self.main.dataset_explorer_controller.handle_filter_change(
             self.dataset_explorer_panel.filter_combo.currentIndex()
         )
-
-        tree = self.dataset_explorer_panel.tree
-        curr_idx = tree.currentIndex()
-        if curr_idx.isValid():
-            nxt_idx = tree.indexBelow(curr_idx)
-            if nxt_idx.isValid():
-                QTimer.singleShot(500, lambda: [tree.setCurrentIndex(nxt_idx), tree.scrollTo(nxt_idx)])
 
     def clear_current_manual_annotation(self):
         path = self.main.get_current_action_path()
