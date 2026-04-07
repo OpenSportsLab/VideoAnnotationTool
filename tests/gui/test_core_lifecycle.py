@@ -86,6 +86,30 @@ def test_close_project_returns_to_welcome(window, monkeypatch):
     assert window.tree_model.rowCount() == 0
 
 
+@pytest.mark.gui
+# Workflow: Closing a loaded-but-clean project should not open a confirmation popup.
+def test_close_project_when_clean_skips_confirmation_popup(window, monkeypatch):
+    window.dataset_explorer_controller.create_new_project("localization")
+    assert window.model.json_loaded is True
+    window.model.is_data_dirty = False
+
+    stop_calls = {"count": 0}
+    monkeypatch.setattr(
+        window.media_controller,
+        "stop",
+        lambda: stop_calls.__setitem__("count", stop_calls["count"] + 1),
+    )
+    # If a popup is shown unexpectedly, fail the test.
+    monkeypatch.setattr(
+        "main_window.QMessageBox.exec",
+        lambda self: (_ for _ in ()).throw(AssertionError("Confirmation popup should not be shown")),
+    )
+
+    should_close = window.check_and_close_current_project()
+    assert should_close is True
+    assert stop_calls["count"] == 1
+
+
 # @pytest.mark.gui
 # # Workflow: If user cancels close flow, the current workspace remains open and loaded.
 # def test_close_project_cancel_keeps_workspace_open(window, monkeypatch):

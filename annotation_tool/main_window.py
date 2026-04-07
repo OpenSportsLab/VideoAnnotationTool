@@ -447,38 +447,61 @@ class VideoAnnotationWindow(QMainWindow):
                 self.setStyleSheet(f.read())
         except Exception as exc: print(f"Style error: {exc}")
 
-    def check_and_close_current_project(self) -> bool:
-        if not self.model.json_loaded: return True
+    def _prompt_unsaved_close_action(self) -> str:
+        """
+        Prompt user for how to proceed when unsaved changes exist.
+        Returns one of: "save", "save_as", "discard", "cancel".
+        """
         msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Close Project")
-        msg_box.setText("Continue will clear the current workspace. Continue?")
-        if self.model.is_data_dirty: msg_box.setInformativeText("Unsaved changes present.")
-        btn_yes = msg_box.addButton("Yes", QMessageBox.ButtonRole.AcceptRole)
-        msg_box.addButton("No", QMessageBox.ButtonRole.RejectRole)
+        msg_box.setWindowTitle("Unsaved Changes")
+        msg_box.setText("Unsaved changes will be lost. How do you want to proceed?")
+
+        btn_save = msg_box.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
+        btn_save_as = msg_box.addButton("Save As", QMessageBox.ButtonRole.ActionRole)
+        btn_discard = msg_box.addButton("Close Without Saving", QMessageBox.ButtonRole.DestructiveRole)
+        btn_cancel = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        msg_box.setDefaultButton(btn_save)
         msg_box.exec()
-        if msg_box.clickedButton() == btn_yes: self.media_controller.stop()
-        return msg_box.clickedButton() == btn_yes
+
+        clicked = msg_box.clickedButton()
+        if clicked == btn_save:
+            return "save"
+        if clicked == btn_save_as:
+            return "save_as"
+        if clicked == btn_discard:
+            return "discard"
+        if clicked == btn_cancel:
+            return "cancel"
+        return "cancel"
+
+    def check_and_close_current_project(self) -> bool:
+        if not self.model.json_loaded:
+            return True
+        if not self.model.is_data_dirty:
+            self.media_controller.stop()
+            return True
+
+        action = self._prompt_unsaved_close_action()
+        if action == "save":
+            if not self.dataset_explorer_controller.save_project():
+                return False
+        elif action == "save_as":
+            if not self.dataset_explorer_controller.export_project():
+                return False
+        elif action == "discard":
+            pass
+        else:
+            return False
+
+        self.media_controller.stop()
+        return True
 
     def closeEvent(self, event) -> None:
-        if not self.model.is_data_dirty or not self.model.json_loaded:
+        if self.check_and_close_current_project():
             self.media_controller.stop()
             event.accept()
-            return
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Unsaved Annotations")
-        msg.setText("Do you want to save before quitting?")
-        save_btn = msg.addButton("Save & Exit", QMessageBox.ButtonRole.AcceptRole)
-        discard_btn = msg.addButton("Discard & Exit", QMessageBox.ButtonRole.DestructiveRole)
-        msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        msg.exec()
-        if msg.clickedButton() == save_btn:
-            self.dataset_explorer_controller.save_project()
-            self.media_controller.stop()
-            event.accept()
-        elif msg.clickedButton() == discard_btn:
-            self.media_controller.stop()
-            event.accept()
-        else: event.ignore()
+        else:
+            event.ignore()
 
     def update_save_export_button_state(self) -> None:
         has_data = self.model.json_loaded # Simple heuristic for now
