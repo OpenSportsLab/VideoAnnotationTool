@@ -559,15 +559,6 @@ class LocalizationEditorController:
                 return idx
         return -1
 
-    def _navigate_clip(self, step):
-        tree = self.dataset_explorer_panel.tree
-        curr_idx = tree.currentIndex()
-        if not curr_idx.isValid():
-            return
-        next_idx = tree.indexBelow(curr_idx) if step > 0 else tree.indexAbove(curr_idx)
-        if next_idx.isValid():
-            tree.setCurrentIndex(next_idx)
-
     def _navigate_annotation(self, step):
         if not self.current_video_path:
             return

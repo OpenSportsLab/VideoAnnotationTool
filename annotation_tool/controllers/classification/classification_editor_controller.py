@@ -120,55 +120,6 @@ class ClassificationEditorController:
         supported = [path for path in paths if path.lower().endswith(SUPPORTED_EXTENSIONS[:3])]
         self.main.center_panel.show_all_views(supported)
 
-    def nav_prev_action(self):
-        self._nav_tree(step=-1, level="top")
-
-    def nav_next_action(self):
-        self._nav_tree(step=1, level="top")
-
-    def nav_prev_clip(self):
-        self._nav_tree(step=-1, level="child")
-
-    def nav_next_clip(self):
-        self._nav_tree(step=1, level="child")
-
-    def _nav_tree(self, step, level):
-        tree = self.dataset_explorer_panel.tree
-        curr = tree.currentIndex()
-        if not curr.isValid():
-            return
-
-        model = self.tree_model
-
-        if level == "top":
-            if curr.parent().isValid():
-                curr = curr.parent()
-
-            new_row = curr.row() + step
-            if 0 <= new_row < model.rowCount(QModelIndex()):
-                while 0 <= new_row < model.rowCount(QModelIndex()):
-                    if not tree.isRowHidden(new_row, QModelIndex()):
-                        new_idx = model.index(new_row, 0, QModelIndex())
-                        tree.setCurrentIndex(new_idx)
-                        tree.scrollTo(new_idx)
-                        break
-                    new_row += step
-            return
-
-        parent = curr.parent()
-        if not parent.isValid():
-            if step == 1 and model.rowCount(curr) > 0:
-                nxt = model.index(0, 0, curr)
-                tree.setCurrentIndex(nxt)
-                tree.scrollTo(nxt)
-            return
-
-        new_row = curr.row() + step
-        if 0 <= new_row < model.rowCount(parent):
-            nxt = model.index(new_row, 0, parent)
-            tree.setCurrentIndex(nxt)
-            tree.scrollTo(nxt)
-
     # ---------------------------------------------------------------------
     # Classification Annotation + Schema
     # ---------------------------------------------------------------------

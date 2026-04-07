@@ -389,16 +389,6 @@ class DenseEditorController:
     # -------------------------------------------------------------------------
     # Navigation
     # -------------------------------------------------------------------------
-    def _navigate_clip(self, step: int):
-        tree = self.dataset_explorer_panel.tree
-        current = tree.currentIndex()
-        if not current.isValid():
-            return
-
-        next_idx = tree.indexBelow(current) if step > 0 else tree.indexAbove(current)
-        if next_idx.isValid():
-            tree.setCurrentIndex(next_idx)
-
     def _navigate_annotation(self, step: int):
         events = self.model.dense_description_events.get(self.current_video_path, [])
         if not events:

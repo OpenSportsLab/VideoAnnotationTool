@@ -3,6 +3,7 @@ Core GUI lifecycle smoke tests for `VideoAnnotationWindow`.
 """
 
 import pytest
+from PyQt6.QtCore import Qt
 
 
 MODE_TO_TAB_INDEX = {
@@ -84,6 +85,56 @@ def test_close_project_returns_to_welcome(window, monkeypatch):
     assert window.model.json_loaded is False
     assert window.center_stack.currentIndex() == 0
     assert window.tree_model.rowCount() == 0
+
+
+@pytest.mark.gui
+# Workflow: Dataset Explorer Prev/Next Clip buttons should move current top-level dataset selection.
+def test_dataset_explorer_prev_next_clip_buttons_navigate_rows(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification", item_count=3)
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    window.router.import_annotations()
+    assert window.tree_model.rowCount() == 3
+
+    tree = window.dataset_explorer_panel.tree
+    first_index = window.tree_model.index(0, 0)
+    tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+    assert tree.currentIndex().row() == 0
+
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_next_clip, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+    assert tree.currentIndex().row() == 1
+
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_next_clip, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+    assert tree.currentIndex().row() == 2
+
+    # Boundary: next on last row should keep selection unchanged.
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_next_clip, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+    assert tree.currentIndex().row() == 2
+
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_prev_clip, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+    assert tree.currentIndex().row() == 1
+
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_prev_clip, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+    assert tree.currentIndex().row() == 0
+
+    # Boundary: prev on first row should keep selection unchanged.
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_prev_clip, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+    assert tree.currentIndex().row() == 0
 
 
 @pytest.mark.gui

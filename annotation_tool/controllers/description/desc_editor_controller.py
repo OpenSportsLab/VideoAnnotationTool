@@ -255,59 +255,6 @@ class DescEditorController:
         self.main.show_temp_msg("Saved", "Description updated.")
 
     # -------------------------------------------------------------------------
-    # Tree Navigation Helpers (Description mode)
-    # -------------------------------------------------------------------------
-    def nav_prev_action(self):
-        self._nav_tree(step=-1, level="top")
-
-    def nav_next_action(self):
-        self._nav_tree(step=1, level="top")
-
-    def nav_prev_clip(self):
-        self._nav_tree(step=-1, level="child")
-
-    def nav_next_clip(self):
-        self._nav_tree(step=1, level="child")
-
-    def _nav_tree(self, step, level):
-        tree = self.main.dataset_explorer_panel.tree
-        curr = tree.currentIndex()
-        if not curr.isValid():
-            return
-
-        model = self.main.tree_model
-
-        if level == "top":
-            if curr.parent().isValid():
-                curr = curr.parent()
-            new_row = curr.row() + step
-            if 0 <= new_row < model.rowCount(QModelIndex()):
-                new_idx = model.index(new_row, 0, QModelIndex())
-                tree.setCurrentIndex(new_idx)
-                tree.scrollTo(new_idx)
-            return
-
-        if level == "child":
-            parent = curr.parent()
-            if not parent.isValid():
-                if step == 1 and model.rowCount(curr) > 0:
-                    child = model.index(0, 0, curr)
-                    tree.setCurrentIndex(child)
-                elif step == -1:
-                    self.nav_prev_action()
-                return
-
-            new_row = curr.row() + step
-            if 0 <= new_row < model.rowCount(parent):
-                new_idx = model.index(new_row, 0, parent)
-                tree.setCurrentIndex(new_idx)
-            else:
-                if step == 1:
-                    self.nav_next_action()
-                else:
-                    self.nav_prev_action()
-
-    # -------------------------------------------------------------------------
     # Internal shared helpers
     # -------------------------------------------------------------------------
     def _mark_dirty_and_refresh(self):
