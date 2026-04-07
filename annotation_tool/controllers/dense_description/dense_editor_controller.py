@@ -38,6 +38,7 @@ class DenseEditorController:
     # -------------------------------------------------------------------------
     def setup_connections(self):
         self.center_panel.positionChanged.connect(self._on_media_position_changed)
+        self.right_panel.eventNavigateRequested.connect(self._navigate_annotation)
 
         input_widget = self.right_panel.input_widget
         table = self.right_panel.table

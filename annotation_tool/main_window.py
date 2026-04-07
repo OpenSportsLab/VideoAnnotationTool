@@ -90,6 +90,14 @@ class VideoAnnotationWindow(QMainWindow):
         self.editor_dock.setObjectName("AnnotationEditorDock")
         self.editor_dock.setWidget(self.right_tabs)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.editor_dock)
+        self.editor_dock.setMinimumWidth(300)
+
+        # Start with a slimmer right editor dock so media gets more horizontal space.
+        self.resizeDocks(
+            [self.data_dock, self.editor_dock],
+            [100, 100],
+            Qt.Orientation.Horizontal,
+        )
 
         # Allow nested docking and tabbed docks
         self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AnimatedDocks)
@@ -219,14 +227,10 @@ class VideoAnnotationWindow(QMainWindow):
 
 
         # --- Center panel (Unified Playback) ---
-        center_panel.playPauseRequested.connect(self._dispatch_play_pause)
-        center_panel.seekRelativeRequested.connect(self._dispatch_seek)
+        center_panel.playPauseRequested.connect(self.media_controller.toggle_play_pause)
+        center_panel.seekRelativeRequested.connect(self.media_controller.seek_relative)
         center_panel.stopRequested.connect(self.media_controller.stop)
         center_panel.playbackRateRequested.connect(center_panel.set_playback_rate)
-        
-        # Navigation signals from the unified bar
-        center_panel.nextPrevClipRequested.connect(self._dispatch_next_prev_clip)
-        center_panel.nextPrevAnnotRequested.connect(self._dispatch_next_prev_annot)
         
         # --- Classification Editor ---
         self.classification_editor_controller.setup_connections()
@@ -307,15 +311,28 @@ class VideoAnnotationWindow(QMainWindow):
         QShortcut(QKeySequence.StandardKey.Undo, self).activated.connect(self.history_manager.perform_undo)
         QShortcut(QKeySequence.StandardKey.Redo, self).activated.connect(self.history_manager.perform_redo)
 
-        QShortcut(QKeySequence(Qt.Key.Key_Space), self).activated.connect(self._dispatch_play_pause)
-        QShortcut(QKeySequence(Qt.Key.Key_Left), self).activated.connect(lambda: self._dispatch_seek(-40))
-        QShortcut(QKeySequence(Qt.Key.Key_Right), self).activated.connect(lambda: self._dispatch_seek(40))
-        QShortcut(QKeySequence("Ctrl+Left"), self).activated.connect(lambda: self._dispatch_seek(-1000))
-        QShortcut(QKeySequence("Ctrl+Right"), self).activated.connect(lambda: self._dispatch_seek(1000))
-        QShortcut(QKeySequence("Ctrl+Shift+Left"), self).activated.connect(lambda: self._dispatch_seek(-5000))
-        QShortcut(QKeySequence("Ctrl+Shift+Right"), self).activated.connect(lambda: self._dispatch_seek(5000))
+        QShortcut(QKeySequence(Qt.Key.Key_Space), self).activated.connect(
+            self.media_controller.toggle_play_pause
+        )
+        QShortcut(QKeySequence(Qt.Key.Key_Left), self).activated.connect(
+            lambda: self.media_controller.seek_relative(-40)
+        )
+        QShortcut(QKeySequence(Qt.Key.Key_Right), self).activated.connect(
+            lambda: self.media_controller.seek_relative(40)
+        )
+        QShortcut(QKeySequence("Ctrl+Left"), self).activated.connect(
+            lambda: self.media_controller.seek_relative(-1000)
+        )
+        QShortcut(QKeySequence("Ctrl+Right"), self).activated.connect(
+            lambda: self.media_controller.seek_relative(1000)
+        )
+        QShortcut(QKeySequence("Ctrl+Shift+Left"), self).activated.connect(
+            lambda: self.media_controller.seek_relative(-5000)
+        )
+        QShortcut(QKeySequence("Ctrl+Shift+Right"), self).activated.connect(
+            lambda: self.media_controller.seek_relative(5000)
+        )
 
-        QShortcut(QKeySequence("A"), self).activated.connect(self._dispatch_add_annotation)
         QShortcut(QKeySequence("S"), self).activated.connect(
             lambda: self.show_temp_msg("Info", "Select an event and edit time via right-click.")
         )
@@ -366,39 +383,6 @@ class VideoAnnotationWindow(QMainWindow):
 
     def _on_remove_item_requested(self, index: QModelIndex):
         self.dataset_explorer_controller.handle_remove_item(index)
-
-    def _dispatch_play_pause(self) -> None:
-        self.media_controller.toggle_play_pause()
-
-    def _dispatch_seek(self, delta_ms: int) -> None:
-        self.media_controller.seek_relative(delta_ms)
-
-    def _dispatch_next_prev_clip(self, step: int):
-        if self._is_loc_mode(): self.localization_editor_controller._navigate_clip(step)
-        elif self._is_desc_mode(): 
-            if step > 0:
-                self.desc_editor_controller.nav_next_clip()
-            else:
-                self.desc_editor_controller.nav_prev_clip()
-        elif self._is_dense_mode(): self.dense_editor_controller._navigate_clip(step)
-        else:
-            if step > 0:
-                self.classification_editor_controller.nav_next_clip()
-            else:
-                self.classification_editor_controller.nav_prev_clip()
-
-    def _dispatch_next_prev_annot(self, step: int):
-        if self._is_loc_mode(): self.localization_editor_controller._navigate_annotation(step)
-        elif self._is_dense_mode(): self.dense_editor_controller._navigate_annotation(step)
-
-    def _dispatch_add_annotation(self) -> None:
-        if self._is_loc_mode():
-            head = self.localization_editor_controller.current_head
-            if not head: return
-            self.localization_editor_controller._on_label_add_req(head)
-        elif self._is_desc_mode(): self.desc_editor_controller.save_current_annotation()
-        elif self._is_dense_mode(): self.dense_editor_controller.submit_current_annotation()
-        else: self.classification_editor_controller.save_manual_annotation()
 
     # ---------------------------------------------------------------------
     # UI Helpers

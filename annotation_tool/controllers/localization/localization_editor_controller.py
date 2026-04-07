@@ -49,6 +49,8 @@ class LocalizationEditorController:
         self.current_head = None
 
     def setup_connections(self):
+        self.right_panel.eventNavigateRequested.connect(self._navigate_annotation)
+
         if hasattr(self.right_panel, "smart_widget"):
             smart_ui = self.right_panel.smart_widget
             smart_ui.setTimeRequested.connect(self._on_smart_set_time)
@@ -569,9 +571,13 @@ class LocalizationEditorController:
     def _navigate_annotation(self, step):
         if not self.current_video_path:
             return
-        events = self.model.localization_events.get(self.current_video_path, [])
+
+        hand_events = self.model.localization_events.get(self.current_video_path, [])
+        smart_events = self.model.smart_localization_events.get(self.current_video_path, [])
+        events = [*hand_events, *smart_events]
         if not events:
             return
+
         sorted_events = sorted(events, key=lambda x: x.get("position_ms", 0))
         current_pos = self.center_panel.player.position()
         target_time = None
@@ -587,16 +593,25 @@ class LocalizationEditorController:
                     break
         if target_time is not None:
             self.center_panel.set_position(target_time)
-            self._select_row_by_time(target_time)
+            # Keep current tab unchanged. If the event is not in the active table,
+            # we still seek video but do not force tab-switching.
+            active_tab = self.right_panel.tabs.currentIndex()
+            if active_tab == 1:
+                self._select_row_by_time_in_table(self.right_panel.smart_widget.smart_table, target_time)
+            else:
+                self._select_row_by_time_in_table(self.right_panel.table, target_time)
 
     def _select_row_by_time(self, time_ms):
-        model = self.right_panel.table.model
+        self._select_row_by_time_in_table(self.right_panel.table, time_ms)
+
+    def _select_row_by_time_in_table(self, table_adapter, time_ms):
+        model = table_adapter.model
         for row in range(model.rowCount()):
             item = model.get_annotation_at(row)
             if item and abs(item.get("position_ms", 0) - time_ms) < 10:
                 idx = model.index(row, 0)
-                self.right_panel.table.table.selectRow(row)
-                self.right_panel.table.table.scrollTo(idx)
+                table_adapter.table.selectRow(row)
+                table_adapter.table.scrollTo(idx)
                 break
 
     def _reselect_event(self, target_event):

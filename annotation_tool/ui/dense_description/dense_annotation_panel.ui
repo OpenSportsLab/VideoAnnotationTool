@@ -125,6 +125,30 @@
      </property>
     </widget>
    </item>
+   <item>
+    <layout class="QHBoxLayout" name="denseEventNavLayout">
+     <item>
+      <widget class="QPushButton" name="btn_prev_event">
+       <property name="cursor">
+        <cursorShape>PointingHandCursor</cursorShape>
+       </property>
+       <property name="text">
+        <string>Prev Event</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btn_next_event">
+       <property name="cursor">
+        <cursorShape>PointingHandCursor</cursorShape>
+       </property>
+       <property name="text">
+        <string>Next Event</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
   </layout>
  </widget>
  <resources/>

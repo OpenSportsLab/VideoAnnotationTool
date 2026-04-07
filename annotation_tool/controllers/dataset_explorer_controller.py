@@ -60,6 +60,7 @@ class DatasetExplorerController(QObject):
         self.panel.clear_btn.clicked.connect(self.handle_clear_workspace)
         self.panel.removeItemRequested.connect(self.handle_remove_item)
         self.panel.filter_combo.currentIndexChanged.connect(self.handle_filter_change)
+        self.panel.clipNavigateRequested.connect(self.navigate_clips)
 
         # Selection handling remains centralized in MainWindow dispatch.
         self.panel.tree.selectionModel().currentChanged.connect(self._on_selection_changed)
@@ -158,6 +159,32 @@ class DatasetExplorerController(QObject):
     def _mark_dirty_and_refresh(self):
         self.app_state.is_data_dirty = True
         self.main.update_save_export_button_state()
+
+    def navigate_clips(self, step: int):
+        """
+        Move selection across top-level dataset items only.
+        Respects active row hiding (filters) and normalizes child selection to parent.
+        """
+        tree = self.panel.tree
+        current = tree.currentIndex()
+        if not current.isValid():
+            return
+
+        current_top = self._get_action_index(current)
+        if not current_top.isValid():
+            return
+
+        row = current_top.row() + (1 if step > 0 else -1)
+        root = QModelIndex()
+
+        while 0 <= row < self.tree_model.rowCount(root):
+            if not tree.isRowHidden(row, root):
+                next_idx = self.tree_model.index(row, 0, root)
+                if next_idx.isValid():
+                    tree.setCurrentIndex(next_idx)
+                    tree.scrollTo(next_idx)
+                    return
+            row += 1 if step > 0 else -1
 
     # ------------------------------------------------------------------
     # Add Actions
