@@ -9,14 +9,13 @@ Description mode uses a single controller for editor + navigation responsibiliti
 Owns Description editor behavior:
 
 - editor signal wiring (`confirm_clicked`, `clear_clicked`)
-- tree selection text refresh (`on_item_selected`)
+- Data-ID based selection text refresh (`on_data_selected`)
 - caption save/clear/reset flows
 - undo/redo command creation (`CmdType.DESC_EDIT`)
-- Description dataset explorer actions (`add/remove/filter/clear`)
 - done-status refresh through the shared tree status path
 
 ## Notes
 
-- Media load orchestration for Description selection is handled in `main_window.py`.
+- Media routing and sample lifecycle (`add/remove/filter/clear`) are handled in
+  `controllers/dataset_explorer_controller.py`.
 - JSON load/create/save/export remains handled by `controllers/dataset_explorer_controller.py`.
-- `DatasetExplorerController` still routes panel signals, but delegates Description mode add/remove/filter/clear behavior to `DescEditorController`.

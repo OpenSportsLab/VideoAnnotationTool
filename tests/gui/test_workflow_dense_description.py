@@ -165,7 +165,7 @@ def test_dense_description_remove_selected_item_resets_panel_state(
 
 
 @pytest.mark.gui
-# Workflow: In Dense Description mode, clearing workspace should reset model/tree/panel and return to welcome.
+# Workflow: In Dense Description mode, clearing workspace should reset model/tree/panel and keep mode active.
 def test_dense_description_clear_workspace_resets_panel_and_model(
     window,
     monkeypatch,
@@ -187,8 +187,8 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
     stop_calls = []
     monkeypatch.setattr(window.media_controller, "stop", lambda: stop_calls.append(True))
     monkeypatch.setattr(
-        "controllers.dense_description.dense_editor_controller.QMessageBox.question",
-        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+        "controllers.dataset_explorer_controller.QMessageBox.exec",
+        lambda self: QMessageBox.StandardButton.Yes,
     )
 
     window.dataset_explorer_controller.handle_clear_workspace()
@@ -196,13 +196,14 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
 
     assert stop_calls
     assert window.tree_model.rowCount() == 0
-    assert window.model.json_loaded is False
+    assert window.model.json_loaded is True
+    assert window.model.current_json_path == str(project_json_path)
     assert window.model.action_item_data == []
-    assert window.model.dense_global_metadata == {}
+    assert window.model.dense_global_metadata != {}
     assert window.dense_editor_controller.current_video_path is None
     assert window.dense_panel.input_widget.text_editor.toPlainText() == ""
     assert window.dense_panel.table.model.rowCount() == 0
-    assert window.center_stack.currentIndex() == 0
+    assert window.center_stack.currentIndex() == 1
 
 
 # @pytest.mark.gui

@@ -14,15 +14,24 @@ class DatasetExplorerTreeModel(QStandardItemModel):
     """
 
     FilePathRole = Qt.ItemDataRole.UserRole
+    DataIdRole = Qt.ItemDataRole.UserRole + 1
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setColumnCount(1)
 
-    def add_entry(self, name: str, path: str, source_files: list = None, icon=None) -> QStandardItem:
+    def add_entry(
+        self,
+        name: str,
+        path: str,
+        source_files: list = None,
+        icon=None,
+        data_id: str = None,
+    ) -> QStandardItem:
         item = QStandardItem(name)
         item.setEditable(False)
         item.setData(path, self.FilePathRole)
+        item.setData(data_id, self.DataIdRole)
 
         if icon:
             item.setIcon(icon)
@@ -32,6 +41,7 @@ class DatasetExplorerTreeModel(QStandardItemModel):
                 child = QStandardItem(os.path.basename(src))
                 child.setEditable(False)
                 child.setData(src, self.FilePathRole)
+                child.setData(data_id, self.DataIdRole)
                 item.appendRow(child)
 
         self.appendRow(item)

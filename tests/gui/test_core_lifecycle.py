@@ -2,6 +2,10 @@
 Core GUI lifecycle smoke tests for `VideoAnnotationWindow`.
 """
 
+import json
+import os
+from pathlib import Path
+
 import pytest
 from PyQt6.QtCore import Qt
 
@@ -138,6 +142,116 @@ def test_dataset_explorer_prev_next_sample_buttons_navigate_rows(
 
 
 @pytest.mark.gui
+# Workflow: Selecting a sample emits Data ID (not path) and routes media load from Dataset Explorer.
+def test_dataset_selection_emits_data_id_and_routes_media(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    emitted_ids = []
+    media_calls = []
+    window.dataset_explorer_controller.dataSelected.connect(lambda data_id: emitted_ids.append(data_id))
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda file_path, auto_play=True: media_calls.append(file_path),
+    )
+
+    window.router.import_annotations()
+    first_index = window.tree_model.index(0, 0)
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    assert emitted_ids
+    selected_data_id = emitted_ids[-1]
+    selected_entry = window.model.action_item_data[0]
+    assert selected_data_id == selected_entry.get("data_id")
+
+    assert media_calls
+    assert media_calls[-1] == selected_entry.get("path")
+    assert selected_data_id != media_calls[-1]
+
+
+@pytest.mark.gui
+# Workflow: In classification multi-view, selecting a parent sample routes all views + primary media and emits Data ID.
+def test_classification_multiview_selection_routes_views_and_data_id(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    source_a = Path(__file__).resolve().parents[1] / "data" / "test_video_1.mp4"
+    source_b = Path(__file__).resolve().parents[1] / "data" / "test_video_2.mp4"
+    assert source_a.exists()
+    assert source_b.exists()
+
+    # Use relative paths so JSON loading exercises path-resolution flow.
+    rel_a_str = os.path.relpath(source_a, start=tmp_path).replace("\\", "/")
+    rel_b_str = os.path.relpath(source_b, start=tmp_path).replace("\\", "/")
+
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-07",
+        "task": "action_classification",
+        "description": "multiview test",
+        "modalities": ["video"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass", "shot"]}},
+        "data": [
+            {
+                "id": "mv_1",
+                "inputs": [
+                    {"path": rel_a_str, "type": "video"},
+                    {"path": rel_b_str, "type": "video"},
+                ],
+                "labels": {},
+            }
+        ],
+    }
+    project_json_path = tmp_path / "classification_multiview.json"
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    emitted_ids = []
+    shown_views = []
+    media_calls = []
+    window.dataset_explorer_controller.dataSelected.connect(lambda data_id: emitted_ids.append(data_id))
+    monkeypatch.setattr(
+        window.center_panel,
+        "show_all_views",
+        lambda paths: shown_views.append(list(paths)),
+    )
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda file_path, auto_play=True: media_calls.append(file_path),
+    )
+
+    window.router.import_annotations()
+    parent_index = window.tree_model.index(0, 0)
+    assert parent_index.isValid()
+    assert window.tree_model.rowCount(parent_index) == 2
+    window.dataset_explorer_panel.tree.setCurrentIndex(parent_index)
+    qtbot.wait(50)
+
+    assert window.model.is_multi_view is True
+    assert emitted_ids[-1] == window.model.action_item_data[0].get("data_id")
+    assert shown_views
+    assert len(shown_views[-1]) == 2
+    assert media_calls
+
+
+@pytest.mark.gui
 # Workflow: Closing a loaded-but-clean project should not open a confirmation popup.
 def test_close_project_when_clean_skips_confirmation_popup(window, monkeypatch):
     window.dataset_explorer_controller.create_new_project("localization")
@@ -159,6 +273,40 @@ def test_close_project_when_clean_skips_confirmation_popup(window, monkeypatch):
     should_close = window.check_and_close_current_project()
     assert should_close is True
     assert stop_calls["count"] == 1
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("mode", ["description", "dense_description"])
+# Workflow: For Description/Dense, hand-labelled samples remain visible in hand filter,
+# while smart filter is currently expected to hide all rows.
+def test_smart_filter_is_currently_empty_for_description_and_dense(
+    window,
+    monkeypatch,
+    synthetic_project_json,
+    mode,
+):
+    project_json_path = synthetic_project_json(mode)
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    window.router.import_annotations()
+    assert window.tree_model.rowCount() == 1
+
+    root_index = window.tree_model.index(0, 0)
+    assert root_index.isValid()
+
+    tree = window.dataset_explorer_panel.tree
+    combo = window.dataset_explorer_panel.filter_combo
+
+    combo.setCurrentIndex(1)  # Show Hand Labelled
+    window.dataset_explorer_controller.handle_filter_change(1)
+    assert tree.isRowHidden(0, root_index.parent()) is False
+
+    combo.setCurrentIndex(2)  # Show Smart Labelled
+    window.dataset_explorer_controller.handle_filter_change(2)
+    assert tree.isRowHidden(0, root_index.parent()) is True
 
 
 # @pytest.mark.gui

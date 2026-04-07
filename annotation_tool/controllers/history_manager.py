@@ -65,8 +65,13 @@ class HistoryManager:
             tree = self.main.dataset_explorer_panel.tree
             current_idx = tree.selectionModel().currentIndex()
             if current_idx.isValid():
-                # Force reload of data from model to UI (pass None as previous index)
-                self.main.desc_editor_controller.on_item_selected(current_idx, None)
+                action_idx = current_idx.parent() if current_idx.parent().isValid() else current_idx
+                data_id = action_idx.data(getattr(self.main.tree_model, "DataIdRole", 0x0101))
+                if not data_id:
+                    path = action_idx.data(getattr(self.main.tree_model, "FilePathRole", 0x0100))
+                    data_id = self.model.get_data_id_by_path(path)
+                if data_id:
+                    self.main.desc_editor_controller.on_data_selected(data_id)
         
         # 3: Dense Description Mode
         elif tab_idx == 3:

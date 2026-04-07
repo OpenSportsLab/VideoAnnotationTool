@@ -34,10 +34,6 @@ class VideoAnnotationWindow(QMainWindow):
     Now directly implements the UI setup to avoid overcomplicated nesting.
     """
 
-    FILTER_ALL = 0
-    FILTER_DONE = 1
-    FILTER_NOT_DONE = 2
-
     def __init__(self) -> None:
         super().__init__()
 
@@ -61,7 +57,7 @@ class VideoAnnotationWindow(QMainWindow):
         # --- 2. Left Dock: Dataset Explorer ---
         self.dataset_explorer_panel = DatasetExplorerPanel(
             tree_title="Data",
-            filter_items=["Show All", "Hand Labelled", "Smart Labelled", "No Labelled"],
+            filter_items=["Show All", "Show Hand Labelled", "Show Smart Labelled", "Show Not Labelled"],
             clear_text="Clear All",
             enable_context_menu=True
         )
@@ -224,6 +220,10 @@ class VideoAnnotationWindow(QMainWindow):
         # Handled by dataset_explorer_controller for clear PMC separation,
         # but the controller will internally call MainWindow dispatchers
         # when it needs global context.
+        self.dataset_explorer_controller.dataSelected.connect(self.classification_editor_controller.on_data_selected)
+        self.dataset_explorer_controller.dataSelected.connect(self.localization_editor_controller.on_data_selected)
+        self.dataset_explorer_controller.dataSelected.connect(self.desc_editor_controller.on_data_selected)
+        self.dataset_explorer_controller.dataSelected.connect(self.dense_editor_controller.on_data_selected)
 
 
         # --- Center panel (Unified Playback) ---
@@ -348,65 +348,12 @@ class VideoAnnotationWindow(QMainWindow):
     def _is_desc_mode(self) -> bool: return self._get_active_mode_index() == 2
     def _is_dense_mode(self) -> bool: return self._get_active_mode_index() == 3
 
-    def _on_tree_selection_changed(self, current: QModelIndex, previous: QModelIndex):
-        if current.isValid():
-            # [CENTRALIZED] Enable all editors now that a clip is selected
-            self.classification_panel.manual_box.setEnabled(True)
-            self.localization_panel.setEnabled(True)
-            self.description_panel.setEnabled(True)
-            self.dense_panel.setEnabled(True)
-            
-            # 1. Handle Branch (Parent) vs Leaf (Video)
-            # If the user clicks a parent (e.g. Action Name), auto-select its first child (the video)
-            if self.tree_model.rowCount(current) > 0:
-                first_child = self.tree_model.index(0, 0, current)
-                if first_child.isValid():
-                    # This will trigger selectionChanged again for the child
-                    self.dataset_explorer_panel.tree.setCurrentIndex(first_child)
-                    return
-
-            # 2. Mode-aware Dispatching (Avoid duplicate loading)
-            if self._is_loc_mode():
-                self.localization_editor_controller.on_clip_selected(current, previous)
-            elif self._is_desc_mode():
-                self.desc_editor_controller.on_item_selected(current, previous)
-            elif self._is_dense_mode():
-                self.dense_editor_controller.on_item_selected(current, previous)
-            else:
-                self.classification_editor_controller.on_item_selected(current, previous)
-        else:
-            # Disable editors if no clip is selected
-            self.classification_panel.manual_box.setEnabled(False)
-            self.localization_panel.setEnabled(False)
-            self.description_panel.setEnabled(False)
-            self.dense_panel.setEnabled(False)
-
     def _on_remove_item_requested(self, index: QModelIndex):
         self.dataset_explorer_controller.handle_remove_item(index)
 
     # ---------------------------------------------------------------------
     # UI Helpers
     # ---------------------------------------------------------------------
-    def _on_class_clear_clicked(self) -> None:
-        if not self.model.json_loaded: return
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Clear Workspace")
-        msg.setText("Clear workspace? Unsaved changes will be lost.")
-        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        if msg.exec() == QMessageBox.StandardButton.Yes:
-            self.media_controller.stop()
-            self.classification_editor_controller.clear_workspace()
-
-    def _on_desc_clear_clicked(self) -> None:
-        if not self.model.json_loaded: return
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Clear Workspace")
-        msg.setText("Clear description workspace? Unsaved changes will be lost.")
-        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        if msg.exec() == QMessageBox.StandardButton.Yes:
-            self.media_controller.stop()
-            self.desc_editor_controller.clear_workspace()
-
     def prepare_new_project_ui(self) -> None:
         self.set_project_ui_enabled(True)
         self.classification_editor_controller.setup_dynamic_ui()
@@ -535,10 +482,7 @@ class VideoAnnotationWindow(QMainWindow):
         if item:
             idx = item.index()
             self.dataset_explorer_panel.tree.setCurrentIndex(idx)
-        if self._is_loc_mode(): self.localization_editor_controller._display_events_for_item(action_path)
-        elif self._is_desc_mode():
-            if item:
-                self.desc_editor_controller.on_item_selected(item.index(), None)
-        elif self._is_dense_mode(): self.dense_editor_controller.display_events_for_item(action_path)
-        else: self.classification_editor_controller.display_manual_annotation(action_path)
+        data_id = self.model.get_data_id_by_path(action_path)
+        if data_id:
+            self.dataset_explorer_controller.dataSelected.emit(data_id)
         self.update_save_export_button_state()

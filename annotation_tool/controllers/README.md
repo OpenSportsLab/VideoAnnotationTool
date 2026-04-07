@@ -49,5 +49,7 @@ from controllers.welcome_controller import WelcomeController
 
 ## Notes
 
-- `DatasetExplorerController` remains the staged owner of create/load/save/export lifecycle flows.
-- Mode controllers delegate add/remove/filter/clear behavior from Dataset Explorer.
+- `DatasetExplorerController` owns sample lifecycle flows (`add/remove/filter/clear`),
+  Data-ID selection dispatch, and media routing.
+- Mode controllers consume Data-ID selection and own mode-specific annotation/editor behavior.
+- `DatasetExplorerController` also owns create/load/save/export lifecycle flows.

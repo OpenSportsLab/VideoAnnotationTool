@@ -1,6 +1,7 @@
 import os
 import copy
 from enum import Enum, auto
+from uuid import uuid4
 
 
 class CmdType(Enum):
@@ -86,6 +87,8 @@ class AppStateModel:
         self.action_item_data = []
         self.action_item_map = {}      # path -> QStandardItem (populated by UI layer)
         self.action_path_to_name = {}  # path -> name
+        self.action_id_to_path = {}    # data_id -> path
+        self.action_id_to_item = {}    # data_id -> entry dict
 
         # --- Dense Description data ---
         # Format: { video_path: [ { "position_ms": ..., "lang": "en", "text": "..." }, ... ] }
@@ -115,6 +118,8 @@ class AppStateModel:
         self.action_item_data = []
         self.action_item_map = {}
         self.action_path_to_name = {}
+        self.action_id_to_path = {}
+        self.action_id_to_item = {}
         self.dense_description_events = {}
 
         self.undo_stack = []
@@ -193,23 +198,42 @@ class AppStateModel:
             normalized_sources = [path]
         else:
             normalized_sources = list(source_files)
+
+        explicit_data_id = extra_fields.pop("data_id", None)
+        requested_data_id = (
+            explicit_data_id
+            or extra_fields.get("id")
+            or name
+            or os.path.basename(path)
+        )
+        data_id = self._make_unique_data_id(str(requested_data_id))
+
         entry = {
             "name": name,
             "path": path,
             "source_files": normalized_sources,
+            "data_id": data_id,
         }
         entry.update(extra_fields)
         self.action_item_data.append(entry)
         self.action_path_to_name[path] = name
+        self.action_id_to_path[data_id] = path
+        self.action_id_to_item[data_id] = entry
         return entry
 
     def remove_action_item_by_path(self, path: str) -> bool:
         """Remove a standard action entry keyed by path."""
         before = len(self.action_item_data)
+        removed_items = [d for d in self.action_item_data if d.get("path") == path]
         self.action_item_data = [d for d in self.action_item_data if d.get("path") != path]
         removed = len(self.action_item_data) != before
         self.action_path_to_name.pop(path, None)
         self.action_item_map.pop(path, None)
+        for item in removed_items:
+            data_id = item.get("data_id")
+            if data_id:
+                self.action_id_to_path.pop(data_id, None)
+                self.action_id_to_item.pop(data_id, None)
         self.clear_annotations_for_path(path)
         return removed
 
@@ -229,6 +253,10 @@ class AppStateModel:
             item_id = item.get("id") or item.get("name")
             if item_id:
                 self.imported_action_metadata.pop(item_id, None)
+            data_id = item.get("data_id")
+            if data_id:
+                self.action_id_to_path.pop(data_id, None)
+                self.action_id_to_item.pop(data_id, None)
 
         self.action_path_to_name.pop(path, None)
         self.action_item_map.pop(path, None)
@@ -265,6 +293,80 @@ class AppStateModel:
             break
 
         return False
+
+    def ensure_data_ids(self):
+        """Ensure every action item has a unique canonical data_id."""
+        seen = set()
+        self.action_id_to_item = {}
+        self.action_id_to_path = {}
+        for item in self.action_item_data:
+            requested = item.get("data_id") or item.get("id") or item.get("name") or str(uuid4())
+            data_id = str(requested)
+            if data_id in seen:
+                data_id = self._make_unique_data_id(data_id, reserved=seen)
+            seen.add(data_id)
+            item["data_id"] = data_id
+            path = item.get("path")
+            if path:
+                self.action_id_to_path[data_id] = path
+            self.action_id_to_item[data_id] = item
+
+    def get_item_by_id(self, data_id: str):
+        if not data_id:
+            return None
+        item = self.action_id_to_item.get(data_id)
+        if item is not None:
+            return item
+        for candidate in self.action_item_data:
+            if candidate.get("data_id") == data_id:
+                self.action_id_to_item[data_id] = candidate
+                path = candidate.get("path")
+                if path:
+                    self.action_id_to_path[data_id] = path
+                return candidate
+        return None
+
+    def get_path_by_id(self, data_id: str):
+        if not data_id:
+            return None
+        path = self.action_id_to_path.get(data_id)
+        if path:
+            return path
+        item = self.get_item_by_id(data_id)
+        if not item:
+            return None
+        path = item.get("path")
+        if path:
+            self.action_id_to_path[data_id] = path
+        return path
+
+    def get_sources_by_id(self, data_id: str):
+        item = self.get_item_by_id(data_id)
+        if not item:
+            return []
+        sources = item.get("source_files")
+        if isinstance(sources, list) and sources:
+            return list(sources)
+        path = item.get("path")
+        return [path] if path else []
+
+    def get_data_id_by_path(self, path: str):
+        if not path:
+            return None
+        for item in self.action_item_data:
+            if item.get("path") == path:
+                return item.get("data_id")
+        return None
+
+    def _make_unique_data_id(self, base: str, reserved=None) -> str:
+        used = set(reserved or set())
+        used.update(str(d.get("data_id")) for d in self.action_item_data if d.get("data_id"))
+        if base not in used:
+            return base
+        idx = 2
+        while f"{base}__{idx}" in used:
+            idx += 1
+        return f"{base}__{idx}"
 
     # ------------------------------------------------------------
     # Validation: Classification (Action Classification)
