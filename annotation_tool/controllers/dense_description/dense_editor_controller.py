@@ -68,7 +68,7 @@ class DenseEditorController:
 
         start_dir = self.model.current_working_directory or ""
         files, _ = QFileDialog.getOpenFileNames(
-            self.main, "Select Video(s)", start_dir, "Video (*.mp4 *.avi *.mov *.mkv)"
+            self.main, "Select Sample(s)", start_dir, "Video (*.mp4 *.avi *.mov *.mkv)"
         )
         if not files:
             return
@@ -96,7 +96,7 @@ class DenseEditorController:
         if added_count > 0:
             self._mark_dirty_and_refresh()
             self.filter_dataset_items(self.dataset_explorer_panel.filter_combo.currentIndex())
-            self.main.show_temp_msg("Videos Added", f"Added {added_count} clips.")
+            self.main.show_temp_msg("Samples Added", f"Added {added_count} samples.")
             if first_idx and first_idx.isValid():
                 self.dataset_explorer_panel.tree.setCurrentIndex(first_idx)
                 self.dataset_explorer_panel.tree.setFocus()
@@ -125,8 +125,8 @@ class DenseEditorController:
 
         reply = QMessageBox.question(
             self.main,
-            "Remove Video",
-            f"Are you sure you want to remove this video and its annotations?\n\n{os.path.basename(path)}",
+            "Remove Sample",
+            f"Are you sure you want to remove this sample and its annotations?\n\n{os.path.basename(path)}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -140,7 +140,7 @@ class DenseEditorController:
 
         self._remove_tree_row(action_idx)
         self._mark_dirty_and_refresh()
-        self.main.show_temp_msg("Removed", "Video removed from project.")
+        self.main.show_temp_msg("Removed", "Sample removed from project.")
 
     def filter_dataset_items(self, index: int):
         root = self.tree_model.invisibleRootItem()
@@ -229,7 +229,7 @@ class DenseEditorController:
 
     def _on_description_submitted(self, text: str):
         if not self.current_video_path:
-            QMessageBox.warning(self.main, "Warning", "Please select a video first.")
+            QMessageBox.warning(self.main, "Warning", "Please select a sample first.")
             return
 
         pos_ms = self.center_panel.player.position()

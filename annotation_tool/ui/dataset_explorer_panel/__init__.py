@@ -45,7 +45,7 @@ class DatasetExplorerPanel(QWidget):
 
     removeItemRequested = pyqtSignal(QModelIndex)
     addDataRequested = pyqtSignal()
-    clipNavigateRequested = pyqtSignal(int)
+    sampleNavigateRequested = pyqtSignal(int)
 
     def __init__(
         self,
@@ -72,8 +72,8 @@ class DatasetExplorerPanel(QWidget):
 
         self._configure_widgets(tree_title, filter_items, clear_text)
         self.btn_add_data.clicked.connect(self.addDataRequested.emit)
-        self.btn_prev_clip.clicked.connect(lambda: self.clipNavigateRequested.emit(-1))
-        self.btn_next_clip.clicked.connect(lambda: self.clipNavigateRequested.emit(1))
+        self.btn_prev_sample.clicked.connect(lambda: self.sampleNavigateRequested.emit(-1))
+        self.btn_next_sample.clicked.connect(lambda: self.sampleNavigateRequested.emit(1))
         self._set_context_menu_enabled(enable_context_menu)
 
     def _configure_widgets(self, tree_title, filter_items, clear_text):

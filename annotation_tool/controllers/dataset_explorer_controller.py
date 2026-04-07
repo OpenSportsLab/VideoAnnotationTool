@@ -56,11 +56,11 @@ class DatasetExplorerController(QObject):
 
     def _setup_connections(self):
         """Connect Panel signals to Controller slots."""
-        self.panel.addDataRequested.connect(self.handle_add_video)
+        self.panel.addDataRequested.connect(self.handle_add_sample)
         self.panel.clear_btn.clicked.connect(self.handle_clear_workspace)
         self.panel.removeItemRequested.connect(self.handle_remove_item)
         self.panel.filter_combo.currentIndexChanged.connect(self.handle_filter_change)
-        self.panel.clipNavigateRequested.connect(self.navigate_clips)
+        self.panel.sampleNavigateRequested.connect(self.navigate_samples)
 
         # Selection handling remains centralized in MainWindow dispatch.
         self.panel.tree.selectionModel().currentChanged.connect(self._on_selection_changed)
@@ -122,7 +122,7 @@ class DatasetExplorerController(QObject):
     def _active_mode_ops(self):
         return self._mode_nav_ops.get(self._active_mode_idx(), self._mode_nav_ops[0])
 
-    def handle_add_video(self):
+    def handle_add_sample(self):
         self._active_mode_ops()["add"]()
 
     def handle_clear_workspace(self):
@@ -195,7 +195,7 @@ class DatasetExplorerController(QObject):
         self.app_state.is_data_dirty = True
         self.main.update_save_export_button_state()
 
-    def navigate_clips(self, step: int):
+    def navigate_samples(self, step: int):
         """
         Move selection across top-level dataset items only.
         Respects active row hiding (filters) and normalizes child selection to parent.
@@ -675,8 +675,8 @@ class DatasetExplorerController(QObject):
         if missing_files:
             shown_missing = missing_files[:5]
             msg = (
-                f"Loaded {loaded_count} clips.\n\n"
-                f"WARNING: {len(missing_files)} videos not found locally:\n"
+                f"Loaded {loaded_count} samples.\n\n"
+                f"WARNING: {len(missing_files)} samples not found locally:\n"
                 + "\n".join(shown_missing)
             )
             if len(missing_files) > 5:
@@ -684,7 +684,7 @@ class DatasetExplorerController(QObject):
             QMessageBox.warning(self.main, "Load Warning", msg)
         else:
             self.main.statusBar().showMessage(
-                f"Mode Switched — Loaded {loaded_count} clips. Current Mode: LOCALIZATION",
+                f"Mode Switched — Loaded {loaded_count} samples. Current Mode: LOCALIZATION",
                 1500,
             )
 
@@ -785,7 +785,7 @@ class DatasetExplorerController(QObject):
             QMessageBox.warning(
                 self.main,
                 "Load Warning",
-                f"Could not find video files for {len(missing_files)} actions locally.",
+                f"Could not find source files for {len(missing_files)} samples locally.",
             )
         else:
             self.main.statusBar().showMessage(
@@ -877,11 +877,11 @@ class DatasetExplorerController(QObject):
             QMessageBox.warning(
                 self.main,
                 "Load Warning",
-                f"Could not find {len(missing_files)} video files locally.",
+                f"Could not find source files for {len(missing_files)} samples locally.",
             )
         else:
             self.main.statusBar().showMessage(
-                f"Dense Mode: Loaded {loaded_count} clips.",
+                f"Dense Mode: Loaded {loaded_count} samples.",
                 2000,
             )
 

@@ -85,7 +85,7 @@ class LocalizationEditorController:
     def add_dataset_items(self):
         start_dir = self.model.current_working_directory or ""
         files, _ = QFileDialog.getOpenFileNames(
-            self.main, "Select Video(s)", start_dir, "Video (*.mp4 *.avi *.mov *.mkv)"
+            self.main, "Select Sample(s)", start_dir, "Video (*.mp4 *.avi *.mov *.mkv)"
         )
         if not files:
             return
@@ -111,7 +111,7 @@ class LocalizationEditorController:
         if added_count > 0:
             self._mark_dirty_and_refresh()
             self.filter_dataset_items(self.dataset_explorer_panel.filter_combo.currentIndex())
-            self.main.show_temp_msg("Videos Added", f"Added {added_count} clips.")
+            self.main.show_temp_msg("Samples Added", f"Added {added_count} samples.")
             if first_idx and first_idx.isValid():
                 self.dataset_explorer_panel.tree.setCurrentIndex(first_idx)
                 self.on_clip_selected(first_idx, None)
@@ -136,7 +136,7 @@ class LocalizationEditorController:
 
         self._remove_tree_row(action_idx)
         self._mark_dirty_and_refresh()
-        self.main.show_temp_msg("Removed", "Video removed from list.")
+        self.main.show_temp_msg("Removed", "Sample removed from list.")
 
     def filter_dataset_items(self, index: int):
         root = self.tree_model.invisibleRootItem()
@@ -429,7 +429,7 @@ class LocalizationEditorController:
     # --- Spotting (Data Creation) ---
     def _on_spotting_triggered(self, head, label):
         if not self.current_video_path:
-            QMessageBox.warning(self.main, "Warning", "No video selected.")
+            QMessageBox.warning(self.main, "Warning", "No sample selected.")
             return
 
         pos_ms = self.center_panel.player.position()

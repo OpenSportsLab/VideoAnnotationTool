@@ -88,8 +88,8 @@ def test_close_project_returns_to_welcome(window, monkeypatch):
 
 
 @pytest.mark.gui
-# Workflow: Dataset Explorer Prev/Next Clip buttons should move current top-level dataset selection.
-def test_dataset_explorer_prev_next_clip_buttons_navigate_rows(
+# Workflow: Dataset Explorer Prev/Next Sample buttons should move current top-level dataset selection.
+def test_dataset_explorer_prev_next_sample_buttons_navigate_rows(
     window,
     monkeypatch,
     qtbot,
@@ -110,29 +110,29 @@ def test_dataset_explorer_prev_next_clip_buttons_navigate_rows(
     qtbot.wait(50)
     assert tree.currentIndex().row() == 0
 
-    qtbot.mouseClick(window.dataset_explorer_panel.btn_next_clip, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_next_sample, Qt.MouseButton.LeftButton)
     qtbot.wait(50)
     assert tree.currentIndex().row() == 1
 
-    qtbot.mouseClick(window.dataset_explorer_panel.btn_next_clip, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_next_sample, Qt.MouseButton.LeftButton)
     qtbot.wait(50)
     assert tree.currentIndex().row() == 2
 
     # Boundary: next on last row should keep selection unchanged.
-    qtbot.mouseClick(window.dataset_explorer_panel.btn_next_clip, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_next_sample, Qt.MouseButton.LeftButton)
     qtbot.wait(50)
     assert tree.currentIndex().row() == 2
 
-    qtbot.mouseClick(window.dataset_explorer_panel.btn_prev_clip, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_prev_sample, Qt.MouseButton.LeftButton)
     qtbot.wait(50)
     assert tree.currentIndex().row() == 1
 
-    qtbot.mouseClick(window.dataset_explorer_panel.btn_prev_clip, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_prev_sample, Qt.MouseButton.LeftButton)
     qtbot.wait(50)
     assert tree.currentIndex().row() == 0
 
     # Boundary: prev on first row should keep selection unchanged.
-    qtbot.mouseClick(window.dataset_explorer_panel.btn_prev_clip, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.dataset_explorer_panel.btn_prev_sample, Qt.MouseButton.LeftButton)
     qtbot.wait(50)
     assert tree.currentIndex().row() == 0
 

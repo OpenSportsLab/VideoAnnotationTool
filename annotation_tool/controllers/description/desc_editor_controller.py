@@ -53,7 +53,7 @@ class DescEditorController:
 
         filters = "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp);;All Files (*)"
         start_dir = self.model.current_working_directory or ""
-        files, _ = QFileDialog.getOpenFileNames(self.main, "Select Videos to Add", start_dir, filters)
+        files, _ = QFileDialog.getOpenFileNames(self.main, "Select Samples to Add", start_dir, filters)
         if not files:
             return
 

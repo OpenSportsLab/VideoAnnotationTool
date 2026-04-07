@@ -17,6 +17,7 @@ dataset_explorer_panel/
 - `DatasetExplorerPanel` loads the `.ui` with `uic.loadUi(...)`, binds model/view behavior, and exposes UI signals:
   - `addDataRequested`
   - `removeItemRequested`
+  - `sampleNavigateRequested` (`-1` previous sample, `+1` next sample)
 
 ## Notes
 
