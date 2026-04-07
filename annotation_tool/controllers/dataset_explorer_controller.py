@@ -203,6 +203,7 @@ class DatasetExplorerController(QObject):
 
     def handle_filter_change(self, index):
         root = self.tree_model.invisibleRootItem()
+        first_visible_idx = QModelIndex()
         for row in range(root.rowCount()):
             item = root.child(row)
             if item is None:
@@ -221,6 +222,33 @@ class DatasetExplorerController(QObject):
                 hide = True
 
             self.panel.tree.setRowHidden(row, QModelIndex(), hide)
+            if not hide and not first_visible_idx.isValid():
+                first_visible_idx = self.tree_model.index(row, 0, QModelIndex())
+
+        if first_visible_idx.isValid():
+            current_idx = self._get_action_index(self.panel.tree.currentIndex())
+            current_visible = (
+                current_idx.isValid()
+                and not self.panel.tree.isRowHidden(current_idx.row(), QModelIndex())
+            )
+            if not current_visible:
+                self.panel.tree.setCurrentIndex(first_visible_idx)
+                self.panel.tree.scrollTo(first_visible_idx)
+            return
+
+        self._clear_selection_for_empty_filtered_view()
+
+    def _clear_selection_for_empty_filtered_view(self):
+        self.media_controller.stop()
+        self.main.center_panel.player.setSource(QUrl())
+        self.main.center_panel.set_markers([])
+
+        current_idx = self.panel.tree.currentIndex()
+        if current_idx.isValid():
+            self.panel.tree.setCurrentIndex(QModelIndex())
+        else:
+            self._set_annotation_panels_enabled(False)
+            self.dataSelected.emit("")
 
     def _on_selection_changed(self, current, previous):
         self._set_annotation_panels_enabled(current.isValid())

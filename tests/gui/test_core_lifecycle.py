@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QModelIndex, Qt
 
 
 MODE_TO_TAB_INDEX = {
@@ -273,6 +273,45 @@ def test_close_project_when_clean_skips_confirmation_popup(window, monkeypatch):
     should_close = window.check_and_close_current_project()
     assert should_close is True
     assert stop_calls["count"] == 1
+
+
+@pytest.mark.gui
+# Workflow: When a filter leaves no visible samples, selection/media/annotation must be cleared.
+def test_filter_with_no_visible_samples_clears_media_and_annotation(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(
+        "controllers.router.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    emitted_ids = []
+    stop_calls = {"count": 0}
+    window.dataset_explorer_controller.dataSelected.connect(lambda data_id: emitted_ids.append(data_id))
+    monkeypatch.setattr(
+        window.media_controller,
+        "stop",
+        lambda: stop_calls.__setitem__("count", stop_calls["count"] + 1),
+    )
+
+    window.router.import_annotations()
+    assert window.tree_model.rowCount() == 1
+    assert window.dataset_explorer_panel.tree.currentIndex().isValid()
+
+    # Default synthetic classification data is unlabelled, so hand-labelled filter hides all.
+    window.dataset_explorer_panel.filter_combo.setCurrentIndex(1)
+    window.dataset_explorer_controller.handle_filter_change(1)
+    qtbot.wait(50)
+
+    assert window.dataset_explorer_panel.tree.isRowHidden(0, QModelIndex()) is True
+    assert window.dataset_explorer_panel.tree.currentIndex().isValid() is False
+    assert emitted_ids and emitted_ids[-1] == ""
+    assert stop_calls["count"] >= 1
+    assert window.classification_panel.manual_box.isEnabled() is False
 
 
 @pytest.mark.gui
