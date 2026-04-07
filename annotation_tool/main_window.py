@@ -369,7 +369,7 @@ class VideoAnnotationWindow(QMainWindow):
             if self._is_loc_mode():
                 self.localization_editor_controller.on_clip_selected(current, previous)
             elif self._is_desc_mode():
-                self._handle_description_selection(current, previous)
+                self.desc_editor_controller.on_item_selected(current, previous)
             elif self._is_dense_mode():
                 self.dense_editor_controller.on_item_selected(current, previous)
             else:
@@ -506,36 +506,6 @@ class VideoAnnotationWindow(QMainWindow):
         if not idx.isValid(): return None
         if idx.parent().isValid(): return idx.parent().data(self.tree_model.FilePathRole)
         return idx.data(self.tree_model.FilePathRole)
-
-    def _resolve_description_media_path(self, current: QModelIndex):
-        """Resolve selected description tree index to a playable media path."""
-        if not current.isValid():
-            return None
-
-        path = current.data(self.tree_model.FilePathRole)
-        if self.tree_model.hasChildren(current):
-            first_child = self.tree_model.index(0, 0, current)
-            if first_child.isValid():
-                path = first_child.data(self.tree_model.FilePathRole)
-            else:
-                path = None
-
-        cwd = self.model.current_working_directory
-        if path and cwd and not os.path.isabs(path):
-            media_path = os.path.normpath(os.path.join(cwd, path))
-        else:
-            media_path = path
-
-        if media_path and os.path.exists(media_path):
-            return media_path
-        return None
-
-    def _handle_description_selection(self, current: QModelIndex, previous: QModelIndex):
-        """MainWindow-owned Description selection path: media load + editor refresh."""
-        media_path = self._resolve_description_media_path(current)
-        if media_path:
-            self.media_controller.load_and_play(media_path)
-        self.desc_editor_controller.on_item_selected(current, previous)
 
     def sync_batch_inference_dropdowns(self) -> None:
         self.classification_editor_controller.sync_batch_inference_dropdowns()

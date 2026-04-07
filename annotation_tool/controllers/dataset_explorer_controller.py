@@ -135,7 +135,42 @@ class DatasetExplorerController(QObject):
         self._active_mode_ops()["filter"](index)
 
     def _on_selection_changed(self, current, previous):
+        self._route_media_on_selection(current)
         self.main._on_tree_selection_changed(current, previous)
+
+    def _route_media_on_selection(self, current: QModelIndex):
+        """
+        Route Description-mode tree selection directly to the central media player.
+        Description editor controller stays text-only.
+        """
+        # Description tab index is 2 in MainWindow tab ordering.
+        if self._active_mode_idx() != 2:
+            return
+        if not current.isValid():
+            return
+        # Parent items with children are normalized by MainWindow to first child.
+        if self.tree_model.rowCount(current) > 0:
+            return
+
+        media_path = self._resolve_media_path_from_index(current)
+        if media_path:
+            self.main.media_controller.load_and_play(media_path)
+
+    def _resolve_media_path_from_index(self, index: QModelIndex):
+        if not index.isValid():
+            return None
+
+        path = index.data(getattr(self.tree_model, "FilePathRole", 0x0100))
+        if not path:
+            return None
+
+        cwd = self.app_state.current_working_directory
+        if cwd and not os.path.isabs(path):
+            path = os.path.normpath(os.path.join(cwd, path))
+
+        if path and os.path.exists(path):
+            return path
+        return None
 
     def _get_action_index(self, index: QModelIndex) -> QModelIndex:
         """Normalize child selection to its top-level action index."""

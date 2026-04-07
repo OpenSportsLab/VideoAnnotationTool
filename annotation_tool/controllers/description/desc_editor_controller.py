@@ -156,7 +156,6 @@ class DescEditorController:
     def on_item_selected(self, current: QModelIndex, previous: QModelIndex):
         """
         Refresh Description editor content for selected tree item.
-        Selection/media loading is orchestrated by MainWindow.
         """
         if not current.isValid():
             self.main.description_panel.caption_edit.clear()
