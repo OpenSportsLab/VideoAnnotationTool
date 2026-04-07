@@ -20,4 +20,4 @@ Classification mode now uses a single mode controller plus helper services.
 
 - Obsolete split controllers (`class_annotation_manager.py`, `class_navigation_manager.py`) were removed.
 - Classification lifecycle I/O (create/load/save/export) remains in
-  `controllers/common/dataset_explorer_controller.py` in this staged architecture.
+  `controllers/dataset_explorer_controller.py` in this staged architecture.

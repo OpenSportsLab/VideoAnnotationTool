@@ -18,5 +18,5 @@ Owns Description editor behavior:
 ## Notes
 
 - Media load orchestration for Description selection is handled in `main_window.py`.
-- JSON load/create/save/export remains handled by `controllers/common/dataset_explorer_controller.py`.
+- JSON load/create/save/export remains handled by `controllers/dataset_explorer_controller.py`.
 - `DatasetExplorerController` still routes panel signals, but delegates Description mode add/remove/filter/clear behavior to `DescEditorController`.

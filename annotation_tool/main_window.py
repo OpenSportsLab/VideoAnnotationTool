@@ -4,16 +4,16 @@ from PyQt6.QtCore import Qt, QModelIndex
 from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QMainWindow, QMessageBox, QStackedWidget, QDockWidget, QTabWidget
 
-from controllers.classification.classification_editor_controller import ClassificationEditorController
-from controllers.localization.localization_editor_controller import LocalizationEditorController
-from controllers.description.desc_editor_controller import DescEditorController
-from controllers.dense_description.dense_editor_controller import DenseEditorController
+from controllers.classification import ClassificationEditorController
+from controllers.localization import LocalizationEditorController
+from controllers.description import DescEditorController
+from controllers.dense_description import DenseEditorController
 from controllers.history_manager import HistoryManager
 from controllers.media_controller import MediaController
 
 from controllers.router import AppRouter
-from controllers.common.dataset_explorer_controller import DatasetExplorerController
-from controllers.common.welcome_controller import WelcomeController
+from controllers.dataset_explorer_controller import DatasetExplorerController
+from controllers.welcome_controller import WelcomeController
 from models import AppStateModel
 
 # [NEW] Direct UI Imports

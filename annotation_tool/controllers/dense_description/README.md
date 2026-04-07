@@ -20,3 +20,6 @@ Dense Description mode now uses a single controller:
 
 This replaces the old `DenseManager` split and keeps Dense mode aligned with
 the Description controller architecture.
+
+Dense JSON lifecycle load/save/export remains routed through
+`controllers/dataset_explorer_controller.py` in the current staged design.

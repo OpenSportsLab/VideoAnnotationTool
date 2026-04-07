@@ -26,13 +26,19 @@ annotation_tool/
 │   ├── router.py               # Mode detection & Project lifecycle management
 │   ├── history_manager.py      # Universal Undo/Redo system (Supports Batch Annotations)
 │   ├── media_controller.py     # Unified playback logic (Anti-freeze/Visual clearing)
+│   ├── dataset_explorer_controller.py # Shared dataset tree + lifecycle flows
+│   ├── welcome_controller.py   # Welcome screen actions + recent datasets wiring
 │   ├── classification/         # Logic for Classification mode
+│   │   ├── __init__.py
 │   │   ├── classification_editor_controller.py # Unified classification mode controller
 │   │   ├── inference_manager.py                # AI Smart Annotation helper
 │   │   └── train_manager.py                    # Training helper
 │   ├── localization/           # Logic for Action Spotting (Localization) mode
+│   │   └── __init__.py
 │   ├── description/            # Logic for Global Captioning (Description) mode
+│   │   └── __init__.py
 │   └── dense_description/      # Logic for Dense Captioning (Text-at-Timestamp)
+│       ├── __init__.py
 │       └── dense_editor_controller.py # Dense editor logic + explorer delegation
 │
 ├── ui/                         # [View Layer] Interface Definitions
