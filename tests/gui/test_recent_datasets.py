@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QLabel, QMessageBox, QPushButton, QToolButton
 
 
@@ -96,7 +96,7 @@ def test_recent_projects_dedupe_order_and_limit(window, monkeypatch, tmp_path, s
 
     recents = window.router.get_recent_projects()
     assert len(recents) == max_recent_display
-    assert recents == [str(path) for path in reversed(project_paths[-10:])]
+    assert recents == [str(path) for path in reversed(project_paths[-max_recent_display:])]
 
     reopened_path = project_paths[2]
     assert window.router.open_project_from_path(str(reopened_path)) is True
@@ -182,3 +182,65 @@ def test_recent_projects_remove_button_removes_entry(window, monkeypatch, qtbot,
     assert open_calls["count"] == 0
     assert window.router.get_recent_projects() == []
     assert window.welcome_widget.recent_projects_list.count() == 0
+
+
+# @pytest.mark.gui
+# # Workflow: Open datasets in different modes and verify recents ordering is newest-first across modes.
+# def test_recent_projects_tracks_multiple_modes_newest_first(window, monkeypatch, synthetic_project_json):
+#     window.router.remove_all_recent_project()
+#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+
+#     classification_path = synthetic_project_json("classification").resolve()
+#     localization_path = synthetic_project_json("localization").resolve()
+#     description_path = synthetic_project_json("description").resolve()
+#     dense_path = synthetic_project_json("dense_description").resolve()
+
+#     assert window.router.open_project_from_path(str(classification_path)) is True
+#     assert window.router.open_project_from_path(str(localization_path)) is True
+#     assert window.router.open_project_from_path(str(description_path)) is True
+#     assert window.router.open_project_from_path(str(dense_path)) is True
+
+#     recents = window.router.get_recent_projects()
+#     assert recents[:4] == [
+#         str(dense_path),
+#         str(description_path),
+#         str(localization_path),
+#         str(classification_path),
+#     ]
+
+
+# @pytest.mark.gui
+# # Workflow: Recents should persist across app restart and re-render in the welcome list.
+# def test_recent_projects_persist_across_window_restart(
+#     window,
+#     monkeypatch,
+#     qtbot,
+#     synthetic_project_json,
+# ):
+#     from main_window import VideoAnnotationWindow
+
+#     window.router.remove_all_recent_project()
+#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+
+#     first_path = synthetic_project_json("classification").resolve()
+#     second_path = synthetic_project_json("localization").resolve()
+
+#     assert window.router.open_project_from_path(str(first_path)) is True
+#     assert window.router.open_project_from_path(str(second_path)) is True
+#     window.show_welcome_view()
+#     assert window.welcome_widget.recent_projects_list.count() == 2
+
+#     settings_file = window.router.settings.fileName()
+#     restarted = VideoAnnotationWindow()
+#     qtbot.addWidget(restarted)
+#     restarted.show()
+#     restarted.router.settings = QSettings(settings_file, QSettings.Format.IniFormat)
+#     restarted.show_welcome_view()
+#     qtbot.wait(50)
+
+#     recents_after_restart = restarted.router.get_recent_projects()
+#     assert recents_after_restart[:2] == [str(second_path), str(first_path)]
+#     assert restarted.welcome_widget.recent_projects_list.count() == 2
+#     file_btn_0, folder_lbl_0, _ = _get_recent_row_controls(restarted, 0)
+#     assert file_btn_0.text() == second_path.name
+#     assert folder_lbl_0.text() == str(second_path.parent)

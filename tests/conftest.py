@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import types
+from itertools import cycle, islice
 from pathlib import Path
 
 import pytest
@@ -59,7 +60,7 @@ _install_opensportslib_stub()
 
 
 @pytest.fixture
-def window(qtbot, monkeypatch):
+def window(qtbot, monkeypatch, tmp_path):
     """
     Create and show the main window for GUI tests.
 
@@ -81,11 +82,13 @@ def window(qtbot, monkeypatch):
     main_window.show()
     qtbot.wait(50)
 
-    # Use a test-specific QSettings to isolate from real user data and ensure a clean slate.
+    # Use a test-specific QSettings file to isolate from real user data and ensure a clean slate.
+    settings_file = tmp_path / "app_settings.ini"
     main_window.router.settings = QSettings(
-        "OpenSportsLab_test",
-        "VideoAnnotationTool_test",
+        str(settings_file),
+        QSettings.Format.IniFormat,
     )
+    main_window._test_settings_file = str(settings_file)
 
     yield main_window
 
@@ -109,13 +112,97 @@ def synthetic_project_json(tmp_path):
     - Use a real test video path relative to the generated JSON file so
       path-resolution logic is exercised.
     """
-    def _write(mode: str) -> Path:
-        source_video_path = REPO_ROOT / "tests" / "data" / "test_video_1.mp4"
-        if not source_video_path.exists():
-            raise FileNotFoundError(f"Missing test asset: {source_video_path}")
+    def _write(mode: str, item_count: int = 1) -> Path:
+        if item_count < 1:
+            raise ValueError("item_count must be >= 1")
 
-        # Keep a relative path in JSON so loader path-resolution behavior is tested.
-        rel_clip_path = os.path.relpath(source_video_path, start=tmp_path).replace("\\", "/")
+        source_video_paths = [
+            REPO_ROOT / "tests" / "data" / "test_video_1.mp4",
+            REPO_ROOT / "tests" / "data" / "test_video_2.mp4",
+            REPO_ROOT / "tests" / "data" / "test_video_3.mp4",
+        ]
+        for source_video_path in source_video_paths:
+            if not source_video_path.exists():
+                raise FileNotFoundError(f"Missing test asset: {source_video_path}")
+
+        selected_sources = list(islice(cycle(source_video_paths), item_count))
+        rel_clip_paths = [
+            os.path.relpath(source_video_path, start=tmp_path).replace("\\", "/")
+            for source_video_path in selected_sources
+        ]
+
+        classification_data = []
+        localization_data = []
+        description_data = []
+        dense_data = []
+        for idx, rel_clip_path in enumerate(rel_clip_paths, start=1):
+            clip_id = f"clip_{idx}"
+            classification_data.append(
+                {
+                    "id": clip_id,
+                    "inputs": [{"path": rel_clip_path, "type": "video"}],
+                    "labels": {},
+                }
+            )
+            localization_data.append(
+                {
+                    "id": clip_id,
+                    "inputs": [
+                        {
+                            "path": rel_clip_path,
+                            "type": "video",
+                            "fps": 25.0,
+                        }
+                    ],
+                    "events": [
+                        {
+                            "head": "ball_action",
+                            "label": "pass",
+                            "position_ms": 1000,
+                        }
+                    ],
+                }
+            )
+            description_data.append(
+                {
+                    "id": clip_id,
+                    "inputs": [
+                        {
+                            "path": rel_clip_path,
+                            "type": "video",
+                            "fps": 25.0,
+                        }
+                    ],
+                    "captions": [
+                        {
+                            "lang": "en",
+                            "text": "A short test caption." if idx == 1 else f"A short test caption {idx}.",
+                        }
+                    ],
+                    "metadata": {
+                        "path": rel_clip_path,
+                    },
+                }
+            )
+            dense_data.append(
+                {
+                    "id": clip_id,
+                    "inputs": [
+                        {
+                            "path": rel_clip_path,
+                            "type": "video",
+                            "fps": 25.0,
+                        }
+                    ],
+                    "dense_captions": [
+                        {
+                            "position_ms": 1000,
+                            "lang": "en",
+                            "text": "A dense caption event." if idx == 1 else f"A dense caption event {idx}.",
+                        }
+                    ],
+                }
+            )
 
         payload_by_mode = {
             "classification": {
@@ -130,18 +217,7 @@ def synthetic_project_json(tmp_path):
                         "labels": ["pass", "shot"],
                     }
                 },
-                "data": [
-                    {
-                        "id": "clip_1",
-                        "inputs": [
-                            {
-                                "path": rel_clip_path,
-                                "type": "video",
-                            }
-                        ],
-                        "labels": {},
-                    }
-                ],
+                "data": classification_data,
             },
             "localization": {
                 "version": "2.0",
@@ -155,25 +231,7 @@ def synthetic_project_json(tmp_path):
                         "labels": ["pass", "shot"],
                     }
                 },
-                "data": [
-                    {
-                        "id": "clip_1",
-                        "inputs": [
-                            {
-                                "path": rel_clip_path,
-                                "type": "video",
-                                "fps": 25.0,
-                            }
-                        ],
-                        "events": [
-                            {
-                                "head": "ball_action",
-                                "label": "pass",
-                                "position_ms": 1000,
-                            }
-                        ],
-                    }
-                ],
+                "data": localization_data,
             },
             "description": {
                 "version": "1.0",
@@ -183,27 +241,7 @@ def synthetic_project_json(tmp_path):
                 "metadata": {
                     "source": "pytest-qt",
                 },
-                "data": [
-                    {
-                        "id": "clip_1",
-                        "inputs": [
-                            {
-                                "path": rel_clip_path,
-                                "type": "video",
-                                "fps": 25.0,
-                            }
-                        ],
-                        "captions": [
-                            {
-                                "lang": "en",
-                                "text": "A short test caption.",
-                            }
-                        ],
-                        "metadata": {
-                            "path": rel_clip_path,
-                        },
-                    }
-                ],
+                "data": description_data,
             },
             "dense_description": {
                 "version": "1.0",
@@ -213,25 +251,7 @@ def synthetic_project_json(tmp_path):
                 "metadata": {
                     "source": "pytest-qt",
                 },
-                "data": [
-                    {
-                        "id": "clip_1",
-                        "inputs": [
-                            {
-                                "path": rel_clip_path,
-                                "type": "video",
-                                "fps": 25.0,
-                            }
-                        ],
-                        "dense_captions": [
-                            {
-                                "position_ms": 1000,
-                                "lang": "en",
-                                "text": "A dense caption event.",
-                            }
-                        ],
-                    }
-                ],
+                "data": dense_data,
             },
         }
 

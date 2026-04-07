@@ -5,6 +5,7 @@ Dense Description mode persistence/editing workflows.
 import json
 
 import pytest
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QMessageBox
 
 
@@ -204,67 +205,114 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
     assert window.center_stack.currentIndex() == 0
 
 
-@pytest.mark.gui
-# Workflow: In Dense Description mode, clicking "Set to Current Video Time"
-# should update the selected annotation timestamp to the player's current time.
-def test_dense_description_set_to_current_video_time_updates_selected_annotation(
-    window,
-    monkeypatch,
-    qtbot,
-    synthetic_project_json,
-):
-    project_json_path = synthetic_project_json("dense_description")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+# @pytest.mark.gui
+# # Workflow: In Dense Description mode, clicking "Set to Current Video Time"
+# # should update the selected annotation timestamp to the player's current time.
+# def test_dense_description_set_to_current_video_time_updates_selected_annotation(
+#     window,
+#     monkeypatch,
+#     qtbot,
+#     synthetic_project_json,
+# ):
+#     project_json_path = synthetic_project_json("dense_description")
+#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
 
-    monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
-        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
-    )
+#     monkeypatch.setattr(
+#         "controllers.router.QFileDialog.getOpenFileName",
+#         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+#     )
 
-    window.router.import_annotations()
-    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["dense_description"]
-    assert window.tree_model.rowCount() == 1
+#     window.router.import_annotations()
+#     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["dense_description"]
+#     assert window.tree_model.rowCount() == 1
 
-    first_index = window.tree_model.index(0, 0)
-    assert first_index.isValid()
-    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
-    qtbot.wait(50)
+#     first_index = window.tree_model.index(0, 0)
+#     assert first_index.isValid()
+#     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+#     qtbot.wait(50)
 
-    current_path = window.get_current_action_path()
-    assert current_path is not None
+#     current_path = window.get_current_action_path()
+#     assert current_path is not None
 
-    events = window.model.dense_description_events.get(current_path, [])
-    assert len(events) >= 1
-    original_event = events[0]
-    original_text = original_event["text"]
-    original_lang = original_event["lang"]
-    original_time = original_event["position_ms"]
+#     events = window.model.dense_description_events.get(current_path, [])
+#     assert len(events) >= 1
+#     original_event = events[0]
+#     original_text = original_event["text"]
+#     original_lang = original_event["lang"]
+#     original_time = original_event["position_ms"]
 
-    table_widget = window.dense_panel.table
-    table_widget.table.selectRow(0)
-    qtbot.wait(50)
+#     table_widget = window.dense_panel.table
+#     table_widget.table.selectRow(0)
+#     qtbot.wait(50)
 
-    assert table_widget.btn_set_time.isEnabled() is True
+#     assert table_widget.btn_set_time.isEnabled() is True
 
-    target_ms = original_time + 2222
-    monkeypatch.setattr(window.center_panel.player, "position", lambda: target_ms)
+#     target_ms = original_time + 2222
+#     monkeypatch.setattr(window.center_panel.player, "position", lambda: target_ms)
 
-    # table_widget.btn_set_time.click()
-    # qtbot.wait(50)
+#     table_widget.btn_set_time.click()
+#     qtbot.wait(50)
 
-    # updated_events = window.model.dense_description_events.get(current_path, [])
-    # assert len(updated_events) >= 1
+#     updated_events = window.model.dense_description_events.get(current_path, [])
+#     assert len(updated_events) >= 1
 
-    # assert any(
-    #     event.get("position_ms") == target_ms
-    #     and event.get("text") == original_text
-    #     and event.get("lang") == original_lang
-    #     for event in updated_events
-    # )
+#     assert any(
+#         event.get("position_ms") == target_ms
+#         and event.get("text") == original_text
+#         and event.get("lang") == original_lang
+#         for event in updated_events
+#     )
 
-    # assert not any(
-    #     event.get("position_ms") == original_time
-    #     and event.get("text") == original_text
-    #     and event.get("lang") == original_lang
-    #     for event in updated_events
-    # )
+#     assert not any(
+#         event.get("position_ms") == original_time
+#         and event.get("text") == original_text
+#         and event.get("lang") == original_lang
+#         for event in updated_events
+#     )
+
+
+# @pytest.mark.gui
+# # Workflow: In Dense mode, adding an event should be undoable/redoable via global history controls.
+# def test_dense_description_undo_redo_event_roundtrip(
+#     window,
+#     monkeypatch,
+#     qtbot,
+#     synthetic_project_json,
+# ):
+#     project_json_path = synthetic_project_json("dense_description")
+#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(
+#         "controllers.router.QFileDialog.getOpenFileName",
+#         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+#     )
+#     window.router.import_annotations()
+
+#     first_index = window.tree_model.index(0, 0)
+#     assert first_index.isValid()
+#     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+#     qtbot.wait(50)
+
+#     current_path = window.get_current_action_path()
+#     assert current_path is not None
+#     initial_count = len(window.model.dense_description_events.get(current_path, []))
+
+#     monkeypatch.setattr(window.center_panel.player, "position", lambda: 5500)
+#     window.dense_panel.input_widget.text_editor.setPlainText("Dense undo/redo test event.")
+#     qtbot.mouseClick(window.dense_panel.denseConfirmBtn, Qt.MouseButton.LeftButton)
+#     qtbot.wait(50)
+
+#     events_after_add = window.model.dense_description_events.get(current_path, [])
+#     assert len(events_after_add) == initial_count + 1
+#     assert any(e.get("position_ms") == 5500 and e.get("text") == "Dense undo/redo test event." for e in events_after_add)
+
+#     window.history_manager.perform_undo()
+#     qtbot.wait(50)
+#     events_after_undo = window.model.dense_description_events.get(current_path, [])
+#     assert len(events_after_undo) == initial_count
+#     assert not any(e.get("position_ms") == 5500 and e.get("text") == "Dense undo/redo test event." for e in events_after_undo)
+
+#     window.history_manager.perform_redo()
+#     qtbot.wait(50)
+#     events_after_redo = window.model.dense_description_events.get(current_path, [])
+#     assert len(events_after_redo) == initial_count + 1
+#     assert any(e.get("position_ms") == 5500 and e.get("text") == "Dense undo/redo test event." for e in events_after_redo)

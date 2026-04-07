@@ -128,3 +128,33 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
     assert target_removed_name not in final_names
     for remaining_video in added_video_paths[1:]:
         assert remaining_video.name in final_names
+
+
+# @pytest.mark.gui
+# # Workflow: Import classification JSON, try to add the same existing video again, and verify duplicates are ignored.
+# def test_classification_duplicate_add_is_ignored(
+#     window,
+#     monkeypatch,
+#     qtbot,
+#     synthetic_project_json,
+# ):
+#     project_json_path = synthetic_project_json("classification")
+#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(
+#         "controllers.router.QFileDialog.getOpenFileName",
+#         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+#     )
+#     window.router.import_annotations()
+#     assert window.tree_model.rowCount() == 1
+#     assert len(window.model.action_item_data) == 1
+
+#     existing_video_path = window.model.action_item_data[0]["path"]
+#     monkeypatch.setattr(
+#         "controllers.classification.classification_editor_controller.QFileDialog.getOpenFileNames",
+#         lambda *args, **kwargs: ([str(existing_video_path)], "Media Files (*.mp4)"),
+#     )
+#     qtbot.mouseClick(window.dataset_explorer_panel.btn_add_data, Qt.MouseButton.LeftButton)
+#     qtbot.wait(50)
+
+#     assert window.tree_model.rowCount() == 1
+#     assert len(window.model.action_item_data) == 1

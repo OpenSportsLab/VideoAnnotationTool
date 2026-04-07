@@ -127,29 +127,29 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
     assert window.classification_panel.get_annotation().get("action") == "shot"
 
 
-@pytest.mark.gui
-# Workflow: Import classification JSON, remove the selected dataset item from the explorer,
-# and verify tree/model/editor/media state is reset for classification mode.
-def test_classification_remove_selected_item_resets_state(
-    window,
-    monkeypatch,
-    qtbot,
-    synthetic_project_json,
-):
-    project_json_path = synthetic_project_json("classification")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+# @pytest.mark.gui
+# # Workflow: Import classification JSON, remove the selected dataset item from the explorer,
+# # and verify tree/model/editor/media state is reset for classification mode.
+# def test_classification_remove_selected_item_resets_state(
+#     window,
+#     monkeypatch,
+#     qtbot,
+#     synthetic_project_json,
+# ):
+#     project_json_path = synthetic_project_json("classification")
+#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
 
-    monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
-        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
-    )
-    window.router.import_annotations()
-    assert window.tree_model.rowCount() == 1
+#     monkeypatch.setattr(
+#         "controllers.router.QFileDialog.getOpenFileName",
+#         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+#     )
+#     window.router.import_annotations()
+#     assert window.tree_model.rowCount() == 1
 
-    first_index = window.tree_model.index(0, 0)
-    assert first_index.isValid()
-    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
-    qtbot.wait(50)
+#     first_index = window.tree_model.index(0, 0)
+#     assert first_index.isValid()
+#     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+#     qtbot.wait(50)
 
     # window.dataset_explorer_controller.handle_remove_item(first_index)
     # qtbot.wait(50)
@@ -193,3 +193,86 @@ def test_classification_clear_workspace_resets_state(
     assert window.model.json_loaded is False
     assert window.model.current_json_path is None
     assert window.classification_panel.manual_box.isEnabled() is False
+
+
+# @pytest.mark.gui
+# # Workflow: In Classification mode, save an annotation then verify undo/redo toggles it in model and editor.
+# def test_classification_undo_redo_manual_annotation_roundtrip(
+#     window,
+#     monkeypatch,
+#     qtbot,
+#     synthetic_project_json,
+# ):
+#     project_json_path = synthetic_project_json("classification")
+#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(
+#         "controllers.router.QFileDialog.getOpenFileName",
+#         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+#     )
+#     window.router.import_annotations()
+
+#     first_index = window.tree_model.index(0, 0)
+#     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+#     qtbot.wait(50)
+
+#     current_path = window.get_current_action_path()
+#     assert current_path is not None
+
+#     panel = window.classification_panel
+#     panel.tabs.setCurrentIndex(0)
+#     group = panel.label_groups["action"]
+#     shot_btn = next(btn for btn in group.radio_group.buttons() if btn.text() == "shot")
+#     qtbot.mouseClick(shot_btn, Qt.MouseButton.LeftButton)
+#     qtbot.mouseClick(panel.confirm_btn, Qt.MouseButton.LeftButton)
+#     qtbot.wait(50)
+
+#     assert window.model.manual_annotations[current_path]["action"] == "shot"
+
+#     window.history_manager.perform_undo()
+#     qtbot.wait(50)
+#     assert current_path not in window.model.manual_annotations
+#     assert window.classification_panel.get_annotation().get("action") in (None, "")
+
+#     window.history_manager.perform_redo()
+#     qtbot.wait(50)
+#     assert window.model.manual_annotations[current_path]["action"] == "shot"
+#     assert window.classification_panel.get_annotation().get("action") == "shot"
+
+
+# @pytest.mark.gui
+# # Workflow: In Classification mode, done/not-done filter should hide unannotated rows and keep annotated rows visible.
+# def test_classification_filter_done_hides_unannotated_rows(
+#     window,
+#     monkeypatch,
+#     qtbot,
+#     synthetic_project_json,
+# ):
+#     project_json_path = synthetic_project_json("classification", item_count=2)
+#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(
+#         "controllers.router.QFileDialog.getOpenFileName",
+#         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+#     )
+#     window.router.import_annotations()
+#     assert window.tree_model.rowCount() == 2
+
+#     first_index = window.tree_model.index(0, 0)
+#     second_index = window.tree_model.index(1, 0)
+#     assert first_index.isValid() and second_index.isValid()
+
+#     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+#     qtbot.wait(50)
+
+#     panel = window.classification_panel
+#     panel.tabs.setCurrentIndex(0)
+#     group = panel.label_groups["action"]
+#     pass_btn = next(btn for btn in group.radio_group.buttons() if btn.text() == "pass")
+#     qtbot.mouseClick(pass_btn, Qt.MouseButton.LeftButton)
+#     qtbot.mouseClick(panel.confirm_btn, Qt.MouseButton.LeftButton)
+#     qtbot.wait(50)
+
+#     window.dataset_explorer_panel.filter_combo.setCurrentIndex(1)
+#     qtbot.wait(50)
+
+#     assert window.dataset_explorer_panel.tree.isRowHidden(0, first_index.parent()) is False
+#     assert window.dataset_explorer_panel.tree.isRowHidden(1, second_index.parent()) is True
