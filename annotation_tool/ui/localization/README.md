@@ -1,20 +1,18 @@
-# UI: Localization
+# Localization UI
 
-Localization right-panel UI is package-style and Qt Designer driven.
+Localization right-panel UI package.
 
 ## Structure
 
 ```text
 ui/localization/
-└── annotation_panel/
-    ├── __init__.py
-    ├── localization_annotation_panel.ui
-    └── README.md
+├── __init__.py
+├── localization_annotation_panel.ui
+└── README.md
 ```
 
 ## Notes
 
-- `LocalizationAnnotationPanel` is loaded from `localization_annotation_panel.ui`.
-- Spotting tabs, event table, and smart inference widgets are composed in
-  `annotation_panel/__init__.py`.
-- Legacy `event_editor/` child modules were removed as part of the consolidation.
+- Main class: `LocalizationAnnotationPanel` (import path: `from ui.localization import LocalizationAnnotationPanel`).
+- `.ui` stays standard-widget only.
+- `__init__.py` attaches adapter behavior for spotting tabs, hand-events table, and smart inference widgets.

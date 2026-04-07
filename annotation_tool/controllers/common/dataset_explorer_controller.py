@@ -829,7 +829,7 @@ class DatasetExplorerController(QObject):
     # Internal: Create New Project
     # ---------------------------------------------------------------------
     def _create_new_classification_project(self):
-        from ui.common.dialogs import ClassificationTypeDialog
+        from ui.dialogs import ClassificationTypeDialog
 
         dialog = ClassificationTypeDialog(self.main)
         if not dialog.exec():

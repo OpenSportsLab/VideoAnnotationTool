@@ -180,7 +180,7 @@ QSlider::sub-page:horizontal {
    ======================================================= */
 
 /* --- Project Controls (Left Panel Buttons) --- */
-/* Target: ui/common/project_controls.py */
+/* Target: shared project controls */
 QPushButton[class="project_control_btn"] {
     border-radius: 6px;
     padding: 5px;
@@ -208,7 +208,7 @@ QPushButton[class="project_control_btn"]:disabled {
 }
 
 /* --- Dialogs: Project Type Selection --- */
-/* Target: ui/common/dialogs.py */
+/* Target: ui/dialogs.py */
 
 /* The instruction text */
 QLabel[class="dialog_instruction_lbl"] {
@@ -232,7 +232,7 @@ QPushButton[class="dialog_mode_btn"]:hover {
 }
 
 /* --- Welcome Screen --- */
-/* Target: ui/common/welcome_widget/ */
+/* Target: ui/welcome_widget/ */
 
 QWidget#welcome_page {
     background-color: #555; 
@@ -361,7 +361,7 @@ QPushButton[class="welcome_secondary_btn"]:pressed {
 
 
 /* --- Common Project Tree Panel --- */
-/* Target: ui/common/dataset_explorer_panel.py */
+/* Target: ui/dataset_explorer_panel/ */
 
 QLabel[class="panel_header_lbl"] {
     font-weight: bold;
@@ -378,7 +378,7 @@ QPushButton#panel_clear_btn {
    ======================================================= */
 
 /* --- Classification Annotation Panel --- */
-/* Target: ui/classification/annotation_panel/__init__.py */
+/* Target: ui/classification/__init__.py */
 
 /* Undo/Redo Buttons */
 QPushButton[class="editor_control_btn"] {
@@ -419,7 +419,7 @@ QPushButton[class="editor_save_btn"]:hover {
 }
 
 /* --- Dynamic Widgets (Label Groups) --- */
-/* Target: ui/classification/annotation_panel/__init__.py */
+/* Target: ui/classification/__init__.py */
 
 /* Common Header Style */
 QLabel.group_head_lbl {
@@ -580,7 +580,7 @@ QSlider[class="timeline_slider"]::sub-page:horizontal {
 }
 
 /* --- Spotting Controls (Tabs & Labels) --- */
-/* Target: ui/localization/annotation_panel/ */
+/* Target: ui/localization/ */
 
 /* Label Grid Buttons */
 QPushButton[class="spotting_label_btn"] {
@@ -649,7 +649,7 @@ QTabWidget[class="spotting_tabs"] > QTabBar::tab:hover {
 }
 
 /* --- Annotation Table --- */
-/* Target: ui/localization/annotation_panel/ */
+/* Target: ui/localization/ */
 
 QTableView[class="annotation_table"] {
     background-color: #2E2E2E;
@@ -724,7 +724,7 @@ QLabel#descTimeLabel {
 
 /* =======================================================
    Dense Description - Right Panel Widgets
-   Target: ui/dense_description/annotation_panel/
+   Target: ui/dense_description/
    ======================================================= */
 
 QLabel[class="dense_time_display"] {

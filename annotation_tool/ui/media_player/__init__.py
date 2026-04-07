@@ -79,7 +79,7 @@ class MediaCenterPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        ui_path = resource_path(os.path.join("ui", "common", "media_player", "media_center_panel.ui"))
+        ui_path = resource_path(os.path.join("ui", "media_player", "media_center_panel.ui"))
         try:
             uic.loadUi(ui_path, self)
         except Exception as exc:

@@ -1,21 +1,18 @@
 # Classification UI
 
-Classification mode UI is package-based and Qt Designer driven.
+Classification right-panel UI package.
 
 ## Structure
 
 ```text
 ui/classification/
-├── annotation_panel/
-│   ├── __init__.py
-│   ├── classification_annotation_panel.ui
-│   └── README.md
+├── __init__.py
+├── classification_annotation_panel.ui
 └── README.md
 ```
 
 ## Notes
 
-- `classification_annotation_panel.ui` is standard-widget only (fully editable in Qt Creator).
-- Runtime dynamic schema widgets (single/multi-label groups) are created in
-  `annotation_panel/__init__.py` and inserted into the `.ui` placeholder container.
-- Public panel class remains `ClassificationAnnotationPanel`.
+- Main class: `ClassificationAnnotationPanel` (import path: `from ui.classification import ClassificationAnnotationPanel`).
+- `.ui` contains all static layout.
+- Runtime dynamic schema widgets (single/multi-label groups) are injected into `.ui` placeholders from `__init__.py`.

@@ -61,7 +61,7 @@ def test_import_project_routed_flow_all_modes(window, monkeypatch, synthetic_pro
 #             return True
 
 #     monkeypatch.setattr("controllers.router.ProjectTypeDialog", _FakeProjectTypeDialog)
-#     monkeypatch.setattr("ui.common.dialogs.ClassificationTypeDialog", _FakeClassificationTypeDialog)
+#     monkeypatch.setattr("ui.dialogs.ClassificationTypeDialog", _FakeClassificationTypeDialog)
 
 #     window.router.create_new_project_flow()
 

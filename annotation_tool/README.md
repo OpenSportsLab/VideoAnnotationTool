@@ -36,21 +36,14 @@ annotation_tool/
 │       └── dense_editor_controller.py # Dense editor logic + explorer delegation
 │
 ├── ui/                         # [View Layer] Interface Definitions
-│   ├── common/                 # Shared widgets (Main Window, Sidebar, Video Surface)
-│   │   ├── main_window.py        # Top-level UI (Stacked layout management)
-│   │   ├── video_surface.py      # Shared Pure QVideoWidget + QMediaPlayer
-│   │   ├── workspace.py          # Unified 3-column skeleton
-│   │   └── dialogs.py            # Project wizards and mode selectors
-│   ├── classification/         # UI specific to Classification
-│   │   └── annotation_panel/      # Qt Designer driven classification editor panel
-│   │       ├── __init__.py
-│   │       └── classification_annotation_panel.ui
-│   ├── localization/           # UI specific to Localization (Timeline + Tabbed Spotting)
-│   ├── description/            # UI specific to Global Captioning (Full-video text)
-│   └── dense_description/      # UI specific to Dense Description
-│       └── annotation_panel/
-│           ├── __init__.py       # Loads DenseAnnotationPanel UI + table/input composition
-│           └── dense_annotation_panel.ui
+│   ├── dialogs.py                # Shared dialogs (project type, media errors, etc.)
+│   ├── welcome_widget/           # Welcome screen package
+│   ├── dataset_explorer_panel/   # Left-dock dataset explorer package
+│   ├── media_player/             # Center media/timeline package
+│   ├── classification/           # Classification right-panel package
+│   ├── localization/             # Localization right-panel package
+│   ├── description/              # Description right-panel package
+│   └── dense_description/        # Dense Description right-panel package
 │
 └── style/                      # Visual theme assets
     └── style.qss               # Centralized Dark mode stylesheet
@@ -78,8 +71,9 @@ annotation_tool/
 
 ### 4. The View Layer (`/ui`)
 
-* **`video_surface.py`**: A shared rendering component used by **every** mode to ensure consistent video performance.
-* **`dense_annotation_panel.ui`**: Qt Designer file for Dense right-panel layout and editable table area.
+* Shared shell widgets live directly under `ui/`: `welcome_widget/`, `dataset_explorer_panel/`, `media_player/`, and `dialogs.py`.
+* Each mode package is flat and self-contained (`__init__.py` + `.ui` + `README.md`).
+* Example: `dense_description/dense_annotation_panel.ui` defines Dense right-panel layout and editable table area.
 
 ---
 

@@ -1,19 +1,18 @@
-# UI: Dense Description
+# Dense Description UI
 
-Dense Description right-panel UI is package-style and Qt Designer driven.
+Dense Description right-panel UI package.
 
 ## Structure
 
 ```text
 ui/dense_description/
-└── annotation_panel/
-    ├── __init__.py
-    ├── dense_annotation_panel.ui
-    └── README.md
+├── __init__.py
+├── dense_annotation_panel.ui
+└── README.md
 ```
 
 ## Notes
 
-- `DenseAnnotationPanel` is loaded from `dense_annotation_panel.ui`.
-- Dense input and table behavior are composed in `annotation_panel/__init__.py`.
-- Legacy `event_editor/` child modules were removed as part of the consolidation.
+- Main class: `DenseAnnotationPanel` (import path: `from ui.dense_description import DenseAnnotationPanel`).
+- `.ui` stays standard-widget only.
+- `__init__.py` attaches dense input and table adapters used by the controller.

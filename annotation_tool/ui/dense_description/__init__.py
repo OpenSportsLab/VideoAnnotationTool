@@ -275,7 +275,7 @@ class DenseAnnotationPanel(QWidget):
         super().__init__(parent)
 
         ui_path = resource_path(
-            os.path.join("ui", "dense_description", "annotation_panel", "dense_annotation_panel.ui")
+            os.path.join("ui", "dense_description", "dense_annotation_panel.ui")
         )
         try:
             uic.loadUi(ui_path, self)

@@ -5,7 +5,7 @@ from typing import List
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from ui.common.dialogs import ProjectTypeDialog
+from ui.dialogs import ProjectTypeDialog
 
 
 class AppRouter:

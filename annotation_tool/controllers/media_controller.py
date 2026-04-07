@@ -47,7 +47,7 @@ class MediaController(QObject):
         self.stop() # Force kill playback
         
         try:
-            from ui.common.dialogs import MediaErrorDialog
+            from ui.dialogs import MediaErrorDialog
             error_dialog = MediaErrorDialog(error_details, parent=self.video_widget)
             error_dialog.exec() # Block UI thread
         except ImportError as e:

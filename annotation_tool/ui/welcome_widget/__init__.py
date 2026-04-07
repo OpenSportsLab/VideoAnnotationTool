@@ -31,7 +31,7 @@ class WelcomeWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        ui_path = resource_path(os.path.join("ui", "common", "welcome_widget", "welcome_widget.ui"))
+        ui_path = resource_path(os.path.join("ui", "welcome_widget", "welcome_widget.ui"))
         try:
             uic.loadUi(ui_path, self)
         except Exception as exc:

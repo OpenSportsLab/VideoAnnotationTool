@@ -17,13 +17,13 @@ from controllers.common.welcome_controller import WelcomeController
 from models import AppStateModel
 
 # [NEW] Direct UI Imports
-from ui.common.welcome_widget import WelcomeWidget
-from ui.common.dataset_explorer_panel import DatasetExplorerPanel
-from ui.common.media_player import MediaCenterPanel
-from ui.classification.annotation_panel import ClassificationAnnotationPanel
-from ui.localization.annotation_panel import LocalizationAnnotationPanel
-from ui.description.annotation_panel import DescriptionAnnotationPanel
-from ui.dense_description.annotation_panel import DenseAnnotationPanel
+from ui.welcome_widget import WelcomeWidget
+from ui.dataset_explorer_panel import DatasetExplorerPanel
+from ui.media_player import MediaCenterPanel
+from ui.classification import ClassificationAnnotationPanel
+from ui.localization import LocalizationAnnotationPanel
+from ui.description import DescriptionAnnotationPanel
+from ui.dense_description import DenseAnnotationPanel
 
 from utils import create_checkmark_icon, resource_path
 

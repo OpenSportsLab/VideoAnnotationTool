@@ -629,7 +629,7 @@ class LocalizationAnnotationPanel(QWidget):
         super().__init__(parent)
 
         ui_path = resource_path(
-            os.path.join("ui", "localization", "annotation_panel", "localization_annotation_panel.ui")
+            os.path.join("ui", "localization", "localization_annotation_panel.ui")
         )
         try:
             uic.loadUi(ui_path, self)

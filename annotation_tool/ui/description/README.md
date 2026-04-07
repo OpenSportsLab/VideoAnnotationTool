@@ -1,37 +1,23 @@
-# UI: Description Mode
+# Description UI
 
-Description-mode UI is focused on the right-side text editor panel.  
-The center media/timeline/playback UI is shared through `ui/common/media_player/`.
+Description right-panel UI package.
 
 ## Structure
 
 ```text
 ui/description/
-├── annotation_panel/
-│   ├── __init__.py
-│   ├── description_annotation_panel.ui
-│   └── README.md
+├── __init__.py
+├── description_annotation_panel.ui
 └── README.md
 ```
 
-## Main View
+## Notes
 
-- **Class:** `DescriptionAnnotationPanel`
-- **Import path:** `from ui.description.annotation_panel import DescriptionAnnotationPanel`
-- **Loaded from:** `annotation_panel/description_annotation_panel.ui`
-
-## Exposed Surface
-
-- Widgets:
-  - `caption_edit`
-  - `confirm_btn`
-  - `clear_btn`
-- Signals:
-  - `confirm_clicked`
-  - `clear_clicked`
-
-QSS object names remain:
-
-- `descCaptionEdit`
-- `descConfirmBtn`
-- `descClearBtn`
+- Main class: `DescriptionAnnotationPanel` (import path: `from ui.description import DescriptionAnnotationPanel`).
+- Exposed surface:
+  - widgets: `caption_edit`, `confirm_btn`, `clear_btn`
+  - signals: `confirm_clicked`, `clear_clicked`
+- QSS object names remain unchanged:
+  - `descCaptionEdit`
+  - `descConfirmBtn`
+  - `descClearBtn`

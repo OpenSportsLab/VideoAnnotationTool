@@ -353,7 +353,7 @@ class ClassificationAnnotationPanel(QWidget):
         super().__init__(parent)
 
         ui_path = resource_path(
-            os.path.join("ui", "classification", "annotation_panel", "classification_annotation_panel.ui")
+            os.path.join("ui", "classification", "classification_annotation_panel.ui")
         )
         try:
             uic.loadUi(ui_path, self)
