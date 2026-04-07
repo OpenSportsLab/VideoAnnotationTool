@@ -150,12 +150,14 @@ class VideoAnnotationWindow(QMainWindow):
         """Switch to the Welcome Screen (Index 0 in central stack)."""
         self.center_stack.setCurrentIndex(0)
         self.set_project_ui_enabled(False)
+        self._set_side_docks_visible(False)
         if hasattr(self, "welcome_controller"):
             self.welcome_controller.refresh_recent_projects()
 
     def show_workspace(self):
         """Switch to the Media Player (Index 1 in central stack)."""
         self.center_stack.setCurrentIndex(1)
+        self._set_side_docks_visible(True)
         self.set_project_ui_enabled(True)
 
     def show_classification_view(self):
@@ -200,6 +202,11 @@ class VideoAnnotationWindow(QMainWindow):
         self.localization_panel.setEnabled(enabled)
         self.description_panel.setEnabled(enabled)
         self.dense_panel.setEnabled(enabled)
+
+    def _set_side_docks_visible(self, visible: bool):
+        """Show or hide side dock widgets (dataset explorer + annotation editor)."""
+        self.data_dock.setVisible(visible)
+        self.editor_dock.setVisible(visible)
 
     # Welcome screen
     def _safe_import_annotations(self): self.router.import_annotations()

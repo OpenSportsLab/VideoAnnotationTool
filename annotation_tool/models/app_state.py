@@ -1,5 +1,6 @@
 import os
 import copy
+import datetime
 from enum import Enum, auto
 from uuid import uuid4
 
@@ -45,6 +46,17 @@ class AppStateModel:
     - Does not touch UI widgets (UI is managed elsewhere).
     """
 
+    HEADER_EDITABLE_KEYS = (
+        "version",
+        "date",
+        "task",
+        "dataset_name",
+        "description",
+        "modalities",
+        "metadata",
+    )
+    HEADER_EXCLUDED_KEYS = {"data", "labels"}
+
     def __init__(self):
         # --- Project metadata ---
         self.current_working_directory = None
@@ -54,6 +66,10 @@ class AppStateModel:
         self.project_description = ""  # Keep a default to avoid missing-field issues
         self.current_task_name = "Untitled Task"
         self.modalities = ["video"]
+        self.project_mode = ""
+        self.project_header_known = {}
+        self.project_header_unknown = {}
+        self.project_header_draft = {}
 
         self.is_multi_view = False
 
@@ -103,6 +119,7 @@ class AppStateModel:
         self.current_json_path = None
         self.json_loaded = False
         self.is_data_dirty = False
+        self.project_header_draft = {}
 
         self.is_multi_view = False
 
@@ -130,6 +147,11 @@ class AppStateModel:
             self.current_working_directory = None
             self.current_task_name = "Untitled Task"
             self.project_description = ""
+            self.modalities = ["video"]
+            self.project_mode = ""
+            self.project_header_known = {}
+            self.project_header_unknown = {}
+            self.project_header_draft = {}
 
     def push_undo(self, cmd_type: CmdType, **kwargs):
         """Push a command onto the undo stack and clear the redo stack."""
@@ -137,6 +159,129 @@ class AppStateModel:
         self.undo_stack.append(command)
         self.redo_stack.clear()
         self.is_data_dirty = True
+
+    # ------------------------------------------------------------
+    # Top-level Header State
+    # ------------------------------------------------------------
+    def initialize_project_header_from_json(self, data: dict, mode: str):
+        """Split top-level JSON fields into editable-known and read-only-unknown."""
+        self.project_mode = mode or ""
+        known = {}
+        unknown = {}
+
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if key in self.HEADER_EXCLUDED_KEYS:
+                    continue
+                if key in self.HEADER_EDITABLE_KEYS:
+                    known[key] = copy.deepcopy(value)
+                else:
+                    unknown[key] = copy.deepcopy(value)
+
+        self.project_header_known = known
+        self.project_header_unknown = unknown
+        self.project_header_draft = {}
+
+    def initialize_project_header_defaults(self, mode: str):
+        """Initialize editable top-level headers for new projects by mode."""
+        today = datetime.date.today().isoformat()
+        defaults_by_mode = {
+            "classification": {
+                "version": "2.0",
+                "date": today,
+                "task": "action_classification",
+                "description": "",
+                "modalities": ["video"],
+            },
+            "localization": {
+                "version": "2.0",
+                "date": today,
+                "task": "action_spotting",
+                "dataset_name": "Untitled Task",
+                "modalities": ["video"],
+                "metadata": {
+                    "source": "Annotation Tool Export",
+                    "created_by": "User",
+                },
+            },
+            "description": {
+                "version": "1.0",
+                "date": today,
+                "task": "video_captioning",
+                "dataset_name": "Untitled Description Task",
+                "metadata": {
+                    "source": "SoccerNet Annotation Tool",
+                    "created_by": "User",
+                },
+            },
+            "dense_description": {
+                "version": "1.0",
+                "date": today,
+                "task": "dense_video_captioning",
+                "dataset_name": "Untitled Dense Task",
+                "metadata": {
+                    "source": "SoccerNet Annotation Tool",
+                    "created_by": "User",
+                    "license": "CC-BY-NC 4.0",
+                },
+            },
+        }
+
+        defaults = copy.deepcopy(defaults_by_mode.get(mode, {}))
+        self.project_mode = mode or ""
+        self.project_header_known = defaults
+        self.project_header_unknown = {}
+        self.project_header_draft = {}
+
+    def set_project_header_draft(self, draft: dict):
+        """Set staged known-header edits (applied only on Save / Save As)."""
+        if not isinstance(draft, dict):
+            self.project_header_draft = {}
+            return
+        self.project_header_draft = {
+            key: copy.deepcopy(value)
+            for key, value in draft.items()
+            if key in self.HEADER_EDITABLE_KEYS
+        }
+
+    def get_project_header_for_display(self):
+        """Return currently visible editable known headers (known + staged draft)."""
+        merged = copy.deepcopy(self.project_header_known)
+        for key, value in self.project_header_draft.items():
+            if key in self.HEADER_EDITABLE_KEYS:
+                merged[key] = copy.deepcopy(value)
+        return merged
+
+    def build_project_header_for_write(self):
+        """
+        Build merged top-level header for file writing.
+        - Uses known + staged draft + preserved unknown keys.
+        - Excludes `data` and `labels` (writers add those separately).
+        """
+        merged_known = copy.deepcopy(self.project_header_known)
+        for key, value in self.project_header_draft.items():
+            if key in self.HEADER_EDITABLE_KEYS:
+                merged_known[key] = copy.deepcopy(value)
+
+        output = {}
+        for key in self.HEADER_EDITABLE_KEYS:
+            if key in merged_known:
+                output[key] = merged_known[key]
+
+        for key, value in self.project_header_unknown.items():
+            if key in self.HEADER_EXCLUDED_KEYS:
+                continue
+            if key not in output:
+                output[key] = copy.deepcopy(value)
+
+        return output
+
+    def commit_project_header_draft(self):
+        """Persist staged known-header edits into committed header state."""
+        for key, value in self.project_header_draft.items():
+            if key in self.HEADER_EDITABLE_KEYS:
+                self.project_header_known[key] = copy.deepcopy(value)
+        self.project_header_draft = {}
 
     # ------------------------------------------------------------
     # Shared State Helpers (used by controllers)

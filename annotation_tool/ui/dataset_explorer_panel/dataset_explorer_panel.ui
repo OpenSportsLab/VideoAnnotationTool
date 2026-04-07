@@ -2,10 +2,15 @@
 <ui version="4.0">
  <class>DatasetExplorerPanelForm</class>
  <widget class="QWidget" name="DatasetExplorerPanelForm">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>251</width>
+    <height>354</height>
+   </rect>
+  </property>
   <layout class="QVBoxLayout" name="verticalLayout">
-   <property name="spacing">
-    <number>5</number>
-   </property>
    <property name="leftMargin">
     <number>5</number>
    </property>
@@ -19,88 +24,215 @@
     <number>5</number>
    </property>
    <item>
-    <layout class="QHBoxLayout" name="headerLayout">
-     <item>
-      <widget class="QLabel" name="lbl_title">
-       <property name="text">
-        <string>Project Items</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="btn_add_data">
-       <property name="cursor">
-        <cursorShape>PointingHandCursor</cursorShape>
-       </property>
-       <property name="text">
-        <string>Add New Data</string>
-       </property>
-      </widget>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <widget class="QTreeView" name="tree"/>
-   </item>
-   <item>
-    <layout class="QHBoxLayout" name="bottomLayout">
-     <property name="leftMargin">
-      <number>0</number>
+    <widget class="QTabWidget" name="header_tabs">
+     <property name="currentIndex">
+      <number>1</number>
      </property>
-     <property name="topMargin">
-      <number>5</number>
-     </property>
-     <property name="rightMargin">
-      <number>0</number>
-     </property>
-     <property name="bottomMargin">
-      <number>0</number>
-     </property>
-     <item>
-      <widget class="QLabel" name="lbl_filter">
-       <property name="text">
-        <string>Filter:</string>
+     <widget class="QWidget" name="tab_headers">
+      <attribute name="title">
+       <string>Headers</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayout_tab_headers">
+       <property name="spacing">
+        <number>4</number>
        </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="filter_combo"/>
-     </item>
-     <item>
-      <widget class="QPushButton" name="clear_btn">
-       <property name="cursor">
-        <cursorShape>PointingHandCursor</cursorShape>
+       <property name="leftMargin">
+        <number>0</number>
        </property>
-       <property name="text">
-        <string>Clear All</string>
+       <property name="topMargin">
+        <number>0</number>
        </property>
-      </widget>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <layout class="QHBoxLayout" name="horizontalLayout_2">
-     <item>
-      <widget class="QPushButton" name="btn_prev_sample">
-       <property name="cursor">
-        <cursorShape>PointingHandCursor</cursorShape>
+       <property name="rightMargin">
+        <number>0</number>
        </property>
-       <property name="text">
-        <string>Prev Sample</string>
+       <property name="bottomMargin">
+        <number>0</number>
        </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="btn_next_sample">
-       <property name="cursor">
-        <cursorShape>PointingHandCursor</cursorShape>
+       <item>
+        <widget class="QTableWidget" name="table_header_known">
+         <column>
+          <property name="text">
+           <string>Key</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>Value</string>
+          </property>
+         </column>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="tab_data">
+      <attribute name="title">
+       <string>Data</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayout_tab_data">
+       <property name="leftMargin">
+        <number>0</number>
        </property>
-       <property name="text">
-        <string>Next Sample</string>
+       <property name="topMargin">
+        <number>0</number>
        </property>
-      </widget>
-     </item>
-    </layout>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <item>
+        <layout class="QHBoxLayout" name="headerLayout">
+         <item>
+          <widget class="QLabel" name="lbl_title">
+           <property name="text">
+            <string>Project Items</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_add_data">
+           <property name="cursor">
+            <cursorShape>PointingHandCursor</cursorShape>
+           </property>
+           <property name="text">
+            <string>Add New Data</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QTreeView" name="tree"/>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="bottomLayout">
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>5</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QLabel" name="lbl_filter">
+           <property name="text">
+            <string>Filter:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QComboBox" name="filter_combo"/>
+         </item>
+         <item>
+          <widget class="QPushButton" name="clear_btn">
+           <property name="cursor">
+            <cursorShape>PointingHandCursor</cursorShape>
+           </property>
+           <property name="text">
+            <string>Clear All</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout_2">
+         <item>
+          <widget class="QPushButton" name="btn_prev_sample">
+           <property name="cursor">
+            <cursorShape>PointingHandCursor</cursorShape>
+           </property>
+           <property name="text">
+            <string>Prev Sample</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_next_sample">
+           <property name="cursor">
+            <cursorShape>PointingHandCursor</cursorShape>
+           </property>
+           <property name="text">
+            <string>Next Sample</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="tab_others">
+      <attribute name="title">
+       <string>Others</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayout_tab_others">
+       <property name="spacing">
+        <number>4</number>
+       </property>
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QTableWidget" name="table_header_unknown">
+         <column>
+          <property name="text">
+           <string>Key</string>
+          </property>
+         </column>
+         <column>
+          <property name="text">
+           <string>Value</string>
+          </property>
+         </column>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="tab_json">
+      <attribute name="title">
+       <string>JSON</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayout_tab_json">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QPlainTextEdit" name="json_raw_text">
+         <property name="readOnly">
+          <bool>true</bool>
+         </property>
+         <property name="lineWrapMode">
+          <enum>QPlainTextEdit::LineWrapMode::NoWrap</enum>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </widget>
    </item>
   </layout>
  </widget>

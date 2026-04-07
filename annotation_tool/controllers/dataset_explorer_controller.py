@@ -32,6 +32,9 @@ class DatasetExplorerController(QObject):
         self.panel.removeItemRequested.connect(self.handle_remove_item)
         self.panel.filter_combo.currentIndexChanged.connect(self.handle_filter_change)
         self.panel.sampleNavigateRequested.connect(self.navigate_samples)
+        self.panel.headerDraftChanged.connect(self._on_header_draft_changed)
+        if hasattr(self.panel, "header_tabs"):
+            self.panel.header_tabs.currentChanged.connect(self._on_explorer_tab_changed)
 
         # Dataset Explorer owns selection normalization/media routing and emits Data IDs.
         self.panel.tree.selectionModel().currentChanged.connect(self._on_selection_changed)
@@ -41,6 +44,134 @@ class DatasetExplorerController(QObject):
         self.main.localization_panel.setEnabled(enabled)
         self.main.description_panel.setEnabled(enabled)
         self.main.dense_panel.setEnabled(enabled)
+
+    def _on_header_draft_changed(self, draft: dict):
+        """Track staged header edits without applying them to runtime mode behavior yet."""
+        self.app_state.set_project_header_draft(draft or {})
+        if not self.app_state.json_loaded:
+            return
+        self.app_state.is_data_dirty = True
+        self.main.update_save_export_button_state()
+        self._refresh_json_preview()
+
+    def _on_explorer_tab_changed(self, index: int):
+        if not hasattr(self.panel, "header_tabs"):
+            return
+        tab_name = self.panel.header_tabs.tabText(index).strip().lower()
+        if tab_name == "json":
+            self._refresh_json_preview()
+
+    def _refresh_header_panel(self):
+        self.panel.set_header_rows(
+            known=self.app_state.project_header_known,
+            unknown=self.app_state.project_header_unknown,
+            draft=self.app_state.project_header_draft,
+            key_order=list(self.app_state.HEADER_EDITABLE_KEYS),
+        )
+        self._refresh_json_preview()
+
+    def _initialize_project_header_from_loaded_data(self, data: dict, mode: str):
+        self.app_state.initialize_project_header_from_json(data, mode)
+        self._refresh_header_panel()
+
+    def _initialize_project_header_for_new_project(self, mode: str):
+        self.app_state.initialize_project_header_defaults(mode)
+        self._refresh_header_panel()
+
+    def _build_output_with_header(self, include_labels: bool) -> dict:
+        output = self.app_state.build_project_header_for_write()
+        output.pop("data", None)
+        output.pop("labels", None)
+        if include_labels:
+            output["labels"] = self.app_state.label_definitions
+        output["data"] = []
+        return output
+
+    def _preview_base_dir(self) -> str:
+        if self.app_state.current_json_path:
+            return os.path.dirname(os.path.abspath(self.app_state.current_json_path))
+        if self.app_state.current_working_directory:
+            return os.path.abspath(self.app_state.current_working_directory)
+        return os.getcwd()
+
+    def _refresh_json_preview(self):
+        if not hasattr(self.panel, "set_raw_json_text"):
+            return
+
+        if not self.app_state.json_loaded:
+            self.panel.clear_raw_json_text()
+            return
+
+        try:
+            mode = self.app_state.project_mode
+            base_dir = self._preview_base_dir()
+            output = self._compose_output_for_mode(mode, base_dir)
+            self.panel.set_raw_json_text(json.dumps(output, indent=2, ensure_ascii=False))
+        except Exception as exc:
+            self.panel.set_raw_json_text(
+                json.dumps({"error": f"Could not build JSON preview: {exc}"}, indent=2, ensure_ascii=False)
+            )
+
+    def _compose_output_for_mode(self, mode: str, base_dir: str) -> dict:
+        if mode == "classification":
+            return self._compose_classification_output(base_dir)
+        if mode == "localization":
+            return self._compose_localization_output(base_dir)
+        if mode == "description":
+            return self._compose_description_output(base_dir)
+        if mode == "dense_description":
+            return self._compose_dense_output(base_dir)
+        return self.app_state.build_project_header_for_write()
+
+    def _finalize_successful_write(self):
+        self.app_state.commit_project_header_draft()
+        self._sync_runtime_metadata_from_header()
+        self._refresh_header_panel()
+        self.app_state.is_data_dirty = False
+        self.main.update_save_export_button_state()
+
+    def _sync_runtime_metadata_from_header(self):
+        """After a successful write, mirror committed header values to runtime metadata."""
+        header = self.app_state.project_header_known or {}
+        mode = self.app_state.project_mode
+        today = datetime.date.today().isoformat()
+
+        modalities = header.get("modalities")
+        if isinstance(modalities, list):
+            self.app_state.modalities = list(modalities)
+
+        description = header.get("description")
+        if isinstance(description, str):
+            self.app_state.project_description = description
+
+        if mode == "classification":
+            task_name = header.get("task")
+            if isinstance(task_name, str) and task_name:
+                self.app_state.current_task_name = task_name
+            if hasattr(self.main, "classification_editor_controller"):
+                self.main.classification_editor_controller.setup_dynamic_ui()
+        else:
+            dataset_name = header.get("dataset_name")
+            task_name = header.get("task")
+            if isinstance(dataset_name, str) and dataset_name:
+                self.app_state.current_task_name = dataset_name
+            elif isinstance(task_name, str) and task_name:
+                self.app_state.current_task_name = task_name
+
+        if mode == "description":
+            meta = header.get("metadata")
+            self.app_state.desc_global_metadata = {
+                "version": header.get("version", "1.0"),
+                "date": header.get("date", today),
+                "metadata": meta if isinstance(meta, dict) else {},
+            }
+        elif mode == "dense_description":
+            meta = header.get("metadata")
+            self.app_state.dense_global_metadata = {
+                "version": header.get("version", "1.0"),
+                "date": header.get("date", today),
+                "metadata": meta if isinstance(meta, dict) else {},
+            }
 
     # ---------------------------------------------------------------------
     # Tree Population
@@ -82,6 +213,7 @@ class DatasetExplorerController(QObject):
             first_index = self.tree_model.index(0, 0)
             if first_index.isValid():
                 self.panel.tree.setCurrentIndex(first_index)
+        self._refresh_json_preview()
 
     def update_item_status(self, action_path: str):
         """Update done/not-done icon for one action."""
@@ -323,6 +455,7 @@ class DatasetExplorerController(QObject):
     def _mark_dirty_and_refresh(self):
         self.app_state.is_data_dirty = True
         self.main.update_save_export_button_state()
+        self._refresh_json_preview()
 
     def navigate_samples(self, step: int):
         """
@@ -517,6 +650,7 @@ class DatasetExplorerController(QObject):
         self.main.center_panel.set_markers([])
         self.dataSelected.emit("")
         self.main.update_save_export_button_state()
+        self._refresh_json_preview()
 
     # ---------------------------------------------------------------------
     # Project Lifecycle
@@ -639,6 +773,9 @@ class DatasetExplorerController(QObject):
 
         self.main.reset_all_managers()
         self.app_state.reset(full_reset=True)
+        self.panel.clear_header_rows()
+        if hasattr(self.panel, "clear_raw_json_text"):
+            self.panel.clear_raw_json_text()
         self.main.update_save_export_button_state()
         self.main.show_welcome_view()
         self.main.show_temp_msg("Project Closed", "Returned to Home Screen", duration=1000)
@@ -686,6 +823,7 @@ class DatasetExplorerController(QObject):
                 return False
 
         self.app_state.reset(full_reset=True)
+        self._initialize_project_header_from_loaded_data(data, "classification")
 
         self.app_state.current_working_directory = os.path.dirname(file_path)
         self.app_state.current_task_name = data.get("task", "N/A")
@@ -808,6 +946,7 @@ class DatasetExplorerController(QObject):
                 return False
 
         self.app_state.reset(full_reset=True)
+        self._initialize_project_header_from_loaded_data(data, "localization")
 
         project_root = os.path.dirname(os.path.abspath(file_path))
         self.app_state.current_working_directory = project_root
@@ -942,6 +1081,7 @@ class DatasetExplorerController(QObject):
                 return False
 
         self.app_state.reset(full_reset=True)
+        self._initialize_project_header_from_loaded_data(data, "description")
 
         self.app_state.current_working_directory = os.path.dirname(os.path.abspath(file_path))
         self.app_state.current_task_name = data.get("dataset_name", data.get("task", "Description Task"))
@@ -1049,6 +1189,7 @@ class DatasetExplorerController(QObject):
                 return False
 
         self.app_state.reset(full_reset=True)
+        self._initialize_project_header_from_loaded_data(data, "dense_description")
 
         project_root = os.path.dirname(os.path.abspath(file_path))
         self.app_state.current_working_directory = project_root
@@ -1125,6 +1266,7 @@ class DatasetExplorerController(QObject):
             return
 
         self.app_state.reset(full_reset=True)
+        self._initialize_project_header_for_new_project("classification")
 
         self.app_state.current_task_name = "action_classification"
         self.app_state.modalities = ["video"]
@@ -1144,6 +1286,7 @@ class DatasetExplorerController(QObject):
 
     def _create_new_localization_project(self):
         self.app_state.reset(full_reset=True)
+        self._initialize_project_header_for_new_project("localization")
 
         self.app_state.current_task_name = "Untitled Task"
         self.app_state.project_description = ""
@@ -1172,6 +1315,7 @@ class DatasetExplorerController(QObject):
 
     def _create_new_description_project(self):
         self.app_state.reset(full_reset=True)
+        self._initialize_project_header_for_new_project("description")
 
         self.app_state.current_task_name = "Untitled Description Task"
         self.app_state.project_description = ""
@@ -1201,6 +1345,7 @@ class DatasetExplorerController(QObject):
 
     def _create_new_dense_project(self):
         self.app_state.reset(full_reset=True)
+        self._initialize_project_header_for_new_project("dense_description")
 
         self.app_state.current_task_name = "Untitled Dense Task"
         self.app_state.project_description = ""
@@ -1236,18 +1381,8 @@ class DatasetExplorerController(QObject):
     # ---------------------------------------------------------------------
     # Internal: Writers
     # ---------------------------------------------------------------------
-    def _write_classification_json(self, save_path):
-        output = {
-            "version": "2.0",
-            "date": datetime.datetime.now().isoformat().split("T")[0],
-            "task": self.app_state.current_task_name,
-            "description": self.app_state.project_description,
-            "modalities": self.app_state.modalities,
-            "labels": self.app_state.label_definitions,
-            "data": [],
-        }
-
-        json_dir = os.path.dirname(os.path.abspath(save_path))
+    def _compose_classification_output(self, base_dir: str) -> dict:
+        output = self._build_output_with_header(include_labels=True)
         sorted_items = sorted(
             self.app_state.action_item_data,
             key=lambda x: natural_sort_key(x.get("name", "")),
@@ -1260,9 +1395,9 @@ class DatasetExplorerController(QObject):
             inputs = []
             for src_abs_path in item.get("source_files", []):
                 try:
-                    fpath = os.path.relpath(src_abs_path, json_dir).replace("\\", "/")
-                except ValueError:
-                    fpath = src_abs_path.replace("\\", "/")
+                    fpath = os.path.relpath(src_abs_path, base_dir).replace("\\", "/")
+                except Exception:
+                    fpath = str(src_abs_path).replace("\\", "/")
 
                 meta = self.app_state.imported_input_metadata.get(
                     (aid, os.path.basename(src_abs_path)), {}
@@ -1282,7 +1417,6 @@ class DatasetExplorerController(QObject):
                     definition = self.app_state.label_definitions.get(head)
                     if not definition:
                         continue
-
                     if definition["type"] == "single_label":
                         entry_labels[head] = {"label": value, "confidence": 1.0, "manual": True}
                     elif definition["type"] == "multi_label":
@@ -1310,33 +1444,10 @@ class DatasetExplorerController(QObject):
 
             output["data"].append(data_entry)
 
-        try:
-            with open(save_path, "w", encoding="utf-8") as f:
-                json.dump(output, f, indent=2, ensure_ascii=False)
+        return output
 
-            self.app_state.is_data_dirty = False
-            self.main.update_save_export_button_state()
-            self.main.show_temp_msg("Saved", f"Saved to {os.path.basename(save_path)}")
-            return True
-        except Exception as exc:
-            QMessageBox.critical(self.main, "Error", f"Save failed: {exc}")
-            return False
-
-    def _write_localization_json(self, path):
-        output = {
-            "version": "2.0",
-            "date": "2025-12-16",
-            "task": "action_spotting",
-            "dataset_name": self.app_state.current_task_name,
-            "metadata": {
-                "source": "Annotation Tool Export",
-                "created_by": "User",
-            },
-            "labels": self.app_state.label_definitions,
-            "data": [],
-        }
-
-        base_dir = os.path.dirname(path)
+    def _compose_localization_output(self, base_dir: str) -> dict:
+        output = self._build_output_with_header(include_labels=True)
         sorted_items = sorted(
             self.app_state.action_item_data,
             key=lambda d: natural_sort_key(d.get("name", "")),
@@ -1373,31 +1484,10 @@ class DatasetExplorerController(QObject):
             }
             output["data"].append(entry)
 
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(output, f, indent=4, ensure_ascii=False)
+        return output
 
-            self.app_state.is_data_dirty = False
-            self.main.update_save_export_button_state()
-            self.main.statusBar().showMessage(f"Saved — {os.path.basename(path)}", 1500)
-            return True
-        except Exception as exc:
-            QMessageBox.critical(self.main, "Error", f"Save failed: {exc}")
-            return False
-
-    def _write_description_json(self, path):
-        global_meta = getattr(self.app_state, "desc_global_metadata", {})
-
-        output = {
-            "version": global_meta.get("version", "1.0"),
-            "date": global_meta.get("date", datetime.date.today().isoformat()),
-            "task": "video_captioning",
-            "dataset_name": self.app_state.current_task_name,
-            "metadata": global_meta.get("metadata", {}),
-            "data": [],
-        }
-
-        base_dir = os.path.dirname(path)
+    def _compose_description_output(self, base_dir: str) -> dict:
+        output = self._build_output_with_header(include_labels=False)
         sorted_items = sorted(
             self.app_state.action_item_data,
             key=lambda d: natural_sort_key(d.get("name", "")),
@@ -1440,37 +1530,10 @@ class DatasetExplorerController(QObject):
             }
             output["data"].append(entry)
 
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(output, f, indent=4, ensure_ascii=False)
+        return output
 
-            self.app_state.is_data_dirty = False
-            self.main.update_save_export_button_state()
-            self.main.statusBar().showMessage(f"Saved to {os.path.basename(path)}", 2000)
-            return True
-        except Exception as exc:
-            QMessageBox.critical(self.main, "Save Error", str(exc))
-            return False
-
-    def _write_dense_json(self, path):
-        global_meta = getattr(self.app_state, "dense_global_metadata", {})
-
-        output = {
-            "version": global_meta.get("version", "1.0"),
-            "date": global_meta.get("date", datetime.date.today().isoformat()),
-            "task": "dense_video_captioning",
-            "dataset_name": self.app_state.current_task_name,
-            "metadata": global_meta.get(
-                "metadata",
-                {
-                    "source": "SoccerNet Annotation Tool",
-                    "created_by": "User",
-                },
-            ),
-            "data": [],
-        }
-
-        base_dir = os.path.dirname(path)
+    def _compose_dense_output(self, base_dir: str) -> dict:
+        output = self._build_output_with_header(include_labels=False)
         sorted_items = sorted(
             self.app_state.action_item_data,
             key=lambda d: natural_sort_key(d.get("name", "")),
@@ -1509,13 +1572,63 @@ class DatasetExplorerController(QObject):
 
             output["data"].append(entry)
 
+        return output
+
+    def _write_classification_json(self, save_path):
+        base_dir = os.path.dirname(os.path.abspath(save_path))
+        output = self._compose_classification_output(base_dir)
+
+        try:
+            with open(save_path, "w", encoding="utf-8") as f:
+                json.dump(output, f, indent=2, ensure_ascii=False)
+
+            self._finalize_successful_write()
+            self.main.show_temp_msg("Saved", f"Saved to {os.path.basename(save_path)}")
+            return True
+        except Exception as exc:
+            QMessageBox.critical(self.main, "Error", f"Save failed: {exc}")
+            return False
+
+    def _write_localization_json(self, path):
+        base_dir = os.path.dirname(os.path.abspath(path))
+        output = self._compose_localization_output(base_dir)
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(output, f, indent=4, ensure_ascii=False)
+
+            self._finalize_successful_write()
+            self.main.statusBar().showMessage(f"Saved — {os.path.basename(path)}", 1500)
+            return True
+        except Exception as exc:
+            QMessageBox.critical(self.main, "Error", f"Save failed: {exc}")
+            return False
+
+    def _write_description_json(self, path):
+        base_dir = os.path.dirname(os.path.abspath(path))
+        output = self._compose_description_output(base_dir)
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(output, f, indent=4, ensure_ascii=False)
+
+            self._finalize_successful_write()
+            self.main.statusBar().showMessage(f"Saved to {os.path.basename(path)}", 2000)
+            return True
+        except Exception as exc:
+            QMessageBox.critical(self.main, "Save Error", str(exc))
+            return False
+
+    def _write_dense_json(self, path):
+        base_dir = os.path.dirname(os.path.abspath(path))
+        output = self._compose_dense_output(base_dir)
+
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(output, f, indent=4, ensure_ascii=False)
 
             self.app_state.current_json_path = path
-            self.app_state.is_data_dirty = False
-            self.main.update_save_export_button_state()
+            self._finalize_successful_write()
             self.main.statusBar().showMessage(f"Saved — {os.path.basename(path)}", 1500)
             return True
         except Exception as exc:
