@@ -27,34 +27,23 @@ annotation_tool/
 │   ├── history_manager.py      # Universal Undo/Redo system (Supports Batch Annotations)
 │   ├── media_controller.py     # Unified playback logic (Anti-freeze/Visual clearing)
 │   ├── classification/         # Logic for Classification mode
-│   │   ├── class_annotation_manager.py # Manual label state management
-│   │   ├── class_file_manager.py       # JSON I/O for Classification tasks
-│   │   ├── class_navigation_manager.py # Action tree navigation
-│   │   └── inference_manager.py        # [NEW] AI Smart Annotation (Single/Batch Inference)
+│   │   ├── classification_editor_controller.py # Unified classification mode controller
+│   │   ├── inference_manager.py                # AI Smart Annotation helper
+│   │   └── train_manager.py                    # Training helper
 │   ├── localization/           # Logic for Action Spotting (Localization) mode
 │   ├── description/            # Logic for Global Captioning (Description) mode
 │   └── dense_description/      # Logic for Dense Captioning (Text-at-Timestamp)
-│       ├── dense_manager.py      # Core logic for dense annotations & UI sync
-│       └── dense_file_manager.py # JSON I/O specifically for Dense tasks
+│       └── dense_editor_controller.py # Dense editor logic + explorer delegation
 │
 ├── ui/                         # [View Layer] Interface Definitions
-│   ├── common/                 # Shared widgets (Main Window, Sidebar, Video Surface)
-│   │   ├── main_window.py        # Top-level UI (Stacked layout management)
-│   │   ├── video_surface.py      # Shared Pure QVideoWidget + QMediaPlayer
-│   │   ├── workspace.py          # Unified 3-column skeleton
-│   │   └── dialogs.py            # Project wizards and mode selectors
-│   ├── classification/         # UI specific to Classification
-│   │   └── event_editor/         # Dynamic Schema Editor & [NEW] Smart Annotation UI
-│   │       ├── dynamic_widgets.py  # Single/Multi label dynamic radio & checkbox groups
-│   │       ├── editor.py           # Includes NativeDonutChart & Batch Progress UI
-│   │       └── controls.py         # Playback control bar
-│   ├── localization/           # UI specific to Localization (Timeline + Tabbed Spotting)
-│   ├── description/            # UI specific to Global Captioning (Full-video text)
-│   └── dense_description/      # UI specific to Dense Description
-│       └── event_editor/
-│           ├── __init__.py       # Right panel assembler for Dense mode
-│           ├── desc_input_widget.py # Text input & timestamp submission
-│           └── dense_table.py    # Specialized Table Model for Lang/Text columns
+│   ├── dialogs.py                # Shared dialogs (project type, media errors, etc.)
+│   ├── welcome_widget/           # Welcome screen package
+│   ├── dataset_explorer_panel/   # Left-dock dataset explorer package
+│   ├── media_player/             # Center media/timeline package
+│   ├── classification/           # Classification right-panel package
+│   ├── localization/             # Localization right-panel package
+│   ├── description/              # Description right-panel package
+│   └── dense_description/        # Dense Description right-panel package
 │
 └── style/                      # Visual theme assets
     └── style.qss               # Centralized Dark mode stylesheet
@@ -77,38 +66,14 @@ annotation_tool/
 
 ### 3. Modality Logic (`/controllers`)
 
-* **`localization_manager.py`**: Logic for "Spotting" (mapping a label to a timestamp).
-* **`dense_manager.py`**: **[NEW]** Logic for mapping free-text descriptions to timestamps. It handles the submission from the `DenseDescriptionInputWidget` and updates the timeline markers.
-* **`dense_file_manager.py`**: Handles JSON persistence for dense tasks, ensuring the `text` and `position_ms` fields are properly serialized.
+* **`localization_editor_controller.py`**: Logic for "Spotting" (mapping a label to a timestamp), schema management, table/timeline sync, and localization explorer delegation.
+* **`dense_editor_controller.py`**: Logic for mapping free-text descriptions to timestamps, timeline sync, CRUD + undo/redo, and Dense-mode explorer add/remove/filter/clear delegation.
 
 ### 4. The View Layer (`/ui`)
 
-* **`video_surface.py`**: A shared rendering component used by **every** mode to ensure consistent video performance.
-* **`dense_table.py`**: A specialized view inheriting from the Localization table model. It replaces the "Label/Head" columns with "Lang/Description" while maintaining the same timestamp-jump functionality.
-* **`desc_input_widget.py`**: Provides a `QTextEdit` for long-form text and an "Add" button that captures the exact current playback frame.
-
----
-
-## 🔄 Reusability & Modality Comparison
-
-The application is built on a "Composite Design" strategy. While each mode serves a different task, they share significant architectural DNA.
-
-### Is Dense Description a reuse of Localization?
-
-**Yes.** The Dense Description modality is essentially a **specialized evolution** of the Localization mode.
-
-* **Shared Center Panel**: Both use the `LocCenterPanel`, which includes the zoomable `TimelineWidget` and `VideoSurface`.
-* **Shared Data Logic**: Both are "Event-based" (data is tied to a `position_ms`) rather than "Clip-based".
-* **Shared Table Interface**: The `DenseTableModel` is a direct subclass of `AnnotationTableModel`, inheriting all natural sorting and timestamp-parsing logic.
-
-### Modality Feature Matrix
-
-| Feature | Classification | Localization | Global Description | Dense Description |
-| --- | --- | --- | --- | --- |
-| **Primary Data** | Multi-choice Labels | Timestamped Labels | Global Video Text | Timestamped Text |
-| **Center UI** | Multi-view Player | Timeline + Player | Slider + Player | Timeline + Player |
-| **Right UI** | Schema Editor | Tabbed Spotting | Text Editor | Text Input + Table |
-| **Code Base** | Unique | Shared with Dense | Unique | Shared with Loc |
+* Shared shell widgets live directly under `ui/`: `welcome_widget/`, `dataset_explorer_panel/`, `media_player/`, and `dialogs.py`.
+* Each mode package is flat and self-contained (`__init__.py` + `.ui` + `README.md`).
+* Example: `dense_description/dense_annotation_panel.ui` defines Dense right-panel layout and editable table area.
 
 ---
 
@@ -119,5 +84,3 @@ The application is built on a "Composite Design" strategy. While each mode serve
 3. **Annotate**:
 * In **Dense mode**, navigate to a point in the video, type your description in the right panel, and click "Add Description".
 * Use the **Timeline** to jump between existing text annotations.
-
-

@@ -1,6 +1,5 @@
 import copy
 from models import CmdType
-from ui.classification.event_editor import DynamicSingleLabelGroup, DynamicMultiLabelGroup
 
 class HistoryManager:
     """
@@ -47,35 +46,35 @@ class HistoryManager:
         # 0: Classification Mode
         if tab_idx == 0:
             # Rebuild the right-side dynamic control
-            self.main.setup_dynamic_ui()
+            self.main.classification_editor_controller.setup_dynamic_ui()
             # Refresh the left and annotation status
             self.main.refresh_ui_after_undo_redo(self.main.get_current_action_path())
 
         # 1: Localization Mode
         elif tab_idx == 1:
             # Refresh Schema (Tabs)
-            self.main.loc_manager._refresh_schema_ui()
+            self.main.localization_editor_controller._refresh_schema_ui()
             # Refresh Events (Table & Timeline)
-            self.main.loc_manager._refresh_current_clip_events()
+            self.main.localization_editor_controller._refresh_current_clip_events()
             # Refresh left side
-            self.main.loc_manager.populate_tree()
+            self.main.dataset_explorer_controller.populate_tree()
 
         # 2: Description Mode
         elif tab_idx == 2:
-            # Refresh the editor text by re-triggering selection logic
-            tree = self.main.left_panel.tree
+            # Refresh editor text only (no media reload/replay on undo/redo).
+            tree = self.main.dataset_explorer_panel.tree
             current_idx = tree.selectionModel().currentIndex()
             if current_idx.isValid():
                 # Force reload of data from model to UI (pass None as previous index)
-                self.main.desc_nav_manager.on_item_selected(current_idx, None)
+                self.main.desc_editor_controller.on_item_selected(current_idx, None)
         
         # 3: Dense Description Mode
         elif tab_idx == 3:
             # Refresh the table and timeline markers
-            # Using the path stored in dense_manager
-            path = self.main.dense_manager.current_video_path
+            # Using the path stored in dense editor controller
+            path = self.main.dense_editor_controller.current_video_path
             if path:
-                self.main.dense_manager._display_events_for_item(path)
+                self.main.dense_editor_controller.display_events_for_item(path)
 
     def _apply_state_change(self, cmd, is_undo):
         ctype = cmd['type']
@@ -145,8 +144,10 @@ class HistoryManager:
                 val = cmd['old_val'] if is_undo else cmd['new_val']
                 grp = self.main.classification_panel.label_groups.get(cmd['head'])
                 if grp:
-                    if isinstance(grp, DynamicSingleLabelGroup): grp.set_checked_label(val)
-                    else: grp.set_checked_labels(val)
+                    if hasattr(grp, "set_checked_label"):
+                        grp.set_checked_label(val)
+                    elif hasattr(grp, "set_checked_labels"):
+                        grp.set_checked_labels(val)
 
        
 
@@ -225,9 +226,7 @@ class HistoryManager:
                     if text_val and text_val.strip():
                         has_text = True
                 
-                tree_item = self.model.action_item_map.get(path)
-                if tree_item:
-                    tree_item.setIcon(self.main.done_icon if has_text else self.main.empty_icon)
+                self.main.update_action_item_status(path)
 
             self._refresh_active_view()
 

@@ -1,4 +1,0 @@
-from .editor import ClassificationAnnotationPanel
-from .dynamic_widgets import DynamicSingleLabelGroup, DynamicMultiLabelGroup
-
-ClassificationAnnotationPanel = ClassificationAnnotationPanel

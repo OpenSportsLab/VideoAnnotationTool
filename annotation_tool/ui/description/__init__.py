@@ -1,12 +1,44 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
-from PyQt6.QtCore import Qt
+import os
 
-class DescriptionMediaPlayer(QWidget):
-    """Placeholder for the Description Video Player"""
+from PyQt6 import uic
+from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtWidgets import QWidget
+
+from utils import resource_path
+
+
+class DescriptionAnnotationPanel(QWidget):
+    """
+    Description annotation editor panel view loaded from Qt Designer UI.
+    """
+
+    confirm_clicked = pyqtSignal()
+    clear_clicked = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        label = QLabel("Description Player (Center)\nPlays: video1 / video2")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet("font-size: 18px; color: #888;")
-        layout.addWidget(label)
+
+        ui_path = resource_path(
+            os.path.join("ui", "description", "description_annotation_panel.ui")
+        )
+        try:
+            uic.loadUi(ui_path, self)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to load DescriptionAnnotationPanel UI: {ui_path}. Reason: {exc}"
+            ) from exc
+
+        # Keep existing runtime API expected by controllers/tests.
+        self.caption_edit = self.descCaptionEdit
+        self.confirm_btn = self.descConfirmBtn
+        self.clear_btn = self.descClearBtn
+
+        # Keep Clear/Confirm width ratio from the previous hand-built widget.
+        self.buttonsLayout.setStretch(0, 1)
+        self.buttonsLayout.setStretch(1, 2)
+
+        self.confirm_btn.clicked.connect(self.confirm_clicked.emit)
+        self.clear_btn.clicked.connect(self.clear_clicked.emit)
+
+
+__all__ = ["DescriptionAnnotationPanel"]

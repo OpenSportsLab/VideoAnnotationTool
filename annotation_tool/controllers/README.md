@@ -58,18 +58,29 @@ These controllers provide foundational functionality used across the entire appl
 
 Logic dedicated to the **Whole-Video Classification** task (assigning attributes to an entire video clip).
 
-* **`class_file_manager.py`**: Handles JSON I/O and relative path calculations.
-* **`navigation_manager.py`**: Manages the "Action List" (Left Panel), auto-play logic, and filtering.
-* **`annotation_manager.py`**: Manages dynamic schema logic (Radio/Checkbox generation) and saves class selections.
+* **`classification_editor_controller.py`**:
+* Single Classification mode controller.
+* Owns selection/media load, annotation save/clear, schema CRUD, clip navigation, and dynamic-label wiring.
+* Owns Classification Dataset Explorer delegation (`add/remove/filter/clear/clear_workspace`).
+
+* **`inference_manager.py`**:
+* Smart inference helper service used by `ClassificationEditorController`.
+
+* **`train_manager.py`**:
+* Training helper service used by `ClassificationEditorController`.
 
 ### 3. Localization Controllers (`controllers/localization/`)
 
 Logic dedicated to the **Action Spotting** task (pinpointing specific timestamps).
 
-* **`loc_file_manager.py`**: Handles JSON I/O with path fallback logic (checking local directories if absolute paths fail).
-* **`localization_manager.py`**:
-* Synchronizes the **Video Player**, **Timeline Widget**, and **Event Table**.
-* Captures timestamps for spotting events and manages the multi-tab interface.
+* **`localization_editor_controller.py`**:
+* Owns localization editor behavior: tree selection/media load, schema/head/label operations, spotting CRUD, table sync, and smart inference flows.
+* Owns localization navigation helpers (next/previous clip and annotation).
+* Owns localization Dataset Explorer delegation for add/remove/filter/clear and clear-workspace reset.
+* Keeps localization table/timeline/tree refresh aligned with shared undo/redo pathways.
+
+Localization JSON lifecycle load/create/save/export remains routed through
+`controllers/common/dataset_explorer_controller.py` in the current staged design.
 
 
 
@@ -77,14 +88,11 @@ Logic dedicated to the **Action Spotting** task (pinpointing specific timestamps
 
 Logic dedicated to the **Global Captioning** task (one text description per video action).
 
-* **`desc_navigation_manager.py`**:
-* Manages **Multi-Clip Actions** (navigating logical "Actions" that may contain multiple video files).
-* Wraps the `MediaController` to ensure smooth loading of large video files.
-
-
-* **`desc_annotation_manager.py`**:
-* Handles **Q&A Formatting**: Parses JSON "questions" into a readable Q&A format in the editor.
-* **Flattening**: Consolidates text into a single description block upon save.
+* **`desc_editor_controller.py`**:
+* Owns Description editor behavior: selection-to-text refresh, save/clear actions, reset, and undo command creation.
+* Owns Description navigation helpers: previous/next action and previous/next clip traversal.
+* Owns Description-mode dataset explorer actions: add/remove/filter/clear and clear-workspace reset.
+* Keeps tree done-status updates aligned with shared status refresh pathways.
 
 
 * **`desc_file_manager.py`**:
@@ -96,11 +104,10 @@ Logic dedicated to the **Global Captioning** task (one text description per vide
 
 Logic dedicated to the **Dense Captioning** task (text descriptions anchored to specific timestamps).
 
-* **`dense_manager.py`**:
-* **Editor-Timeline Sync**: Continuously synchronizes the text input field with the video playback position. If the video hits an event, the text loads automatically.
-* **CRUD**: Handles creating, updating, and deleting timestamped text events.
+* **`dense_editor_controller.py`**:
+* Owns Dense editor behavior: timestamp/text sync, event create/update/delete, and undo command creation.
+* Owns Dense tree-selection and navigation helpers (next/previous clip and event).
+* Owns Dense-mode Dataset Explorer delegation for add/remove/filter/clear and clear-workspace reset.
 
-
-* **`dense_file_manager.py`**:
-* **Metadata Preservation**: Ensures global and item-level metadata is retained during Load/Save cycles.
-* **Data Mapping**: Maps the flat `dense_captions` JSON list to the internal application model.
+Dense JSON lifecycle load/save/export remains routed through the shared
+`controllers/common/dataset_explorer_controller.py` in the current staged design.

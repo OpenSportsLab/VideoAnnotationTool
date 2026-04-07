@@ -47,7 +47,7 @@ class MediaController(QObject):
         self.stop() # Force kill playback
         
         try:
-            from ui.common.dialogs import MediaErrorDialog
+            from ui.dialogs import MediaErrorDialog
             error_dialog = MediaErrorDialog(error_details, parent=self.video_widget)
             error_dialog.exec() # Block UI thread
         except ImportError as e:
@@ -130,3 +130,19 @@ class MediaController(QObject):
 
     def set_position(self, position):
         self.player.setPosition(position)
+
+    def seek_relative(self, delta_ms: int):
+        """
+        Move playback position by a relative offset in milliseconds.
+        """
+        current = self.player.position()
+        target = current + delta_ms
+
+        if target < 0:
+            target = 0
+
+        duration = self.player.duration()
+        if duration > 0 and target > duration:
+            target = duration
+
+        self.player.setPosition(target)

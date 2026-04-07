@@ -134,6 +134,139 @@ class AppStateModel:
         self.is_data_dirty = True
 
     # ------------------------------------------------------------
+    # Shared State Helpers (used by controllers)
+    # ------------------------------------------------------------
+    def detect_json_type(self, data):
+        """Detect supported project type from top-level task and sample fields."""
+        task = str(data.get("task", "")).lower()
+
+        if "dense" in task:
+            return "dense_description"
+        if "caption" in task or "description" in task:
+            return "description"
+        if "spotting" in task or "localization" in task:
+            return "localization"
+        if "classification" in task:
+            return "classification"
+
+        if "labels" in data and isinstance(data["labels"], dict):
+            return "localization"
+
+        items = data.get("data", [])
+        if not items:
+            return "unknown"
+
+        first = items[0] if isinstance(items[0], dict) else {}
+        if "dense_captions" in first:
+            return "dense_description"
+
+        if "events" in first:
+            events = first.get("events", [])
+            if events and isinstance(events, list) and isinstance(events[0], dict):
+                if "text" in events[0]:
+                    return "dense_description"
+                if "label" in events[0]:
+                    return "localization"
+
+        if "captions" in first:
+            return "description"
+        if "labels" in first:
+            return "classification"
+
+        return "unknown"
+
+    def has_action_path(self, path: str) -> bool:
+        return any(d.get("path") == path for d in self.action_item_data)
+
+    def has_action_name(self, name: str) -> bool:
+        return any(d.get("name") == name for d in self.action_item_data)
+
+    def has_description_path(self, path: str) -> bool:
+        return any(
+            d.get("path") == path or d.get("metadata", {}).get("path") == path
+            for d in self.action_item_data
+        )
+
+    def add_action_item(self, name: str, path: str, source_files=None, **extra_fields):
+        """Append a normalized action entry and update path-name lookup."""
+        if source_files is None:
+            normalized_sources = [path]
+        else:
+            normalized_sources = list(source_files)
+        entry = {
+            "name": name,
+            "path": path,
+            "source_files": normalized_sources,
+        }
+        entry.update(extra_fields)
+        self.action_item_data.append(entry)
+        self.action_path_to_name[path] = name
+        return entry
+
+    def remove_action_item_by_path(self, path: str) -> bool:
+        """Remove a standard action entry keyed by path."""
+        before = len(self.action_item_data)
+        self.action_item_data = [d for d in self.action_item_data if d.get("path") != path]
+        removed = len(self.action_item_data) != before
+        self.action_path_to_name.pop(path, None)
+        self.action_item_map.pop(path, None)
+        self.clear_annotations_for_path(path)
+        return removed
+
+    def remove_description_action_by_path(self, path: str):
+        """Remove description entry that may be keyed by path or metadata.path."""
+        removed_items = []
+        kept_items = []
+        for item in self.action_item_data:
+            item_path = item.get("path") or item.get("metadata", {}).get("path")
+            if item_path == path:
+                removed_items.append(item)
+            else:
+                kept_items.append(item)
+        self.action_item_data = kept_items
+
+        for item in removed_items:
+            item_id = item.get("id") or item.get("name")
+            if item_id:
+                self.imported_action_metadata.pop(item_id, None)
+
+        self.action_path_to_name.pop(path, None)
+        self.action_item_map.pop(path, None)
+        self.clear_annotations_for_path(path)
+        return removed_items
+
+    def clear_annotations_for_path(self, path: str):
+        for store_name in (
+            "manual_annotations",
+            "smart_annotations",
+            "localization_events",
+            "smart_localization_events",
+            "dense_description_events",
+        ):
+            store = getattr(self, store_name, None)
+            if isinstance(store, dict):
+                store.pop(path, None)
+
+    def is_action_done(self, action_path: str) -> bool:
+        """Return True when path has any annotation payload across modes."""
+        if self.localization_events.get(action_path):
+            return True
+        if self.manual_annotations.get(action_path):
+            return True
+        if self.dense_description_events.get(action_path):
+            return True
+
+        for data in self.action_item_data:
+            if data.get("path") != action_path:
+                continue
+            captions = data.get("captions", [])
+            if any(c.get("text", "").strip() for c in captions if isinstance(c, dict)):
+                return True
+            break
+
+        return False
+
+    # ------------------------------------------------------------
     # Validation: Classification (Action Classification)
     # ------------------------------------------------------------
     def validate_gac_json(self, data):

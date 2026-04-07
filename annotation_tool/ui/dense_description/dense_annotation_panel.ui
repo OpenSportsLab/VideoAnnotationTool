@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>DenseAnnotationPanel</class>
+ <widget class="QWidget" name="DenseAnnotationPanel">
+  <layout class="QVBoxLayout" name="denseMainLayout">
+   <property name="spacing">
+    <number>8</number>
+   </property>
+   <property name="leftMargin">
+    <number>6</number>
+   </property>
+   <property name="topMargin">
+    <number>6</number>
+   </property>
+   <property name="rightMargin">
+    <number>6</number>
+   </property>
+   <property name="bottomMargin">
+    <number>6</number>
+   </property>
+   <item>
+    <widget class="QLabel" name="denseTitleLabel">
+     <property name="styleSheet">
+      <string notr="true">font-weight: bold; color: #ccc;</string>
+     </property>
+     <property name="text">
+      <string>Dense Annotation</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="denseCurrentTimeLabel">
+     <property name="text">
+      <string>Current Time: 00:00:00.000</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignmentFlag::AlignCenter</set>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">dense_time_display</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTextEdit" name="denseDescriptionEdit">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>120</height>
+      </size>
+     </property>
+     <property name="placeholderText">
+      <string>Enter the description of the event here...</string>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">dense_desc_editor</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="denseConfirmBtn">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>40</height>
+      </size>
+     </property>
+     <property name="cursor">
+      <cursorShape>PointingHandCursor</cursorShape>
+     </property>
+     <property name="text">
+      <string>Confirm Description</string>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">dense_confirm_btn</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="denseEditLabel">
+     <property name="text">
+      <string>Edit Annotation</string>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">panel_header_lbl</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="denseSetCurrentTimeBtn">
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
+     <property name="cursor">
+      <cursorShape>PointingHandCursor</cursorShape>
+     </property>
+     <property name="text">
+      <string>Set to Current Video Time</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="denseEventsListLabel">
+     <property name="text">
+      <string>Events List</string>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">panel_header_lbl</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTableView" name="denseEventsTableView">
+     <property name="alternatingRowColors">
+      <bool>true</bool>
+     </property>
+     <property name="selectionMode">
+      <enum>QAbstractItemView::SelectionMode::SingleSelection</enum>
+     </property>
+     <property name="selectionBehavior">
+      <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">annotation_table</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

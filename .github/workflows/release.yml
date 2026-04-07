@@ -68,7 +68,7 @@ jobs:
             ~\AppData\Local\pip\Cache
             ~\AppData\Local\pip\cache
             ~\AppData\Roaming\pip\Cache
-          key: ${{ runner.os }}-pip-${{ hashFiles('annotation_tool/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -77,7 +77,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt
+          pip install -r ../requirements.txt
 
       - name: Cleanup before PyInstaller
         shell: pwsh
@@ -137,7 +137,7 @@ jobs:
           path: |
             ~/Library/Caches/pip
             ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('annotation_tool/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -145,7 +145,7 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r ../requirements.txt
 
       - name: Cleanup before PyInstaller
         shell: bash
@@ -204,7 +204,7 @@ jobs:
         with:
           path: |
             ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('annotation_tool/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -213,7 +213,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt
+          pip install -r ../requirements.txt
 
       - name: Cleanup before PyInstaller
         shell: bash

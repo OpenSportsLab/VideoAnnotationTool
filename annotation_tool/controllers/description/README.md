@@ -1,42 +1,22 @@
-# 🧠 Controllers: Description
+# Controllers: Description
 
-This directory contains the business logic for the **Description** mode (Global Video Captioning).
+Description mode uses a single controller for editor + navigation responsibilities.
 
-Unlike other modes, this controller set must handle **Multi-Clip Actions** (where one logical "Action" ID might consist of multiple video files/camera angles) and legacy **Q&A formatting**.
+## Files
 
-## 📂 Files
+### `desc_editor_controller.py`
 
-### `desc_navigation_manager.py`
+Owns Description editor behavior:
 
-**Playback & Navigation Logic.**
-Manages the Center Panel (Video Player) and the Left Sidebar (Tree View).
+- editor signal wiring (`confirm_clicked`, `clear_clicked`)
+- tree selection text refresh (`on_item_selected`)
+- caption save/clear/reset flows
+- undo/redo command creation (`CmdType.DESC_EDIT`)
+- Description dataset explorer actions (`add/remove/filter/clear`)
+- done-status refresh through the shared tree status path
 
-* **Key Responsibilities:**
-* **Media Control:** Wraps the shared `MediaController`. It implements the "Stop -> Clear -> Load -> Play" sequence to ensure smooth video transitions without artifacts.
-* **Tree Navigation:** Handles logic for moving between **Actions** (logical items) vs. **Clips** (physical files within an action).
-* **Dynamic Loading:** Resolves video paths based on the project's root directory.
+## Notes
 
-
-
-### `desc_annotation_manager.py`
-
-**Editor & Data Logic.**
-Manages the Right Panel (Text Input).
-
-* **Key Responsibilities:**
-* **Q&A Formatting:** If the loaded JSON contains `questions`, it formats them into a readable "Q: ... A: ..." block in the text editor.
-* **Flattening:** Upon saving, it consolidates the text into a single description block (unless strict schema enforcement is added later).
-* **Undo/Redo:** Pushes `CmdType.DESC_EDIT` commands to the global history stack.
-* **State Tracking:** Updates the tree icon (Checkmark/Empty) immediately after a save.
-
-
-
-### `desc_file_manager.py`
-
-**The I/O Handler.**
-Manages the specific JSON schema for Global Captioning tasks.
-
-* **Key Responsibilities:**
-* **Multi-Clip Support:** Can parse JSON where one `id` has multiple entries in the `inputs` list. It ensures all related files are registered in the `ProjectTreeModel`.
-* **Legacy Support:** Handles older JSON formats where captions might be split by questions.
-* **Export:** Reconstructs the `inputs` array during export to ensure the output JSON matches the input structure (preserving `name`, `fps`, etc.).
+- Media load orchestration for Description selection is handled in `main_window.py`.
+- JSON load/create/save/export remains handled by `controllers/common/dataset_explorer_controller.py`.
+- `DatasetExplorerController` still routes panel signals, but delegates Description mode add/remove/filter/clear behavior to `DescEditorController`.

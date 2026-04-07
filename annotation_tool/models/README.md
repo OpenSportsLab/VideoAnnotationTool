@@ -27,7 +27,7 @@ This directory contains the **Model** layer of the MVC architecture. It is respo
     * **Usage:**
         * Instantiated in `viewer.py`.
         * Shared across both Classification and Localization views.
-        * Manipulated by Controllers (`NavigationManager`, `LocalizationManager`).
+        * Manipulated by Controllers (`NavigationManager`, `LocalizationEditorController`).
 
 ## 🔄 Data Flow
 1. **Controllers** update `AppStateModel` (business data) and `ProjectTreeModel` (UI list data) simultaneously.

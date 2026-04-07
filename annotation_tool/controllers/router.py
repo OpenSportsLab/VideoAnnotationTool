@@ -1,12 +1,12 @@
 import json
+import os
+from typing import List
+
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from controllers.classification.class_file_manager import ClassFileManager
-from controllers.localization.loc_file_manager import LocFileManager
-from controllers.description.desc_file_manager import DescFileManager
-from controllers.dense_description.dense_file_manager import DenseFileManager
+from ui.dialogs import ProjectTypeDialog
 
-from ui.common.dialogs import ProjectTypeDialog
 
 class AppRouter:
     """
@@ -16,12 +16,17 @@ class AppRouter:
     3. Delegate to specific Managers
     4. Handle Project Closure
     """
+    SETTINGS_ORG = "OpenSportsLab"
+    SETTINGS_APP = "VideoAnnotationTool"
+    RECENT_DATASETS_KEY = "welcome/recent_datasets"
+    MAX_RECENT_DATASETS_DISPLAY = 10
+
     def __init__(self, main_window):
         self.main = main_window
-        self.class_fm = ClassFileManager(main_window)
-        self.loc_fm = LocFileManager(main_window)
-        self.desc_fm = DescFileManager(main_window)
-        self.dense_fm = DenseFileManager(main_window)
+        self.settings = QSettings(
+            self.SETTINGS_ORG,
+            self.SETTINGS_APP,
+        )
 
     def create_new_project_flow(self):
         """Unified entry point for creating a new project."""
@@ -32,123 +37,123 @@ class AppRouter:
 
         dlg = ProjectTypeDialog(self.main)
         if dlg.exec():
-            mode = dlg.selected_mode
-            
-            if mode == "classification":
-                self.class_fm.create_new_project()
-            elif mode == "localization":
-                self.loc_fm.create_new_project()
-            elif mode == "description":
-                self.desc_fm.create_new_project()
-            elif mode == "dense_description":
-                self.dense_fm.create_new_project()
+            self.main.dataset_explorer_controller.create_new_project(dlg.selected_mode)
 
     def import_annotations(self):
         """Global entry point for loading a JSON file."""
-        if not self.main.check_and_close_current_project():
-            return
-        
-        # [NEW] Reset all mode UIs before loading new data to prevent "Ghost UI" bugs
-        self.main.reset_all_managers()
-        
         file_path, _ = QFileDialog.getOpenFileName(
             self.main, "Select Project JSON", "", "JSON Files (*.json)"
         )
         if not file_path:
             return
-        
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f: 
-                data = json.load(f)
-        except Exception as e:
-            QMessageBox.critical(self.main, "Error", f"Invalid JSON: {e}")
-            return
 
-        # Detect the type using heuristics
-        json_type = self._detect_json_type(data)
-
-        if json_type == "classification":
-            if self.class_fm.load_project(data, file_path):
-                self.main.show_classification_view()
-            
-        elif json_type == "localization":
-            if self.loc_fm.load_project(data, file_path):
-                self.main.show_localization_view()
-
-        elif json_type == "description":
-            # [FIXED] Check return value to ensure validation passed before switching view
-            if self.desc_fm.load_project(data, file_path):
-                self.main.show_description_view()
-            
-        elif json_type == "dense_description":
-            if self.dense_fm.load_project(data, file_path):
-                self.main.show_dense_description_view()
-            
-        else:
-            QMessageBox.critical(self.main, "Error", "Unknown JSON format or Task Type.")
+        self.open_project_from_path(file_path)
 
     def close_project(self):
         """Handles closing the current project."""
-        if not self.main.check_and_close_current_project():
-            return
+        self.main.dataset_explorer_controller.close_project()
 
+    def open_project_from_path(self, file_path: str) -> bool:
+        """
+        Open a project JSON from a concrete path.
+        Returns True when the dataset was loaded successfully.
+        """
+        normalized_path = self._normalize_project_path(file_path)
+        if not normalized_path:
+            return False
+
+        if not os.path.exists(normalized_path):
+            QMessageBox.warning(
+                self.main,
+                "Dataset Not Found",
+                f"Dataset file does not exist and will be removed from recents:\n{normalized_path}",
+            )
+            self._remove_recent_project(normalized_path)
+            return False
+
+        if not self.main.check_and_close_current_project():
+            return False
+
+        # Reset all mode UIs before loading new data to prevent ghost state.
         self.main.reset_all_managers()
 
-        self.class_fm._clear_workspace(full_reset=True)
-        self.loc_fm._clear_workspace(full_reset=True)
-        self.desc_fm._clear_workspace(full_reset=True)
-        self.dense_fm._clear_workspace(full_reset=True)
+        try:
+            with open(normalized_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as exc:
+            QMessageBox.critical(self.main, "Error", f"Invalid JSON: {exc}")
+            return False
 
-        self.main.show_welcome_view()
-        self.main.show_temp_msg("Project Closed", "Returned to Home Screen", duration=1000)
+        loaded = self.main.dataset_explorer_controller.load_project(data, normalized_path)
+        if not loaded:
+            QMessageBox.critical(self.main, "Error", "Unknown JSON format or Task Type.")
+            return False
 
-    def _detect_json_type(self, data):
+        self._add_recent_project(normalized_path)
+        return True
+
+    def get_recent_projects(self) -> List[str]:
         """
-        Heuristics to identify the project type from JSON structure.
-        Refined to better detect Description tasks even if malformed.
+        Return recent datasets for UI display (newest first, max 5).
         """
-        task = str(data.get("task", "")).lower()
-        
-        # 1. Explicit task string check (Highest Priority)
-        if "dense" in task:
-            return "dense_description"
-        
-        if "caption" in task or "description" in task:
-            return "description"
-        
-        if "spotting" in task or "localization" in task:
-            return "localization"
-            
-        if "classification" in task:
-            return "classification"
+        return self._read_recent_projects()[: self.MAX_RECENT_DATASETS_DISPLAY]
 
-        # 2. Top-level Structure Check
-        if "labels" in data and isinstance(data["labels"], dict):
-            return "localization"
+    def get_max_recent_datasets_displayed(self) -> int:
+        """
+        Return the maximum number of recent datasets to display in the UI.
+        """
+        return self.MAX_RECENT_DATASETS_DISPLAY
 
-        # 3. Item Structure Heuristics (Fallback)
-        items = data.get("data", [])
-        if not items: 
-            return "unknown"
-            
-        first = items[0] if isinstance(items[0], dict) else {}
+    def remove_all_recent_project(self):
+        self.settings.setValue(self.RECENT_DATASETS_KEY, [])
+        self.settings.sync()
 
-        # Dense checks
-        if "dense_captions" in first:
-            return "dense_description"
-        if "events" in first:
-            evts = first.get("events", [])
-            if evts and isinstance(evts, list) and len(evts) > 0 and "text" in evts[0]:
-                return "dense_description"
-            if evts and isinstance(evts, list) and len(evts) > 0 and "label" in evts[0]:
-                return "localization"
-        
-        # Description checks
-        if "captions" in first:
-            return "description"
+    def remove_recent_project(self, path: str):
+        """Public API for removing one recent dataset entry."""
+        self._remove_recent_project(path)
 
-        # Classification checks
-        if "labels" in first:
-            return "classification"
-            
-        return "unknown"
+    def _read_recent_projects(self) -> List[str]:
+        raw_value = self.settings.value(self.RECENT_DATASETS_KEY, [])
+
+        if isinstance(raw_value, str):
+            paths = [raw_value]
+        elif isinstance(raw_value, (list, tuple)):
+            paths = [str(path) for path in raw_value if path]
+        else:
+            paths = []
+
+        return [self._normalize_project_path(path) for path in paths if path]
+
+    def _add_recent_project(self, path: str):
+        normalized_path = self._normalize_project_path(path)
+        if not normalized_path:
+            return
+
+        existing = self._read_recent_projects()
+        target_key = self._path_key(normalized_path)
+        deduped = [p for p in existing if self._path_key(p) != target_key]
+        # Persist full deduplicated history; UI display limits to MAX_RECENT_DATASETS_DISPLAY.
+        updated = [normalized_path, *deduped]
+        self._write_recent_projects(updated)
+
+    def _remove_recent_project(self, path: str):
+        normalized_path = self._normalize_project_path(path)
+        if not normalized_path:
+            return
+
+        target_key = self._path_key(normalized_path)
+        updated = [p for p in self._read_recent_projects() if self._path_key(p) != target_key]
+        self._write_recent_projects(updated)
+
+    def _write_recent_projects(self, paths: List[str]):
+        self.settings.setValue(self.RECENT_DATASETS_KEY, paths)
+        self.settings.sync()
+
+
+    def _normalize_project_path(self, path: str) -> str:
+        if not path:
+            return ""
+        return os.path.abspath(os.path.normpath(path))
+
+    def _path_key(self, path: str) -> str:
+        return os.path.normcase(os.path.normpath(path))

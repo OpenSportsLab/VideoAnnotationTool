@@ -317,9 +317,11 @@ class BatchInferenceWorker(QThread):
 
 
 class InferenceManager(QObject):
-    def __init__(self, main_window):
+    def __init__(self, classification_controller):
         super().__init__()
-        self.main = main_window
+        self.controller = classification_controller
+        self.main = classification_controller.main
+        self.panel = classification_controller.panel
         
         if hasattr(sys, '_MEIPASS'):
             self.base_dir = sys._MEIPASS
@@ -330,8 +332,8 @@ class InferenceManager(QObject):
         self.worker = None
         self.batch_worker = None
         
-        self.main.classification_panel.batch_run_requested.connect(self.start_batch_inference)
-        self.main.classification_panel.batch_confirm_requested.connect(self.confirm_batch_inference)
+        self.panel.batch_run_requested.connect(self.start_batch_inference)
+        self.panel.batch_confirm_requested.connect(self.confirm_batch_inference)
 
     def _get_label_map_from_config(self) -> dict:
         """
@@ -373,7 +375,7 @@ class InferenceManager(QObject):
 
         action_id = self.main.model.action_path_to_name.get(current_video_path, os.path.basename(current_video_path))
 
-        self.main.classification_panel.show_inference_loading(True)
+        self.panel.show_inference_loading(True)
 
         # 1. Dynamically load labels from config
         label_map = self._get_label_map_from_config()
@@ -395,7 +397,7 @@ class InferenceManager(QObject):
                     "labels": sorted(default_labels)
                 }
                 # Force UI regeneration to display radio buttons
-                self.main.setup_dynamic_ui()
+                self.controller.setup_dynamic_ui()
 
         # [NEW] Save raw inference result to smart_annotations memory
         current_video_path = self.main.get_current_action_path()
@@ -420,11 +422,11 @@ class InferenceManager(QObject):
         self.main.model.smart_annotations[current_video_path] = new_data
         
         self.main.model.is_data_dirty = True
-        self.main.classification_panel.display_inference_result(target_head, label, conf_dict)
+        self.panel.display_inference_result(target_head, label, conf_dict)
         self.worker = None
 
     def _on_inference_error(self, error_msg):
-        self.main.classification_panel.show_inference_loading(False)
+        self.panel.show_inference_loading(False)
         QMessageBox.critical(self.main, "Inference Error", f"An error occurred during inference:\n\n{error_msg}")
         self.worker = None
 
@@ -466,7 +468,7 @@ class InferenceManager(QObject):
                     
             target_clips.append({'id': base_id, 'paths': paths, 'gt': gt_label, 'original_items': items})
 
-        self.main.classification_panel.show_inference_loading(True)
+        self.panel.show_inference_loading(True)
         
         # 1. Dynamically load labels from config
         label_map = self._get_label_map_from_config()
@@ -487,7 +489,7 @@ class InferenceManager(QObject):
                     "type": "single_label",
                     "labels": sorted(default_labels)
                 }
-                self.main.setup_dynamic_ui()
+                self.controller.setup_dynamic_ui()
 
         # Start building the output text without the accuracy metrics
         text = "BATCH INFERENCE PREDICTIONS:\n\n"
@@ -536,11 +538,11 @@ class InferenceManager(QObject):
             self.main.model.smart_annotations[path] = data
             
         self.main.model.is_data_dirty = True
-        self.main.classification_panel.display_batch_inference_result(text, batch_predictions)
+        self.panel.display_batch_inference_result(text, batch_predictions)
         self.batch_worker = None
 
     def _on_batch_inference_error(self, error_msg):
-        self.main.classification_panel.show_inference_loading(False)
+        self.panel.show_inference_loading(False)
         QMessageBox.critical(self.main, "Batch Inference Error", f"An error occurred during batch inference:\n\n{error_msg}")
         self.batch_worker = None
 
