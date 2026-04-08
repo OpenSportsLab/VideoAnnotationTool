@@ -92,14 +92,44 @@ class HistoryManager:
 
     def _apply_state_change(self, cmd, is_undo):
         ctype = cmd['type']
+
+        if ctype == CmdType.DATASET_JSON_REPLACE:
+            controller = self.main.dataset_explorer_controller
+            snapshot = cmd['old_data'] if is_undo else cmd['new_data']
+            expanded_sample_ids = controller._expanded_sample_ids_in_tree()
+            preferred_sample_id = self.model.current_selected_sample_id
+            preferred_input_path = self.model.current_selected_input_path
+
+            controller.restore_dataset_json_from_history(
+                snapshot,
+                preferred_sample_id=preferred_sample_id,
+                preferred_input_path=preferred_input_path,
+                expanded_sample_ids=expanded_sample_ids,
+            )
+            self.main.refresh_ui_after_undo_redo(
+                self.main.get_current_action_path(),
+                filter_selection_fallback="clear_selection",
+            )
+            return
         
         # 1. Classification Specific
         if ctype == CmdType.ANNOTATION_CONFIRM:
             path = cmd['path']
             data = cmd['old_data'] if is_undo else cmd['new_data']
+            sample = self.model.get_sample_by_path(path)
+            if not isinstance(sample, dict):
+                return
+
             if data is None:
-                if path in self.model.manual_annotations: del self.model.manual_annotations[path]
-            else: self.model.manual_annotations[path] = copy.deepcopy(data)
+                sample.pop("labels", None)
+            elif isinstance(data, dict):
+                # Restore the exact user-level payload and preserve explicit empty blocks.
+                sample["labels"] = {}
+                record = self.model.manual_annotations[path]
+                for head, value in data.items():
+                    record[head] = copy.deepcopy(value)
+            else:
+                self.model.manual_annotations[path] = copy.deepcopy(data)
             self.main.refresh_ui_after_undo_redo(path, filter_selection_fallback="clear_selection")
 
         # [NEW] Handle batch annotation confirm
@@ -175,10 +205,22 @@ class HistoryManager:
             events = self.model.localization_events.get(path, [])
             
             if is_undo:
-                events.append(evt)
+                event_index = cmd.get("event_index")
+                if isinstance(event_index, int) and 0 <= event_index <= len(events):
+                    events.insert(event_index, evt)
+                else:
+                    events.append(evt)
                 if path not in self.model.localization_events: self.model.localization_events[path] = events
             else:
-                if evt in events: events.remove(evt)
+                event_index = cmd.get("event_index")
+                if (
+                    isinstance(event_index, int)
+                    and 0 <= event_index < len(events)
+                    and events[event_index] == evt
+                ):
+                    events.pop(event_index)
+                elif evt in events:
+                    events.remove(evt)
             
             self._refresh_active_view()
             
@@ -240,12 +282,24 @@ class HistoryManager:
             
             if is_undo:
                 # Undo Del -> Add back
-                events.append(evt)
+                event_index = cmd.get("event_index")
+                if isinstance(event_index, int) and 0 <= event_index <= len(events):
+                    events.insert(event_index, evt)
+                else:
+                    events.append(evt)
                 if path not in self.model.dense_description_events: 
                     self.model.dense_description_events[path] = events
             else:
                 # Redo Del -> Remove
-                if evt in events: events.remove(evt)
+                event_index = cmd.get("event_index")
+                if (
+                    isinstance(event_index, int)
+                    and 0 <= event_index < len(events)
+                    and events[event_index] == evt
+                ):
+                    events.pop(event_index)
+                elif evt in events:
+                    events.remove(evt)
                 
             self._refresh_active_view()
 
@@ -349,9 +403,14 @@ class HistoryManager:
             head = cmd['head']; lbl = cmd['label']
             if head in self.model.label_definitions:
                 lst = self.model.label_definitions[head]['labels']
+                label_index = cmd.get("label_index")
                 
                 if is_undo:
-                    if lbl not in lst: lst.append(lbl); lst.sort()
+                    if lbl not in lst:
+                        if isinstance(label_index, int) and 0 <= label_index <= len(lst):
+                            lst.insert(label_index, lbl)
+                        else:
+                            lst.append(lbl)
                     if 'affected_data' in cmd:
                         for k, v in cmd['affected_data'].items():
                             if k not in self.model.manual_annotations: self.model.manual_annotations[k] = {}
@@ -368,7 +427,14 @@ class HistoryManager:
                             self.model.localization_events[vid].extend(events_list)
                             
                 else:
-                    if lbl in lst: lst.remove(lbl)
+                    if (
+                        isinstance(label_index, int)
+                        and 0 <= label_index < len(lst)
+                        and lst[label_index] == lbl
+                    ):
+                        lst.pop(label_index)
+                    elif lbl in lst:
+                        lst.remove(lbl)
                     if 'affected_data' in cmd:
                         for k in cmd['affected_data']:
                             anno = self.model.manual_annotations.get(k, {})

@@ -231,20 +231,16 @@ class LocalizationEditorController:
                 player.play()
             return
 
-        self.model.push_undo(CmdType.SCHEMA_ADD_LBL, head=head, label=label_name)
+        before_json = self.model.snapshot_dataset_json()
         labels_list.append(label_name)
-        self.model.is_data_dirty = True
 
         if self.current_video_path:
             new_event = {"head": head, "label": label_name, "position_ms": current_pos}
-            self.model.push_undo(
-                CmdType.LOC_EVENT_ADD,
-                video_path=self.current_video_path,
-                event=new_event,
-            )
             if self.current_video_path not in self.model.localization_events:
                 self.model.localization_events[self.current_video_path] = []
             self.model.localization_events[self.current_video_path].append(new_event)
+
+        self.model.push_dataset_json_replace_undo_if_changed(before_json)
 
         self._refresh_schema_ui()
         self.right_panel.annot_mgmt.tabs.set_current_head(head)
@@ -304,13 +300,15 @@ class LocalizationEditorController:
             if aff:
                 loc_affected[vid_path] = aff
 
+        labels_list = self.model.label_definitions[head].get("labels", [])
+        label_index = labels_list.index(label) if label in labels_list else -1
         self.model.push_undo(
             CmdType.SCHEMA_DEL_LBL,
             head=head,
             label=label,
+            label_index=label_index,
             loc_affected_events=loc_affected,
         )
-        labels_list = self.model.label_definitions[head].get("labels", [])
         if label in labels_list:
             labels_list.remove(label)
 
@@ -349,6 +347,9 @@ class LocalizationEditorController:
 
     # --- Table Modification ---
     def _on_annotation_modified(self, old_event, new_event):
+        if old_event == new_event:
+            return
+
         events = self.model.localization_events.get(self.current_video_path, [])
         index = self._find_event_index(events, old_event)
         if index < 0:
@@ -407,6 +408,7 @@ class LocalizationEditorController:
             CmdType.LOC_EVENT_DEL,
             video_path=self.current_video_path,
             event=copy.deepcopy(events[index]),
+            event_index=index,
         )
         events.pop(index)
         self.model.is_data_dirty = True
@@ -564,8 +566,9 @@ class LocalizationEditorController:
         if not self.current_video_path:
             return
 
+        before_json = self.model.snapshot_dataset_json()
         self.model.smart_localization_events[self.current_video_path] = predicted_events
-        self.model.is_data_dirty = True
+        self.model.push_dataset_json_replace_undo_if_changed(before_json)
         self.main.show_temp_msg("Smart Inference", f"Success: Found {len(predicted_events)} events.")
         self.main.update_save_export_button_state()
 
@@ -584,6 +587,7 @@ class LocalizationEditorController:
         if not smart_events:
             return
 
+        before_json = self.model.snapshot_dataset_json()
         if self.current_video_path not in self.model.localization_events:
             self.model.localization_events[self.current_video_path] = []
 
@@ -597,15 +601,18 @@ class LocalizationEditorController:
             "Smart Spotting",
             "Predictions confirmed and merged into Hand Annotations.",
         )
-        self.model.is_data_dirty = True
+        self.model.push_dataset_json_replace_undo_if_changed(before_json)
         self.main.update_save_export_button_state()
 
     def _clear_smart_events(self):
         if not self.current_video_path:
             return
-        if self.model.smart_localization_events.get(self.current_video_path):
-            self.model.is_data_dirty = True
+        if not self.model.smart_localization_events.get(self.current_video_path):
+            return
+
+        before_json = self.model.snapshot_dataset_json()
         self.model.smart_localization_events[self.current_video_path] = []
+        self.model.push_dataset_json_replace_undo_if_changed(before_json)
         self._display_smart_events(self.current_video_path)
         self.main.show_temp_msg("Smart Spotting", "Cleared smart predictions.")
         self.main.update_save_export_button_state()

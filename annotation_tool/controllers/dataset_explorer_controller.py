@@ -7,6 +7,7 @@ from collections.abc import MutableMapping
 from PyQt6.QtCore import QModelIndex, QObject, QSettings, QUrl, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
+from controllers.command_types import CmdType
 from ui.dialogs import NewDatasetDialog, UnsavedChangesDialog
 from utils import natural_sort_key
 
@@ -393,6 +394,20 @@ class DatasetExplorerController(QObject):
         self.undo_stack.append({"type": cmd_type, **kwargs})
         self.redo_stack.clear()
         self.is_data_dirty = True
+
+    def snapshot_dataset_json(self):
+        return copy.deepcopy(self.dataset_json)
+
+    def push_dataset_json_replace_undo_if_changed(self, before_json) -> bool:
+        after_json = copy.deepcopy(self.dataset_json)
+        if after_json == before_json:
+            return False
+        self.push_undo(
+            CmdType.DATASET_JSON_REPLACE,
+            old_data=copy.deepcopy(before_json),
+            new_data=after_json,
+        )
+        return True
 
     def ensure_data_ids(self):
         self._ensure_sample_ids()
@@ -876,14 +891,18 @@ class DatasetExplorerController(QObject):
     def _on_header_draft_changed(self, draft: dict):
         if not self.json_loaded or not isinstance(draft, dict):
             return
+        before_json = self.snapshot_dataset_json()
         changed = False
         for key, value in draft.items():
             if key in self.HEADER_EDITABLE_KEYS:
-                self.dataset_json[key] = copy.deepcopy(value)
-                changed = True
+                current_value = self.dataset_json.get(key)
+                if current_value != value:
+                    self.dataset_json[key] = copy.deepcopy(value)
+                    changed = True
         if not changed:
             return
-        self.is_data_dirty = True
+        if not self.push_dataset_json_replace_undo_if_changed(before_json):
+            return
         self.main.update_save_export_button_state()
         self._refresh_header_panel()
         self._refresh_schema_panels()
@@ -1103,6 +1122,7 @@ class DatasetExplorerController(QObject):
                 self._suspend_tree_item_changed = False
             return
 
+        before_json = self.snapshot_dataset_json()
         self._suspend_tree_item_changed = True
         try:
             sample["id"] = final_id
@@ -1116,7 +1136,7 @@ class DatasetExplorerController(QObject):
             self._suspend_tree_item_changed = False
 
         self._rebuild_runtime_index()
-        self.is_data_dirty = True
+        self.push_dataset_json_replace_undo_if_changed(before_json)
         if self.current_selected_sample_id == old_sample_id:
             self.current_selected_sample_id = final_id
             self.dataSelected.emit(final_id)
@@ -1199,6 +1219,65 @@ class DatasetExplorerController(QObject):
         if not action_idx.isValid():
             return None, QModelIndex()
         return action_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100)), action_idx
+
+    def _index_for_path(self, path: str) -> QModelIndex:
+        target_key = self._fs_path_key(path)
+        if not target_key:
+            return QModelIndex()
+
+        root = QModelIndex()
+        for row in range(self.tree_model.rowCount(root)):
+            parent_idx = self.tree_model.index(row, 0, root)
+            if not parent_idx.isValid():
+                continue
+            parent_path = parent_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
+            if self._fs_path_key(parent_path) == target_key:
+                return parent_idx
+            for child_row in range(self.tree_model.rowCount(parent_idx)):
+                child_idx = self.tree_model.index(child_row, 0, parent_idx)
+                child_path = child_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
+                if self._fs_path_key(child_path) == target_key:
+                    return child_idx
+        return QModelIndex()
+
+    def _restore_tree_selection(self, preferred_sample_id: str = "", preferred_input_path: str = None) -> bool:
+        tree = self.panel.tree
+        target_idx = QModelIndex()
+
+        if preferred_input_path:
+            candidate = self._index_for_path(preferred_input_path)
+            if candidate.isValid():
+                action_idx = self._get_action_index(candidate)
+                if not tree.isRowHidden(action_idx.row(), QModelIndex()):
+                    target_idx = candidate
+
+        if not target_idx.isValid() and preferred_sample_id:
+            parent_idx = self._top_level_index_for_sample(preferred_sample_id)
+            if parent_idx.isValid() and not tree.isRowHidden(parent_idx.row(), QModelIndex()):
+                target_idx = parent_idx
+
+        if not target_idx.isValid():
+            return False
+
+        if tree.currentIndex() != target_idx:
+            tree.setCurrentIndex(target_idx)
+            tree.scrollTo(target_idx)
+        return True
+
+    def restore_dataset_json_from_history(
+        self,
+        dataset_json_state,
+        preferred_sample_id: str = "",
+        preferred_input_path: str = None,
+        expanded_sample_ids=None,
+    ):
+        self.dataset_json = copy.deepcopy(dataset_json_state) if isinstance(dataset_json_state, dict) else {}
+        self._rebuild_runtime_index()
+        self._refresh_header_panel()
+        self._refresh_schema_panels()
+        self.populate_tree()
+        self._reapply_expanded_samples(expanded_sample_ids or set())
+        self._restore_tree_selection(preferred_sample_id, preferred_input_path)
 
     def _remove_tree_row(self, action_idx: QModelIndex):
         if action_idx.isValid():
@@ -1491,6 +1570,7 @@ class DatasetExplorerController(QObject):
         if not self.current_working_directory:
             self.current_working_directory = os.path.dirname(files[0])
 
+        before_json = self.snapshot_dataset_json()
         added_count = 0
         first_sample_id = None
 
@@ -1504,7 +1584,7 @@ class DatasetExplorerController(QObject):
         if added_count <= 0:
             return
 
-        self.is_data_dirty = True
+        self.push_dataset_json_replace_undo_if_changed(before_json)
         self.populate_tree()
         self.main.update_save_export_button_state()
         self.main.show_temp_msg("Added", f"Added {added_count} samples.")
@@ -1527,9 +1607,10 @@ class DatasetExplorerController(QObject):
         if msg.exec() != QMessageBox.StandardButton.Yes:
             return
 
+        before_json = self.snapshot_dataset_json()
         self.media_controller.stop()
         self.dataset_json["data"] = []
-        self.is_data_dirty = True
+        self.push_dataset_json_replace_undo_if_changed(before_json)
         self._rebuild_runtime_index()
         self.main.reset_all_managers()
         self.main.show_workspace()
@@ -1551,6 +1632,7 @@ class DatasetExplorerController(QObject):
         if not sample_id:
             return
 
+        before_json = self.snapshot_dataset_json()
         is_child_row = index.parent().isValid()
         removed_parent_row = action_idx.row()
         removed = False
@@ -1570,7 +1652,7 @@ class DatasetExplorerController(QObject):
         if not removed:
             return
 
-        self.is_data_dirty = True
+        self.push_dataset_json_replace_undo_if_changed(before_json)
         removed_selected = (
             sample_id == self.current_selected_sample_id
             if sample_removed

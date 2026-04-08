@@ -540,20 +540,24 @@ class InferenceManager(QObject):
         """
         [MODIFIED] Acknowledge batch inference without polluting Hand Annotations.
         """
+        before_json = self.main.model.snapshot_dataset_json()
         applied_count = 0
 
         # Smart annotations were already pushed to memory and Undo stack 
         # during _on_batch_inference_success. Here we just mark them as confirmed.
         for path, label in results.items():
             if path in self.main.model.smart_annotations:
-                # [NEW] Set a confirmed flag directly in smart memory
+                # Set a confirmed flag directly in smart memory only when it changes.
+                if self.main.model.smart_annotations[path].get("_confirmed"):
+                    continue
                 self.main.model.smart_annotations[path]["_confirmed"] = True
                 self.main.update_action_item_status(path)
                 applied_count += 1
         
+        changed = self.main.model.push_dataset_json_replace_undo_if_changed(before_json)
+
         # Update UI global states
-        if applied_count > 0:
-            self.main.model.is_data_dirty = True
+        if changed and applied_count > 0:
             self.main.update_save_export_button_state()
             self.main.show_temp_msg("Batch Annotation", f"Confirmed {applied_count} smart annotations independently.")
         else:

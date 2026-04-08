@@ -167,9 +167,13 @@ class ClassificationEditorController:
                 return
 
             old_data = copy.deepcopy(smart_data)
-            self.model.smart_annotations[path]["_confirmed"] = True
+            new_data = copy.deepcopy(smart_data)
+            new_data["_confirmed"] = True
+            if new_data == old_data:
+                return
+
+            self.model.smart_annotations[path] = copy.deepcopy(new_data)
             self.model.is_data_dirty = True
-            new_data = copy.deepcopy(self.model.smart_annotations[path])
 
             self.model.push_undo(
                 CmdType.SMART_ANNOTATION_RUN,
@@ -196,6 +200,10 @@ class ClassificationEditorController:
             cleaned = None
 
         old_data = copy.deepcopy(self.model.manual_annotations.get(path))
+        normalized_old = old_data if old_data else None
+        if normalized_old == cleaned:
+            return
+
         self.model.push_undo(
             CmdType.ANNOTATION_CONFIRM,
             path=path,
@@ -367,11 +375,13 @@ class ClassificationEditorController:
                 affected[key] = label
             elif definition["type"] == "multi_label" and label in value.get(head, []):
                 affected[key] = copy.deepcopy(value[head])
+        label_index = definition["labels"].index(label) if label in definition["labels"] else -1
 
         self.model.push_undo(
             CmdType.SCHEMA_DEL_LBL,
             head=head,
             label=label,
+            label_index=label_index,
             affected_data=affected,
         )
 

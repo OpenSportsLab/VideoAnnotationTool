@@ -146,6 +146,8 @@ class DenseEditorController:
     def _on_annotation_modified(self, old_event: dict, new_event: dict):
         if not self.current_video_path:
             return
+        if old_event == new_event:
+            return
 
         events = self.model.dense_description_events.get(self.current_video_path, [])
         try:
@@ -175,16 +177,19 @@ class DenseEditorController:
             return
 
         events = self.model.dense_description_events.get(self.current_video_path, [])
-        if item_data not in events:
+        try:
+            event_index = events.index(item_data)
+        except ValueError:
             return
 
         self.model.push_undo(
             CmdType.DENSE_EVENT_DEL,
             video_path=self.current_video_path,
             event=copy.deepcopy(item_data),
+            event_index=event_index,
         )
 
-        events.remove(item_data)
+        events.pop(event_index)
         self.model.is_data_dirty = True
         self.display_events_for_item(self.current_video_path)
         self.main.update_action_item_status(self.current_video_path)

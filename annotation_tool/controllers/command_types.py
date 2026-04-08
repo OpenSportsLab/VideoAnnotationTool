@@ -4,6 +4,8 @@ from enum import Enum, auto
 class CmdType(Enum):
     """Command types recorded in the undo/redo history."""
 
+    DATASET_JSON_REPLACE = auto()
+
     ANNOTATION_CONFIRM = auto()
     BATCH_ANNOTATION_CONFIRM = auto()
 
