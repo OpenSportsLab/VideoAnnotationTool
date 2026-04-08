@@ -115,6 +115,21 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
 
 
 @pytest.mark.gui
+def test_single_input_samples_render_as_parent_with_one_child(window, monkeypatch, qtbot, synthetic_project_json):
+    project_json_path = synthetic_project_json("classification")
+    _open_project(window, monkeypatch, project_json_path)
+
+    parent_index = _select_top_row(window, qtbot, 0)
+    assert parent_index.isValid()
+    assert window.tree_model.rowCount(parent_index) == 1
+
+    child_index = window.tree_model.index(0, 0, parent_index)
+    assert child_index.isValid()
+    assert child_index.data(window.tree_model.DataIdRole) == parent_index.data(window.tree_model.DataIdRole)
+    assert child_index.data(window.tree_model.FilePathRole) == parent_index.data(window.tree_model.FilePathRole)
+
+
+@pytest.mark.gui
 def test_legacy_task_header_is_preserved_but_does_not_route_initial_tab(
     window,
     monkeypatch,
@@ -306,13 +321,51 @@ def test_remove_top_level_row_keeps_next_selection_valid(
 
 
 @pytest.mark.gui
-def test_remove_child_row_removes_the_entire_multiview_sample(
+def test_remove_child_row_removes_one_input_and_keeps_multiview_sample(
     window,
     monkeypatch,
     qtbot,
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("multiview")
+    _open_project(window, monkeypatch, project_json_path)
+
+    parent_index = _select_top_row(window, qtbot, 0)
+    child_index = window.tree_model.index(0, 0, parent_index)
+    assert child_index.isValid()
+
+    original_sample = window.model.get_sample("mv_clip")
+    assert original_sample is not None
+    assert len(original_sample.get("inputs", [])) == 2
+
+    window.dataset_explorer_panel.tree.setCurrentIndex(child_index)
+    qtbot.wait(50)
+    window.dataset_explorer_controller.handle_remove_item(child_index)
+    qtbot.wait(50)
+
+    assert window.tree_model.rowCount() == 1
+    remaining_sample = window.model.get_sample("mv_clip")
+    assert remaining_sample is not None
+    assert len(remaining_sample.get("inputs", [])) == 1
+
+    refreshed_parent = window.tree_model.index(0, 0)
+    assert refreshed_parent.isValid()
+    assert window.tree_model.rowCount(refreshed_parent) == 1
+    remaining_child = window.tree_model.index(0, 0, refreshed_parent)
+    assert remaining_child.isValid()
+    assert window.model.current_selected_sample_id == "mv_clip"
+    assert window.model.current_selected_input_path == remaining_child.data(window.tree_model.FilePathRole)
+    assert window.dataset_explorer_panel.tree.currentIndex() == remaining_child
+
+
+@pytest.mark.gui
+def test_remove_only_child_row_removes_whole_single_input_sample(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
     _open_project(window, monkeypatch, project_json_path)
 
     parent_index = _select_top_row(window, qtbot, 0)
@@ -327,6 +380,91 @@ def test_remove_child_row_removes_the_entire_multiview_sample(
     assert window.tree_model.rowCount() == 0
     assert window.model.dataset_json["data"] == []
     assert window.model.current_selected_sample_id == ""
+
+
+@pytest.mark.gui
+def test_remove_sample_selects_previous_sample(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("mixed", item_count=3)
+    _open_project(window, monkeypatch, project_json_path)
+
+    second_index = _select_top_row(window, qtbot, 1)
+    assert second_index.isValid()
+    assert second_index.data(window.tree_model.DataIdRole) == "clip_2"
+
+    window.dataset_explorer_controller.handle_remove_item(second_index)
+    qtbot.wait(50)
+
+    assert window.tree_model.rowCount() == 2
+    assert window.model.current_selected_sample_id == "clip_1"
+    assert window.get_current_action_path() == window.model.get_path_by_id("clip_1")
+
+
+@pytest.mark.gui
+def test_remove_keeps_expanded_tree_rows(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("mixed", item_count=3)
+    _open_project(window, monkeypatch, project_json_path)
+
+    first_parent = _select_top_row(window, qtbot, 0)
+    second_parent = _select_top_row(window, qtbot, 1)
+    third_parent = _select_top_row(window, qtbot, 2)
+    assert first_parent.isValid()
+    assert second_parent.isValid()
+    assert third_parent.isValid()
+
+    tree = window.dataset_explorer_panel.tree
+    assert tree.isExpanded(first_parent)
+    assert tree.isExpanded(second_parent)
+    assert tree.isExpanded(third_parent)
+
+    window.dataset_explorer_controller.handle_remove_item(second_parent)
+    qtbot.wait(50)
+
+    refreshed_first = window.tree_model.index(0, 0)
+    refreshed_second = window.tree_model.index(1, 0)
+    assert refreshed_first.isValid()
+    assert refreshed_second.isValid()
+    assert refreshed_first.data(window.tree_model.DataIdRole) == "clip_1"
+    assert refreshed_second.data(window.tree_model.DataIdRole) == "clip_3"
+    assert tree.isExpanded(refreshed_first)
+    assert tree.isExpanded(refreshed_second)
+
+
+@pytest.mark.gui
+def test_selecting_new_parent_expands_it_without_collapsing_others(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("mixed", item_count=2)
+    _open_project(window, monkeypatch, project_json_path)
+
+    first_parent = _select_top_row(window, qtbot, 0)
+    second_parent = window.tree_model.index(1, 0)
+    assert first_parent.isValid()
+    assert second_parent.isValid()
+    assert window.tree_model.rowCount(first_parent) == 1
+    assert window.tree_model.rowCount(second_parent) == 1
+
+    tree = window.dataset_explorer_panel.tree
+    assert tree.isExpanded(first_parent)
+    assert not tree.isExpanded(second_parent)
+
+    tree.setCurrentIndex(second_parent)
+    qtbot.wait(50)
+
+    assert tree.isExpanded(first_parent)
+    assert tree.isExpanded(second_parent)
 
 
 @pytest.mark.gui
@@ -564,6 +702,40 @@ def test_save_as_rewrites_paths_autosaves_description_and_promotes_new_recent(
 
 
 @pytest.mark.gui
+def test_save_keeps_current_tree_selection_and_expansion_state(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("mixed", item_count=3)
+    _open_project(window, monkeypatch, project_json_path)
+
+    first_parent = _select_top_row(window, qtbot, 0)
+    second_parent = _select_top_row(window, qtbot, 1)
+    assert first_parent.isValid()
+    assert second_parent.isValid()
+    assert second_parent.data(window.tree_model.DataIdRole) == "clip_2"
+
+    tree = window.dataset_explorer_panel.tree
+    assert tree.isExpanded(first_parent)
+    assert tree.isExpanded(second_parent)
+    assert window.model.current_selected_sample_id == "clip_2"
+
+    window.dataset_explorer_controller.save_project()
+    qtbot.wait(50)
+
+    refreshed_first = window.tree_model.index(0, 0)
+    refreshed_second = window.tree_model.index(1, 0)
+    assert refreshed_first.isValid()
+    assert refreshed_second.isValid()
+    assert refreshed_second.data(window.tree_model.DataIdRole) == "clip_2"
+    assert window.model.current_selected_sample_id == "clip_2"
+    assert tree.isExpanded(refreshed_first)
+    assert tree.isExpanded(refreshed_second)
+
+
+@pytest.mark.gui
 def test_json_tab_reflects_header_edit_sample_edit_and_undo_redo(
     window,
     monkeypatch,
@@ -581,8 +753,7 @@ def test_json_tab_reflects_header_edit_sample_edit_and_undo_redo(
     _set_known_header_value(window.dataset_explorer_panel, "description", edited_description)
     qtbot.wait(50)
     window.description_panel.caption_edit.setPlainText(edited_caption)
-    qtbot.mouseClick(window.description_panel.confirm_btn, Qt.MouseButton.LeftButton)
-    qtbot.wait(50)
+    qtbot.wait(350)
 
     raw_json = json.loads(window.dataset_explorer_panel.json_raw_text.toPlainText())
     assert raw_json["description"] == edited_description

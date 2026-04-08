@@ -1,5 +1,7 @@
 import copy
 
+from PyQt6.QtCore import QTimer
+
 from controllers.command_types import CmdType
 
 
@@ -14,32 +16,34 @@ class DescEditorController:
         self.model = main_window.model
         self.current_sample_id = ""
         self.current_action_path = None
+        self._suspend_autosave = False
+        self._autosave_timer = QTimer(self.main)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.setInterval(250)
+        self._autosave_timer.timeout.connect(self._save_current_annotation_if_needed)
 
     def setup_connections(self):
         """Connect Description editor UI signals to controller actions."""
-        self.main.description_panel.confirm_clicked.connect(self.save_current_annotation)
-        self.main.description_panel.clear_clicked.connect(self.clear_current_text)
+        self.main.description_panel.caption_edit.textChanged.connect(self._on_caption_text_changed)
 
     def reset_ui(self):
         """Reset the Description editor UI for project clear/close flows."""
+        self._autosave_timer.stop()
         self.current_sample_id = ""
         self.current_action_path = None
-        self.main.description_panel.caption_edit.setPlainText("")
+        self._set_editor_text("")
         self.main.description_panel.caption_edit.setEnabled(False)
         self.main.description_panel.setEnabled(False)
-
-    def clear_current_text(self):
-        """Clear current editor text."""
-        self.main.description_panel.caption_edit.clear()
 
     def on_item_removed(self, path: str):
         """Handle removal of a description item from the dataset explorer."""
         if self.current_action_path != path:
             return
 
+        self._autosave_timer.stop()
         self.current_sample_id = ""
         self.current_action_path = None
-        self.main.description_panel.caption_edit.clear()
+        self._set_editor_text("")
         self.main.description_panel.caption_edit.setEnabled(False)
 
     def on_data_selected(self, data_id: str):
@@ -47,8 +51,9 @@ class DescEditorController:
         Refresh Description editor content for selected tree item.
         """
         if not data_id:
+            self._autosave_timer.stop()
             self.current_sample_id = ""
-            self.main.description_panel.caption_edit.clear()
+            self._set_editor_text("")
             self.current_action_path = None
             self.main.description_panel.caption_edit.setEnabled(False)
             self.main.description_panel.setEnabled(False)
@@ -59,9 +64,10 @@ class DescEditorController:
         action_data = self.model.get_item_by_id(data_id)
         if not action_data:
             self.main.description_panel.caption_edit.setPlaceholderText("No metadata found for this item.")
+            self._autosave_timer.stop()
             self.current_sample_id = ""
             self.current_action_path = None
-            self.main.description_panel.caption_edit.clear()
+            self._set_editor_text("")
             self.main.description_panel.caption_edit.setEnabled(False)
             self.main.description_panel.setEnabled(False)
             if self.main.right_tabs.currentIndex() == 2:
@@ -102,23 +108,42 @@ class DescEditorController:
                 formatted_blocks.append(f'Q: "{question}"\nA: ""')
             full_text = "\n\n".join(formatted_blocks)
 
-        self.main.description_panel.caption_edit.setPlainText(full_text)
+        self._set_editor_text(full_text)
 
-    def save_current_annotation(self):
+    def _set_editor_text(self, text: str):
+        self._suspend_autosave = True
+        try:
+            self.main.description_panel.caption_edit.setPlainText(text)
+        finally:
+            self._suspend_autosave = False
+
+    def _on_caption_text_changed(self):
+        if self._suspend_autosave:
+            return
+        if not self.current_sample_id:
+            return
+        self._autosave_timer.start()
+
+    def _save_current_annotation_if_needed(self):
+        self.save_current_annotation(show_feedback=False)
+
+    def save_current_annotation(self, show_feedback: bool = False):
         """
         Persist current Description editor text into the selected action captions.
         Pushes DESC_EDIT undo command and updates done status.
         """
         if not self.current_sample_id:
-            return
+            return False
 
         text_content = self.main.description_panel.caption_edit.toPlainText()
         sample = self.model.get_sample(self.current_sample_id)
         if not sample:
-            return
+            return False
 
         old_captions = copy.deepcopy(sample.get("captions", []))
         new_captions = [{"lang": "en", "text": text_content}]
+        if old_captions == new_captions:
+            return False
 
         self.model.push_undo(
             CmdType.DESC_EDIT,
@@ -134,4 +159,6 @@ class DescEditorController:
 
         # Keep tree status updates through the shared status-sync path.
         self.main.update_action_item_status(self.current_action_path)
-        self.main.show_temp_msg("Saved", "Description updated.")
+        if show_feedback:
+            self.main.show_temp_msg("Saved", "Description updated.")
+        return True

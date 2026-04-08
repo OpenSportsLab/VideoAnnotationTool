@@ -465,15 +465,112 @@ class DatasetExplorerController(QObject):
         return self.sample_id_to_entry.get(sample_id)
 
     def remove_action_item_by_path(self, path: str) -> bool:
+        sample_id = self.get_data_id_by_path(path)
+        if not sample_id:
+            sample = self.get_sample_by_path(path)
+            sample_id = str(sample.get("id")) if isinstance(sample, dict) and sample.get("id") else ""
+        if not sample_id:
+            return False
+        return self._remove_sample_by_id(sample_id)
+
+    def _remove_sample_by_id(self, sample_id: str) -> bool:
+        if not sample_id:
+            return False
         before = len(self.get_samples())
         self.dataset_json["data"] = [
             sample for sample in self.get_samples()
-            if self._primary_runtime_path_for_sample(sample) != path
+            if str(sample.get("id")) != str(sample_id)
         ]
         removed = len(self.get_samples()) != before
         if removed:
             self._rebuild_runtime_index()
         return removed
+
+    def _remove_sample_input_by_path(self, sample_id: str, input_path: str):
+        sample = self.get_sample(sample_id)
+        if not isinstance(sample, dict):
+            return False, False
+
+        inputs = sample.get("inputs")
+        if not isinstance(inputs, list) or not inputs:
+            return False, False
+
+        target_key = self._fs_path_key(input_path)
+        if not target_key:
+            return False, False
+
+        kept_inputs = []
+        removed_input = False
+        for input_item in inputs:
+            if (
+                not removed_input
+                and isinstance(input_item, dict)
+                and self._fs_path_key(self._resolve_media_path(input_item.get("path"))) == target_key
+            ):
+                removed_input = True
+                continue
+            kept_inputs.append(input_item)
+
+        if not removed_input:
+            return False, False
+
+        if kept_inputs:
+            sample["inputs"] = kept_inputs
+            self._rebuild_runtime_index()
+            return True, False
+
+        sample_removed = self._remove_sample_by_id(sample_id)
+        return sample_removed, sample_removed
+
+    def _top_level_index_for_sample(self, sample_id: str) -> QModelIndex:
+        entry = self.sample_id_to_entry.get(sample_id)
+        if not entry:
+            return QModelIndex()
+        item = self.action_item_map.get(entry.get("path"))
+        if item is None:
+            return QModelIndex()
+        idx = item.index()
+        return idx if idx.isValid() else QModelIndex()
+
+    def _first_visible_top_level_index(self, start_row: int) -> QModelIndex:
+        root = QModelIndex()
+        row_count = self.tree_model.rowCount(root)
+        if row_count <= 0:
+            return QModelIndex()
+
+        tree = self.panel.tree
+        for row in range(start_row, -1, -1):
+            if tree.isRowHidden(row, root):
+                continue
+            idx = self.tree_model.index(row, 0, root)
+            if idx.isValid():
+                return idx
+
+        for row in range(max(start_row + 1, 0), row_count):
+            if tree.isRowHidden(row, root):
+                continue
+            idx = self.tree_model.index(row, 0, root)
+            if idx.isValid():
+                return idx
+
+        return QModelIndex()
+
+    def _first_child_index_for_parent(self, parent_idx: QModelIndex) -> QModelIndex:
+        if not parent_idx.isValid():
+            return QModelIndex()
+        if self.tree_model.rowCount(parent_idx) <= 0:
+            return QModelIndex()
+        child_idx = self.tree_model.index(0, 0, parent_idx)
+        return child_idx if child_idx.isValid() else QModelIndex()
+
+    def _reapply_expanded_samples(self, sample_ids):
+        if not sample_ids:
+            return
+        tree = self.panel.tree
+        for sample_id in sample_ids:
+            parent_idx = self._top_level_index_for_sample(str(sample_id))
+            if parent_idx.isValid():
+                tree.setExpanded(parent_idx, True)
 
     def remove_description_action_by_path(self, path: str):
         removed = self.remove_action_item_by_path(path)
@@ -587,7 +684,7 @@ class DatasetExplorerController(QObject):
         self.main.show_workspace()
         self._refresh_header_panel()
         self._refresh_schema_panels()
-        self.populate_tree()
+        self.populate_tree(preserve_view=True)
         self._reconcile_tab_with_current_selection()
         self.main.update_save_export_button_state()
         self.main.show_temp_msg(
@@ -888,6 +985,11 @@ class DatasetExplorerController(QObject):
         base_dir = self.project_root or self.current_working_directory or os.getcwd()
         return os.path.normpath(os.path.join(base_dir, path))
 
+    def _fs_path_key(self, path: str) -> str:
+        if not path:
+            return ""
+        return os.path.normcase(os.path.normpath(str(path)))
+
     def _resolved_source_paths_for_sample(self, sample: dict):
         return [self._resolve_media_path(path) for path in self._raw_source_paths_for_sample(sample)]
 
@@ -914,7 +1016,7 @@ class DatasetExplorerController(QObject):
             entry = {
                 "name": self._display_name_for_sample(sample),
                 "path": path,
-                "source_files": source_files or [path],
+                "source_files": source_files,
                 "data_id": sample_id,
                 "id": sample_id,
                 "inputs": sample.get("inputs", []),
@@ -940,10 +1042,76 @@ class DatasetExplorerController(QObject):
         sample_id = action_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
         return self.get_sample(sample_id)
 
+    def _capture_tree_view_state(self):
+        tree = self.panel.tree
+        current_idx = tree.currentIndex()
+        current_parent = self._get_action_index(current_idx)
+        selected_sample_id = ""
+        selected_input_path = None
+        if current_parent.isValid():
+            selected_sample_id = str(current_parent.data(getattr(self.tree_model, "DataIdRole", 0x0101)) or "")
+        if current_idx.isValid() and current_idx.parent().isValid():
+            selected_input_path = current_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
+
+        expanded_sample_ids = set()
+        root = QModelIndex()
+        for row in range(self.tree_model.rowCount(root)):
+            parent_idx = self.tree_model.index(row, 0, root)
+            if not parent_idx.isValid():
+                continue
+            if not tree.isExpanded(parent_idx):
+                continue
+            sample_id = parent_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
+            if sample_id:
+                expanded_sample_ids.add(str(sample_id))
+
+        return {
+            "selected_sample_id": selected_sample_id or self.current_selected_sample_id or "",
+            "selected_input_path": selected_input_path,
+            "expanded_sample_ids": expanded_sample_ids,
+        }
+
+    def _restore_tree_view_state(self, view_state: dict) -> bool:
+        if not isinstance(view_state, dict):
+            return False
+
+        tree = self.panel.tree
+        for sample_id in view_state.get("expanded_sample_ids", set()):
+            parent_idx = self._top_level_index_for_sample(str(sample_id))
+            if parent_idx.isValid():
+                tree.setExpanded(parent_idx, True)
+
+        sample_id = str(view_state.get("selected_sample_id") or "")
+        if not sample_id:
+            return False
+
+        parent_idx = self._top_level_index_for_sample(sample_id)
+        if not parent_idx.isValid():
+            return False
+        if tree.isRowHidden(parent_idx.row(), QModelIndex()):
+            return False
+
+        target_idx = parent_idx
+        selected_input_key = self._fs_path_key(view_state.get("selected_input_path"))
+        if selected_input_key and self.tree_model.rowCount(parent_idx) > 0:
+            for row in range(self.tree_model.rowCount(parent_idx)):
+                child_idx = self.tree_model.index(row, 0, parent_idx)
+                if not child_idx.isValid():
+                    continue
+                child_key = self._fs_path_key(child_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100)))
+                if child_key == selected_input_key:
+                    target_idx = child_idx
+                    break
+
+        tree.setCurrentIndex(target_idx)
+        tree.scrollTo(target_idx)
+        return True
+
     # ------------------------------------------------------------------
     # Tree population and selection
     # ------------------------------------------------------------------
-    def populate_tree(self):
+    def populate_tree(self, preserve_view: bool = False):
+        previous_view_state = self._capture_tree_view_state() if preserve_view else None
         self._rebuild_runtime_index()
         self.tree_model.clear()
         self.action_item_map.clear()
@@ -965,10 +1133,16 @@ class DatasetExplorerController(QObject):
 
         self.handle_filter_change(self.panel.filter_combo.currentIndex())
 
+        restored = False
+        if preserve_view and self.tree_model.rowCount() > 0:
+            restored = self._restore_tree_view_state(previous_view_state)
+
         if self.tree_model.rowCount() > 0:
-            first_index = self.tree_model.index(0, 0)
-            if first_index.isValid():
-                self.panel.tree.setCurrentIndex(first_index)
+            if not restored:
+                first_index = self.tree_model.index(0, 0)
+                if first_index.isValid():
+                    self.panel.tree.setCurrentIndex(first_index)
+                    self._expand_current_parent()
         else:
             self._clear_selection_for_empty_filtered_view()
 
@@ -1011,6 +1185,13 @@ class DatasetExplorerController(QObject):
         if action_idx.isValid():
             self.tree_model.removeRow(action_idx.row(), action_idx.parent())
 
+    def _expand_current_parent(self):
+        tree = self.panel.tree
+        current_idx = tree.currentIndex()
+        selected_parent = self._get_action_index(current_idx) if current_idx.isValid() else QModelIndex()
+        if selected_parent.isValid():
+            tree.setExpanded(selected_parent, True)
+
     def _clear_selection_for_empty_filtered_view(self):
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
@@ -1027,6 +1208,7 @@ class DatasetExplorerController(QObject):
 
     def _on_selection_changed(self, current, _previous):
         self._set_annotation_panels_enabled(current.isValid())
+        self._expand_current_parent()
         if not current.isValid():
             self.current_selected_sample_id = ""
             self.current_selected_input_path = None
@@ -1173,6 +1355,7 @@ class DatasetExplorerController(QObject):
             if not current_visible:
                 self.panel.tree.setCurrentIndex(first_visible_idx)
                 self.panel.tree.scrollTo(first_visible_idx)
+            self._expand_current_parent()
             return
 
         self._clear_selection_for_empty_filtered_view()
@@ -1316,22 +1499,64 @@ class DatasetExplorerController(QObject):
         self.main.show_temp_msg("Cleared", "Workspace reset.")
 
     def handle_remove_item(self, index: QModelIndex):
-        path, _action_idx = self._path_from_index(index)
-        if not path:
+        if not index.isValid():
             return
 
-        removed = self.remove_action_item_by_path(path)
+        pre_remove_expanded_sample_ids = self._capture_tree_view_state().get("expanded_sample_ids", set())
+        action_idx = self._get_action_index(index)
+        if not action_idx.isValid():
+            return
+
+        sample_id = action_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
+        if not sample_id:
+            return
+
+        is_child_row = index.parent().isValid()
+        removed_parent_row = action_idx.row()
+        removed = False
+        sample_removed = False
+        removed_path = ""
+
+        if is_child_row:
+            child_path = index.data(getattr(self.tree_model, "FilePathRole", 0x0100))
+            removed, sample_removed = self._remove_sample_input_by_path(sample_id, child_path)
+            removed_path = child_path or ""
+        else:
+            sample_path = action_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
+            removed = self._remove_sample_by_id(sample_id)
+            sample_removed = removed
+            removed_path = sample_path or ""
+
         if not removed:
             return
 
         self.is_data_dirty = True
-        removed_selected = self.current_selected_input_path == path or self.get_data_id_by_path(path) == self.current_selected_sample_id
+        removed_selected = (
+            sample_id == self.current_selected_sample_id
+            if sample_removed
+            else self._fs_path_key(removed_path) == self._fs_path_key(self.current_selected_input_path)
+        )
         self.populate_tree()
+
+        post_remove_selection = QModelIndex()
+        if sample_removed:
+            post_remove_selection = self._first_visible_top_level_index(removed_parent_row - 1)
+        else:
+            parent_idx = self._top_level_index_for_sample(sample_id)
+            if parent_idx.isValid():
+                child_idx = self._first_child_index_for_parent(parent_idx)
+                post_remove_selection = child_idx if child_idx.isValid() else parent_idx
+
+        if post_remove_selection.isValid():
+            self.panel.tree.setCurrentIndex(post_remove_selection)
+            self.panel.tree.scrollTo(post_remove_selection)
+        self._reapply_expanded_samples(pre_remove_expanded_sample_ids)
+
         self.main.update_save_export_button_state()
-        self.main.show_temp_msg("Removed", "Sample removed.")
+        self.main.show_temp_msg("Removed", "Sample removed." if sample_removed else "Input removed.")
 
         if removed_selected and self.tree_model.rowCount() == 0:
-            self._reset_panels_after_removed_path(path)
+            self._reset_panels_after_removed_path(removed_path)
 
     def _reset_panels_after_removed_path(self, _removed_path: str):
         self.current_selected_sample_id = ""
@@ -1432,9 +1657,8 @@ class DatasetExplorerController(QObject):
         self.current_working_directory = self.project_root
         self.is_data_dirty = False
         self._add_recent_project(self.current_json_path)
-        self._rebuild_runtime_index()
         self._refresh_header_panel()
-        self.populate_tree()
+        self.populate_tree(preserve_view=True)
         self.main.update_save_export_button_state()
         self.main.show_temp_msg("Saved", f"Saved to {os.path.basename(save_path)}")
         return True

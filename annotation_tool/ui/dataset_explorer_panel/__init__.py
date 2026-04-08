@@ -49,9 +49,10 @@ class DatasetExplorerTreeModel(QStandardItemModel):
         if icon:
             item.setIcon(icon)
 
-        if source_files and len(source_files) > 1:
+        if source_files:
             for src in source_files:
-                child = QStandardItem(os.path.basename(src))
+                child_name = os.path.basename(src) or str(src)
+                child = QStandardItem(child_name)
                 child.setEditable(False)
                 child.setData(src, self.FilePathRole)
                 child.setData(data_id, self.DataIdRole)
@@ -179,7 +180,8 @@ class DatasetExplorerPanel(QWidget):
             return
 
         menu = QMenu(self.tree)
-        remove_action = menu.addAction("Remove Item")
+        remove_label = "Remove Input" if index.parent().isValid() else "Remove Sample"
+        remove_action = menu.addAction(remove_label)
         selected = menu.exec(self.tree.mapToGlobal(pos))
         if selected == remove_action:
             self.removeItemRequested.emit(index)

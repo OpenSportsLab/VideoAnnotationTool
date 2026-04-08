@@ -168,11 +168,10 @@ def test_description_annotate_save_reload_edit_and_persist(
     first_path = window.get_current_action_path()
     assert first_path is not None
 
-    # 2) Write first caption text and confirm.
+    # 2) Write first caption text and wait for autosave.
     first_text = "Description v1 from GUI test."
     window.description_panel.caption_edit.setPlainText(first_text)
-    qtbot.mouseClick(window.description_panel.confirm_btn, Qt.MouseButton.LeftButton)
-    qtbot.wait(50)
+    qtbot.wait(350)
 
     target_item = next(
         item
@@ -205,8 +204,7 @@ def test_description_annotate_save_reload_edit_and_persist(
     # 4) Edit caption again, save, reload, and verify edited text persisted.
     second_text = "Description v2 edited after reload."
     window.description_panel.caption_edit.setPlainText(second_text)
-    qtbot.mouseClick(window.description_panel.confirm_btn, Qt.MouseButton.LeftButton)
-    qtbot.wait(50)
+    qtbot.wait(350)
 
     window.dataset_explorer_controller.save_project()
     saved_data_after_edit = json.loads(project_json_path.read_text(encoding="utf-8"))

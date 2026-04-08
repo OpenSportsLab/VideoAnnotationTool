@@ -8,9 +8,9 @@ Description mode uses a single controller for editor + navigation responsibiliti
 
 Owns Description editor behavior:
 
-- editor signal wiring (`confirm_clicked`, `clear_clicked`)
+- editor signal wiring (`caption_edit.textChanged` autosave)
 - Data-ID based selection text refresh (`on_data_selected`)
-- caption save/clear/reset flows
+- caption autosave/save/reset flows
 - undo/redo command creation (`CmdType.DESC_EDIT`)
 - done-status refresh through the shared tree status path
 
