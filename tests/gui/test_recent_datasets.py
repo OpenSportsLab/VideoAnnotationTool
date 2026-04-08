@@ -2,7 +2,6 @@
 Recent datasets GUI behavior tests.
 """
 
-import json
 import shutil
 from pathlib import Path
 
@@ -34,7 +33,7 @@ def test_recent_projects_list_updates_after_successful_import(window, monkeypatc
     project_json_path = synthetic_project_json("classification").resolve()
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
 
@@ -57,10 +56,10 @@ def test_recent_project_click_opens_dataset(window, monkeypatch, qtbot, syntheti
     project_json_path = synthetic_project_json("classification").resolve()
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     window.router.import_annotations()
     window.router.close_project()
@@ -81,7 +80,7 @@ def test_recent_projects_dedupe_order_and_limit(window, monkeypatch, tmp_path, s
     window.router.remove_all_recent_project()
     max_recent_display = window.router.get_max_recent_datasets_displayed()
     base_project = synthetic_project_json("classification")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     project_paths = []
     for idx in range(max_recent_display + 5):
@@ -111,20 +110,23 @@ def test_recent_projects_dedupe_order_and_limit(window, monkeypatch, tmp_path, s
 
 
 @pytest.mark.gui
-# Workflow: Try to open an invalid JSON project and verify it is not added to recents.
-def test_recent_projects_failed_open_does_not_add(window, monkeypatch, tmp_path):
+# Workflow: Try to open a missing dataset path from recents and verify the stale entry is removed.
+def test_recent_projects_missing_file_open_removes_stale_entry(window, monkeypatch, tmp_path):
     window.router.remove_all_recent_project()
-    invalid_project = tmp_path / "invalid_project.json"
-    invalid_project.write_text(json.dumps({"foo": "bar"}), encoding="utf-8")
+    missing_project = (tmp_path / "missing_project.json").resolve()
+    window.router._add_recent_project(str(missing_project))
+    assert window.router.get_recent_projects() == [str(missing_project)]
 
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    warning_calls = {"count": 0}
     monkeypatch.setattr(
-        "controllers.router.QMessageBox.critical",
-        lambda *args, **kwargs: QMessageBox.StandardButton.Ok,
+        "controllers.dataset_explorer_controller.QMessageBox.warning",
+        lambda *args, **kwargs: warning_calls.__setitem__("count", warning_calls["count"] + 1)
+        or QMessageBox.StandardButton.Ok,
     )
 
-    loaded = window.router.open_project_from_path(str(invalid_project))
+    loaded = window.router.open_project_from_path(str(missing_project))
     assert loaded is False
+    assert warning_calls["count"] == 1
     assert window.router.get_recent_projects() == []
 
 
@@ -138,7 +140,7 @@ def test_recent_projects_missing_path_removed_on_click(window, monkeypatch, qtbo
 
     warning_calls = {"count": 0}
     monkeypatch.setattr(
-        "controllers.router.QMessageBox.warning",
+        "controllers.dataset_explorer_controller.QMessageBox.warning",
         lambda *args, **kwargs: warning_calls.__setitem__("count", warning_calls["count"] + 1)
         or QMessageBox.StandardButton.Ok,
     )
@@ -160,10 +162,10 @@ def test_recent_projects_remove_button_removes_entry(window, monkeypatch, qtbot,
     window.router.remove_all_recent_project()
     project_json_path = synthetic_project_json("classification").resolve()
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
     window.router.import_annotations()
     window.router.close_project()
     assert window.welcome_widget.recent_projects_list.count() == 1
@@ -188,7 +190,7 @@ def test_recent_projects_remove_button_removes_entry(window, monkeypatch, qtbot,
 # # Workflow: Open datasets in different modes and verify recents ordering is newest-first across modes.
 # def test_recent_projects_tracks_multiple_modes_newest_first(window, monkeypatch, synthetic_project_json):
 #     window.router.remove_all_recent_project()
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
 #     classification_path = synthetic_project_json("classification").resolve()
 #     localization_path = synthetic_project_json("localization").resolve()
@@ -220,7 +222,7 @@ def test_recent_projects_remove_button_removes_entry(window, monkeypatch, qtbot,
 #     from main_window import VideoAnnotationWindow
 
 #     window.router.remove_all_recent_project()
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
 #     first_path = synthetic_project_json("classification").resolve()
 #     second_path = synthetic_project_json("localization").resolve()

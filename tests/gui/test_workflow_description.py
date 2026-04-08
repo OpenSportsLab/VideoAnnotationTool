@@ -28,10 +28,10 @@ def test_description_selection_loads_media_and_refreshes_editor(
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("description")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -109,9 +109,9 @@ def test_description_multiview_parent_selection_loads_first_child_media(
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
 
@@ -149,11 +149,11 @@ def test_description_annotate_save_reload_edit_and_persist(
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("description")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     # 1) Open description JSON and select first item.
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -177,7 +177,7 @@ def test_description_annotate_save_reload_edit_and_persist(
     target_item = next(
         item
         for item in window.model.action_item_data
-        if item.get("metadata", {}).get("path") == first_path
+        if item.get("path") == first_path
     )
     assert target_item["captions"][0]["text"] == first_text
 
@@ -191,7 +191,7 @@ def test_description_annotate_save_reload_edit_and_persist(
     assert window.model.json_loaded is False
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -217,7 +217,7 @@ def test_description_annotate_save_reload_edit_and_persist(
     assert window.model.json_loaded is False
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -238,10 +238,10 @@ def test_description_remove_selected_item_clears_editor_state(
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("description")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -281,10 +281,10 @@ def test_description_clear_workspace_resets_editor_and_model(
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("description")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -327,9 +327,9 @@ def test_description_clear_workspace_resets_editor_and_model(
 #     synthetic_project_json,
 # ):
 #     project_json_path = synthetic_project_json("description", item_count=2)
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 #     monkeypatch.setattr(
-#         "controllers.router.QFileDialog.getOpenFileName",
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
 #     window.router.import_annotations()
@@ -365,9 +365,9 @@ def test_description_clear_workspace_resets_editor_and_model(
 #     synthetic_project_json,
 # ):
 #     project_json_path = synthetic_project_json("description")
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 #     monkeypatch.setattr(
-#         "controllers.router.QFileDialog.getOpenFileName",
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
 #     window.router.import_annotations()

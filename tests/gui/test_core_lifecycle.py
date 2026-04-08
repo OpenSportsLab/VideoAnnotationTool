@@ -34,7 +34,7 @@ def test_import_project_routed_flow_all_modes(window, monkeypatch, synthetic_pro
     project_json_path = synthetic_project_json(mode)
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
 
@@ -65,7 +65,7 @@ def test_import_project_routed_flow_all_modes(window, monkeypatch, synthetic_pro
 #         def exec(self):
 #             return True
 
-#     monkeypatch.setattr("controllers.router.ProjectTypeDialog", _FakeProjectTypeDialog)
+#     monkeypatch.setattr("controllers.dataset_explorer_controller.ProjectTypeDialog", _FakeProjectTypeDialog)
 #     monkeypatch.setattr("ui.dialogs.ClassificationTypeDialog", _FakeClassificationTypeDialog)
 
 #     window.router.create_new_project_flow()
@@ -82,7 +82,7 @@ def test_close_project_returns_to_welcome(window, monkeypatch):
     window.dataset_explorer_controller.create_new_project("localization")
     assert window.model.json_loaded is True
 
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     window.router.close_project()
 
@@ -101,7 +101,7 @@ def test_dataset_explorer_prev_next_sample_buttons_navigate_rows(
 ):
     project_json_path = synthetic_project_json("classification", item_count=3)
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
 
@@ -151,7 +151,7 @@ def test_dataset_selection_emits_data_id_and_routes_media(
 ):
     project_json_path = synthetic_project_json("classification")
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
 
@@ -218,7 +218,7 @@ def test_classification_multiview_selection_routes_views_and_data_id(
     project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
 
@@ -266,7 +266,7 @@ def test_close_project_when_clean_skips_confirmation_popup(window, monkeypatch):
     )
     # If a popup is shown unexpectedly, fail the test.
     monkeypatch.setattr(
-        "main_window.QMessageBox.exec",
+        "controllers.dataset_explorer_controller.QMessageBox.exec",
         lambda self: (_ for _ in ()).throw(AssertionError("Confirmation popup should not be shown")),
     )
 
@@ -285,7 +285,7 @@ def test_filter_with_no_visible_samples_clears_media_and_annotation(
 ):
     project_json_path = synthetic_project_json("classification")
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
 
@@ -326,7 +326,7 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 ):
     project_json_path = synthetic_project_json(mode)
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
 
@@ -414,7 +414,7 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 #         no_button.click()
 #         return 0
 
-#     monkeypatch.setattr("main_window.QMessageBox.exec", _fake_exec)
+#     monkeypatch.setattr("controllers.dataset_explorer_controller.QMessageBox.exec", _fake_exec)
 #     stopped = {"count": 0}
 #     monkeypatch.setattr(window.media_controller, "stop", lambda: stopped.__setitem__("count", stopped["count"] + 1))
 

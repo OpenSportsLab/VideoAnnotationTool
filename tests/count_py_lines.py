@@ -16,6 +16,7 @@ IGNORE_DIRS = {
     "test_data",
 }
 
+
 def count_lines(path: Path) -> int:
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as f:
@@ -23,12 +24,31 @@ def count_lines(path: Path) -> int:
     except Exception:
         return -1
 
-def walk_tree(root: Path, prefix: str = "") -> int:
+
+def compute_dir_totals(root: Path, totals: dict[Path, int]) -> int:
     total_lines = 0
 
     entries = sorted(
         [p for p in root.iterdir() if p.name not in IGNORE_DIRS],
-        key=lambda p: (p.is_file(), p.name.lower())
+        key=lambda p: (p.is_file(), p.name.lower()),
+    )
+
+    for entry in entries:
+        if entry.is_dir():
+            total_lines += compute_dir_totals(entry, totals)
+        elif entry.suffix == ".py":
+            n = count_lines(entry)
+            if n >= 0:
+                total_lines += n
+
+    totals[root] = total_lines
+    return total_lines
+
+
+def walk_tree(root: Path, totals: dict[Path, int], prefix: str = "") -> None:
+    entries = sorted(
+        [p for p in root.iterdir() if p.name not in IGNORE_DIRS],
+        key=lambda p: (p.is_file(), p.name.lower()),
     )
 
     for i, entry in enumerate(entries):
@@ -37,26 +57,25 @@ def walk_tree(root: Path, prefix: str = "") -> int:
         next_prefix = prefix + ("    " if is_last else "│   ")
 
         if entry.is_dir():
-            print(f"{prefix}{connector}{entry.name}/")
-            total_lines += walk_tree(entry, next_prefix)
-
+            print(f"{prefix}{connector}{entry.name}/ [{totals.get(entry, 0)} lines]")
+            walk_tree(entry, totals, next_prefix)
         elif entry.suffix == ".py":
             n = count_lines(entry)
             label = f"{n} lines" if n >= 0 else "unreadable"
             print(f"{prefix}{connector}{entry.name} [{label}]")
 
-            if n >= 0:
-                total_lines += n
-
-    return total_lines
 
 def main():
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
     root = root.resolve()
 
-    print(f"{root.name}/")
-    total = walk_tree(root)
-    print(f"\nTotal Python lines: {total}")
+    totals: dict[Path, int] = {}
+    grand_total = compute_dir_totals(root, totals)
+
+    print(f"{root.name}/ [{grand_total} lines]")
+    walk_tree(root, totals)
+    print(f"\nTotal Python lines: {grand_total}")
+
 
 if __name__ == "__main__":
     main()

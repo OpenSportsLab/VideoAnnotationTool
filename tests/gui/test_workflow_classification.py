@@ -27,11 +27,11 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("classification")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     # 1) Open classification JSON.
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -74,7 +74,7 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
 
     # 6) Reopen and verify label persistence in model and UI.
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -111,7 +111,7 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
     assert window.center_stack.currentIndex() == 0
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -137,10 +137,10 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
 #     synthetic_project_json,
 # ):
 #     project_json_path = synthetic_project_json("classification")
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
 #     monkeypatch.setattr(
-#         "controllers.router.QFileDialog.getOpenFileName",
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
 #     window.router.import_annotations()
@@ -170,10 +170,10 @@ def test_classification_clear_workspace_resets_state(
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("classification")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -204,9 +204,9 @@ def test_classification_clear_workspace_resets_state(
 #     synthetic_project_json,
 # ):
 #     project_json_path = synthetic_project_json("classification")
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 #     monkeypatch.setattr(
-#         "controllers.router.QFileDialog.getOpenFileName",
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
 #     window.router.import_annotations()
@@ -248,9 +248,9 @@ def test_classification_clear_workspace_resets_state(
 #     synthetic_project_json,
 # ):
 #     project_json_path = synthetic_project_json("classification", item_count=2)
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 #     monkeypatch.setattr(
-#         "controllers.router.QFileDialog.getOpenFileName",
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
 #     window.router.import_annotations()

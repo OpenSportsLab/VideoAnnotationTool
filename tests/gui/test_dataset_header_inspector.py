@@ -64,7 +64,7 @@ def _set_known_value(panel, key: str, value: str):
 def test_dataset_header_inspector_renders_known_and_unknown_fields(window, monkeypatch, tmp_path):
     project_json_path = _write_classification_project_with_custom_header(tmp_path)
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -94,17 +94,16 @@ def test_dataset_header_inspector_renders_known_and_unknown_fields(window, monke
 
 
 @pytest.mark.gui
-# Workflow: Staged header edits should not mutate runtime mode fields until Save, then persist and round-trip.
+# Workflow: Header edits should update the canonical dataset_json immediately, then persist and round-trip.
 def test_header_draft_applies_on_save_and_roundtrips(window, monkeypatch, qtbot, tmp_path):
     project_json_path = _write_classification_project_with_custom_header(tmp_path)
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
 
     panel = window.dataset_explorer_panel
-    original_task = window.model.current_task_name
     new_task = "classification_overridden"
     new_description = "Edited header description"
 
@@ -112,9 +111,9 @@ def test_header_draft_applies_on_save_and_roundtrips(window, monkeypatch, qtbot,
     _set_known_value(panel, "description", new_description)
     qtbot.wait(50)
 
-    assert window.model.current_task_name == original_task
-    assert window.model.project_header_draft.get("task") == new_task
-    assert window.model.project_header_draft.get("description") == new_description
+    assert window.model.dataset_json.get("task") == new_task
+    assert window.model.dataset_json.get("description") == new_description
+    assert window.model.project_header_draft == {}
 
     window.dataset_explorer_controller.save_project()
 
@@ -124,12 +123,11 @@ def test_header_draft_applies_on_save_and_roundtrips(window, monkeypatch, qtbot,
     assert saved.get("custom_owner") == "qa-team"
     assert "labels" in saved
     assert len(saved.get("data", [])) == 1
-    assert window.model.project_header_draft == {}
-    assert window.model.current_task_name == new_task
+    assert window.model.dataset_json.get("task") == new_task
 
     window.router.close_project()
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -142,11 +140,11 @@ def test_header_draft_applies_on_save_and_roundtrips(window, monkeypatch, qtbot,
 
 
 @pytest.mark.gui
-# Workflow: Closing with discard after staged header edits should not write staged values to disk.
+# Workflow: Closing with discard after unsaved header edits should not write the in-memory values to disk.
 def test_header_draft_discard_close_does_not_persist(window, monkeypatch, qtbot, tmp_path):
     project_json_path = _write_classification_project_with_custom_header(tmp_path)
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.router.import_annotations()
@@ -155,7 +153,7 @@ def test_header_draft_discard_close_does_not_persist(window, monkeypatch, qtbot,
     qtbot.wait(50)
     assert window.model.is_data_dirty is True
 
-    monkeypatch.setattr(window, "_prompt_unsaved_close_action", lambda: "discard")
+    monkeypatch.setattr(window.dataset_explorer_controller, "_prompt_unsaved_close_action", lambda: "discard")
     window.router.close_project()
 
     saved = json.loads(project_json_path.read_text(encoding="utf-8"))
