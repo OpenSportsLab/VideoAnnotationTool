@@ -2,7 +2,7 @@ import os
 
 from PyQt6.QtCore import Qt, QModelIndex
 from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
-from PyQt6.QtWidgets import QMainWindow, QMessageBox, QStackedWidget, QDockWidget, QTabWidget
+from PyQt6.QtWidgets import QDockWidget, QMainWindow, QStackedWidget, QTabWidget
 
 from controllers.classification import ClassificationEditorController
 from controllers.localization import LocalizationEditorController
@@ -10,11 +10,8 @@ from controllers.description import DescEditorController
 from controllers.dense_description import DenseEditorController
 from controllers.history_manager import HistoryManager
 from controllers.media_controller import MediaController
-
-from controllers.router import AppRouter
 from controllers.dataset_explorer_controller import DatasetExplorerController
 from controllers.welcome_controller import WelcomeController
-from models import AppStateModel
 
 # [NEW] Direct UI Imports
 from ui.welcome_widget import WelcomeWidget
@@ -39,9 +36,6 @@ class VideoAnnotationWindow(QMainWindow):
 
         self.setWindowTitle("Video Annotation Tool")
         self.resize(1200, 800)
-
-        # --- Model wiring ---
-        self.model = AppStateModel()
 
         # --- 1. Center Area: Stacked Widget (Welcome vs Media Player) ---
         self.center_stack = QStackedWidget()
@@ -98,25 +92,23 @@ class VideoAnnotationWindow(QMainWindow):
         # Allow nested docking and tabbed docks
         self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AnimatedDocks)
 
-        # [NEW] Dataset Explorer (Panel-Model-Controller)
-        # Initialized early so other controllers (like Router) can reference it
+        # Central playback controller.
+        self.media_controller = MediaController(self.center_panel.player, self.center_panel.video_widget)
+
+        # Dataset explorer now owns the canonical dataset document.
         self.dataset_explorer_controller = DatasetExplorerController(
             main_window=self,
             panel=self.dataset_explorer_panel,
             tree_model=self.tree_model,
-            app_state=self.model,
-            media_controller=None # Placeholder, will be set after MediaController init
+            media_controller=self.media_controller,
         )
+        self.model = self.dataset_explorer_controller
+        self.router = self.dataset_explorer_controller
 
         # --- Controllers ---
-        self.router = AppRouter(self)
         self.welcome_controller = WelcomeController(self.welcome_widget, self.router, self)
         self.history_manager = HistoryManager(self)
-        
-        # [CENTRALIZED] Create the ONE and ONLY Media Controller here
-        self.media_controller = MediaController(self.center_panel.player, self.center_panel.video_widget)
-        self.dataset_explorer_controller.media_controller = self.media_controller
-        
+
         self.classification_editor_controller = ClassificationEditorController(
             self, self.media_controller
         )
@@ -213,7 +205,7 @@ class VideoAnnotationWindow(QMainWindow):
     def _safe_create_project(self): self.router.create_new_project_flow()
     def _safe_close_dataset_or_quit(self):
         if self.model.json_loaded:
-            self.router.close_project()
+            self.dataset_explorer_controller.close_project()
         else:
             self.close()
 
@@ -231,6 +223,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.dataSelected.connect(self.localization_editor_controller.on_data_selected)
         self.dataset_explorer_controller.dataSelected.connect(self.desc_editor_controller.on_data_selected)
         self.dataset_explorer_controller.dataSelected.connect(self.dense_editor_controller.on_data_selected)
+        self.right_tabs.currentChanged.connect(self._on_editor_tab_changed)
 
 
         # --- Center panel (Unified Playback) ---
@@ -265,7 +258,7 @@ class VideoAnnotationWindow(QMainWindow):
         file_menu.addAction(self.action_load)
 
         self.action_close = QAction("Close Dataset", self)
-        self.action_close.triggered.connect(self.router.close_project)
+        self.action_close.triggered.connect(self.dataset_explorer_controller.close_project)
         file_menu.addAction(self.action_close)
 
         file_menu.addSeparator()
@@ -344,39 +337,39 @@ class VideoAnnotationWindow(QMainWindow):
             lambda: self.show_temp_msg("Info", "Select an event and edit time via right-click.")
         )
 
-    # ---------------------------------------------------------------------
-    # Mode-aware dispatchers
-    # ---------------------------------------------------------------------
-    def _get_active_mode_index(self) -> int:
-        return self.right_tabs.currentIndex()
+    # # ---------------------------------------------------------------------
+    # # Mode-aware dispatchers (Deprecated?)
+    # # ---------------------------------------------------------------------
+    # def _get_active_mode_index(self) -> int:
+    #     return self.right_tabs.currentIndex()
 
-    def _is_cls_mode(self) -> bool: return self._get_active_mode_index() == 0
-    def _is_loc_mode(self) -> bool: return self._get_active_mode_index() == 1
-    def _is_desc_mode(self) -> bool: return self._get_active_mode_index() == 2
-    def _is_dense_mode(self) -> bool: return self._get_active_mode_index() == 3
+    # def _is_cls_mode(self) -> bool: return self._get_active_mode_index() == 0
+    # def _is_loc_mode(self) -> bool: return self._get_active_mode_index() == 1
+    # def _is_desc_mode(self) -> bool: return self._get_active_mode_index() == 2
+    # def _is_dense_mode(self) -> bool: return self._get_active_mode_index() == 3
 
-    def _on_remove_item_requested(self, index: QModelIndex):
-        self.dataset_explorer_controller.handle_remove_item(index)
+    # def _on_remove_item_requested(self, index: QModelIndex):
+    #     self.dataset_explorer_controller.handle_remove_item(index)
 
     # ---------------------------------------------------------------------
     # UI Helpers
     # ---------------------------------------------------------------------
-    def prepare_new_project_ui(self) -> None:
-        self.set_project_ui_enabled(True)
-        self.classification_editor_controller.setup_dynamic_ui()
-        self.show_temp_msg("New Project Created", "Classification ready.")
+    # def prepare_new_project_ui(self) -> None:
+    #     self.set_project_ui_enabled(True)
+    #     self.classification_editor_controller.setup_dynamic_ui()
+    #     self.show_temp_msg("New Project Created", "Dataset ready.")
 
-    def prepare_new_localization_ui(self) -> None:
-        self.set_project_ui_enabled(True)
-        self.show_temp_msg("New Project Created", "Localization ready.")
+    # def prepare_new_localization_ui(self) -> None:
+    #     self.prepare_new_project_ui()
 
-    def prepare_new_description_ui(self) -> None:
-        self.set_project_ui_enabled(True)
-        self.show_temp_msg("New Project Created", "Description ready.")
+    # def prepare_new_description_ui(self) -> None:
+    #     self.prepare_new_project_ui()
     
-    def prepare_new_dense_ui(self) -> None:
-        self.set_project_ui_enabled(True)
-        self.show_temp_msg("New Project Created", "Dense Description ready.")
+    # def prepare_new_dense_ui(self) -> None:
+    #     self.prepare_new_project_ui()
+
+    def _on_editor_tab_changed(self, _index: int) -> None:
+        self.dataset_explorer_controller.handle_active_mode_changed()
 
     def load_stylesheet(self) -> None:
         style_path = resource_path(os.path.join("style", "style.qss"))
@@ -385,57 +378,11 @@ class VideoAnnotationWindow(QMainWindow):
                 self.setStyleSheet(f.read())
         except Exception as exc: print(f"Style error: {exc}")
 
-    def _prompt_unsaved_close_action(self) -> str:
-        """
-        Prompt user for how to proceed when unsaved changes exist.
-        Returns one of: "save", "save_as", "discard", "cancel".
-        """
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Unsaved Changes")
-        msg_box.setText("Unsaved changes will be lost. How do you want to proceed?")
-
-        btn_save = msg_box.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
-        btn_save_as = msg_box.addButton("Save As", QMessageBox.ButtonRole.ActionRole)
-        btn_discard = msg_box.addButton("Close Without Saving", QMessageBox.ButtonRole.DestructiveRole)
-        btn_cancel = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        msg_box.setDefaultButton(btn_save)
-        msg_box.exec()
-
-        clicked = msg_box.clickedButton()
-        if clicked == btn_save:
-            return "save"
-        if clicked == btn_save_as:
-            return "save_as"
-        if clicked == btn_discard:
-            return "discard"
-        if clicked == btn_cancel:
-            return "cancel"
-        return "cancel"
-
     def check_and_close_current_project(self) -> bool:
-        if not self.model.json_loaded:
-            return True
-        if not self.model.is_data_dirty:
-            self.media_controller.stop()
-            return True
-
-        action = self._prompt_unsaved_close_action()
-        if action == "save":
-            if not self.dataset_explorer_controller.save_project():
-                return False
-        elif action == "save_as":
-            if not self.dataset_explorer_controller.export_project():
-                return False
-        elif action == "discard":
-            pass
-        else:
-            return False
-
-        self.media_controller.stop()
-        return True
+        return self.dataset_explorer_controller.check_and_close_current_project()
 
     def closeEvent(self, event) -> None:
-        if self.check_and_close_current_project():
+        if self.dataset_explorer_controller.check_and_close_current_project():
             self.media_controller.stop()
             event.accept()
         else:
@@ -449,6 +396,8 @@ class VideoAnnotationWindow(QMainWindow):
         self.action_export.setEnabled(can_export)
         self.action_undo.setEnabled(len(self.model.undo_stack) > 0)
         self.action_redo.setEnabled(len(self.model.redo_stack) > 0)
+        if hasattr(self, "dataset_explorer_controller"):
+            self.dataset_explorer_controller._refresh_json_preview()
 
     def show_temp_msg(self, title: str, msg: str, duration: int = 1500, **kwargs) -> None:
         one_line = " ".join(str(msg).splitlines()).strip()

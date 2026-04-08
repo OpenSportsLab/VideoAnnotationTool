@@ -7,9 +7,10 @@ import copy
 import uuid
 import re
 import yaml
-from models import CmdType
 from PyQt6.QtCore import QThread, pyqtSignal, QObject
 from PyQt6.QtWidgets import QMessageBox
+
+from controllers.command_types import CmdType
 from utils import natural_sort_key
 
 os.environ["WANDB_MODE"] = "disabled"
@@ -373,7 +374,7 @@ class InferenceManager(QObject):
             QMessageBox.warning(self.main, "Warning", "Please select an action/video from the list first.")
             return
 
-        action_id = self.main.model.action_path_to_name.get(current_video_path, os.path.basename(current_video_path))
+        action_id = self.main.model.get_data_id_by_path(current_video_path) or os.path.basename(current_video_path)
 
         self.panel.show_inference_loading(True)
 
@@ -423,6 +424,7 @@ class InferenceManager(QObject):
         
         self.main.model.is_data_dirty = True
         self.panel.display_inference_result(target_head, label, conf_dict)
+        self.main.update_save_export_button_state()
         self.worker = None
 
     def _on_inference_error(self, error_msg):
@@ -437,36 +439,23 @@ class InferenceManager(QObject):
 
         sorted_items = sorted(self.main.model.action_item_data, key=lambda x: natural_sort_key(x.get('name', '')))
         
-        action_groups = {}
-        for item in sorted_items:
-            base_id = re.sub(r'_view\d+', '', item['name'])
-            if base_id not in action_groups:
-                action_groups[base_id] = []
-            action_groups[base_id].append(item)
-            
-        sorted_base_ids = list(action_groups.keys())
-        max_idx = len(sorted_base_ids) - 1
+        max_idx = len(sorted_items) - 1
         
         if start_idx < 0 or end_idx > max_idx or start_idx > end_idx:
             QMessageBox.warning(self.main, "Invalid Range", f"Please enter a valid range between 0 and {max_idx}.")
             return
 
-        target_base_ids = sorted_base_ids[start_idx : end_idx + 1]
-        
         target_clips = []
-        for base_id in target_base_ids:
-            items = action_groups[base_id]
-            paths = [it['path'] for it in items]
-            
-            # Extract current ground truth
-            gt_label = ""
-            for it in items:
-                ann = self.main.model.manual_annotations.get(it['path'], {})
-                if 'action' in ann:
-                    gt_label = ann['action']
-                    break
-                    
-            target_clips.append({'id': base_id, 'paths': paths, 'gt': gt_label, 'original_items': items})
+        for item in sorted_items[start_idx : end_idx + 1]:
+            manual_annotation = self.main.model.manual_annotations.get(item["path"], {})
+            target_clips.append(
+                {
+                    "id": item.get("data_id") or item.get("name"),
+                    "paths": item.get("source_files", [item["path"]]),
+                    "gt": manual_annotation.get("action", ""),
+                    "original_items": [item],
+                }
+            )
 
         self.panel.show_inference_loading(True)
         
@@ -539,6 +528,7 @@ class InferenceManager(QObject):
             
         self.main.model.is_data_dirty = True
         self.panel.display_batch_inference_result(text, batch_predictions)
+        self.main.update_save_export_button_state()
         self.batch_worker = None
 
     def _on_batch_inference_error(self, error_msg):

@@ -7,9 +7,9 @@ This package contains the application logic layer.
 ```text
 controllers/
 ├── __init__.py
+├── command_types.py
 ├── dataset_explorer_controller.py
 ├── welcome_controller.py
-├── router.py
 ├── media_controller.py
 ├── history_manager.py
 ├── classification/

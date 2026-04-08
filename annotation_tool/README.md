@@ -18,15 +18,14 @@ annotation_tool/
 ├── config.yaml                 # [NEW] Inference configuration for opensportslib models
 ├── __init__.py                 # Package initialization
 │
-├── models/                     # [Model Layer] Data Structures & State
-│   ├── app_state.py            # Global State, Undo/Redo Stacks, & JSON Validation
-│   └── project_tree.py         # Shared QStandardItemModel for the sidebar tree
+├── models/                     # [Model Layer] Shared enums / compatibility exports
+│   └── __init__.py
 │
 ├── controllers/                # [Controller Layer] Business Logic
-│   ├── router.py               # Mode detection & Project lifecycle management
+│   ├── command_types.py        # Shared undo/redo command enum
 │   ├── history_manager.py      # Universal Undo/Redo system (Supports Batch Annotations)
 │   ├── media_controller.py     # Unified playback logic (Anti-freeze/Visual clearing)
-│   ├── dataset_explorer_controller.py # Shared dataset tree + lifecycle flows
+│   ├── dataset_explorer_controller.py # Canonical dataset_json owner + lifecycle flows
 │   ├── welcome_controller.py   # Welcome screen actions + recent datasets wiring
 │   ├── classification/         # Logic for Classification mode
 │   │   ├── __init__.py
@@ -58,17 +57,17 @@ annotation_tool/
 
 ## 📝 Detailed Module Descriptions
 
-### 1. Core Infrastructure & Routing
+### 1. Core Infrastructure
 
 * **`main.py`**: Initializes the `QApplication` and the high-level event loop.
 * **`viewer.py`**: The heart of the application. It instantiates all Managers, connects signals between UI components and Logic Controllers, and implements `stop_all_players()` to prevent media resource leaks during mode switching.
-* **`router.py`**: Features a heuristic detection engine that identifies project types from JSON keys (e.g., detecting `"dense"` tasks to trigger the Dense Description mode).
+* **`dataset_explorer_controller.py`**: Owns the canonical `dataset_json` document, handles open/create/close/save/export flows, tracks recent datasets, and routes the selected sample to all editor controllers.
 * **`media_controller.py`**: Manages the "Stop -> Load -> Delay -> Play" sequence to eliminate black screens and GPU buffer artifacts.
 
 ### 2. The Model Layer (`/models`)
 
-* **`app_state.py`**: Maintains the "Source of Truth" for the application. It stores `manual_annotations` (Class), `localization_events` (Loc), and `dense_description_events` (Dense). It also contains strict JSON Schema validators for each task.
-* **`project_tree.py`**: A `QStandardItemModel` used by all modes to display clips in the sidebar.
+* Persisted dataset content now lives in one in-memory `dataset_json` tree managed by `dataset_explorer_controller.py`.
+* Runtime-only state stays outside that JSON tree: current selection, recent datasets, media playback state, and undo/redo stacks.
 
 ### 3. Modality Logic (`/controllers`)
 
@@ -85,8 +84,8 @@ annotation_tool/
 
 ## 🚀 Getting Started
 
-1. **Select Mode**: Launch the app and use the "New Project" wizard to select one of the four modes.
-2. **Import**: The `AppRouter` will automatically detect the correct modality if you import an existing JSON.
+1. **Create Dataset**: Launch the app and use the "Create New Dataset" dialog. The four editor tabs stay available for every dataset.
+2. **Import**: Load any compatible JSON. The app keeps all supported annotation blocks in one `dataset_json` document instead of switching project modes.
 3. **Annotate**:
 * In **Dense mode**, navigate to a point in the video, type your description in the right panel, and click "Add Description".
 * Use the **Timeline** to jump between existing text annotations.

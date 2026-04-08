@@ -3,8 +3,8 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QMessageBox
 
+from controllers.command_types import CmdType
 from controllers.media_controller import MediaController
-from models import CmdType
 
 
 class DenseEditorController:
@@ -22,6 +22,7 @@ class DenseEditorController:
         self.right_panel = main_window.dense_panel
         self.media_controller = media_controller
 
+        self.current_sample_id = ""
         self.current_video_path = None
 
         self.sync_timer = QTimer(self.main)
@@ -50,6 +51,7 @@ class DenseEditorController:
         self.right_panel.table.set_data([])
         self.right_panel.input_widget.set_text("")
         self.right_panel.setEnabled(False)
+        self.current_sample_id = ""
         self.current_video_path = None
 
     def submit_current_annotation(self):
@@ -59,28 +61,25 @@ class DenseEditorController:
     # Selection + Dense Editing
     # -------------------------------------------------------------------------
     def on_data_selected(self, data_id: str):
-        if self.main.right_tabs.currentIndex() != 3:
-            return
-
         if not data_id:
+            self.current_sample_id = ""
             self.current_video_path = None
             self.right_panel.setEnabled(False)
             self.right_panel.table.set_data([])
             self.right_panel.input_widget.set_text("")
-            self.center_panel.set_markers([])
+            if self._is_active_mode():
+                self.center_panel.set_markers([])
             return
 
         path = self.model.get_path_by_id(data_id)
-        if path == self.current_video_path:
-            return
-
         if not path:
             return
 
+        self.current_sample_id = data_id
         self.current_video_path = path
         self.right_panel.setEnabled(True)
         self.right_panel.input_widget.set_text("")
-        self.display_events_for_item(path)
+        self.display_events_for_item(path, update_markers=self._is_active_mode())
 
     def _on_media_position_changed(self, ms: int):
         self.right_panel.input_widget.update_time(self._fmt_ms_full(ms))
@@ -201,7 +200,7 @@ class DenseEditorController:
         new_event["position_ms"] = current_ms
         self._on_annotation_modified(old_event, new_event)
 
-    def display_events_for_item(self, path: str):
+    def display_events_for_item(self, path: str, update_markers=None):
         current_selection_ms = None
         selection_model = self.right_panel.table.table.selectionModel()
         if selection_model:
@@ -216,11 +215,14 @@ class DenseEditorController:
         sorted_events = sorted(events, key=lambda x: x.get("position_ms", 0))
 
         self.right_panel.table.set_data(sorted_events)
-        markers = [
-            {"start_ms": event.get("position_ms", 0), "color": QColor("#FFD700")}
-            for event in sorted_events
-        ]
-        self.center_panel.set_markers(markers)
+        if update_markers is None:
+            update_markers = self._is_active_mode()
+        if update_markers:
+            markers = [
+                {"start_ms": event.get("position_ms", 0), "color": QColor("#FFD700")}
+                for event in sorted_events
+            ]
+            self.center_panel.set_markers(markers)
 
         if current_selection_ms is not None:
             self._select_row_by_time(current_selection_ms)
@@ -294,3 +296,6 @@ class DenseEditorController:
         minutes = seconds // 60
         hours = minutes // 60
         return f"{hours:02}:{minutes % 60:02}:{seconds % 60:02}.{ms % 1000:03}"
+
+    def _is_active_mode(self) -> bool:
+        return self.main.right_tabs.currentIndex() == 3

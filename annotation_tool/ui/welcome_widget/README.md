@@ -33,8 +33,8 @@ welcome_widget/
 - The recent list is view-only and signal-driven.
 - Clicking the file name emits `recentProjectRequested(path)`.
 - Clicking `×` emits `recentProjectRemoveRequested(path)`.
-- Persistence is not handled in the widget; `AppRouter` stores recents via `QSettings`.
-- Router persists all unique opened datasets (newest first, deduplicated); widget displays only the top 5.
+- Persistence is not handled in the widget; `DatasetExplorerController` stores recents via `QSettings`.
+- The controller persists all unique opened datasets (newest first, deduplicated); widget displays only the top configured entries.
 
 ## Notes
 

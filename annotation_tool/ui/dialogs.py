@@ -9,113 +9,38 @@ from PyQt6.QtCore import QDir, Qt, QSize
 from PyQt6.QtGui import QFileSystemModel, QIcon
 from utils import get_square_remove_btn_style
 
-class ProjectTypeDialog(QDialog):
-    """
-    Project type chooser.
-    Shown after clicking 'New Project' to select the operating mode.
-    Updated to include Classification, Localization, and Description.
-    """
+class NewDatasetDialog(QDialog):
+    """Minimal new-dataset flow with only multiview grouping."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-
-        self.setWindowTitle("Select Project Type")
-        self.resize(600, 250) # Widen slightly to fit 3 buttons
-        self.selected_mode: str | None = None
+        self.setWindowTitle("Create New Dataset")
+        self.resize(420, 180)
+        self.is_multi_view = False
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setSpacing(14)
+        layout.setContentsMargins(24, 24, 24, 24)
 
-        lbl = QLabel("Please select the type of project you want to create:")
+        lbl = QLabel("Create a blank dataset. All four editor tabs stay available.")
+        lbl.setWordWrap(True)
         lbl.setProperty("class", "dialog_instruction_lbl")
         layout.addWidget(lbl)
 
-        # Three large buttons side-by-side
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(20)
+        self.multiview_checkbox = QCheckBox("Group added samples by parent folder (multiview)")
+        self.multiview_checkbox.setChecked(False)
+        layout.addWidget(self.multiview_checkbox)
 
-        # 1. Classification Button
-        self.btn_cls = QPushButton("Classification")
-        self.btn_cls.setMinimumSize(QSize(0, 80))
-        self.btn_cls.setProperty("class", "project_type_btn") # CSS class for styling
-        
-        # 2. Localization Button
-        self.btn_loc = QPushButton("Localization")
-        self.btn_loc.setMinimumSize(QSize(0, 80))
-        self.btn_loc.setProperty("class", "project_type_btn")
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
-        # 3. [NEW] Description Button
-        self.btn_desc = QPushButton("Description")
-        self.btn_desc.setMinimumSize(QSize(0, 80))
-        self.btn_desc.setProperty("class", "project_type_btn")
-
-        # 3. [NEW] Description Button
-        self.btn_dense = QPushButton("Dense Description")
-        self.btn_dense.setMinimumSize(QSize(0, 80))
-        self.btn_dense.setProperty("class", "project_type_btn")
-
-        # Add buttons to layout
-        btn_layout.addWidget(self.btn_cls)
-        btn_layout.addWidget(self.btn_loc)
-        btn_layout.addWidget(self.btn_desc) # [NEW]
-        btn_layout.addWidget(self.btn_dense) # [NEW]
-
-        layout.addLayout(btn_layout)
-
-        # Connect signals
-        # Lambda is used to pass the mode string to the handler
-        self.btn_cls.clicked.connect(lambda: self.finalize_selection("classification"))
-        self.btn_loc.clicked.connect(lambda: self.finalize_selection("localization"))
-        self.btn_desc.clicked.connect(lambda: self.finalize_selection("description")) 
-        self.btn_dense.clicked.connect(lambda: self.finalize_selection("dense_description")) # [NEW]
-
-    def finalize_selection(self, mode: str):
-        """Stores the selected mode and closes the dialog."""
-        self.selected_mode = mode
-        self.accept()
-
-class ClassificationTypeDialog(QDialog):
-    """
-    [NEW] Dialog to ask the user if the new Classification project 
-    is Single-View or Multi-View.
-    """
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Classification Project Type")
-        self.resize(450, 180)
-        self.is_multi_view = False # Default to Single-View
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(30, 30, 30, 30)
-
-        lbl = QLabel("Is this a Single-View or Multi-View project?")
-        lbl.setProperty("class", "dialog_instruction_lbl")
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(lbl)
-
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(20)
-
-        self.btn_sv = QPushButton("Single-View\n(Individual Videos)")
-        self.btn_sv.setMinimumSize(QSize(0, 70))
-        self.btn_sv.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        self.btn_mv = QPushButton("Multi-View\n(Grouped by Folder)")
-        self.btn_mv.setMinimumSize(QSize(0, 70))
-        self.btn_mv.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        btn_layout.addWidget(self.btn_sv)
-        btn_layout.addWidget(self.btn_mv)
-        layout.addLayout(btn_layout)
-
-        # Connect signals
-        self.btn_sv.clicked.connect(lambda: self.finalize_selection(False))
-        self.btn_mv.clicked.connect(lambda: self.finalize_selection(True))
-
-    def finalize_selection(self, is_multi: bool):
-        self.is_multi_view = is_multi
+    def _accept(self):
+        self.is_multi_view = self.multiview_checkbox.isChecked()
         self.accept()
 
 class FolderPickerDialog(QDialog):

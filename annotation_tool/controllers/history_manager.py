@@ -1,5 +1,6 @@
 import copy
-from models import CmdType
+
+from controllers.command_types import CmdType
 
 class HistoryManager:
     """
@@ -142,20 +143,6 @@ class HistoryManager:
             # Refresh the UI to reflect batch smart annotations
             self._refresh_active_view()
 
-            
-        elif ctype == CmdType.UI_CHANGE:
-            path = cmd['path']
-            if self.main.get_current_action_path() == path:
-                val = cmd['old_val'] if is_undo else cmd['new_val']
-                grp = self.main.classification_panel.label_groups.get(cmd['head'])
-                if grp:
-                    if hasattr(grp, "set_checked_label"):
-                        grp.set_checked_label(val)
-                    elif hasattr(grp, "set_checked_labels"):
-                        grp.set_checked_labels(val)
-
-       
-
         # =========================================================
         # 2. Localization Specific (Events)
         # =========================================================
@@ -210,27 +197,12 @@ class HistoryManager:
         # =========================================================
         elif ctype == CmdType.DESC_EDIT:
             path = cmd['path']
+            sample_id = cmd.get("sample_id") or self.model.get_data_id_by_path(path)
             # Determine whether to apply old or new data
             data_to_apply = cmd['old_data'] if is_undo else cmd['new_data']
-            
-            # Find the corresponding item in the data model
-            target_entry = None
-            for item in self.model.action_item_data:
-                if item.get("metadata", {}).get("path") == path:
-                    target_entry = item
-                    break
-            
-            if target_entry:
-                # 1. Restore the 'captions' list
-                target_entry["captions"] = copy.deepcopy(data_to_apply)
-                
-                # 2. Update the tree icon status (Empty vs Done)
-                has_text = False
-                if data_to_apply and len(data_to_apply) > 0:
-                    text_val = data_to_apply[0].get("text", "")
-                    if text_val and text_val.strip():
-                        has_text = True
-                
+
+            if sample_id:
+                self.model.set_sample_captions(sample_id, copy.deepcopy(data_to_apply))
                 self.main.update_action_item_status(path)
 
             self._refresh_active_view()

@@ -6,8 +6,8 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
+from controllers.command_types import CmdType
 from controllers.media_controller import MediaController
-from models import CmdType
 
 from .loc_inference import LocalizationInferenceManager
 
@@ -96,14 +96,13 @@ class LocalizationEditorController:
         self._on_annotation_modified(old_event, new_event)
 
     def on_data_selected(self, data_id: str):
-        if self.main.right_tabs.currentIndex() != 1:
-            return
-
         if not data_id:
             self.current_video_path = None
             self.right_panel.table.set_data([])
             if hasattr(self.right_panel, "smart_widget"):
                 self.right_panel.smart_widget.smart_table.set_data([])
+            if self._is_active_mode():
+                self.center_panel.set_markers([])
             self.right_panel.setEnabled(False)
             return
 
@@ -113,13 +112,13 @@ class LocalizationEditorController:
             self.right_panel.setEnabled(False)
             return
 
-        if path == self.current_video_path:
-            return
-
         if path and os.path.exists(path):
             self.current_video_path = path
             self.right_panel.setEnabled(True)
-            self._display_events_for_item(path)
+            if self._is_showing_smart_tab():
+                self._display_smart_events(path, update_markers=self._is_active_mode())
+            else:
+                self._display_events_for_item(path, update_markers=self._is_active_mode())
         elif path:
             QMessageBox.warning(self.main, "Error", f"File not found: {path}")
 
@@ -429,14 +428,17 @@ class LocalizationEditorController:
             events = self.model.localization_events.get(path, [])
             item.setIcon(self.main.done_icon if events else self.main.empty_icon)
 
-    def _display_events_for_item(self, path):
+    def _display_events_for_item(self, path, update_markers=None):
         events = self.model.localization_events.get(path, [])
         # Keep original event dict references so table-originated edits/deletes map back
         # to the same objects stored in the model.
         display_data = sorted(events, key=lambda x: x.get("position_ms", 0))
         self.right_panel.table.set_data(display_data)
-        markers = [{"start_ms": e.get("position_ms", 0), "color": QColor("#00BFFF")} for e in events]
-        self.center_panel.set_markers(markers)
+        if update_markers is None:
+            update_markers = self._is_active_mode() and not self._is_showing_smart_tab()
+        if update_markers:
+            markers = [{"start_ms": e.get("position_ms", 0), "color": QColor("#00BFFF")} for e in events]
+            self.center_panel.set_markers(markers)
 
     def _find_event_index(self, events, event):
         """
@@ -563,7 +565,9 @@ class LocalizationEditorController:
             return
 
         self.model.smart_localization_events[self.current_video_path] = predicted_events
+        self.model.is_data_dirty = True
         self.main.show_temp_msg("Smart Inference", f"Success: Found {len(predicted_events)} events.")
+        self.main.update_save_export_button_state()
 
         if self.right_panel.tabs.currentIndex() == 1:
             self._display_smart_events(self.current_video_path)
@@ -599,24 +603,36 @@ class LocalizationEditorController:
     def _clear_smart_events(self):
         if not self.current_video_path:
             return
+        if self.model.smart_localization_events.get(self.current_video_path):
+            self.model.is_data_dirty = True
         self.model.smart_localization_events[self.current_video_path] = []
         self._display_smart_events(self.current_video_path)
         self.main.show_temp_msg("Smart Spotting", "Cleared smart predictions.")
+        self.main.update_save_export_button_state()
 
-    def _display_smart_events(self, video_path: str):
+    def _display_smart_events(self, video_path: str, update_markers=None):
         events = self.model.smart_localization_events.get(video_path, [])
         self.right_panel.smart_widget.smart_table.set_data(events)
-        markers = [
-            {"start_ms": evt.get("position_ms", 0), "color": QColor("deepskyblue")}
-            for evt in events
-        ]
-        self.center_panel.set_markers(markers)
+        if update_markers is None:
+            update_markers = self._is_active_mode() and self._is_showing_smart_tab()
+        if update_markers:
+            markers = [
+                {"start_ms": evt.get("position_ms", 0), "color": QColor("deepskyblue")}
+                for evt in events
+            ]
+            self.center_panel.set_markers(markers)
 
     def _on_tab_switched(self, index: int):
         if not self.current_video_path:
             return
 
         if index == 0:
-            self._display_events_for_item(self.current_video_path)
+            self._display_events_for_item(self.current_video_path, update_markers=self._is_active_mode())
         elif index == 1:
-            self._display_smart_events(self.current_video_path)
+            self._display_smart_events(self.current_video_path, update_markers=self._is_active_mode())
+
+    def _is_active_mode(self) -> bool:
+        return self.main.right_tabs.currentIndex() == 1
+
+    def _is_showing_smart_tab(self) -> bool:
+        return hasattr(self.right_panel, "tabs") and self.right_panel.tabs.currentIndex() == 1

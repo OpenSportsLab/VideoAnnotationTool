@@ -2,8 +2,8 @@ import copy
 
 from PyQt6.QtWidgets import QMessageBox
 
+from controllers.command_types import CmdType
 from controllers.media_controller import MediaController
-from models import CmdType
 from utils import natural_sort_key
 
 from .inference_manager import InferenceManager
@@ -78,32 +78,33 @@ class ClassificationEditorController:
             group.remove_label_signal.connect(
                 lambda lbl, _, selected_head=head: self.remove_custom_type(selected_head, lbl)
             )
-            group.value_changed.connect(
-                lambda _, value, selected_head=head: self.handle_ui_selection_change(selected_head, value)
-            )
 
     # ---------------------------------------------------------------------
     # Selection / Display
     # ---------------------------------------------------------------------
     def on_data_selected(self, data_id: str):
-        if self.main.right_tabs.currentIndex() != 0:
-            return
-
         if not data_id:
             self.panel.manual_box.setEnabled(False)
             self.panel.clear_selection()
+            self.panel.chart_widget.setVisible(False)
+            if self.main.right_tabs.currentIndex() == 0:
+                self.main.center_panel.set_markers([])
             return
 
         path = self.model.get_path_by_id(data_id)
         if not path:
             self.panel.manual_box.setEnabled(False)
             self.panel.clear_selection()
+            self.panel.chart_widget.setVisible(False)
+            if self.main.right_tabs.currentIndex() == 0:
+                self.main.center_panel.set_markers([])
             return
 
         self.display_manual_annotation(path)
         self.panel.manual_box.setEnabled(True)
         center_panel = self.main.center_panel
-        if hasattr(center_panel, "view_layout"):
+        if self.main.right_tabs.currentIndex() == 0 and hasattr(center_panel, "view_layout"):
+            center_panel.set_markers([])
             center_panel.view_layout.setCurrentWidget(center_panel.single_view_widget)
 
     # ---------------------------------------------------------------------
@@ -262,6 +263,7 @@ class ClassificationEditorController:
         self.panel.set_annotation(data)
 
         smart_data = self.model.smart_annotations.get(path, {})
+        self.panel.chart_widget.setVisible(False)
         if smart_data:
             for _, smart_item in smart_data.items():
                 if not isinstance(smart_item, dict):
@@ -272,32 +274,6 @@ class ClassificationEditorController:
                 )
                 self.panel.chart_widget.setVisible(True)
                 break
-
-    def handle_ui_selection_change(self, head, new_val):
-        if self.main.history_manager._is_undoing_redoing:
-            return
-
-        path = self.main.get_current_action_path()
-        if not path:
-            return
-
-        old_val = self.model.manual_annotations.get(path, {}).get(head)
-        for command in reversed(self.model.undo_stack):
-            if (
-                command["type"] == CmdType.UI_CHANGE
-                and command["path"] == path
-                and command["head"] == head
-            ):
-                old_val = command["new_val"]
-                break
-
-        self.model.push_undo(
-            CmdType.UI_CHANGE,
-            path=path,
-            head=head,
-            old_val=old_val,
-            new_val=new_val,
-        )
 
     def handle_add_label_head(self, name):
         clean = name.strip().replace(" ", "_").lower()
@@ -324,6 +300,7 @@ class ClassificationEditorController:
         self.model.label_definitions[clean] = definition
         self.panel.new_head_edit.clear()
         self.setup_dynamic_ui()
+        self.main.update_save_export_button_state()
 
     def handle_remove_label_head(self, head):
         if head not in self.model.label_definitions:
@@ -352,6 +329,7 @@ class ClassificationEditorController:
 
         self.setup_dynamic_ui()
         self.display_manual_annotation(self.main.get_current_action_path())
+        self.main.update_save_export_button_state()
 
     def add_custom_type(self, head):
         group = self.panel.label_groups.get(head)
@@ -377,6 +355,7 @@ class ClassificationEditorController:
             group.update_checkboxes(labels)
 
         group.input_field.clear()
+        self.main.update_save_export_button_state()
 
     def remove_custom_type(self, head, label):
         definition = self.model.label_definitions[head]
@@ -414,3 +393,4 @@ class ClassificationEditorController:
                 group.update_checkboxes(definition["labels"])
 
         self.display_manual_annotation(self.main.get_current_action_path())
+        self.main.update_save_export_button_state()

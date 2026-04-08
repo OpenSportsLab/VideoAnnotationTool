@@ -1,6 +1,6 @@
 import copy
 
-from models.app_state import CmdType
+from controllers.command_types import CmdType
 
 
 class DescEditorController:
@@ -12,6 +12,7 @@ class DescEditorController:
     def __init__(self, main_window):
         self.main = main_window
         self.model = main_window.model
+        self.current_sample_id = ""
         self.current_action_path = None
 
     def setup_connections(self):
@@ -21,6 +22,7 @@ class DescEditorController:
 
     def reset_ui(self):
         """Reset the Description editor UI for project clear/close flows."""
+        self.current_sample_id = ""
         self.current_action_path = None
         self.main.description_panel.caption_edit.setPlainText("")
         self.main.description_panel.caption_edit.setEnabled(False)
@@ -35,6 +37,7 @@ class DescEditorController:
         if self.current_action_path != path:
             return
 
+        self.current_sample_id = ""
         self.current_action_path = None
         self.main.description_panel.caption_edit.clear()
         self.main.description_panel.caption_edit.setEnabled(False)
@@ -43,28 +46,34 @@ class DescEditorController:
         """
         Refresh Description editor content for selected tree item.
         """
-        if self.main.right_tabs.currentIndex() != 2:
-            return
-
         if not data_id:
+            self.current_sample_id = ""
             self.main.description_panel.caption_edit.clear()
             self.current_action_path = None
             self.main.description_panel.caption_edit.setEnabled(False)
             self.main.description_panel.setEnabled(False)
+            if self.main.right_tabs.currentIndex() == 2:
+                self.main.center_panel.set_markers([])
             return
 
         action_data = self.model.get_item_by_id(data_id)
         if not action_data:
             self.main.description_panel.caption_edit.setPlaceholderText("No metadata found for this item.")
+            self.current_sample_id = ""
             self.current_action_path = None
             self.main.description_panel.caption_edit.clear()
             self.main.description_panel.caption_edit.setEnabled(False)
             self.main.description_panel.setEnabled(False)
+            if self.main.right_tabs.currentIndex() == 2:
+                self.main.center_panel.set_markers([])
             return
 
+        self.current_sample_id = data_id
         self.current_action_path = action_data.get("metadata", {}).get("path") or action_data.get("path")
         self.main.description_panel.caption_edit.setEnabled(True)
         self.main.description_panel.setEnabled(True)
+        if self.main.right_tabs.currentIndex() == 2:
+            self.main.center_panel.set_markers([])
 
         self._load_and_format_text(action_data)
 
@@ -100,31 +109,26 @@ class DescEditorController:
         Persist current Description editor text into the selected action captions.
         Pushes DESC_EDIT undo command and updates done status.
         """
-        if not self.current_action_path:
+        if not self.current_sample_id:
             return
 
         text_content = self.main.description_panel.caption_edit.toPlainText()
-
-        target_item = None
-        for item in self.model.action_item_data:
-            if item.get("metadata", {}).get("path") == self.current_action_path:
-                target_item = item
-                break
-
-        if not target_item:
+        sample = self.model.get_sample(self.current_sample_id)
+        if not sample:
             return
 
-        old_captions = copy.deepcopy(target_item.get("captions", []))
+        old_captions = copy.deepcopy(sample.get("captions", []))
         new_captions = [{"lang": "en", "text": text_content}]
 
         self.model.push_undo(
             CmdType.DESC_EDIT,
             path=self.current_action_path,
+            sample_id=self.current_sample_id,
             old_data=old_captions,
             new_data=new_captions,
         )
 
-        target_item["captions"] = new_captions
+        self.model.set_sample_captions(self.current_sample_id, new_captions)
         self.model.is_data_dirty = True
         self.main.update_save_export_button_state()
 
