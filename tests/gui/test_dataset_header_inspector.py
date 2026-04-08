@@ -73,14 +73,15 @@ def test_dataset_header_inspector_renders_known_and_unknown_fields(window, monke
     known = panel.table_header_known
     unknown = panel.table_header_unknown
 
-    task_row = _row_for_key(known, "task")
-    task_item = known.item(task_row, 1)
-    assert bool(task_item.flags() & Qt.ItemFlag.ItemIsEditable)
-
     modalities_row = _row_for_key(known, "modalities")
     modalities_item = known.item(modalities_row, 1)
     assert not bool(modalities_item.flags() & Qt.ItemFlag.ItemIsEditable)
     assert modalities_item.text().startswith("[")
+
+    task_row = _row_for_key(unknown, "task")
+    task_item = unknown.item(task_row, 1)
+    assert task_item.text() == "action_classification"
+    assert not bool(task_item.flags() & Qt.ItemFlag.ItemIsEditable)
 
     owner_row = _row_for_key(unknown, "custom_owner")
     owner_item = unknown.item(owner_row, 1)
@@ -104,26 +105,23 @@ def test_header_draft_applies_on_save_and_roundtrips(window, monkeypatch, qtbot,
     window.router.import_annotations()
 
     panel = window.dataset_explorer_panel
-    new_task = "classification_overridden"
     new_description = "Edited header description"
 
-    _set_known_value(panel, "task", new_task)
     _set_known_value(panel, "description", new_description)
     qtbot.wait(50)
 
-    assert window.model.dataset_json.get("task") == new_task
     assert window.model.dataset_json.get("description") == new_description
     assert window.model.project_header_draft == {}
 
     window.dataset_explorer_controller.save_project()
 
     saved = json.loads(project_json_path.read_text(encoding="utf-8"))
-    assert saved.get("task") == new_task
+    assert saved.get("task") == "action_classification"
     assert saved.get("description") == new_description
     assert saved.get("custom_owner") == "qa-team"
     assert "labels" in saved
     assert len(saved.get("data", [])) == 1
-    assert window.model.dataset_json.get("task") == new_task
+    assert window.model.dataset_json.get("task") == "action_classification"
 
     window.router.close_project()
     monkeypatch.setattr(
@@ -137,6 +135,8 @@ def test_header_draft_applies_on_save_and_roundtrips(window, monkeypatch, qtbot,
     assert reloaded_panel.table_header_known.item(desc_row, 1).text() == new_description
     owner_row = _row_for_key(reloaded_panel.table_header_unknown, "custom_owner")
     assert reloaded_panel.table_header_unknown.item(owner_row, 1).text() == "qa-team"
+    task_row = _row_for_key(reloaded_panel.table_header_unknown, "task")
+    assert reloaded_panel.table_header_unknown.item(task_row, 1).text() == "action_classification"
 
 
 @pytest.mark.gui

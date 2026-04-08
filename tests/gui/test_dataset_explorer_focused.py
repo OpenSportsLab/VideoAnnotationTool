@@ -83,7 +83,7 @@ def test_normalize_dataset_json_inserts_defaults_preserves_unknowns_and_fixes_id
 
     assert error == ""
     assert normalized["version"] == "2.0"
-    assert normalized["task"] == "video_annotation"
+    assert "task" not in normalized
     assert normalized["metadata"] == {}
     assert normalized["modalities"] == ["video"]
     assert normalized["custom_root"] == {"keep": True}
@@ -151,6 +151,7 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
     assert written["description"] == ""
     assert written["metadata"] == {}
     assert written["modalities"] == ["video"]
+    assert written["task"] == "video_annotation"
     assert written["custom_root"] == {"keep": True}
     assert written["data"][0]["inputs"][0]["path"] == "../project/clips/clip.mp4"
     assert "labels" not in written["data"][0]
@@ -163,21 +164,19 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
     assert written["data"][0]["custom_sample"] == {"keep": 1}
 
 
-@pytest.mark.parametrize(
-    ("task_name", "expected_idx"),
-    [
-        ("classification", 0),
-        ("action_classification", 0),
-        ("action-spotting", 1),
-        ("video captioning", 2),
-        ("dense_video_captioning", 3),
-        ("unknown", None),
-        (None, None),
-    ],
-)
-def test_tab_index_for_task_supports_aliases(explorer_panel_and_controller, task_name, expected_idx):
+def test_available_mode_indices_for_sample_prefers_fixed_order(explorer_panel_and_controller):
     _panel, controller = explorer_panel_and_controller
-    assert controller._tab_index_for_task(task_name) == expected_idx
+    sample = {
+        "labels": {"action": {"label": "pass"}},
+        "smart_labels": {"action": {"label": "shot"}},
+        "events": [{"head": "action", "label": "pass", "position_ms": 1000}],
+        "smart_events": [{"head": "action", "label": "shot", "position_ms": 2000}],
+        "captions": [{"lang": "en", "text": "caption"}],
+        "dense_captions": [{"position_ms": 1500, "lang": "en", "text": "dense"}],
+    }
+    assert controller._available_mode_indices_for_sample(sample) == [0, 1, 2, 3]
+    assert controller._available_mode_indices_for_sample({"events": [{"position_ms": 1}]}) == [1]
+    assert controller._available_mode_indices_for_sample({"captions": [{"text": ""}]}) == []
 
 
 def test_group_selected_files_and_sample_id_rules_for_single_and_multiview(
@@ -210,23 +209,22 @@ def test_panel_header_editor_flags_and_raw_json_widget_are_configured(explorer_p
     panel.set_header_rows(
         known={
             "version": "2.0",
-            "task": "video_annotation",
             "metadata": {"source": "pytest"},
             "modalities": ["video"],
         },
-        unknown={"custom_owner": "qa-team"},
+        unknown={"custom_owner": "qa-team", "task": "video_annotation"},
         draft={},
     )
 
-    task_item = panel.table_header_known.item(_known_row(panel, "task"), 1)
     metadata_item = panel.table_header_known.item(_known_row(panel, "metadata"), 1)
     modalities_item = panel.table_header_known.item(_known_row(panel, "modalities"), 1)
     owner_item = panel.table_header_unknown.item(_unknown_row(panel, "custom_owner"), 1)
+    task_item = panel.table_header_unknown.item(_unknown_row(panel, "task"), 1)
 
-    assert bool(task_item.flags() & Qt.ItemFlag.ItemIsEditable)
     assert not bool(metadata_item.flags() & Qt.ItemFlag.ItemIsEditable)
     assert not bool(modalities_item.flags() & Qt.ItemFlag.ItemIsEditable)
     assert not bool(owner_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    assert not bool(task_item.flags() & Qt.ItemFlag.ItemIsEditable)
     assert panel.json_raw_text.isReadOnly() is True
 
 

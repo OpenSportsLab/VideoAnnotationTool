@@ -219,26 +219,12 @@ class DatasetExplorerController(QObject):
     HEADER_EDITABLE_KEYS = (
         "version",
         "date",
-        "task",
         "dataset_name",
         "description",
         "modalities",
         "metadata",
     )
     HEADER_EXCLUDED_KEYS = {"data", "labels"}
-    TASK_TAB_INDEX = {
-        "classification": 0,
-        "action_classification": 0,
-        "localization": 1,
-        "action_spotting": 1,
-        "spotting": 1,
-        "description": 2,
-        "video_captioning": 2,
-        "captioning": 2,
-        "dense_description": 3,
-        "dense_video_captioning": 3,
-        "dense_captioning": 3,
-    }
 
     def __init__(self, main_window, panel, tree_model, media_controller=None):
         super().__init__()
@@ -289,19 +275,6 @@ class DatasetExplorerController(QObject):
     @label_definitions.setter
     def label_definitions(self, value):
         self.dataset_json["labels"] = value if isinstance(value, dict) else {}
-
-    @property
-    def current_task_name(self) -> str:
-        return (
-            self.dataset_json.get("task")
-            or self.dataset_json.get("dataset_name")
-            or "Untitled Dataset"
-        )
-
-    @current_task_name.setter
-    def current_task_name(self, value: str):
-        if value:
-            self.dataset_json["task"] = value
 
     @property
     def project_description(self) -> str:
@@ -612,12 +585,10 @@ class DatasetExplorerController(QObject):
 
         self._rebuild_runtime_index()
         self.main.show_workspace()
-        initial_tab = self._tab_index_for_task(self.dataset_json.get("task"))
-        if initial_tab is not None:
-            self.main.right_tabs.setCurrentIndex(initial_tab)
         self._refresh_header_panel()
         self._refresh_schema_panels()
         self.populate_tree()
+        self._reconcile_tab_with_current_selection()
         self.main.update_save_export_button_state()
         self.main.show_temp_msg(
             "Loaded",
@@ -626,11 +597,8 @@ class DatasetExplorerController(QObject):
         return True
 
     def create_new_project(self, mode=None, multiview_grouping=False):
+        _ = mode  # Legacy argument kept for compatibility; tab is sample-driven.
         initial_tab = self.main.right_tabs.currentIndex()
-        if isinstance(mode, str):
-            mapped_tab = self._tab_index_for_task(mode)
-            if mapped_tab is not None:
-                initial_tab = mapped_tab
 
         self.reset(full_reset=True)
         self.dataset_json = self._default_dataset_json()
@@ -759,12 +727,6 @@ class DatasetExplorerController(QObject):
     def _path_key(self, path: str) -> str:
         return os.path.normcase(os.path.normpath(path))
 
-    def _tab_index_for_task(self, task_name):
-        if not isinstance(task_name, str):
-            return None
-        normalized = task_name.strip().lower().replace("-", "_").replace(" ", "_")
-        return self.TASK_TAB_INDEX.get(normalized)
-
     # ------------------------------------------------------------------
     # Header and JSON tabs
     # ------------------------------------------------------------------
@@ -819,7 +781,6 @@ class DatasetExplorerController(QObject):
         return {
             "version": "2.0",
             "date": today,
-            "task": "video_annotation",
             "dataset_name": "Untitled Dataset",
             "description": "",
             "modalities": ["video"],
@@ -1089,8 +1050,51 @@ class DatasetExplorerController(QObject):
         selected_path = current.data(getattr(self.tree_model, "FilePathRole", 0x0100))
         self.current_selected_sample_id = sample_id
         self.current_selected_input_path = selected_path or self.get_path_by_id(sample_id)
+
+        sample = self.get_sample(sample_id)
+        if self._reconcile_annotation_tab_for_sample(sample):
+            return
+
         self._route_media_for_selection(current, sample_id)
         self.dataSelected.emit(sample_id)
+
+    def _sample_supports_mode(self, sample: dict, mode_idx: int) -> bool:
+        if not isinstance(sample, dict):
+            return False
+        if mode_idx == 0:
+            return bool(_ManualAnnotationRecord(sample)) or bool(sample.get("smart_labels"))
+        if mode_idx == 1:
+            return bool(sample.get("events")) or bool(sample.get("smart_events"))
+        if mode_idx == 2:
+            captions = sample.get("captions", [])
+            return any(isinstance(cap, dict) and str(cap.get("text", "")).strip() for cap in captions)
+        if mode_idx == 3:
+            return bool(sample.get("dense_captions"))
+        return False
+
+    def _available_mode_indices_for_sample(self, sample: dict):
+        return [mode_idx for mode_idx in (0, 1, 2, 3) if self._sample_supports_mode(sample, mode_idx)]
+
+    def _reconcile_annotation_tab_for_sample(self, sample: dict) -> bool:
+        available_modes = self._available_mode_indices_for_sample(sample)
+        if not available_modes:
+            return False
+        current_mode = self._active_mode_idx()
+        if current_mode in available_modes:
+            return False
+        target_mode = available_modes[0]
+        if target_mode == current_mode:
+            return False
+        self.main.right_tabs.setCurrentIndex(target_mode)
+        return True
+
+    def _reconcile_tab_with_current_selection(self):
+        if not self.current_selected_sample_id:
+            return
+        sample = self.get_sample(self.current_selected_sample_id)
+        if sample is None:
+            return
+        self._reconcile_annotation_tab_for_sample(sample)
 
     def _route_media_for_selection(self, selected_idx: QModelIndex, sample_id: str):
         media_paths = [path for path in self.get_sources_by_id(sample_id) if path]

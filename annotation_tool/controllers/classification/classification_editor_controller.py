@@ -49,7 +49,6 @@ class ClassificationEditorController:
 
     def setup_dynamic_ui(self):
         self.panel.setup_dynamic_labels(self.model.label_definitions)
-        self.panel.task_label.setText(f"Task: {self.model.current_task_name}")
         self._connect_dynamic_type_buttons()
 
     def sync_batch_inference_dropdowns(self):

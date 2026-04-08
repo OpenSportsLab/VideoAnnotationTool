@@ -100,7 +100,6 @@ class DatasetExplorerPanel(QWidget):
         self._header_key_order = [
             "version",
             "date",
-            "task",
             "dataset_name",
             "description",
             "modalities",

@@ -68,7 +68,7 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     project_json_path = synthetic_project_json("mixed", item_count=2)
     _open_project(window, monkeypatch, project_json_path)
 
-    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["classification"]
     assert window.tree_model.rowCount() == 2
 
     _select_top_row(window, qtbot, 0)
@@ -112,6 +112,81 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     assert reloaded_sample["captions"][0]["text"] == "Mixed caption"
     assert reloaded_sample["dense_captions"][0]["text"] == "Mixed dense caption"
     assert window.model.dataset_json["custom_root"] == {"keep": True}
+
+
+@pytest.mark.gui
+def test_legacy_task_header_is_preserved_but_does_not_route_initial_tab(
+    window,
+    monkeypatch,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("mixed", item_count=1)
+    _open_project(window, monkeypatch, project_json_path)
+
+    assert window.model.dataset_json.get("task") == "video_captioning"
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["classification"]
+
+    panel = window.dataset_explorer_panel
+    unknown_rows = {}
+    for row in range(panel.table_header_unknown.rowCount()):
+        key_item = panel.table_header_unknown.item(row, 0)
+        value_item = panel.table_header_unknown.item(row, 1)
+        if key_item and value_item:
+            unknown_rows[key_item.text()] = value_item.text()
+
+    assert unknown_rows.get("task") == "video_captioning"
+    raw_json = json.loads(panel.json_raw_text.toPlainText())
+    assert raw_json.get("task") == "video_captioning"
+
+
+@pytest.mark.gui
+def test_selection_switches_to_first_available_tab_when_current_is_not_supported(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    source_a = Path(__file__).resolve().parents[1] / "data" / "test_video_1.mp4"
+    source_b = Path(__file__).resolve().parents[1] / "data" / "test_video_2.mp4"
+    rel_a = os.path.relpath(source_a, start=tmp_path).replace("\\", "/")
+    rel_b = os.path.relpath(source_b, start=tmp_path).replace("\\", "/")
+
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-08",
+        "task": "action_classification",
+        "dataset_name": "mode_fallback",
+        "modalities": ["video"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass", "shot"]}},
+        "data": [
+            {
+                "id": "desc_only",
+                "inputs": [{"path": rel_a, "type": "video"}],
+                "captions": [{"lang": "en", "text": "description text"}],
+            },
+            {
+                "id": "loc_only",
+                "inputs": [{"path": rel_b, "type": "video"}],
+                "events": [{"head": "action", "label": "pass", "position_ms": 1000}],
+            },
+        ],
+    }
+    project_json_path = tmp_path / "mode_fallback.json"
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    _open_project(window, monkeypatch, project_json_path)
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
+
+    second_index = window.tree_model.index(1, 0)
+    assert second_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(second_index)
+    qtbot.wait(50)
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
+
+    first_index = window.tree_model.index(0, 0)
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
 
 
 @pytest.mark.gui
