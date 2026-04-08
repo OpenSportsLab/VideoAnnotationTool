@@ -7,7 +7,7 @@ from collections.abc import MutableMapping
 from PyQt6.QtCore import QModelIndex, QObject, QSettings, QUrl, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from ui.dialogs import NewDatasetDialog
+from ui.dialogs import NewDatasetDialog, UnsavedChangesDialog
 from utils import natural_sort_key
 
 
@@ -683,27 +683,7 @@ class DatasetExplorerController(QObject):
         return True
 
     def _prompt_unsaved_close_action(self) -> str:
-        msg_box = QMessageBox(self.main)
-        msg_box.setWindowTitle("Unsaved Changes")
-        msg_box.setText("Unsaved changes will be lost. How do you want to proceed?")
-
-        btn_save = msg_box.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
-        btn_save_as = msg_box.addButton("Save As", QMessageBox.ButtonRole.ActionRole)
-        btn_discard = msg_box.addButton("Close Without Saving", QMessageBox.ButtonRole.DestructiveRole)
-        btn_cancel = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        msg_box.setDefaultButton(btn_save)
-        msg_box.exec()
-
-        clicked = msg_box.clickedButton()
-        if clicked == btn_save:
-            return "save"
-        if clicked == btn_save_as:
-            return "save_as"
-        if clicked == btn_discard:
-            return "discard"
-        if clicked == btn_cancel:
-            return "cancel"
-        return "cancel"
+        return UnsavedChangesDialog.get_action(self.main)
 
     def save_project(self):
         if self.main.right_tabs.currentIndex() == 2:

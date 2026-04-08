@@ -234,7 +234,7 @@
         <cursorShape>PointingHandCursor</cursorShape>
        </property>
        <property name="text">
-        <string>📺 Video Tutorial</string>
+        <string>📖 Documentation</string>
        </property>
        <property name="class" stdset="0">
         <string>welcome_secondary_btn</string>

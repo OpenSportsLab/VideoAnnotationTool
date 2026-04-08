@@ -43,6 +43,54 @@ class NewDatasetDialog(QDialog):
         self.is_multi_view = self.multiview_checkbox.isChecked()
         self.accept()
 
+
+class UnsavedChangesDialog(QDialog):
+    """Dialog with fixed button order for close-project decisions."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Unsaved Changes")
+        self.setModal(True)
+        self._action = "cancel"
+
+        layout = QVBoxLayout(self)
+        text = QLabel("Unsaved changes will be lost. How do you want to proceed?", self)
+        text.setWordWrap(True)
+        layout.addWidget(text)
+
+        button_row = QHBoxLayout()
+        layout.addLayout(button_row)
+
+        # Keep this explicit order across platforms.
+        btn_save = QPushButton("Save", self)
+        btn_save_as = QPushButton("Save As", self)
+        btn_discard = QPushButton("Close Without Saving", self)
+        btn_cancel = QPushButton("Cancel", self)
+
+        button_row.addWidget(btn_save)
+        button_row.addWidget(btn_save_as)
+        button_row.addWidget(btn_discard)
+        button_row.addWidget(btn_cancel)
+
+        btn_save.clicked.connect(lambda: self._accept("save"))
+        btn_save_as.clicked.connect(lambda: self._accept("save_as"))
+        btn_discard.clicked.connect(lambda: self._accept("discard"))
+        btn_cancel.clicked.connect(self.reject)
+
+        btn_save.setDefault(True)
+        btn_save.setAutoDefault(True)
+
+    def _accept(self, action: str):
+        self._action = action
+        self.accept()
+
+    @classmethod
+    def get_action(cls, parent=None) -> str:
+        dialog = cls(parent)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            return dialog._action
+        return "cancel"
+
 class FolderPickerDialog(QDialog):
     """
     Custom folder picker that allows multi-selection of folders.
