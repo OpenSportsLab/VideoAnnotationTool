@@ -390,6 +390,7 @@ class ClassificationAnnotationPanel(QWidget):
 
         self.confirm_btn.clicked.connect(self.on_confirm_clicked)
         self.clear_sel_btn.clicked.connect(self.on_clear_clicked)
+        self.tabs.currentChanged.connect(self._update_confirm_button_state)
 
         self.spin_start.currentIndexChanged.connect(self._validate_batch_range)
 
@@ -408,6 +409,7 @@ class ClassificationAnnotationPanel(QWidget):
         self._configure_train_defaults()
         self.clear_dynamic_labels()
         self.manual_box.setEnabled(False)
+        self._update_confirm_button_state()
 
     def _configure_train_defaults(self):
         self.spin_epochs.clear()
@@ -483,10 +485,13 @@ class ClassificationAnnotationPanel(QWidget):
     def on_confirm_clicked(self):
         active_tab = self.tabs.currentIndex()
         if active_tab == 0:
-            self.annotation_saved.emit(self.get_annotation())
             return
         if active_tab == 1:
             self.smart_confirm_requested.emit()
+
+    def _update_confirm_button_state(self):
+        # Manual annotations are auto-saved; keep confirm only for Smart tab actions.
+        self.confirm_btn.setVisible(self.tabs.currentIndex() == 1)
 
     def on_clear_clicked(self):
         active_tab = self.tabs.currentIndex()

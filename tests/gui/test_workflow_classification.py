@@ -56,8 +56,7 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
     qtbot.mouseClick(pass_btn, Qt.MouseButton.LeftButton)
     assert panel.get_annotation().get("action") == "pass"
 
-    # Confirm annotation via UI button and verify in-memory model state.
-    qtbot.mouseClick(panel.confirm_btn, Qt.MouseButton.LeftButton)
+    # Manual annotation is now saved immediately on selection.
     qtbot.wait(50)
     assert window.model.manual_annotations[first_path]["action"] == "pass"
 
@@ -97,7 +96,7 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
     qtbot.mouseClick(shot_btn, Qt.MouseButton.LeftButton)
     assert reopened_panel.get_annotation().get("action") == "shot"
 
-    qtbot.mouseClick(reopened_panel.confirm_btn, Qt.MouseButton.LeftButton)
+    # Manual annotation is now saved immediately on selection.
     qtbot.wait(50)
     assert window.model.manual_annotations[reopened_path]["action"] == "shot"
 

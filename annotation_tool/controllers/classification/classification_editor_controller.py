@@ -77,6 +77,13 @@ class ClassificationEditorController:
             group.remove_label_signal.connect(
                 lambda lbl, _, selected_head=head: self.remove_custom_type(selected_head, lbl)
             )
+            # Manual annotations now persist immediately on value changes.
+            group.value_changed.connect(self._on_manual_label_value_changed)
+
+    def _on_manual_label_value_changed(self, *_args):
+        if self.classification_panel.tabs.currentIndex() != 0:
+            return
+        self.save_manual_annotation(show_feedback=False)
 
     # ---------------------------------------------------------------------
     # Selection / Display
@@ -189,7 +196,7 @@ class ClassificationEditorController:
             self.dataset_explorer_panel.filter_combo.currentIndex()
         )
 
-    def save_manual_annotation(self, override_data=None):
+    def save_manual_annotation(self, override_data=None, show_feedback: bool = True):
         path = self.main.get_current_action_path()
         if not path:
             return
@@ -213,10 +220,12 @@ class ClassificationEditorController:
 
         if cleaned:
             self.model.manual_annotations[path] = cleaned
-            self.main.show_temp_msg("Saved", "Annotation saved.", 1000)
+            if show_feedback:
+                self.main.show_temp_msg("Saved", "Annotation saved.", 1000)
         else:
             self.model.manual_annotations.pop(path, None)
-            self.main.show_temp_msg("Cleared", "Annotation cleared.", 1000)
+            if show_feedback:
+                self.main.show_temp_msg("Cleared", "Annotation cleared.", 1000)
 
         self.main.update_action_item_status(path)
         self.main.update_save_export_button_state()
