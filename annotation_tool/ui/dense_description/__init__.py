@@ -241,28 +241,15 @@ class _DenseTableAdapter(QObject):
 
 class _DenseInputAdapter(QObject):
     """
-    Small adapter to preserve the old input-widget API used by controllers.
+    Thin adapter for the dense add button.
     """
 
-    descriptionSubmitted = pyqtSignal(str)
+    addEventRequested = pyqtSignal()
 
-    def __init__(self, time_label, text_editor, submit_btn):
+    def __init__(self, submit_btn):
         super().__init__()
-        self._time_label = time_label
-        self.text_editor = text_editor
         self._submit_btn = submit_btn
-        self._submit_btn.clicked.connect(self._on_submit)
-
-    def update_time(self, time_str: str):
-        self._time_label.setText(f"Current Time: {time_str}")
-
-    def set_text(self, text: str):
-        self.text_editor.setPlainText(text)
-
-    def _on_submit(self):
-        text = self.text_editor.toPlainText().strip()
-        if text:
-            self.descriptionSubmitted.emit(text)
+        self._submit_btn.clicked.connect(self.addEventRequested.emit)
 
 
 class DenseAnnotationPanel(QWidget):
@@ -286,15 +273,9 @@ class DenseAnnotationPanel(QWidget):
             ) from exc
 
         # Keep existing QSS hooks used by style.qss.
-        self.denseCurrentTimeLabel.setProperty("class", "dense_time_display")
-        self.denseDescriptionEdit.setProperty("class", "dense_desc_editor")
         self.denseConfirmBtn.setProperty("class", "dense_confirm_btn")
 
-        self.input_widget = _DenseInputAdapter(
-            time_label=self.denseCurrentTimeLabel,
-            text_editor=self.denseDescriptionEdit,
-            submit_btn=self.denseConfirmBtn,
-        )
+        self.input_widget = _DenseInputAdapter(submit_btn=self.denseConfirmBtn)
 
         self.table = _DenseTableAdapter(
             self.denseEventsTableView,
@@ -327,9 +308,8 @@ class DenseAnnotationPanel(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         header.setStretchLastSection(False)
 
-        # Top editor + bottom table ratio.
-        self.denseMainLayout.setStretch(2, 1)
-        self.denseMainLayout.setStretch(7, 2)
+        # Keep the table as the primary expanding region.
+        self.denseMainLayout.setStretch(3, 1)
 
         QTimer.singleShot(0, self._apply_dense_column_ratio)
 

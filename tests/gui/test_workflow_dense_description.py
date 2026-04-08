@@ -2,10 +2,12 @@
 Dense Description mode persistence/editing workflows.
 """
 
+import copy
 import json
 
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtWidgets import QMessageBox
 
 
@@ -201,9 +203,147 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
     assert window.model.action_item_data == []
     assert window.model.dense_global_metadata != {}
     assert window.dense_editor_controller.current_video_path is None
-    assert window.dense_panel.input_widget.text_editor.toPlainText() == ""
     assert window.dense_panel.table.model.rowCount() == 0
     assert window.center_stack.currentIndex() == 1
+
+
+@pytest.mark.gui
+def test_dense_add_button_text_is_defined_in_ui(window):
+    assert window.dense_panel.denseConfirmBtn.text() == "Add New Description"
+
+
+@pytest.mark.gui
+def test_dense_add_description_modal_flow_creates_event_and_resumes_playback(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("dense_description")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.router.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    pause_calls = []
+    play_calls = []
+    monkeypatch.setattr(
+        window.center_panel.player,
+        "playbackState",
+        lambda: QMediaPlayer.PlaybackState.PlayingState,
+    )
+    monkeypatch.setattr(window.center_panel.player, "pause", lambda: pause_calls.append(True))
+    monkeypatch.setattr(window.center_panel.player, "play", lambda: play_calls.append(True))
+    monkeypatch.setattr(window.center_panel.player, "position", lambda: 7777)
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
+        lambda *args, **kwargs: ("  Added from popup  ", True),
+    )
+
+    path = window.dense_editor_controller.current_video_path
+    assert path is not None
+    before_events = list(window.model.dense_description_events.get(path, []))
+    before_undo = len(window.model.undo_stack)
+
+    qtbot.mouseClick(window.dense_panel.denseConfirmBtn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    events = list(window.model.dense_description_events.get(path, []))
+    assert len(events) == len(before_events) + 1
+    assert any(event.get("position_ms") == 7777 and event.get("text") == "Added from popup" for event in events)
+    assert len(window.model.undo_stack) == before_undo + 1
+    assert pause_calls
+    assert play_calls
+    selected = window.dense_editor_controller._selected_event_in_table()
+    assert selected is not None
+    assert selected.get("text") == "Added from popup"
+
+
+@pytest.mark.gui
+def test_dense_add_description_cancel_and_empty_submit_are_noops(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("dense_description")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.router.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    path = window.dense_editor_controller.current_video_path
+    assert path is not None
+
+    before_events = copy.deepcopy(window.model.dense_description_events.get(path, []))
+    before_undo = len(window.model.undo_stack)
+
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
+        lambda *args, **kwargs: ("", False),
+    )
+    qtbot.mouseClick(window.dense_panel.denseConfirmBtn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
+        lambda *args, **kwargs: ("   ", True),
+    )
+    qtbot.mouseClick(window.dense_panel.denseConfirmBtn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    assert window.model.dense_description_events.get(path, []) == before_events
+    assert len(window.model.undo_stack) == before_undo
+
+
+@pytest.mark.gui
+def test_dense_table_description_edit_updates_event_and_history(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("dense_description")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.router.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    table_model = window.dense_panel.table.model
+    assert table_model.rowCount() >= 1
+
+    before_undo = len(window.model.undo_stack)
+    cell_idx = table_model.index(0, 2)
+    assert cell_idx.isValid()
+    assert table_model.setData(cell_idx, "Edited via table double-click path")
+    qtbot.wait(50)
+
+    path = window.dense_editor_controller.current_video_path
+    assert path is not None
+    events = window.model.dense_description_events.get(path, [])
+    assert any(event.get("text") == "Edited via table double-click path" for event in events)
+    assert len(window.model.undo_stack) == before_undo + 1
 
 
 # @pytest.mark.gui

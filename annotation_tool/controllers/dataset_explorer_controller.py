@@ -5,6 +5,7 @@ import os
 from collections.abc import MutableMapping
 
 from PyQt6.QtCore import QModelIndex, QObject, QSettings, QUrl, pyqtSignal
+from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from controllers.command_types import CmdType
@@ -1339,7 +1340,7 @@ class DatasetExplorerController(QObject):
         if self._reconcile_annotation_tab_for_sample(sample):
             return
 
-        self._route_media_for_selection(current, sample_id)
+        self._route_media_for_selection(current, sample_id, ensure_playback=True)
         self.dataSelected.emit(sample_id)
 
     def _sample_supports_mode(self, sample: dict, mode_idx: int) -> bool:
@@ -1380,7 +1381,12 @@ class DatasetExplorerController(QObject):
             return
         self._reconcile_annotation_tab_for_sample(sample)
 
-    def _route_media_for_selection(self, selected_idx: QModelIndex, sample_id: str):
+    def _route_media_for_selection(
+        self,
+        selected_idx: QModelIndex,
+        sample_id: str,
+        ensure_playback: bool = False,
+    ):
         media_paths = [path for path in self.get_sources_by_id(sample_id) if path]
         if not media_paths:
             return
@@ -1394,11 +1400,9 @@ class DatasetExplorerController(QObject):
         preferred = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
         primary_path = preferred or media_paths[0]
         self.current_selected_input_path = primary_path
-        if self._fs_path_key(self._last_routed_media_path) == self._fs_path_key(primary_path):
-            return
 
         current_source_path = ""
-        player = getattr(self.main.center_panel, "player", None)
+        player = getattr(center_panel, "player", None)
         if player is not None and hasattr(player, "source"):
             try:
                 current_source = player.source()
@@ -1407,7 +1411,18 @@ class DatasetExplorerController(QObject):
             except Exception:
                 current_source_path = ""
 
-        if self._fs_path_key(current_source_path) != self._fs_path_key(primary_path):
+        same_source = self._fs_path_key(current_source_path) == self._fs_path_key(primary_path)
+        is_playing_target = False
+        if same_source and player is not None and hasattr(player, "playbackState"):
+            try:
+                is_playing_target = (
+                    player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+                )
+            except Exception:
+                is_playing_target = False
+
+        should_load_and_play = (not same_source) or (ensure_playback and not is_playing_target)
+        if should_load_and_play:
             self.main.media_controller.load_and_play(primary_path)
         self._last_routed_media_path = primary_path
 
@@ -1416,7 +1431,7 @@ class DatasetExplorerController(QObject):
         if not current_idx.isValid() or not self.current_selected_sample_id:
             self.dataSelected.emit("")
             return
-        self._route_media_for_selection(current_idx, self.current_selected_sample_id)
+        self._route_media_for_selection(current_idx, self.current_selected_sample_id, ensure_playback=False)
         self.dataSelected.emit(self.current_selected_sample_id)
 
     def navigate_samples(self, step: int):
@@ -1708,7 +1723,6 @@ class DatasetExplorerController(QObject):
         self.main.dense_editor_controller.current_video_path = None
         self.main.dense_editor_controller.current_sample_id = ""
         self.main.dense_panel.table.set_data([])
-        self.main.dense_panel.input_widget.set_text("")
         self.main.dense_panel.setEnabled(False)
 
         self.dataSelected.emit("")

@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QModelIndex, Qt, QUrl
+from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtWidgets import QMessageBox
 
 from controllers.command_types import CmdType
@@ -229,6 +230,8 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
     parent_sample_id = window.model.current_selected_sample_id
     parent_action_path = window.get_current_action_path()
     first_selected_path = window.model.current_selected_input_path
+    first_child_index = window.tree_model.index(0, 0, parent_index)
+    first_child_path = first_child_index.data(window.tree_model.FilePathRole)
     child_index = window.tree_model.index(1, 0, parent_index)
     child_path = child_index.data(window.tree_model.FilePathRole)
 
@@ -244,6 +247,54 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
     assert window.get_current_action_path() == parent_action_path
     assert play_calls[-1] == child_path
     assert len(window.model.action_item_data) == 1
+
+    calls_before_first_child = len(play_calls)
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_child_index)
+    qtbot.wait(50)
+
+    assert len(play_calls) == calls_before_first_child + 1
+    assert play_calls[-1] == first_child_path
+    assert window.model.current_selected_input_path == first_child_path
+
+
+@pytest.mark.gui
+def test_selecting_parent_while_stopped_restarts_playback_for_same_source(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("multiview")
+    _open_project(window, monkeypatch, project_json_path)
+
+    parent_index = window.tree_model.index(0, 0)
+    assert parent_index.isValid()
+    parent_path = parent_index.data(window.tree_model.FilePathRole)
+    assert parent_path
+
+    play_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda file_path, auto_play=True: play_calls.append(file_path),
+    )
+    monkeypatch.setattr(
+        window.center_panel.player,
+        "source",
+        lambda: QUrl.fromLocalFile(parent_path),
+    )
+    monkeypatch.setattr(
+        window.center_panel.player,
+        "playbackState",
+        lambda: QMediaPlayer.PlaybackState.StoppedState,
+    )
+
+    window.dataset_explorer_panel.tree.setCurrentIndex(QModelIndex())
+    window.dataset_explorer_panel.tree.setCurrentIndex(parent_index)
+    qtbot.wait(50)
+
+    assert play_calls
+    assert play_calls[-1] == parent_path
 
 
 @pytest.mark.gui

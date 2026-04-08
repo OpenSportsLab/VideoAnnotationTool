@@ -88,11 +88,13 @@ def test_history_contract_classification_mutations(window, monkeypatch, qtbot, s
     window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["classification"])
     qtbot.wait(50)
 
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: window.classification_editor_controller.save_manual_annotation({"action": "shot"}),
-    )
+    def _select_shot_label():
+        panel = window.classification_panel
+        group = panel.label_groups["action"]
+        shot_btn = next(btn for btn in group.radio_group.buttons() if btn.text() == "shot")
+        shot_btn.click()
+
+    _assert_mutating_action_creates_single_history_entry(window, qtbot, _select_shot_label)
 
     _assert_mutating_action_creates_single_history_entry(
         window,
@@ -288,27 +290,31 @@ def test_history_contract_dense_mutations(window, monkeypatch, qtbot, synthetic_
 
     controller = window.dense_editor_controller
     monkeypatch.setattr(window.center_panel.player, "position", lambda: 5500)
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
+        lambda *args, **kwargs: ("Dense history event", True),
+    )
 
     _assert_mutating_action_creates_single_history_entry(
         window,
         qtbot,
-        lambda: controller._on_description_submitted("Dense history event"),
+        controller._on_add_event_requested,
     )
 
-    def _modify_dense_event():
+    def _edit_dense_text():
         events = list(window.model.dense_description_events.get(controller.current_video_path, []))
         assert events
         old_event = copy.deepcopy(events[0])
         new_event = copy.deepcopy(old_event)
-        new_event["text"] = f"{old_event.get('text', '')} (edited)"
+        new_event["text"] = "Dense history event (edited)"
         controller._on_annotation_modified(old_event, new_event)
 
-    _assert_mutating_action_creates_single_history_entry(window, qtbot, _modify_dense_event)
+    _assert_mutating_action_creates_single_history_entry(window, qtbot, _edit_dense_text)
 
     def _delete_dense_event():
         events = list(window.model.dense_description_events.get(controller.current_video_path, []))
         assert events
-        controller._on_delete_single_annotation(events[0])
+        controller._on_delete_single_annotation(copy.deepcopy(events[0]))
 
     _assert_mutating_action_creates_single_history_entry(window, qtbot, _delete_dense_event)
 
@@ -532,6 +538,18 @@ def test_history_contract_noop_description_event_and_dense_edits_do_not_touch_st
         dense_controller._on_annotation_modified(old_event, copy.deepcopy(old_event))
 
     _assert_non_mutating_action_keeps_history_unchanged(window, qtbot, _dense_noop_modify)
+
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
+        lambda *args, **kwargs: ("", False),
+    )
+    _assert_non_mutating_action_keeps_history_unchanged(window, qtbot, dense_controller._on_add_event_requested)
+
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
+        lambda *args, **kwargs: ("   ", True),
+    )
+    _assert_non_mutating_action_keeps_history_unchanged(window, qtbot, dense_controller._on_add_event_requested)
 
 
 @pytest.mark.gui
