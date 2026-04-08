@@ -73,8 +73,8 @@ def test_dataset_header_inspector_renders_known_and_unknown_fields(window, monke
     known = panel.table_header_known
     unknown = panel.table_header_unknown
 
-    modalities_row = _row_for_key(known, "modalities")
-    modalities_item = known.item(modalities_row, 1)
+    modalities_row = _row_for_key(unknown, "modalities")
+    modalities_item = unknown.item(modalities_row, 1)
     assert not bool(modalities_item.flags() & Qt.ItemFlag.ItemIsEditable)
     assert modalities_item.text().startswith("[")
 

@@ -30,7 +30,7 @@
      </property>
      <widget class="QWidget" name="tab_headers">
       <attribute name="title">
-       <string>Headers</string>
+       <string>Header</string>
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_tab_headers">
        <property name="spacing">

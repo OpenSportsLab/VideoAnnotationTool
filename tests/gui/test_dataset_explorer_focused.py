@@ -210,16 +210,19 @@ def test_panel_header_editor_flags_and_raw_json_widget_are_configured(explorer_p
         known={
             "version": "2.0",
             "metadata": {"source": "pytest"},
+        },
+        unknown={
+            "custom_owner": "qa-team",
+            "task": "video_annotation",
             "modalities": ["video"],
         },
-        unknown={"custom_owner": "qa-team", "task": "video_annotation"},
         draft={},
     )
 
     metadata_item = panel.table_header_known.item(_known_row(panel, "metadata"), 1)
-    modalities_item = panel.table_header_known.item(_known_row(panel, "modalities"), 1)
     owner_item = panel.table_header_unknown.item(_unknown_row(panel, "custom_owner"), 1)
     task_item = panel.table_header_unknown.item(_unknown_row(panel, "task"), 1)
+    modalities_item = panel.table_header_unknown.item(_unknown_row(panel, "modalities"), 1)
 
     assert not bool(metadata_item.flags() & Qt.ItemFlag.ItemIsEditable)
     assert not bool(modalities_item.flags() & Qt.ItemFlag.ItemIsEditable)

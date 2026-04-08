@@ -103,7 +103,6 @@ class DatasetExplorerPanel(QWidget):
             "date",
             "dataset_name",
             "description",
-            "modalities",
             "metadata",
         ]
         self._header_known = {}
@@ -236,7 +235,7 @@ class DatasetExplorerPanel(QWidget):
                 copy.deepcopy(value) if has_value else None,
             )
 
-            is_nested = key in ("metadata", "modalities") or (
+            is_nested = key == "metadata" or (
                 has_value and isinstance(value, (dict, list))
             )
             if is_nested:
@@ -316,8 +315,6 @@ class DatasetExplorerPanel(QWidget):
             # Allow easy initialization for nested known fields.
             if key == "metadata":
                 current = {}
-            elif key == "modalities":
-                current = []
             else:
                 return
 

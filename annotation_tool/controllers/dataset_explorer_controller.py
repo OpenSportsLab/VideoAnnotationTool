@@ -221,7 +221,6 @@ class DatasetExplorerController(QObject):
         "date",
         "dataset_name",
         "description",
-        "modalities",
         "metadata",
     )
     HEADER_EXCLUDED_KEYS = {"data", "labels"}
