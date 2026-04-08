@@ -563,6 +563,21 @@ class DatasetExplorerController(QObject):
         child_idx = self.tree_model.index(0, 0, parent_idx)
         return child_idx if child_idx.isValid() else QModelIndex()
 
+    def _expanded_sample_ids_in_tree(self):
+        tree = self.panel.tree
+        expanded_sample_ids = set()
+        root = QModelIndex()
+        for row in range(self.tree_model.rowCount(root)):
+            parent_idx = self.tree_model.index(row, 0, root)
+            if not parent_idx.isValid():
+                continue
+            if not tree.isExpanded(parent_idx):
+                continue
+            sample_id = parent_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
+            if sample_id:
+                expanded_sample_ids.add(str(sample_id))
+        return expanded_sample_ids
+
     def _reapply_expanded_samples(self, sample_ids):
         if not sample_ids:
             return
@@ -684,7 +699,7 @@ class DatasetExplorerController(QObject):
         self.main.show_workspace()
         self._refresh_header_panel()
         self._refresh_schema_panels()
-        self.populate_tree(preserve_view=True)
+        self.populate_tree()
         self._reconcile_tab_with_current_selection()
         self.main.update_save_export_button_state()
         self.main.show_temp_msg(
@@ -1042,76 +1057,10 @@ class DatasetExplorerController(QObject):
         sample_id = action_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
         return self.get_sample(sample_id)
 
-    def _capture_tree_view_state(self):
-        tree = self.panel.tree
-        current_idx = tree.currentIndex()
-        current_parent = self._get_action_index(current_idx)
-        selected_sample_id = ""
-        selected_input_path = None
-        if current_parent.isValid():
-            selected_sample_id = str(current_parent.data(getattr(self.tree_model, "DataIdRole", 0x0101)) or "")
-        if current_idx.isValid() and current_idx.parent().isValid():
-            selected_input_path = current_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-
-        expanded_sample_ids = set()
-        root = QModelIndex()
-        for row in range(self.tree_model.rowCount(root)):
-            parent_idx = self.tree_model.index(row, 0, root)
-            if not parent_idx.isValid():
-                continue
-            if not tree.isExpanded(parent_idx):
-                continue
-            sample_id = parent_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
-            if sample_id:
-                expanded_sample_ids.add(str(sample_id))
-
-        return {
-            "selected_sample_id": selected_sample_id or self.current_selected_sample_id or "",
-            "selected_input_path": selected_input_path,
-            "expanded_sample_ids": expanded_sample_ids,
-        }
-
-    def _restore_tree_view_state(self, view_state: dict) -> bool:
-        if not isinstance(view_state, dict):
-            return False
-
-        tree = self.panel.tree
-        for sample_id in view_state.get("expanded_sample_ids", set()):
-            parent_idx = self._top_level_index_for_sample(str(sample_id))
-            if parent_idx.isValid():
-                tree.setExpanded(parent_idx, True)
-
-        sample_id = str(view_state.get("selected_sample_id") or "")
-        if not sample_id:
-            return False
-
-        parent_idx = self._top_level_index_for_sample(sample_id)
-        if not parent_idx.isValid():
-            return False
-        if tree.isRowHidden(parent_idx.row(), QModelIndex()):
-            return False
-
-        target_idx = parent_idx
-        selected_input_key = self._fs_path_key(view_state.get("selected_input_path"))
-        if selected_input_key and self.tree_model.rowCount(parent_idx) > 0:
-            for row in range(self.tree_model.rowCount(parent_idx)):
-                child_idx = self.tree_model.index(row, 0, parent_idx)
-                if not child_idx.isValid():
-                    continue
-                child_key = self._fs_path_key(child_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100)))
-                if child_key == selected_input_key:
-                    target_idx = child_idx
-                    break
-
-        tree.setCurrentIndex(target_idx)
-        tree.scrollTo(target_idx)
-        return True
-
     # ------------------------------------------------------------------
     # Tree population and selection
     # ------------------------------------------------------------------
-    def populate_tree(self, preserve_view: bool = False):
-        previous_view_state = self._capture_tree_view_state() if preserve_view else None
+    def populate_tree(self):
         self._rebuild_runtime_index()
         self.tree_model.clear()
         self.action_item_map.clear()
@@ -1133,16 +1082,11 @@ class DatasetExplorerController(QObject):
 
         self.handle_filter_change(self.panel.filter_combo.currentIndex())
 
-        restored = False
-        if preserve_view and self.tree_model.rowCount() > 0:
-            restored = self._restore_tree_view_state(previous_view_state)
-
         if self.tree_model.rowCount() > 0:
-            if not restored:
-                first_index = self.tree_model.index(0, 0)
-                if first_index.isValid():
-                    self.panel.tree.setCurrentIndex(first_index)
-                    self._expand_current_parent()
+            first_index = self.tree_model.index(0, 0)
+            if first_index.isValid():
+                self.panel.tree.setCurrentIndex(first_index)
+                self._expand_current_parent()
         else:
             self._clear_selection_for_empty_filtered_view()
 
@@ -1502,7 +1446,7 @@ class DatasetExplorerController(QObject):
         if not index.isValid():
             return
 
-        pre_remove_expanded_sample_ids = self._capture_tree_view_state().get("expanded_sample_ids", set())
+        pre_remove_expanded_sample_ids = self._expanded_sample_ids_in_tree()
         action_idx = self._get_action_index(index)
         if not action_idx.isValid():
             return
@@ -1657,8 +1601,8 @@ class DatasetExplorerController(QObject):
         self.current_working_directory = self.project_root
         self.is_data_dirty = False
         self._add_recent_project(self.current_json_path)
+        self._rebuild_runtime_index()
         self._refresh_header_panel()
-        self.populate_tree(preserve_view=True)
         self.main.update_save_export_button_state()
         self.main.show_temp_msg("Saved", f"Saved to {os.path.basename(save_path)}")
         return True
