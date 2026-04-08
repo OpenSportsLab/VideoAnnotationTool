@@ -21,7 +21,7 @@ class ClassificationEditorController:
         self.main = main_window
         self.model = main_window.model
         self.media_controller = media_controller
-        self.panel = main_window.classification_panel
+        self.classification_panel = main_window.classification_panel
         self.dataset_explorer_panel = main_window.dataset_explorer_panel
 
         # Helper services remain separate, but are now owned by this controller.
@@ -32,23 +32,23 @@ class ClassificationEditorController:
     # Lifecycle / Wiring
     # ---------------------------------------------------------------------
     def setup_connections(self):
-        self.panel.annotation_saved.connect(self.save_manual_annotation)
-        self.panel.smart_confirm_requested.connect(self.confirm_smart_annotation_as_manual)
-        self.panel.hand_clear_requested.connect(self.clear_current_manual_annotation)
-        self.panel.smart_clear_requested.connect(self.clear_current_smart_annotation)
-        self.panel.add_head_clicked.connect(self.handle_add_label_head)
-        self.panel.remove_head_clicked.connect(self.handle_remove_label_head)
-        self.panel.smart_infer_requested.connect(self.inference_manager.start_inference)
-        self.panel.confirm_infer_requested.connect(self.save_manual_annotation)
+        self.classification_panel.annotation_saved.connect(self.save_manual_annotation)
+        self.classification_panel.smart_confirm_requested.connect(self.confirm_smart_annotation_as_manual)
+        self.classification_panel.hand_clear_requested.connect(self.clear_current_manual_annotation)
+        self.classification_panel.smart_clear_requested.connect(self.clear_current_smart_annotation)
+        self.classification_panel.add_head_clicked.connect(self.handle_add_label_head)
+        self.classification_panel.remove_head_clicked.connect(self.handle_remove_label_head)
+        self.classification_panel.smart_infer_requested.connect(self.inference_manager.start_inference)
+        self.classification_panel.confirm_infer_requested.connect(self.save_manual_annotation)
 
     def reset_ui(self):
-        self.panel.clear_dynamic_labels()
-        self.panel.manual_box.setEnabled(False)
-        self.panel.reset_smart_inference()
-        self.panel.reset_train_ui()
+        self.classification_panel.clear_dynamic_labels()
+        self.classification_panel.manual_box.setEnabled(False)
+        self.classification_panel.reset_smart_inference()
+        self.classification_panel.reset_train_ui()
 
     def setup_dynamic_ui(self):
-        self.panel.setup_dynamic_labels(self.model.label_definitions)
+        self.classification_panel.setup_dynamic_labels(self.model.label_definitions)
         self._connect_dynamic_type_buttons()
 
     def sync_batch_inference_dropdowns(self):
@@ -56,10 +56,10 @@ class ClassificationEditorController:
             self.model.action_item_data, key=lambda data: natural_sort_key(data.get("name", ""))
         )
         action_names = [data["name"] for data in sorted_list]
-        self.panel.update_action_list(action_names)
+        self.classification_panel.update_action_list(action_names)
 
     def _connect_dynamic_type_buttons(self):
-        for head, group in self.panel.label_groups.items():
+        for head, group in self.classification_panel.label_groups.items():
             try:
                 group.add_btn.clicked.disconnect()
             except Exception:
@@ -83,24 +83,24 @@ class ClassificationEditorController:
     # ---------------------------------------------------------------------
     def on_data_selected(self, data_id: str):
         if not data_id:
-            self.panel.manual_box.setEnabled(False)
-            self.panel.clear_selection()
-            self.panel.chart_widget.setVisible(False)
+            self.classification_panel.manual_box.setEnabled(False)
+            self.classification_panel.clear_selection()
+            self.classification_panel.chart_widget.setVisible(False)
             if self.main.right_tabs.currentIndex() == 0:
                 self.main.center_panel.set_markers([])
             return
 
         path = self.model.get_path_by_id(data_id)
         if not path:
-            self.panel.manual_box.setEnabled(False)
-            self.panel.clear_selection()
-            self.panel.chart_widget.setVisible(False)
+            self.classification_panel.manual_box.setEnabled(False)
+            self.classification_panel.clear_selection()
+            self.classification_panel.chart_widget.setVisible(False)
             if self.main.right_tabs.currentIndex() == 0:
                 self.main.center_panel.set_markers([])
             return
 
         self.display_manual_annotation(path)
-        self.panel.manual_box.setEnabled(True)
+        self.classification_panel.manual_box.setEnabled(True)
         center_panel = self.main.center_panel
         if self.main.right_tabs.currentIndex() == 0 and hasattr(center_panel, "view_layout"):
             center_panel.set_markers([])
@@ -110,8 +110,8 @@ class ClassificationEditorController:
     # Classification Annotation + Schema
     # ---------------------------------------------------------------------
     def confirm_smart_annotation_as_manual(self):
-        if self.panel.is_batch_mode_active:
-            batch_preds = self.panel.pending_batch_results
+        if self.classification_panel.is_batch_mode_active:
+            batch_preds = self.classification_panel.pending_batch_results
             if not batch_preds:
                 self.main.show_temp_msg("Notice", "No batch predictions to confirm.")
                 return
@@ -155,7 +155,7 @@ class ClassificationEditorController:
             self.main.show_temp_msg(
                 "Saved", f"Batch Smart Annotations confirmed for {confirmed_count} items.", 2000
             )
-            self.panel.reset_smart_inference()
+            self.classification_panel.reset_smart_inference()
         else:
             path = self.main.get_current_action_path()
             if not path:
@@ -194,7 +194,7 @@ class ClassificationEditorController:
         if not path:
             return
 
-        raw_data = override_data if override_data is not None else self.panel.get_annotation()
+        raw_data = override_data if override_data is not None else self.classification_panel.get_annotation()
         cleaned = {key: value for key, value in raw_data.items() if value}
         if not cleaned:
             cleaned = None
@@ -242,7 +242,7 @@ class ClassificationEditorController:
             self.main.update_save_export_button_state()
             self.main.show_temp_msg("Cleared", "Selection cleared.")
 
-        self.panel.clear_selection()
+        self.classification_panel.clear_selection()
 
     def clear_current_smart_annotation(self):
         path = self.main.get_current_action_path()
@@ -262,24 +262,24 @@ class ClassificationEditorController:
             self.main.show_temp_msg("Cleared", "Smart Annotation cleared.", 1000)
             self.main.update_save_export_button_state()
 
-        self.panel.chart_widget.setVisible(False)
-        self.panel.batch_result_text.setVisible(False)
+        self.classification_panel.chart_widget.setVisible(False)
+        self.classification_panel.batch_result_text.setVisible(False)
 
     def display_manual_annotation(self, path):
         data = self.model.manual_annotations.get(path, {})
-        self.panel.set_annotation(data)
+        self.classification_panel.set_annotation(data)
 
         smart_data = self.model.smart_annotations.get(path, {})
-        self.panel.chart_widget.setVisible(False)
+        self.classification_panel.chart_widget.setVisible(False)
         if smart_data:
             for _, smart_item in smart_data.items():
                 if not isinstance(smart_item, dict):
                     continue
-                self.panel.chart_widget.update_chart(
+                self.classification_panel.chart_widget.update_chart(
                     smart_item.get("label", ""),
                     smart_item.get("conf_dict", {}),
                 )
-                self.panel.chart_widget.setVisible(True)
+                self.classification_panel.chart_widget.setVisible(True)
                 break
 
     def handle_add_label_head(self, name):
@@ -305,7 +305,7 @@ class ClassificationEditorController:
         definition = {"type": label_type, "labels": []}
         self.model.push_undo(CmdType.SCHEMA_ADD_CAT, head=clean, definition=definition)
         self.model.label_definitions[clean] = definition
-        self.panel.new_head_edit.clear()
+        self.classification_panel.new_head_edit.clear()
         self.setup_dynamic_ui()
         self.main.update_save_export_button_state()
 
@@ -339,7 +339,7 @@ class ClassificationEditorController:
         self.main.update_save_export_button_state()
 
     def add_custom_type(self, head):
-        group = self.panel.label_groups.get(head)
+        group = self.classification_panel.label_groups.get(head)
         if not group:
             return
 
@@ -394,7 +394,7 @@ class ClassificationEditorController:
             elif definition["type"] == "multi_label" and label in value.get(head, []):
                 value[head].remove(label)
 
-        group = self.panel.label_groups.get(head)
+        group = self.classification_panel.label_groups.get(head)
         if group:
             if hasattr(group, "update_radios"):
                 group.update_radios(definition["labels"])

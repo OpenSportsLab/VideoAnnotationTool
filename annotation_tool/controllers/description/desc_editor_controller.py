@@ -14,6 +14,7 @@ class DescEditorController:
     def __init__(self, main_window):
         self.main = main_window
         self.model = main_window.model
+        self.description_panel = main_window.description_panel
         self.current_sample_id = ""
         self.current_action_path = None
         self._suspend_autosave = False
@@ -24,7 +25,7 @@ class DescEditorController:
 
     def setup_connections(self):
         """Connect Description editor UI signals to controller actions."""
-        self.main.description_panel.caption_edit.textChanged.connect(self._on_caption_text_changed)
+        self.description_panel.caption_edit.textChanged.connect(self._on_caption_text_changed)
 
     def reset_ui(self):
         """Reset the Description editor UI for project clear/close flows."""
@@ -32,8 +33,8 @@ class DescEditorController:
         self.current_sample_id = ""
         self.current_action_path = None
         self._set_editor_text("")
-        self.main.description_panel.caption_edit.setEnabled(False)
-        self.main.description_panel.setEnabled(False)
+        self.description_panel.caption_edit.setEnabled(False)
+        self.description_panel.setEnabled(False)
 
     def on_item_removed(self, path: str):
         """Handle removal of a description item from the dataset explorer."""
@@ -44,7 +45,7 @@ class DescEditorController:
         self.current_sample_id = ""
         self.current_action_path = None
         self._set_editor_text("")
-        self.main.description_panel.caption_edit.setEnabled(False)
+        self.description_panel.caption_edit.setEnabled(False)
 
     def on_data_selected(self, data_id: str):
         """
@@ -55,29 +56,29 @@ class DescEditorController:
             self.current_sample_id = ""
             self._set_editor_text("")
             self.current_action_path = None
-            self.main.description_panel.caption_edit.setEnabled(False)
-            self.main.description_panel.setEnabled(False)
+            self.description_panel.caption_edit.setEnabled(False)
+            self.description_panel.setEnabled(False)
             if self.main.right_tabs.currentIndex() == 2:
                 self.main.center_panel.set_markers([])
             return
 
         action_data = self.model.get_item_by_id(data_id)
         if not action_data:
-            self.main.description_panel.caption_edit.setPlaceholderText("No metadata found for this item.")
+            self.description_panel.caption_edit.setPlaceholderText("No metadata found for this item.")
             self._autosave_timer.stop()
             self.current_sample_id = ""
             self.current_action_path = None
             self._set_editor_text("")
-            self.main.description_panel.caption_edit.setEnabled(False)
-            self.main.description_panel.setEnabled(False)
+            self.description_panel.caption_edit.setEnabled(False)
+            self.description_panel.setEnabled(False)
             if self.main.right_tabs.currentIndex() == 2:
                 self.main.center_panel.set_markers([])
             return
 
         self.current_sample_id = data_id
         self.current_action_path = action_data.get("metadata", {}).get("path") or action_data.get("path")
-        self.main.description_panel.caption_edit.setEnabled(True)
-        self.main.description_panel.setEnabled(True)
+        self.description_panel.caption_edit.setEnabled(True)
+        self.description_panel.setEnabled(True)
         if self.main.right_tabs.currentIndex() == 2:
             self.main.center_panel.set_markers([])
 
@@ -113,7 +114,7 @@ class DescEditorController:
     def _set_editor_text(self, text: str):
         self._suspend_autosave = True
         try:
-            self.main.description_panel.caption_edit.setPlainText(text)
+            self.description_panel.caption_edit.setPlainText(text)
         finally:
             self._suspend_autosave = False
 
@@ -135,7 +136,7 @@ class DescEditorController:
         if not self.current_sample_id:
             return False
 
-        text_content = self.main.description_panel.caption_edit.toPlainText()
+        text_content = self.description_panel.caption_edit.toPlainText()
         sample = self.model.get_sample(self.current_sample_id)
         if not sample:
             return False

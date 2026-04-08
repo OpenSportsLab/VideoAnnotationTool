@@ -215,7 +215,7 @@ class TrainManager(QObject):
         super().__init__()
         self.controller = classification_controller
         self.main = classification_controller.main
-        self.panel = classification_controller.panel
+        self.panel = classification_controller.classification_panel
         # Background worker thread instance
         self.worker = None
 

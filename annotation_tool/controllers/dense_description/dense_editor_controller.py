@@ -19,7 +19,7 @@ class DenseEditorController:
         self.model = main_window.model
         self.tree_model = main_window.tree_model
         self.center_panel = main_window.center_panel
-        self.right_panel = main_window.dense_panel
+        self.dense_panel = main_window.dense_panel
         self.media_controller = media_controller
 
         self.current_sample_id = ""
@@ -36,10 +36,10 @@ class DenseEditorController:
     # -------------------------------------------------------------------------
     def setup_connections(self):
         self.center_panel.positionChanged.connect(self._on_media_position_changed)
-        self.right_panel.eventNavigateRequested.connect(self._navigate_annotation)
+        self.dense_panel.eventNavigateRequested.connect(self._navigate_annotation)
 
-        input_widget = self.right_panel.input_widget
-        table = self.right_panel.table
+        input_widget = self.dense_panel.input_widget
+        table = self.dense_panel.table
 
         input_widget.descriptionSubmitted.connect(self._on_description_submitted)
         table.annotationSelected.connect(self._on_event_selected_from_table)
@@ -48,14 +48,14 @@ class DenseEditorController:
         table.updateTimeForSelectedRequested.connect(self._on_update_time_for_selected)
 
     def reset_ui(self):
-        self.right_panel.table.set_data([])
-        self.right_panel.input_widget.set_text("")
-        self.right_panel.setEnabled(False)
+        self.dense_panel.table.set_data([])
+        self.dense_panel.input_widget.set_text("")
+        self.dense_panel.setEnabled(False)
         self.current_sample_id = ""
         self.current_video_path = None
 
     def submit_current_annotation(self):
-        self.right_panel.input_widget._on_submit()
+        self.dense_panel.input_widget._on_submit()
 
     # -------------------------------------------------------------------------
     # Selection + Dense Editing
@@ -64,9 +64,9 @@ class DenseEditorController:
         if not data_id:
             self.current_sample_id = ""
             self.current_video_path = None
-            self.right_panel.setEnabled(False)
-            self.right_panel.table.set_data([])
-            self.right_panel.input_widget.set_text("")
+            self.dense_panel.setEnabled(False)
+            self.dense_panel.table.set_data([])
+            self.dense_panel.input_widget.set_text("")
             if self._is_active_mode():
                 self.center_panel.set_markers([])
             return
@@ -77,12 +77,12 @@ class DenseEditorController:
 
         self.current_sample_id = data_id
         self.current_video_path = path
-        self.right_panel.setEnabled(True)
-        self.right_panel.input_widget.set_text("")
+        self.dense_panel.setEnabled(True)
+        self.dense_panel.input_widget.set_text("")
         self.display_events_for_item(path, update_markers=self._is_active_mode())
 
     def _on_media_position_changed(self, ms: int):
-        self.right_panel.input_widget.update_time(self._fmt_ms_full(ms))
+        self.dense_panel.input_widget.update_time(self._fmt_ms_full(ms))
         if not self.sync_timer.isActive():
             self.sync_timer.start()
 
@@ -136,7 +136,7 @@ class DenseEditorController:
 
             self.model.dense_description_events[self.current_video_path].append(new_event)
             self.main.show_temp_msg("Added", "Dense description created.")
-            self.right_panel.input_widget.set_text("")
+            self.dense_panel.input_widget.set_text("")
 
         self.model.is_data_dirty = True
         self.display_events_for_item(self.current_video_path)
@@ -194,7 +194,7 @@ class DenseEditorController:
         self.display_events_for_item(self.current_video_path)
         self.main.update_action_item_status(self.current_video_path)
         self.main.update_save_export_button_state()
-        self.right_panel.input_widget.set_text("")
+        self.dense_panel.input_widget.set_text("")
 
     def _on_update_time_for_selected(self, old_event: dict):
         if not self.current_video_path:
@@ -207,19 +207,19 @@ class DenseEditorController:
 
     def display_events_for_item(self, path: str, update_markers=None):
         current_selection_ms = None
-        selection_model = self.right_panel.table.table.selectionModel()
+        selection_model = self.dense_panel.table.table.selectionModel()
         if selection_model:
             indexes = selection_model.selectedRows()
             if indexes:
                 row = indexes[0].row()
-                item = self.right_panel.table.model.get_annotation_at(row)
+                item = self.dense_panel.table.model.get_annotation_at(row)
                 if item:
                     current_selection_ms = item.get("position_ms")
 
         events = self.model.dense_description_events.get(path, [])
         sorted_events = sorted(events, key=lambda x: x.get("position_ms", 0))
 
-        self.right_panel.table.set_data(sorted_events)
+        self.dense_panel.table.set_data(sorted_events)
         if update_markers is None:
             update_markers = self._is_active_mode()
         if update_markers:
@@ -253,9 +253,9 @@ class DenseEditorController:
 
         # Keep user-typed text if no matching timestamp event is found.
         if found:
-            current_text = self.right_panel.input_widget.text_editor.toPlainText()
+            current_text = self.dense_panel.input_widget.text_editor.toPlainText()
             if current_text != target_text:
-                self.right_panel.input_widget.set_text(target_text)
+                self.dense_panel.input_widget.set_text(target_text)
 
     # -------------------------------------------------------------------------
     # Navigation
@@ -283,17 +283,17 @@ class DenseEditorController:
         if target is not None:
             self.center_panel.set_position(target["position_ms"])
             self._select_row_by_time(target["position_ms"])
-            self.right_panel.input_widget.set_text(target["text"])
+            self.dense_panel.input_widget.set_text(target["text"])
 
     # -------------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------------
     def _select_row_by_time(self, time_ms: int):
-        model = self.right_panel.table.model
+        model = self.dense_panel.table.model
         for row in range(model.rowCount()):
             item = model.get_annotation_at(row)
             if item and abs(item.get("position_ms", 0) - time_ms) < 20:
-                self.right_panel.table.table.selectRow(row)
+                self.dense_panel.table.table.selectRow(row)
                 break
 
     def _fmt_ms_full(self, ms: int) -> str:

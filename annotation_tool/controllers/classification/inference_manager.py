@@ -322,7 +322,7 @@ class InferenceManager(QObject):
         super().__init__()
         self.controller = classification_controller
         self.main = classification_controller.main
-        self.panel = classification_controller.panel
+        self.panel = classification_controller.classification_panel
         
         if hasattr(sys, '_MEIPASS'):
             self.base_dir = sys._MEIPASS

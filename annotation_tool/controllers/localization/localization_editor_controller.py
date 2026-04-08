@@ -26,7 +26,7 @@ class LocalizationEditorController:
         self.tree_model = main_window.tree_model
 
         self.center_panel = main_window.center_panel
-        self.right_panel = main_window.localization_panel
+        self.localization_panel = main_window.localization_panel
 
         self.inference_manager = LocalizationInferenceManager(self.main)
         self.inference_manager.inference_finished.connect(self._on_inference_success)
@@ -40,29 +40,29 @@ class LocalizationEditorController:
     # Lifecycle / Wiring
     # -------------------------------------------------------------------------
     def reset_ui(self):
-        self.right_panel.annot_mgmt.update_schema({})
-        self.right_panel.table.set_data([])
-        if hasattr(self.right_panel, "smart_widget"):
-            self.right_panel.smart_widget.smart_table.set_data([])
-        self.right_panel.setEnabled(False)
+        self.localization_panel.annot_mgmt.update_schema({})
+        self.localization_panel.table.set_data([])
+        if hasattr(self.localization_panel, "smart_widget"):
+            self.localization_panel.smart_widget.smart_table.set_data([])
+        self.localization_panel.setEnabled(False)
         self.current_video_path = None
         self.current_head = None
 
     def setup_connections(self):
-        self.right_panel.eventNavigateRequested.connect(self._navigate_annotation)
+        self.localization_panel.eventNavigateRequested.connect(self._navigate_annotation)
 
-        if hasattr(self.right_panel, "smart_widget"):
-            smart_ui = self.right_panel.smart_widget
+        if hasattr(self.localization_panel, "smart_widget"):
+            smart_ui = self.localization_panel.smart_widget
             smart_ui.setTimeRequested.connect(self._on_smart_set_time)
             smart_ui.runInferenceRequested.connect(self._run_localization_inference)
             smart_ui.confirmSmartRequested.connect(self._confirm_smart_events)
             smart_ui.clearSmartRequested.connect(self._clear_smart_events)
-            self.right_panel.tabs.currentChanged.connect(self._on_tab_switched)
+            self.localization_panel.tabs.currentChanged.connect(self._on_tab_switched)
 
         self.center_panel.positionChanged.connect(self._on_media_position_changed)
 
-        tabs = self.right_panel.annot_mgmt.tabs
-        table = self.right_panel.table
+        tabs = self.localization_panel.annot_mgmt.tabs
+        table = self.localization_panel.table
 
         tabs.headAdded.connect(self._on_head_added)
         tabs.headRenamed.connect(self._on_head_renamed)
@@ -85,7 +85,7 @@ class LocalizationEditorController:
     # -------------------------------------------------------------------------
     def _on_media_position_changed(self, ms):
         time_str = self._fmt_ms_full(ms)
-        self.right_panel.annot_mgmt.tabs.update_current_time(time_str)
+        self.localization_panel.annot_mgmt.tabs.update_current_time(time_str)
 
     def _on_update_time_for_selected(self, old_event):
         if not self.current_video_path:
@@ -98,23 +98,23 @@ class LocalizationEditorController:
     def on_data_selected(self, data_id: str):
         if not data_id:
             self.current_video_path = None
-            self.right_panel.table.set_data([])
-            if hasattr(self.right_panel, "smart_widget"):
-                self.right_panel.smart_widget.smart_table.set_data([])
+            self.localization_panel.table.set_data([])
+            if hasattr(self.localization_panel, "smart_widget"):
+                self.localization_panel.smart_widget.smart_table.set_data([])
             if self._is_active_mode():
                 self.center_panel.set_markers([])
-            self.right_panel.setEnabled(False)
+            self.localization_panel.setEnabled(False)
             return
 
         path = self.model.get_path_by_id(data_id)
         if not path:
             self.current_video_path = None
-            self.right_panel.setEnabled(False)
+            self.localization_panel.setEnabled(False)
             return
 
         if path and os.path.exists(path):
             self.current_video_path = path
-            self.right_panel.setEnabled(True)
+            self.localization_panel.setEnabled(True)
             if self._is_showing_smart_tab():
                 self._display_smart_events(path, update_markers=self._is_active_mode())
             else:
@@ -148,7 +148,7 @@ class LocalizationEditorController:
         self.model.label_definitions[head_name] = definition
         self.model.is_data_dirty = True
         self._refresh_schema_ui()
-        self.right_panel.annot_mgmt.tabs.set_current_head(head_name)
+        self.localization_panel.annot_mgmt.tabs.set_current_head(head_name)
         self.main.show_temp_msg("Head Added", f"Created '{head_name}'")
         self.main.update_save_export_button_state()
 
@@ -166,7 +166,7 @@ class LocalizationEditorController:
                     evt["head"] = new_name
         self.model.is_data_dirty = True
         self._refresh_schema_ui()
-        self.right_panel.annot_mgmt.tabs.set_current_head(new_name)
+        self.localization_panel.annot_mgmt.tabs.set_current_head(new_name)
         self._refresh_current_clip_events()
         self.main.show_temp_msg("Head Renamed", "Updated events.")
         self.main.update_save_export_button_state()
@@ -243,7 +243,7 @@ class LocalizationEditorController:
         self.model.push_dataset_json_replace_undo_if_changed(before_json)
 
         self._refresh_schema_ui()
-        self.right_panel.annot_mgmt.tabs.set_current_head(head)
+        self.localization_panel.annot_mgmt.tabs.set_current_head(head)
         if self.current_video_path:
             self._display_events_for_item(self.current_video_path)
             self.refresh_tree_icons()
@@ -280,7 +280,7 @@ class LocalizationEditorController:
 
         self.model.is_data_dirty = True
         self._refresh_schema_ui()
-        self.right_panel.annot_mgmt.tabs.set_current_head(head)
+        self.localization_panel.annot_mgmt.tabs.set_current_head(head)
         self._refresh_current_clip_events()
         self.main.update_save_export_button_state()
 
@@ -320,7 +320,7 @@ class LocalizationEditorController:
 
         self.model.is_data_dirty = True
         self._refresh_schema_ui()
-        self.right_panel.annot_mgmt.tabs.set_current_head(head)
+        self.localization_panel.annot_mgmt.tabs.set_current_head(head)
         self._refresh_current_clip_events()
         self.main.update_save_export_button_state()
 
@@ -381,7 +381,7 @@ class LocalizationEditorController:
 
         if schema_changed:
             self._refresh_schema_ui()
-            self.right_panel.annot_mgmt.tabs.set_current_head(new_head)
+            self.localization_panel.annot_mgmt.tabs.set_current_head(new_head)
 
         self._display_events_for_item(self.current_video_path)
         self.refresh_tree_icons()
@@ -418,8 +418,8 @@ class LocalizationEditorController:
 
     # --- Helper Refresh Methods ---
     def _refresh_schema_ui(self):
-        self.right_panel.table.set_schema(self.model.label_definitions)
-        self.right_panel.annot_mgmt.update_schema(self.model.label_definitions)
+        self.localization_panel.table.set_schema(self.model.label_definitions)
+        self.localization_panel.annot_mgmt.update_schema(self.model.label_definitions)
 
     def _refresh_current_clip_events(self):
         if self.current_video_path:
@@ -435,7 +435,7 @@ class LocalizationEditorController:
         # Keep original event dict references so table-originated edits/deletes map back
         # to the same objects stored in the model.
         display_data = sorted(events, key=lambda x: x.get("position_ms", 0))
-        self.right_panel.table.set_data(display_data)
+        self.localization_panel.table.set_data(display_data)
         if update_markers is None:
             update_markers = self._is_active_mode() and not self._is_showing_smart_tab()
         if update_markers:
@@ -491,14 +491,14 @@ class LocalizationEditorController:
             self.center_panel.set_position(target_time)
             # Keep current tab unchanged. If the event is not in the active table,
             # we still seek video but do not force tab-switching.
-            active_tab = self.right_panel.tabs.currentIndex()
+            active_tab = self.localization_panel.tabs.currentIndex()
             if active_tab == 1:
-                self._select_row_by_time_in_table(self.right_panel.smart_widget.smart_table, target_time)
+                self._select_row_by_time_in_table(self.localization_panel.smart_widget.smart_table, target_time)
             else:
-                self._select_row_by_time_in_table(self.right_panel.table, target_time)
+                self._select_row_by_time_in_table(self.localization_panel.table, target_time)
 
     def _select_row_by_time(self, time_ms):
-        self._select_row_by_time_in_table(self.right_panel.table, time_ms)
+        self._select_row_by_time_in_table(self.localization_panel.table, time_ms)
 
     def _select_row_by_time_in_table(self, table_adapter, time_ms):
         model = table_adapter.model
@@ -511,8 +511,8 @@ class LocalizationEditorController:
                 break
 
     def _reselect_event(self, target_event):
-        model = self.right_panel.table.model
-        table_view = self.right_panel.table.table
+        model = self.localization_panel.table.model
+        table_view = self.localization_panel.table.table
 
         table_view.selectionModel().blockSignals(True)
 
@@ -529,8 +529,8 @@ class LocalizationEditorController:
                 idx = model.index(row, 0)
                 table_view.selectRow(row)
                 table_view.scrollTo(idx)
-                if hasattr(self.right_panel.table, "btn_set_time"):
-                    self.right_panel.table.btn_set_time.setEnabled(True)
+                if hasattr(self.localization_panel.table, "btn_set_time"):
+                    self.localization_panel.table.btn_set_time.setEnabled(True)
                 break
 
         table_view.selectionModel().blockSignals(False)
@@ -548,7 +548,7 @@ class LocalizationEditorController:
         player = self.center_panel.player
         current_ms = player.position()
         time_str = self._fmt_ms_full(current_ms)
-        self.right_panel.smart_widget.update_time_display(target, time_str, current_ms)
+        self.localization_panel.smart_widget.update_time_display(target, time_str, current_ms)
 
     def _run_localization_inference(self, start_ms: int, end_ms: int):
         if not self.current_video_path:
@@ -558,11 +558,11 @@ class LocalizationEditorController:
             return
 
         self.main.show_temp_msg("Smart Inference", "Running OpenSportsLib Localization Model...")
-        self.right_panel.smart_widget.btn_run_infer.setEnabled(False)
+        self.localization_panel.smart_widget.btn_run_infer.setEnabled(False)
         self.inference_manager.start_inference(self.current_video_path, start_ms, end_ms)
 
     def _on_inference_success(self, predicted_events: list):
-        self.right_panel.smart_widget.btn_run_infer.setEnabled(True)
+        self.localization_panel.smart_widget.btn_run_infer.setEnabled(True)
         if not self.current_video_path:
             return
 
@@ -572,11 +572,11 @@ class LocalizationEditorController:
         self.main.show_temp_msg("Smart Inference", f"Success: Found {len(predicted_events)} events.")
         self.main.update_save_export_button_state()
 
-        if self.right_panel.tabs.currentIndex() == 1:
+        if self.localization_panel.tabs.currentIndex() == 1:
             self._display_smart_events(self.current_video_path)
 
     def _on_inference_error(self, error_msg: str):
-        self.right_panel.smart_widget.btn_run_infer.setEnabled(True)
+        self.localization_panel.smart_widget.btn_run_infer.setEnabled(True)
         QMessageBox.critical(self.main, "Inference Error", f"Failed to run model:\n{error_msg}")
 
     def _confirm_smart_events(self):
@@ -619,7 +619,7 @@ class LocalizationEditorController:
 
     def _display_smart_events(self, video_path: str, update_markers=None):
         events = self.model.smart_localization_events.get(video_path, [])
-        self.right_panel.smart_widget.smart_table.set_data(events)
+        self.localization_panel.smart_widget.smart_table.set_data(events)
         if update_markers is None:
             update_markers = self._is_active_mode() and self._is_showing_smart_tab()
         if update_markers:
@@ -642,4 +642,4 @@ class LocalizationEditorController:
         return self.main.right_tabs.currentIndex() == 1
 
     def _is_showing_smart_tab(self) -> bool:
-        return hasattr(self.right_panel, "tabs") and self.right_panel.tabs.currentIndex() == 1
+        return hasattr(self.localization_panel, "tabs") and self.localization_panel.tabs.currentIndex() == 1
