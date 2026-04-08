@@ -274,6 +274,37 @@ def test_id_normalization_roundtrips_for_duplicate_and_missing_ids(
 
 
 @pytest.mark.gui
+def test_rename_sample_id_updates_tree_selection_and_dataset_json(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    _open_project(window, monkeypatch, project_json_path)
+
+    sample_index = _select_top_row(window, qtbot, 0)
+    assert sample_index.isValid()
+    assert sample_index.data(window.tree_model.DataIdRole) == "clip_1"
+
+    parent_item = window.tree_model.itemFromIndex(sample_index)
+    assert parent_item is not None
+    parent_item.setText("renamed_clip")
+    qtbot.wait(50)
+
+    refreshed_index = window.tree_model.index(0, 0)
+    assert refreshed_index.isValid()
+    assert refreshed_index.data(window.tree_model.DataIdRole) == "renamed_clip"
+    assert refreshed_index.data() == "renamed_clip"
+
+    renamed_sample = window.model.get_sample("renamed_clip")
+    assert renamed_sample is not None
+    assert renamed_sample.get("id") == "renamed_clip"
+    assert window.model.get_sample("clip_1") is None
+    assert window.model.current_selected_sample_id == "renamed_clip"
+    assert window.model.is_data_dirty is True
+
+@pytest.mark.gui
 def test_active_tab_switch_reapplies_markers_without_leaking_stale_markers(
     window,
     monkeypatch,

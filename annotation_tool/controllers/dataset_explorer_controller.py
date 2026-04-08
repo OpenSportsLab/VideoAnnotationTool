@@ -256,6 +256,7 @@ class DatasetExplorerController(QObject):
 
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
+        self._suspend_tree_item_changed = False
 
         self.manual_annotations = _ManualAnnotationsProxy(self)
         self.smart_annotations = _SampleDictProxy(self, "smart_labels")
@@ -359,6 +360,7 @@ class DatasetExplorerController(QObject):
         if hasattr(self.panel, "header_tabs"):
             self.panel.header_tabs.currentChanged.connect(self._on_explorer_tab_changed)
         self.panel.tree.selectionModel().currentChanged.connect(self._on_selection_changed)
+        self.tree_model.itemChanged.connect(self._on_tree_item_changed)
 
     def reset(self, full_reset: bool = False):
         self.current_json_path = None
@@ -381,6 +383,7 @@ class DatasetExplorerController(QObject):
 
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
+        self._suspend_tree_item_changed = False
 
         if full_reset:
             self.dataset_json = {}
@@ -482,8 +485,7 @@ class DatasetExplorerController(QObject):
             if str(sample.get("id")) != str(sample_id)
         ]
         removed = len(self.get_samples()) != before
-        if removed:
-            self._rebuild_runtime_index()
+
         return removed
 
     def _remove_sample_input_by_path(self, sample_id: str, input_path: str):
@@ -1057,6 +1059,70 @@ class DatasetExplorerController(QObject):
         sample_id = action_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
         return self.get_sample(sample_id)
 
+    def _on_tree_item_changed(self, item):
+        if self._suspend_tree_item_changed:
+            return
+        if item is None:
+            return
+
+        item_idx = item.index()
+        if not item_idx.isValid() or item_idx.parent().isValid():
+            return
+
+        old_sample_id = str(item.data(getattr(self.tree_model, "DataIdRole", 0x0101)) or "")
+        if not old_sample_id:
+            return
+
+        requested_id = str(item.text() or "").strip()
+        if not requested_id:
+            self._suspend_tree_item_changed = True
+            try:
+                item.setText(old_sample_id)
+            finally:
+                self._suspend_tree_item_changed = False
+            return
+
+        if requested_id == old_sample_id:
+            # Ignore programmatic item changes (e.g. icon/status updates).
+            return
+
+        reserved = {
+            str(sample.get("id"))
+            for sample in self.get_samples()
+            if isinstance(sample, dict) and str(sample.get("id")) != old_sample_id
+        }
+        final_id = self._make_unique_sample_id(requested_id, reserved)
+
+        sample = self.get_sample(old_sample_id)
+        if not isinstance(sample, dict):
+            self._suspend_tree_item_changed = True
+            try:
+                item.setText(old_sample_id)
+            finally:
+                self._suspend_tree_item_changed = False
+            return
+
+        self._suspend_tree_item_changed = True
+        try:
+            sample["id"] = final_id
+            item.setText(final_id)
+            item.setData(final_id, getattr(self.tree_model, "DataIdRole", 0x0101))
+            for row in range(item.rowCount()):
+                child = item.child(row)
+                if child is not None:
+                    child.setData(final_id, getattr(self.tree_model, "DataIdRole", 0x0101))
+        finally:
+            self._suspend_tree_item_changed = False
+
+        self._rebuild_runtime_index()
+        self.is_data_dirty = True
+        if self.current_selected_sample_id == old_sample_id:
+            self.current_selected_sample_id = final_id
+            self.dataSelected.emit(final_id)
+        self._refresh_json_preview()
+        self.main.update_save_export_button_state()
+        self.main.show_temp_msg("Renamed", f"Sample id set to '{final_id}'.")
+
     # ------------------------------------------------------------------
     # Tree population and selection
     # ------------------------------------------------------------------
@@ -1070,15 +1136,19 @@ class DatasetExplorerController(QObject):
             key=lambda item: natural_sort_key(item.get("name", "")),
         )
 
-        for entry in sorted_items:
-            item = self.tree_model.add_entry(
-                name=entry["name"],
-                path=entry["path"],
-                source_files=entry.get("source_files"),
-                data_id=entry["data_id"],
-            )
-            self.action_item_map[entry["path"]] = item
-            self.update_item_status(entry["path"])
+        self._suspend_tree_item_changed = True
+        try:
+            for entry in sorted_items:
+                item = self.tree_model.add_entry(
+                    name=entry["name"],
+                    path=entry["path"],
+                    source_files=entry.get("source_files"),
+                    data_id=entry["data_id"],
+                )
+                self.action_item_map[entry["path"]] = item
+                self.update_item_status(entry["path"])
+        finally:
+            self._suspend_tree_item_changed = False
 
         self.handle_filter_change(self.panel.filter_combo.currentIndex())
 

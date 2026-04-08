@@ -42,7 +42,7 @@ class DatasetExplorerTreeModel(QStandardItemModel):
         data_id: str = None,
     ) -> QStandardItem:
         item = QStandardItem(name)
-        item.setEditable(False)
+        item.setEditable(True)
         item.setData(path, self.FilePathRole)
         item.setData(data_id, self.DataIdRole)
 
@@ -130,7 +130,7 @@ class DatasetExplorerPanel(QWidget):
         self.bottomLayout.setStretch(1, 1)
 
         self.tree.setHeaderHidden(True)
-        self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tree.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.json_raw_text.setReadOnly(True)
         self.json_raw_text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
