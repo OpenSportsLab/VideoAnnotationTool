@@ -20,6 +20,7 @@ class HistoryManager:
         self.model.redo_stack.append(cmd)
         
         self._apply_state_change(cmd, is_undo=True)
+        self.main.dataset_explorer_controller.refresh_all_item_statuses()
         
         self.main.update_save_export_button_state()
         self._is_undoing_redoing = False
@@ -32,6 +33,7 @@ class HistoryManager:
         self.model.undo_stack.append(cmd)
         
         self._apply_state_change(cmd, is_undo=False)
+        self.main.dataset_explorer_controller.refresh_all_item_statuses()
         
         self.main.update_save_export_button_state()
         self._is_undoing_redoing = False
@@ -49,7 +51,10 @@ class HistoryManager:
             # Rebuild the right-side dynamic control
             self.main.classification_editor_controller.setup_dynamic_ui()
             # Refresh the left and annotation status
-            self.main.refresh_ui_after_undo_redo(self.main.get_current_action_path())
+            self.main.refresh_ui_after_undo_redo(
+                self.main.get_current_action_path(),
+                filter_selection_fallback="clear_selection",
+            )
 
         # 1: Localization Mode
         elif tab_idx == 1:
@@ -57,8 +62,11 @@ class HistoryManager:
             self.main.localization_editor_controller._refresh_schema_ui()
             # Refresh Events (Table & Timeline)
             self.main.localization_editor_controller._refresh_current_clip_events()
-            # Refresh left side
-            self.main.dataset_explorer_controller.populate_tree()
+            # Refresh left side without repopulating the tree.
+            self.main.refresh_ui_after_undo_redo(
+                self.main.get_current_action_path(),
+                filter_selection_fallback="clear_selection",
+            )
 
         # 2: Description Mode
         elif tab_idx == 2:
@@ -92,7 +100,7 @@ class HistoryManager:
             if data is None:
                 if path in self.model.manual_annotations: del self.model.manual_annotations[path]
             else: self.model.manual_annotations[path] = copy.deepcopy(data)
-            self.main.refresh_ui_after_undo_redo(path)
+            self.main.refresh_ui_after_undo_redo(path, filter_selection_fallback="clear_selection")
 
         # [NEW] Handle batch annotation confirm
         elif ctype == CmdType.BATCH_ANNOTATION_CONFIRM:

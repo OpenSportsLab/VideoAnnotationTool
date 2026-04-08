@@ -255,6 +255,7 @@ class DatasetExplorerController(QObject):
 
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
+        self._last_routed_media_path = None
         self._suspend_tree_item_changed = False
 
         self.manual_annotations = _ManualAnnotationsProxy(self)
@@ -382,6 +383,7 @@ class DatasetExplorerController(QObject):
 
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
+        self._last_routed_media_path = None
         self._suspend_tree_item_changed = False
 
         if full_reset:
@@ -1172,6 +1174,10 @@ class DatasetExplorerController(QObject):
         if done_icon is not None and empty_icon is not None:
             item.setIcon(done_icon if self.is_action_done(action_path) else empty_icon)
 
+    def refresh_all_item_statuses(self):
+        for action_path in list(self.action_item_map.keys()):
+            self.update_item_status(action_path)
+
     def _set_annotation_panels_enabled(self, enabled: bool):
         self.main.classification_panel.manual_box.setEnabled(enabled)
         self.main.localization_panel.setEnabled(enabled)
@@ -1208,6 +1214,7 @@ class DatasetExplorerController(QObject):
     def _clear_selection_for_empty_filtered_view(self):
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
+        self._last_routed_media_path = None
         self.media_controller.stop()
         self.main.center_panel.player.setSource(QUrl())
         self.main.center_panel.set_markers([])
@@ -1225,6 +1232,7 @@ class DatasetExplorerController(QObject):
         if not current.isValid():
             self.current_selected_sample_id = ""
             self.current_selected_input_path = None
+            self._last_routed_media_path = None
             self.dataSelected.emit("")
             return
 
@@ -1232,6 +1240,7 @@ class DatasetExplorerController(QObject):
         if not action_idx.isValid():
             self.current_selected_sample_id = ""
             self.current_selected_input_path = None
+            self._last_routed_media_path = None
             self.dataSelected.emit("")
             return
 
@@ -1239,6 +1248,7 @@ class DatasetExplorerController(QObject):
         if not sample_id:
             self.current_selected_sample_id = ""
             self.current_selected_input_path = None
+            self._last_routed_media_path = None
             self.dataSelected.emit("")
             return
 
@@ -1305,10 +1315,24 @@ class DatasetExplorerController(QObject):
         preferred = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
         primary_path = preferred or media_paths[0]
         self.current_selected_input_path = primary_path
-        self.main.media_controller.load_and_play(primary_path)
+        if self._fs_path_key(self._last_routed_media_path) == self._fs_path_key(primary_path):
+            return
+
+        current_source_path = ""
+        player = getattr(self.main.center_panel, "player", None)
+        if player is not None and hasattr(player, "source"):
+            try:
+                current_source = player.source()
+                if current_source.isValid() and current_source.isLocalFile():
+                    current_source_path = current_source.toLocalFile()
+            except Exception:
+                current_source_path = ""
+
+        if self._fs_path_key(current_source_path) != self._fs_path_key(primary_path):
+            self.main.media_controller.load_and_play(primary_path)
+        self._last_routed_media_path = primary_path
 
     def handle_active_mode_changed(self):
-        self.handle_filter_change(self.panel.filter_combo.currentIndex())
         current_idx = self.panel.tree.currentIndex()
         if not current_idx.isValid() or not self.current_selected_sample_id:
             self.dataSelected.emit("")
@@ -1338,7 +1362,7 @@ class DatasetExplorerController(QObject):
                     return
             row += 1 if step > 0 else -1
 
-    def handle_filter_change(self, index):
+    def handle_filter_change(self, index, selection_fallback: str = "first_visible"):
         root = self.tree_model.invisibleRootItem()
         first_visible_idx = QModelIndex()
         for row in range(root.rowCount()):
@@ -1366,6 +1390,9 @@ class DatasetExplorerController(QObject):
             current_idx = self._get_action_index(self.panel.tree.currentIndex())
             current_visible = current_idx.isValid() and not self.panel.tree.isRowHidden(current_idx.row(), QModelIndex())
             if not current_visible:
+                if selection_fallback == "clear_selection":
+                    self._clear_selection_for_empty_filtered_view()
+                    return
                 self.panel.tree.setCurrentIndex(first_visible_idx)
                 self.panel.tree.scrollTo(first_visible_idx)
             self._expand_current_parent()
@@ -1574,6 +1601,7 @@ class DatasetExplorerController(QObject):
     def _reset_panels_after_removed_path(self, _removed_path: str):
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
+        self._last_routed_media_path = None
         self.media_controller.stop()
         self.main.center_panel.player.setSource(QUrl())
         self.main.center_panel.set_markers([])

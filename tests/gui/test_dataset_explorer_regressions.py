@@ -10,6 +10,8 @@ import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QMessageBox
 
+from controllers.command_types import CmdType
+
 
 MODE_TO_TAB_INDEX = {
     "classification": 0,
@@ -330,6 +332,46 @@ def test_active_tab_switch_reapplies_markers_without_leaking_stale_markers(
     window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["classification"])
     qtbot.wait(50)
     assert window.center_panel.slider.markers == []
+
+
+@pytest.mark.gui
+def test_tab_switch_with_selection_does_not_repopulate_tree_or_restart_media(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("mixed", item_count=1)
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+
+    populate_calls = {"count": 0}
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "populate_tree",
+        lambda: populate_calls.__setitem__("count", populate_calls["count"] + 1),
+    )
+
+    play_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda file_path, auto_play=True: play_calls.append(file_path),
+    )
+
+    for mode_idx in (
+        MODE_TO_TAB_INDEX["localization"],
+        MODE_TO_TAB_INDEX["description"],
+        MODE_TO_TAB_INDEX["dense_description"],
+        MODE_TO_TAB_INDEX["classification"],
+    ):
+        window.right_tabs.setCurrentIndex(mode_idx)
+        qtbot.wait(50)
+
+    assert populate_calls["count"] == 0
+    assert play_calls == []
+    assert window.model.current_selected_sample_id == "clip_1"
+    assert window.dataset_explorer_panel.tree.currentIndex().isValid()
 
 
 @pytest.mark.gui
@@ -808,3 +850,93 @@ def test_json_tab_reflects_header_edit_sample_edit_and_undo_redo(
     saved = json.loads(project_json_path.read_text(encoding="utf-8"))
     assert saved["description"] == edited_description
     assert saved["data"][0]["captions"][0]["text"] == edited_caption
+
+
+@pytest.mark.gui
+def test_localization_undo_redo_does_not_repopulate_tree_or_restart_media(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["localization"])
+    qtbot.wait(50)
+
+    path = window.model.get_path_by_id(window.model.current_selected_sample_id)
+    assert path
+    events = window.model.localization_events.get(path, [])
+    assert events
+    old_event = events[0]
+    new_event = dict(old_event)
+    new_event["position_ms"] = int(old_event.get("position_ms", 0)) + 250
+    window.localization_editor_controller._on_annotation_modified(old_event, new_event)
+    qtbot.wait(50)
+    assert window.model.undo_stack
+
+    populate_calls = {"count": 0}
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "populate_tree",
+        lambda: populate_calls.__setitem__("count", populate_calls["count"] + 1),
+    )
+
+    play_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda file_path, auto_play=True: play_calls.append(file_path),
+    )
+
+    window.history_manager.perform_undo()
+    qtbot.wait(50)
+    window.history_manager.perform_redo()
+    qtbot.wait(50)
+
+    assert populate_calls["count"] == 0
+    assert play_calls == []
+
+
+@pytest.mark.gui
+def test_undo_filter_clear_selection_when_selected_row_becomes_hidden(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification", item_count=2)
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 1)
+
+    first_path = window.model.get_path_by_id("clip_1")
+    second_path = window.model.get_path_by_id("clip_2")
+    assert first_path
+    assert second_path
+
+    window.model.manual_annotations[first_path] = {"action": "pass"}
+    window.model.manual_annotations[second_path] = {"action": "pass"}
+    window.update_action_item_status(first_path)
+    window.update_action_item_status(second_path)
+
+    window.model.push_undo(
+        CmdType.ANNOTATION_CONFIRM,
+        path=second_path,
+        old_data=None,
+        new_data={"action": "pass"},
+    )
+
+    window.dataset_explorer_panel.filter_combo.setCurrentIndex(1)
+    qtbot.wait(50)
+    assert window.model.current_selected_sample_id == "clip_2"
+
+    window.history_manager.perform_undo()
+    qtbot.wait(50)
+
+    tree = window.dataset_explorer_panel.tree
+    assert not tree.currentIndex().isValid()
+    assert window.model.current_selected_sample_id == ""
+    assert window.model.current_selected_input_path is None
+    assert not tree.isRowHidden(0, tree.rootIndex())
+    assert tree.isRowHidden(1, tree.rootIndex())

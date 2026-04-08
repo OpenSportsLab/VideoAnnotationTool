@@ -427,18 +427,24 @@ class VideoAnnotationWindow(QMainWindow):
     def _connect_dynamic_type_buttons(self) -> None:
         self.classification_editor_controller._connect_dynamic_type_buttons()
 
-    def refresh_ui_after_undo_redo(self, action_path: str) -> None:
-        if not action_path:
-            self.dataset_explorer_controller.handle_filter_change(self.dataset_explorer_panel.filter_combo.currentIndex())
-            self.update_save_export_button_state()
-            return
-        self.update_action_item_status(action_path)
-        self.dataset_explorer_controller.handle_filter_change(self.dataset_explorer_panel.filter_combo.currentIndex())
-        item = self.model.action_item_map.get(action_path)
-        if item:
-            idx = item.index()
-            self.dataset_explorer_panel.tree.setCurrentIndex(idx)
-        data_id = self.model.get_data_id_by_path(action_path)
-        if data_id:
-            self.dataset_explorer_controller.dataSelected.emit(data_id)
+    def refresh_ui_after_undo_redo(self, action_path: str, filter_selection_fallback: str = "first_visible") -> None:
+        self.dataset_explorer_controller.refresh_all_item_statuses()
+        self.dataset_explorer_controller.handle_filter_change(
+            self.dataset_explorer_panel.filter_combo.currentIndex(),
+            selection_fallback=filter_selection_fallback,
+        )
+
+        if action_path:
+            item = self.model.action_item_map.get(action_path)
+            if item:
+                idx = item.index()
+                if idx.isValid() and not self.dataset_explorer_panel.tree.isRowHidden(idx.row(), QModelIndex()):
+                    if self.dataset_explorer_panel.tree.currentIndex() != idx:
+                        self.dataset_explorer_panel.tree.setCurrentIndex(idx)
+
+        selected_path = self.get_current_action_path()
+        selected_data_id = self.model.get_data_id_by_path(selected_path) if selected_path else None
+        if selected_data_id:
+            self.dataset_explorer_controller.dataSelected.emit(selected_data_id)
+
         self.update_save_export_button_state()
