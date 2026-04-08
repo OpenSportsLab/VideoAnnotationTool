@@ -2,7 +2,6 @@ import copy
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QColor
-from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from controllers.command_types import CmdType
@@ -82,10 +81,9 @@ class DenseEditorController:
             QMessageBox.warning(self.main, "Warning", "Please select a sample first.")
             return
 
-        player = self.center_panel.player
-        was_playing = player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        was_playing = self.media_controller.is_playing()
         if was_playing:
-            player.pause()
+            self.center_panel.playPauseRequested.emit()
 
         try:
             provided_text = (initial_text or "").strip()
@@ -125,7 +123,7 @@ class DenseEditorController:
             self.main.show_temp_msg("Added", "Dense description added.")
         finally:
             if was_playing:
-                player.play()
+                self.center_panel.playPauseRequested.emit()
 
     def _on_annotation_modified(self, old_event: dict, new_event: dict):
         if not self.current_video_path:

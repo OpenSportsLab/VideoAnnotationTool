@@ -223,6 +223,12 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.dataSelected.connect(self.localization_editor_controller.on_data_selected)
         self.dataset_explorer_controller.dataSelected.connect(self.desc_editor_controller.on_data_selected)
         self.dataset_explorer_controller.dataSelected.connect(self.dense_editor_controller.on_data_selected)
+        self.dataset_explorer_controller.mediaRouteRequested.connect(
+            lambda path, ensure_playback: self.media_controller.route_media_selection(path, ensure_playback)
+        )
+        self.dataset_explorer_controller.mediaStopRequested.connect(
+            lambda: self.media_controller.stop()
+        )
         self.right_tabs.currentChanged.connect(self._on_editor_tab_changed)
 
 

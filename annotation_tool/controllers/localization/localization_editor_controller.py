@@ -3,7 +3,6 @@ import os
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
-from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from controllers.command_types import CmdType
@@ -211,16 +210,15 @@ class LocalizationEditorController:
 
     # --- Label Management ---
     def _on_label_add_req(self, head):
-        player = self.center_panel.player
-        was_playing = player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        was_playing = self.media_controller.is_playing()
         if was_playing:
-            player.pause()
-        current_pos = player.position()
+            self.center_panel.playPauseRequested.emit()
+        current_pos = self.center_panel.player.position()
 
         text, ok = QInputDialog.getText(self.main, "Add Label", f"Add label to '{head}':")
         if not ok or not text.strip():
             if was_playing:
-                player.play()
+                self.center_panel.playPauseRequested.emit()
             return
 
         label_name = text.strip()
@@ -228,7 +226,7 @@ class LocalizationEditorController:
         if any(l.lower() == label_name.lower() for l in labels_list):
             self.main.show_temp_msg("Error", "Label exists!", icon=QMessageBox.Icon.Warning)
             if was_playing:
-                player.play()
+                self.center_panel.playPauseRequested.emit()
             return
 
         before_json = self.model.snapshot_dataset_json()
@@ -251,7 +249,7 @@ class LocalizationEditorController:
         self.main.update_save_export_button_state()
 
         if was_playing:
-            player.play()
+            self.center_panel.playPauseRequested.emit()
 
     def _on_label_rename_req(self, head, old_label):
         new_label, ok = QInputDialog.getText(

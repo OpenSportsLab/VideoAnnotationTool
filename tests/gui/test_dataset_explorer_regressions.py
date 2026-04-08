@@ -426,6 +426,19 @@ def test_tab_switch_with_selection_does_not_repopulate_tree_or_restart_media(
 
 
 @pytest.mark.gui
+def test_media_boundary_controllers_do_not_import_qmediaplayer():
+    repo_root = Path(__file__).resolve().parents[2]
+    targets = [
+        repo_root / "annotation_tool" / "controllers" / "dataset_explorer_controller.py",
+        repo_root / "annotation_tool" / "controllers" / "dense_description" / "dense_editor_controller.py",
+        repo_root / "annotation_tool" / "controllers" / "localization" / "localization_editor_controller.py",
+    ]
+    for path in targets:
+        source = path.read_text(encoding="utf-8")
+        assert "QMediaPlayer" not in source
+
+
+@pytest.mark.gui
 def test_remove_top_level_row_keeps_next_selection_valid(
     window,
     monkeypatch,

@@ -4,8 +4,7 @@ import json
 import os
 from collections.abc import MutableMapping
 
-from PyQt6.QtCore import QModelIndex, QObject, QSettings, QUrl, pyqtSignal
-from PyQt6.QtMultimedia import QMediaPlayer
+from PyQt6.QtCore import QModelIndex, QObject, QSettings, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from controllers.command_types import CmdType
@@ -212,6 +211,8 @@ class DatasetExplorerController(QObject):
     """
 
     dataSelected = pyqtSignal(str)
+    mediaRouteRequested = pyqtSignal(str, bool)
+    mediaStopRequested = pyqtSignal()
 
     SETTINGS_ORG = "OpenSportsLab"
     SETTINGS_APP = "VideoAnnotationTool"
@@ -763,7 +764,7 @@ class DatasetExplorerController(QObject):
         if not self.json_loaded:
             return True
         if not self.is_data_dirty:
-            self.media_controller.stop()
+            self.mediaStopRequested.emit()
             return True
 
         action = self._prompt_unsaved_close_action()
@@ -778,7 +779,7 @@ class DatasetExplorerController(QObject):
         else:
             return False
 
-        self.media_controller.stop()
+        self.mediaStopRequested.emit()
         return True
 
     def _prompt_unsaved_close_action(self) -> str:
@@ -1295,8 +1296,7 @@ class DatasetExplorerController(QObject):
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
         self._last_routed_media_path = None
-        self.media_controller.stop()
-        self.main.center_panel.player.setSource(QUrl())
+        self.mediaStopRequested.emit()
         self.main.center_panel.set_markers([])
 
         current_idx = self.panel.tree.currentIndex()
@@ -1400,30 +1400,12 @@ class DatasetExplorerController(QObject):
         preferred = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
         primary_path = preferred or media_paths[0]
         self.current_selected_input_path = primary_path
-
-        current_source_path = ""
-        player = getattr(center_panel, "player", None)
-        if player is not None and hasattr(player, "source"):
-            try:
-                current_source = player.source()
-                if current_source.isValid() and current_source.isLocalFile():
-                    current_source_path = current_source.toLocalFile()
-            except Exception:
-                current_source_path = ""
-
-        same_source = self._fs_path_key(current_source_path) == self._fs_path_key(primary_path)
-        is_playing_target = False
-        if same_source and player is not None and hasattr(player, "playbackState"):
-            try:
-                is_playing_target = (
-                    player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-                )
-            except Exception:
-                is_playing_target = False
-
-        should_load_and_play = (not same_source) or (ensure_playback and not is_playing_target)
-        if should_load_and_play:
-            self.main.media_controller.load_and_play(primary_path)
+        if (
+            not ensure_playback
+            and self._fs_path_key(self._last_routed_media_path) == self._fs_path_key(primary_path)
+        ):
+            return
+        self.mediaRouteRequested.emit(primary_path, ensure_playback)
         self._last_routed_media_path = primary_path
 
     def handle_active_mode_changed(self):
@@ -1623,7 +1605,7 @@ class DatasetExplorerController(QObject):
             return
 
         before_json = self.snapshot_dataset_json()
-        self.media_controller.stop()
+        self.mediaStopRequested.emit()
         self.dataset_json["data"] = []
         self.push_dataset_json_replace_undo_if_changed(before_json)
         self._rebuild_runtime_index()
@@ -1699,8 +1681,7 @@ class DatasetExplorerController(QObject):
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
         self._last_routed_media_path = None
-        self.media_controller.stop()
-        self.main.center_panel.player.setSource(QUrl())
+        self.mediaStopRequested.emit()
         self.main.center_panel.set_markers([])
 
         self.main.classification_panel.clear_selection()

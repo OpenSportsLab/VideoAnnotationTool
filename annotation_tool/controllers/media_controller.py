@@ -1,3 +1,5 @@
+import os
+
 from PyQt6.QtCore import QUrl, QTimer, QObject
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtWidgets import QWidget
@@ -94,6 +96,28 @@ class MediaController(QObject):
         if auto_play:
             self.play_timer.start()
 
+    def current_source_path(self) -> str:
+        try:
+            current_source = self.player.source()
+            if current_source.isValid() and current_source.isLocalFile():
+                return current_source.toLocalFile()
+        except Exception:
+            return ""
+        return ""
+
+    def is_playing(self) -> bool:
+        return self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+
+    def route_media_selection(self, target_path: str, ensure_playback: bool = False):
+        if not target_path:
+            return
+
+        current_source_path = self.current_source_path()
+        same_source = self._fs_path_key(current_source_path) == self._fs_path_key(target_path)
+        should_load_and_play = (not same_source) or (ensure_playback and not self.is_playing())
+        if should_load_and_play:
+            self.load_and_play(target_path)
+
     def _execute_play(self):
         """Starts playback and launches the Watchdog."""
         self._frame_received = False # Reset the frame flag
@@ -146,3 +170,8 @@ class MediaController(QObject):
             target = duration
 
         self.player.setPosition(target)
+
+    def _fs_path_key(self, path: str) -> str:
+        if not path:
+            return ""
+        return os.path.normcase(os.path.normpath(path))

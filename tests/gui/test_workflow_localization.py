@@ -204,6 +204,49 @@ def test_localization_clear_workspace_resets_panel_and_model(
     assert window.localization_panel.table.model.rowCount() == 0
 
 
+@pytest.mark.gui
+def test_localization_add_label_uses_signal_pause_resume_flow(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.router.import_annotations()
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    toggle_emits = []
+    window.center_panel.playPauseRequested.connect(lambda: toggle_emits.append(True))
+    monkeypatch.setattr(window.media_controller, "is_playing", lambda: True)
+    monkeypatch.setattr(window.center_panel.player, "position", lambda: 4321)
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.QInputDialog.getText",
+        lambda *args, **kwargs: ("signal_pause_label", True),
+    )
+
+    undo_before = len(window.model.undo_stack)
+    window.localization_editor_controller._on_label_add_req("ball_action")
+    qtbot.wait(50)
+
+    assert len(toggle_emits) == 2
+    assert "signal_pause_label" in window.model.label_definitions["ball_action"]["labels"]
+    path = window.localization_editor_controller.current_video_path
+    assert path is not None
+    events = window.model.localization_events.get(path, [])
+    assert any(event.get("label") == "signal_pause_label" and event.get("position_ms") == 4321 for event in events)
+    assert len(window.model.undo_stack) == undo_before + 1
+
+
 # @pytest.mark.gui
 # # Workflow: In Localization mode, "Set to Current Video Time" updates selected event timestamp in model/table.
 # def test_localization_set_to_current_video_time_updates_selected_annotation(
