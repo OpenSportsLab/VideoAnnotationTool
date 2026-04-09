@@ -1,88 +1,85 @@
 import copy
 
-from PyQt6.QtCore import QTimer
-
-from controllers.command_types import CmdType
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 
-class DescEditorController:
+class DescEditorController(QObject):
     """
     Description editor controller.
     Owns caption editor signal wiring, text refresh, save, and clear/reset behavior.
     """
 
-    def __init__(self, main_window):
-        self.main = main_window
-        self.model = main_window.model
-        self.description_panel = main_window.description_panel
+    clearMarkersRequested = pyqtSignal()
+    captionsUpdateRequested = pyqtSignal(str, object)
+
+    def __init__(self, description_panel):
+        super().__init__()
+        self.description_panel = description_panel
         self.current_sample_id = ""
         self.current_action_path = None
+        self._current_sample_snapshot = {}
         self._suspend_autosave = False
-        self._autosave_timer = QTimer(self.main)
+        self._active_mode_index = 0
+        self._autosave_timer = QTimer(self.description_panel)
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.setInterval(250)
-        self._autosave_timer.timeout.connect(self._save_current_annotation_if_needed)
+        self._autosave_timer.timeout.connect(self.save_current_annotation)
 
     def setup_connections(self):
         """Connect Description editor UI signals to controller actions."""
         self.description_panel.caption_edit.textChanged.connect(self._on_caption_text_changed)
+
+    def on_mode_changed(self, index: int):
+        self._active_mode_index = index
+        if self._is_active_mode():
+            self.clearMarkersRequested.emit()
 
     def reset_ui(self):
         """Reset the Description editor UI for project clear/close flows."""
         self._autosave_timer.stop()
         self.current_sample_id = ""
         self.current_action_path = None
+        self._current_sample_snapshot = {}
         self._set_editor_text("")
         self.description_panel.caption_edit.setEnabled(False)
         self.description_panel.setEnabled(False)
 
-    def on_item_removed(self, path: str):
-        """Handle removal of a description item from the dataset explorer."""
-        if self.current_action_path != path:
-            return
-
-        self._autosave_timer.stop()
-        self.current_sample_id = ""
-        self.current_action_path = None
-        self._set_editor_text("")
-        self.description_panel.caption_edit.setEnabled(False)
-
-    def on_data_selected(self, data_id: str):
+    def on_selected_sample_changed(self, sample):
         """
         Refresh Description editor content for selected tree item.
         """
-        if not data_id:
-            self._autosave_timer.stop()
-            self.current_sample_id = ""
-            self._set_editor_text("")
-            self.current_action_path = None
-            self.description_panel.caption_edit.setEnabled(False)
-            self.description_panel.setEnabled(False)
-            if self.main.right_tabs.currentIndex() == 2:
-                self.main.center_panel.set_markers([])
-            return
-
-        action_data = self.model.get_item_by_id(data_id)
-        if not action_data:
-            self.description_panel.caption_edit.setPlaceholderText("No metadata found for this item.")
+        if not isinstance(sample, dict):
             self._autosave_timer.stop()
             self.current_sample_id = ""
             self.current_action_path = None
             self._set_editor_text("")
+            self._current_sample_snapshot = {}
             self.description_panel.caption_edit.setEnabled(False)
             self.description_panel.setEnabled(False)
-            if self.main.right_tabs.currentIndex() == 2:
-                self.main.center_panel.set_markers([])
+            if self._is_active_mode():
+                self.clearMarkersRequested.emit()
             return
 
-        self.current_sample_id = data_id
-        self.current_action_path = action_data.get("metadata", {}).get("path") or action_data.get("path")
+        self.current_sample_id = str(sample.get("id") or "")
+        if not self.current_sample_id:
+            self._autosave_timer.stop()
+            self.current_action_path = None
+            self._set_editor_text("")
+            self._current_sample_snapshot = {}
+            self.description_panel.caption_edit.setEnabled(False)
+            self.description_panel.setEnabled(False)
+            if self._is_active_mode():
+                self.clearMarkersRequested.emit()
+            return
+
+        self._current_sample_snapshot = copy.deepcopy(sample)
+        self.current_action_path = self._extract_primary_path(sample)
         self.description_panel.caption_edit.setEnabled(True)
         self.description_panel.setEnabled(True)
-        if self.main.right_tabs.currentIndex() == 2:
-            self.main.center_panel.set_markers([])
+        if self._is_active_mode():
+            self.clearMarkersRequested.emit()
 
-        self._load_and_format_text(action_data)
+        self._load_and_format_text(sample)
 
     def _load_and_format_text(self, data):
         """
@@ -125,41 +122,36 @@ class DescEditorController:
             return
         self._autosave_timer.start()
 
-    def _save_current_annotation_if_needed(self):
-        self.save_current_annotation(show_feedback=False)
-
-    def save_current_annotation(self, show_feedback: bool = False):
+    def save_current_annotation(self):
         """
-        Persist current Description editor text into the selected action captions.
-        Pushes DESC_EDIT undo command and updates done status.
+        Persist current Description editor text into the selected sample captions.
         """
         if not self.current_sample_id:
             return False
 
         text_content = self.description_panel.caption_edit.toPlainText()
-        sample = self.model.get_sample(self.current_sample_id)
-        if not sample:
-            return False
-
-        old_captions = copy.deepcopy(sample.get("captions", []))
+        old_captions = copy.deepcopy(self._current_sample_snapshot.get("captions", []))
         new_captions = [{"lang": "en", "text": text_content}]
         if old_captions == new_captions:
             return False
 
-        self.model.push_undo(
-            CmdType.DESC_EDIT,
-            path=self.current_action_path,
-            sample_id=self.current_sample_id,
-            old_data=old_captions,
-            new_data=new_captions,
+        self.captionsUpdateRequested.emit(
+            self.current_sample_id,
+            copy.deepcopy(new_captions),
         )
-
-        self.model.set_sample_captions(self.current_sample_id, new_captions)
-        self.model.is_data_dirty = True
-        self.main.update_save_export_button_state()
-
-        # Keep tree status updates through the shared status-sync path.
-        self.main.update_action_item_status(self.current_action_path)
-        if show_feedback:
-            self.main.show_temp_msg("Saved", "Description updated.")
+        self._current_sample_snapshot["captions"] = copy.deepcopy(new_captions)
         return True
+
+    def _is_active_mode(self) -> bool:
+        return self._active_mode_index == 2
+
+    @staticmethod
+    def _extract_primary_path(sample: dict):
+        inputs = sample.get("inputs")
+        if isinstance(inputs, list):
+            for input_item in inputs:
+                if isinstance(input_item, dict):
+                    path = input_item.get("path")
+                    if path:
+                        return path
+        return None

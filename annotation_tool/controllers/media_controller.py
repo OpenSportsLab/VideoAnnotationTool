@@ -1,6 +1,6 @@
 import os
 
-from PyQt6.QtCore import QUrl, QTimer, QObject
+from PyQt6.QtCore import QUrl, QTimer, QObject, pyqtSignal
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtWidgets import QWidget
 
@@ -10,6 +10,9 @@ class MediaController(QObject):
     Now includes a 'Watchdog' mechanism to catch silent hardware decoder failures 
     (e.g., AV1 video fails, but Audio keeps playing causing a zombie black screen).
     """
+    playbackStateChanged = pyqtSignal(bool)
+    muteStateChanged = pyqtSignal(bool)
+
     def __init__(self, player: QMediaPlayer, video_widget: QWidget = None):
         super().__init__()
         self.player = player
@@ -33,12 +36,16 @@ class MediaController(QObject):
         # 3. Connect external player and video signals
         self.player.errorOccurred.connect(self._handle_media_error)
         self.player.mediaStatusChanged.connect(self._handle_media_status) # [NEW] Added status check
+        self.player.playbackStateChanged.connect(self._on_playback_state_changed)
         
         if self.video_widget and hasattr(self.video_widget, 'videoSink'):
             sink = self.video_widget.videoSink()
             if sink:
                 # Every time a pixel frame is actually rendered, this triggers
                 sink.videoFrameChanged.connect(self._on_frame_rendered)
+
+    def _on_playback_state_changed(self, state):
+        self.playbackStateChanged.emit(state == QMediaPlayer.PlaybackState.PlayingState)
 
     def _on_frame_rendered(self, *args):
         """Marks that the GPU successfully decoded and drew at least one frame."""
@@ -117,6 +124,25 @@ class MediaController(QObject):
         should_load_and_play = (not same_source) or (ensure_playback and not self.is_playing())
         if should_load_and_play:
             self.load_and_play(target_path)
+
+    def is_muted(self) -> bool:
+        audio_output = self.player.audioOutput()
+        if audio_output is None:
+            return False
+        return bool(audio_output.isMuted())
+
+    def set_muted(self, is_muted: bool):
+        audio_output = self.player.audioOutput()
+        if audio_output is None:
+            return
+        target = bool(is_muted)
+        if bool(audio_output.isMuted()) == target:
+            return
+        audio_output.setMuted(target)
+        self.muteStateChanged.emit(target)
+
+    def toggle_mute(self):
+        self.set_muted(not self.is_muted())
 
     def _execute_play(self):
         """Starts playback and launches the Watchdog."""

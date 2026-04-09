@@ -2,47 +2,12 @@ import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QRadioButton, QTreeView, QDialogButtonBox,
     QAbstractItemView, QGroupBox, QFormLayout, QLineEdit, QHBoxLayout,
-    QCheckBox, QFrame, QListWidget, QComboBox, QPushButton, QLabel,
+    QFrame, QListWidget, QComboBox, QPushButton, QLabel,
     QMessageBox, QWidget, QListWidgetItem, QStyle, QButtonGroup, QScrollArea
 )
 from PyQt6.QtCore import QDir, Qt, QSize
 from PyQt6.QtGui import QFileSystemModel, QIcon
 from utils import get_square_remove_btn_style
-
-class NewDatasetDialog(QDialog):
-    """Minimal new-dataset flow with only multiview grouping."""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Create New Dataset")
-        self.resize(420, 180)
-        self.is_multi_view = False
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(14)
-        layout.setContentsMargins(24, 24, 24, 24)
-
-        lbl = QLabel("Create a blank dataset. All four editor tabs stay available.")
-        lbl.setWordWrap(True)
-        lbl.setProperty("class", "dialog_instruction_lbl")
-        layout.addWidget(lbl)
-
-        self.multiview_checkbox = QCheckBox("Group added samples by parent folder (multiview)")
-        self.multiview_checkbox.setChecked(False)
-        layout.addWidget(self.multiview_checkbox)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            parent=self,
-        )
-        buttons.accepted.connect(self._accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def _accept(self):
-        self.is_multi_view = self.multiview_checkbox.isChecked()
-        self.accept()
-
 
 class UnsavedChangesDialog(QDialog):
     """Dialog with fixed button order for close-project decisions."""

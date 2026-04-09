@@ -25,7 +25,7 @@ def _open_project(window, monkeypatch, project_json_path: Path):
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
 
 def _select_top_row(window, qtbot, row: int = 0):
@@ -37,11 +37,11 @@ def _select_top_row(window, qtbot, row: int = 0):
 
 
 def _json_snapshot(window):
-    return copy.deepcopy(window.model.dataset_json)
+    return copy.deepcopy(window.dataset_explorer_controller.dataset_json)
 
 
 def _stack_sizes(window):
-    return len(window.model.undo_stack), len(window.model.redo_stack)
+    return len(window.dataset_explorer_controller.undo_stack), len(window.dataset_explorer_controller.redo_stack)
 
 
 def _assert_mutating_action_creates_single_history_entry(window, qtbot, action):
@@ -126,7 +126,7 @@ def test_history_contract_classification_mutations(window, monkeypatch, qtbot, s
 
     path = window.get_current_action_path()
     assert path
-    window.model.smart_annotations[path] = {
+    window.dataset_explorer_controller.smart_annotations[path] = {
         "action": {"label": "shot", "conf_dict": {"shot": 1.0}}
     }
 
@@ -155,7 +155,7 @@ def test_history_contract_localization_event_and_schema_mutations(window, monkey
 
     def _modify_first_event():
         path = controller.current_video_path
-        events = list(window.model.localization_events.get(path, []))
+        events = list(window.dataset_explorer_controller.localization_events.get(path, []))
         assert events
         old_event = copy.deepcopy(events[0])
         new_event = copy.deepcopy(old_event)
@@ -171,7 +171,7 @@ def test_history_contract_localization_event_and_schema_mutations(window, monkey
 
     def _delete_first_event():
         path = controller.current_video_path
-        events = list(window.model.localization_events.get(path, []))
+        events = list(window.dataset_explorer_controller.localization_events.get(path, []))
         assert events
         controller._on_delete_single_annotation(copy.deepcopy(events[0]))
 
@@ -249,14 +249,14 @@ def test_history_contract_localization_smart_mutations(window, monkeypatch, qtbo
     )
 
     path = controller.current_video_path
-    window.model.smart_localization_events[path] = [{"head": "ball_action", "label": "shot", "position_ms": 4200}]
+    window.dataset_explorer_controller.smart_localization_events[path] = [{"head": "ball_action", "label": "shot", "position_ms": 4200}]
     _assert_mutating_action_creates_single_history_entry(
         window,
         qtbot,
         controller._confirm_smart_events,
     )
 
-    window.model.smart_localization_events[path] = [{"head": "ball_action", "label": "pass", "position_ms": 1800}]
+    window.dataset_explorer_controller.smart_localization_events[path] = [{"head": "ball_action", "label": "pass", "position_ms": 1800}]
     _assert_mutating_action_creates_single_history_entry(
         window,
         qtbot,
@@ -302,7 +302,7 @@ def test_history_contract_dense_mutations(window, monkeypatch, qtbot, synthetic_
     )
 
     def _edit_dense_text():
-        events = list(window.model.dense_description_events.get(controller.current_video_path, []))
+        events = list(window.dataset_explorer_controller.dense_description_events.get(controller.current_video_path, []))
         assert events
         old_event = copy.deepcopy(events[0])
         new_event = copy.deepcopy(old_event)
@@ -312,7 +312,7 @@ def test_history_contract_dense_mutations(window, monkeypatch, qtbot, synthetic_
     _assert_mutating_action_creates_single_history_entry(window, qtbot, _edit_dense_text)
 
     def _delete_dense_event():
-        events = list(window.model.dense_description_events.get(controller.current_video_path, []))
+        events = list(window.dataset_explorer_controller.dense_description_events.get(controller.current_video_path, []))
         assert events
         controller._on_delete_single_annotation(copy.deepcopy(events[0]))
 
@@ -468,7 +468,7 @@ def test_history_contract_noop_edits_do_not_touch_stack(window, monkeypatch, qtb
         lambda: window.classification_editor_controller.save_manual_annotation({"action": "pass"}),
     )
 
-    current_desc = window.model.dataset_json.get("description")
+    current_desc = window.dataset_explorer_controller.dataset_json.get("description")
     _assert_non_mutating_action_keeps_history_unchanged(
         window,
         qtbot,
@@ -506,7 +506,7 @@ def test_history_contract_noop_description_event_and_dense_edits_do_not_touch_st
     )
 
     # Localization no-op event modification
-    window.router.close_project()
+    window.dataset_explorer_controller.close_project()
     localization_json = synthetic_project_json("localization")
     _open_project(window, monkeypatch, localization_json)
     _select_top_row(window, qtbot, 0)
@@ -515,7 +515,7 @@ def test_history_contract_noop_description_event_and_dense_edits_do_not_touch_st
     loc_controller = window.localization_editor_controller
 
     def _localization_noop_modify():
-        events = list(window.model.localization_events.get(loc_controller.current_video_path, []))
+        events = list(window.dataset_explorer_controller.localization_events.get(loc_controller.current_video_path, []))
         assert events
         old_event = copy.deepcopy(events[0])
         loc_controller._on_annotation_modified(old_event, copy.deepcopy(old_event))
@@ -523,7 +523,7 @@ def test_history_contract_noop_description_event_and_dense_edits_do_not_touch_st
     _assert_non_mutating_action_keeps_history_unchanged(window, qtbot, _localization_noop_modify)
 
     # Dense no-op event modification
-    window.router.close_project()
+    window.dataset_explorer_controller.close_project()
     dense_json = synthetic_project_json("dense_description")
     _open_project(window, monkeypatch, dense_json)
     _select_top_row(window, qtbot, 0)
@@ -532,7 +532,7 @@ def test_history_contract_noop_description_event_and_dense_edits_do_not_touch_st
     dense_controller = window.dense_editor_controller
 
     def _dense_noop_modify():
-        events = list(window.model.dense_description_events.get(dense_controller.current_video_path, []))
+        events = list(window.dataset_explorer_controller.dense_description_events.get(dense_controller.current_video_path, []))
         assert events
         old_event = copy.deepcopy(events[0])
         dense_controller._on_annotation_modified(old_event, copy.deepcopy(old_event))
@@ -558,8 +558,8 @@ def test_history_contract_empty_stack_undo_redo_is_noop(window, monkeypatch, qtb
     _open_project(window, monkeypatch, project_json_path)
     _select_top_row(window, qtbot, 0)
 
-    window.model.undo_stack.clear()
-    window.model.redo_stack.clear()
+    window.dataset_explorer_controller.undo_stack.clear()
+    window.dataset_explorer_controller.redo_stack.clear()
 
     _assert_non_mutating_action_keeps_history_unchanged(window, qtbot, window.history_manager.perform_undo)
     _assert_non_mutating_action_keeps_history_unchanged(window, qtbot, window.history_manager.perform_redo)

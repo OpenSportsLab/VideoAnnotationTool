@@ -1,28 +1,49 @@
 import copy
 
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
 
 from controllers.command_types import CmdType
-from controllers.media_controller import MediaController
 from utils import natural_sort_key
 
 from .inference_manager import InferenceManager
 from .train_manager import TrainManager
 
 
-class ClassificationEditorController:
+class ClassificationEditorController(QObject):
     """
     Single controller for Classification mode.
     Owns annotation logic and smart/train helper wiring.
     Dataset add/remove/filter/clear is handled centrally by DatasetExplorerController.
     """
 
-    def __init__(self, main_window, media_controller: MediaController):
-        self.main = main_window
-        self.model = main_window.model
-        self.media_controller = media_controller
-        self.classification_panel = main_window.classification_panel
-        self.dataset_explorer_panel = main_window.dataset_explorer_panel
+    statusMessageRequested = pyqtSignal(str, str, int)
+    saveStateRefreshRequested = pyqtSignal()
+    itemStatusRefreshRequested = pyqtSignal(str)
+    filterRefreshRequested = pyqtSignal(int, str)
+    # payload: sample_id, cleaned_annotation, show_feedback
+    manualAnnotationSaveRequested = pyqtSignal(str, object, bool)
+    schemaHeadAddRequested = pyqtSignal(str, dict)
+    schemaHeadRemoveRequested = pyqtSignal(str)
+    schemaLabelAddRequested = pyqtSignal(str, str)
+    schemaLabelRemoveRequested = pyqtSignal(str, str)
+
+    def __init__(
+        self,
+        model,
+        classification_panel,
+        dataset_explorer_panel,
+        center_panel,
+        current_action_path_provider,
+    ):
+        super().__init__()
+        self.model = model
+        self.classification_panel = classification_panel
+        self.dataset_explorer_panel = dataset_explorer_panel
+        self.center_panel = center_panel
+        self._get_current_action_path = current_action_path_provider
+        self._active_mode_index = 0
+        self._action_items_cache = []
 
         # Helper services remain separate, but are now owned by this controller.
         self.inference_manager = InferenceManager(self)
@@ -41,6 +62,11 @@ class ClassificationEditorController:
         self.classification_panel.smart_infer_requested.connect(self.inference_manager.start_inference)
         self.classification_panel.confirm_infer_requested.connect(self.save_manual_annotation)
 
+    def on_mode_changed(self, index: int):
+        self._active_mode_index = index
+        if self._is_active_mode():
+            self.center_panel.set_markers([])
+
     def reset_ui(self):
         self.classification_panel.clear_dynamic_labels()
         self.classification_panel.manual_box.setEnabled(False)
@@ -53,10 +79,14 @@ class ClassificationEditorController:
 
     def sync_batch_inference_dropdowns(self):
         sorted_list = sorted(
-            self.model.action_item_data, key=lambda data: natural_sort_key(data.get("name", ""))
+            (self._action_items_cache or self.model.action_item_data),
+            key=lambda data: natural_sort_key(data.get("name", "")),
         )
         action_names = [data["name"] for data in sorted_list]
         self.classification_panel.update_action_list(action_names)
+
+    def on_action_items_changed(self, action_items: list):
+        self._action_items_cache = list(action_items or [])
 
     def _connect_dynamic_type_buttons(self):
         for head, group in self.classification_panel.label_groups.items():
@@ -93,8 +123,8 @@ class ClassificationEditorController:
             self.classification_panel.manual_box.setEnabled(False)
             self.classification_panel.clear_selection()
             self.classification_panel.chart_widget.setVisible(False)
-            if self.main.right_tabs.currentIndex() == 0:
-                self.main.center_panel.set_markers([])
+            if self._is_active_mode():
+                self.center_panel.set_markers([])
             return
 
         path = self.model.get_path_by_id(data_id)
@@ -102,16 +132,14 @@ class ClassificationEditorController:
             self.classification_panel.manual_box.setEnabled(False)
             self.classification_panel.clear_selection()
             self.classification_panel.chart_widget.setVisible(False)
-            if self.main.right_tabs.currentIndex() == 0:
-                self.main.center_panel.set_markers([])
+            if self._is_active_mode():
+                self.center_panel.set_markers([])
             return
 
         self.display_manual_annotation(path)
         self.classification_panel.manual_box.setEnabled(True)
-        center_panel = self.main.center_panel
-        if self.main.right_tabs.currentIndex() == 0 and hasattr(center_panel, "view_layout"):
-            center_panel.set_markers([])
-            center_panel.view_layout.setCurrentWidget(center_panel.single_view_widget)
+        if self._is_active_mode():
+            self.center_panel.set_markers([])
 
     # ---------------------------------------------------------------------
     # Classification Annotation + Schema
@@ -120,7 +148,7 @@ class ClassificationEditorController:
         if self.classification_panel.is_batch_mode_active:
             batch_preds = self.classification_panel.pending_batch_results
             if not batch_preds:
-                self.main.show_temp_msg("Notice", "No batch predictions to confirm.")
+                self._emit_status("Notice", "No batch predictions to confirm.")
                 return
 
             old_batch_data = {}
@@ -150,7 +178,7 @@ class ClassificationEditorController:
                 formatted_data["_confirmed"] = True
                 new_batch_data[path] = copy.deepcopy(formatted_data)
                 self.model.smart_annotations[path] = formatted_data
-                self.main.update_action_item_status(path)
+                self.itemStatusRefreshRequested.emit(path)
                 confirmed_count += 1
 
             self.model.push_undo(
@@ -159,18 +187,16 @@ class ClassificationEditorController:
                 new_data=new_batch_data,
             )
             self.model.is_data_dirty = True
-            self.main.show_temp_msg(
-                "Saved", f"Batch Smart Annotations confirmed for {confirmed_count} items.", 2000
-            )
+            self._emit_status("Saved", f"Batch Smart Annotations confirmed for {confirmed_count} items.", 2000)
             self.classification_panel.reset_smart_inference()
         else:
-            path = self.main.get_current_action_path()
+            path = self._get_current_action_path()
             if not path:
                 return
 
             smart_data = self.model.smart_annotations.get(path)
             if not smart_data:
-                self.main.show_temp_msg("Notice", "No smart annotation available to confirm.")
+                self._emit_status("Notice", "No smart annotation available to confirm.")
                 return
 
             old_data = copy.deepcopy(smart_data)
@@ -188,17 +214,18 @@ class ClassificationEditorController:
                 old_data=old_data,
                 new_data=new_data,
             )
-            self.main.update_action_item_status(path)
-            self.main.show_temp_msg("Saved", "Smart Annotation confirmed independently.", 1000)
+            self.itemStatusRefreshRequested.emit(path)
+            self._emit_status("Saved", "Smart Annotation confirmed independently.", 1000)
 
-        self.main.update_save_export_button_state()
-        self.main.dataset_explorer_controller.handle_filter_change(
-            self.dataset_explorer_panel.filter_combo.currentIndex()
-        )
+        self.saveStateRefreshRequested.emit()
+        self._request_filter_refresh()
 
     def save_manual_annotation(self, override_data=None, show_feedback: bool = True):
-        path = self.main.get_current_action_path()
+        path = self._get_current_action_path()
         if not path:
+            return
+        sample_id = self.model.get_data_id_by_path(path)
+        if not sample_id:
             return
 
         raw_data = override_data if override_data is not None else self.classification_panel.get_annotation()
@@ -210,51 +237,24 @@ class ClassificationEditorController:
         normalized_old = old_data if old_data else None
         if normalized_old == cleaned:
             return
-
-        self.model.push_undo(
-            CmdType.ANNOTATION_CONFIRM,
-            path=path,
-            old_data=old_data,
-            new_data=cleaned,
-        )
-
-        if cleaned:
-            self.model.manual_annotations[path] = cleaned
-            if show_feedback:
-                self.main.show_temp_msg("Saved", "Annotation saved.", 1000)
-        else:
-            self.model.manual_annotations.pop(path, None)
-            if show_feedback:
-                self.main.show_temp_msg("Cleared", "Annotation cleared.", 1000)
-
-        self.main.update_action_item_status(path)
-        self.main.update_save_export_button_state()
-        self.main.dataset_explorer_controller.handle_filter_change(
-            self.dataset_explorer_panel.filter_combo.currentIndex()
-        )
+        self.manualAnnotationSaveRequested.emit(sample_id, copy.deepcopy(cleaned), show_feedback)
 
     def clear_current_manual_annotation(self):
-        path = self.main.get_current_action_path()
+        path = self._get_current_action_path()
         if not path:
+            return
+        sample_id = self.model.get_data_id_by_path(path)
+        if not sample_id:
             return
 
         old_data = copy.deepcopy(self.model.manual_annotations.get(path))
         if old_data:
-            self.model.push_undo(
-                CmdType.ANNOTATION_CONFIRM,
-                path=path,
-                old_data=old_data,
-                new_data=None,
-            )
-            self.model.manual_annotations.pop(path, None)
-            self.main.update_action_item_status(path)
-            self.main.update_save_export_button_state()
-            self.main.show_temp_msg("Cleared", "Selection cleared.")
+            self.manualAnnotationSaveRequested.emit(sample_id, None, True)
 
         self.classification_panel.clear_selection()
 
     def clear_current_smart_annotation(self):
-        path = self.main.get_current_action_path()
+        path = self._get_current_action_path()
         if not path:
             return
 
@@ -268,8 +268,8 @@ class ClassificationEditorController:
             )
             self.model.smart_annotations.pop(path, None)
             self.model.is_data_dirty = True
-            self.main.show_temp_msg("Cleared", "Smart Annotation cleared.", 1000)
-            self.main.update_save_export_button_state()
+            self._emit_status("Cleared", "Smart Annotation cleared.", 1000)
+            self.saveStateRefreshRequested.emit()
 
         self.classification_panel.chart_widget.setVisible(False)
         self.classification_panel.batch_result_text.setVisible(False)
@@ -296,7 +296,7 @@ class ClassificationEditorController:
         if not clean or clean in self.model.label_definitions:
             return
 
-        msg = QMessageBox(self.main)
+        msg = QMessageBox(self.classification_panel)
         msg.setText(f"Type for '{name}'?")
         btn_single = msg.addButton("Single Label", QMessageBox.ButtonRole.ActionRole)
         btn_multi = msg.addButton("Multi Label", QMessageBox.ButtonRole.ActionRole)
@@ -312,40 +312,15 @@ class ClassificationEditorController:
             return
 
         definition = {"type": label_type, "labels": []}
-        self.model.push_undo(CmdType.SCHEMA_ADD_CAT, head=clean, definition=definition)
-        self.model.label_definitions[clean] = definition
+        self.schemaHeadAddRequested.emit(clean, copy.deepcopy(definition))
         self.classification_panel.new_head_edit.clear()
-        self.setup_dynamic_ui()
-        self.main.update_save_export_button_state()
 
     def handle_remove_label_head(self, head):
         if head not in self.model.label_definitions:
             return
-        if QMessageBox.question(self.main, "Remove", f"Remove '{head}'?") == QMessageBox.StandardButton.No:
+        if QMessageBox.question(self.classification_panel, "Remove", f"Remove '{head}'?") == QMessageBox.StandardButton.No:
             return
-
-        affected = {}
-        for key, value in self.model.manual_annotations.items():
-            if head in value:
-                affected[key] = copy.deepcopy(value[head])
-
-        self.model.push_undo(
-            CmdType.SCHEMA_DEL_CAT,
-            head=head,
-            definition=copy.deepcopy(self.model.label_definitions[head]),
-            affected_data=affected,
-        )
-
-        del self.model.label_definitions[head]
-        for key in affected:
-            del self.model.manual_annotations[key][head]
-            if not self.model.manual_annotations[key]:
-                del self.model.manual_annotations[key]
-            self.main.update_action_item_status(key)
-
-        self.setup_dynamic_ui()
-        self.display_manual_annotation(self.main.get_current_action_path())
-        self.main.update_save_export_button_state()
+        self.schemaHeadRemoveRequested.emit(head)
 
     def add_custom_type(self, head):
         group = self.classification_panel.label_groups.get(head)
@@ -358,57 +333,23 @@ class ClassificationEditorController:
 
         labels = self.model.label_definitions[head]["labels"]
         if any(label.lower() == text.lower() for label in labels):
-            self.main.show_temp_msg("Duplicate", "Label exists.", icon=QMessageBox.Icon.Warning)
+            self._emit_status("Duplicate", "Label exists.")
             return
 
-        self.model.push_undo(CmdType.SCHEMA_ADD_LBL, head=head, label=text)
-        labels.append(text)
-        labels.sort()
-
-        if hasattr(group, "update_radios"):
-            group.update_radios(labels)
-        else:
-            group.update_checkboxes(labels)
-
+        self.schemaLabelAddRequested.emit(head, text)
         group.input_field.clear()
-        self.main.update_save_export_button_state()
 
     def remove_custom_type(self, head, label):
         definition = self.model.label_definitions[head]
         if len(definition["labels"]) <= 1:
             return
+        self.schemaLabelRemoveRequested.emit(head, label)
 
-        affected = {}
-        for key, value in self.model.manual_annotations.items():
-            if definition["type"] == "single_label" and value.get(head) == label:
-                affected[key] = label
-            elif definition["type"] == "multi_label" and label in value.get(head, []):
-                affected[key] = copy.deepcopy(value[head])
-        label_index = definition["labels"].index(label) if label in definition["labels"] else -1
+    def _request_filter_refresh(self, fallback: str = "first_visible"):
+        self.filterRefreshRequested.emit(self.dataset_explorer_panel.filter_combo.currentIndex(), fallback)
 
-        self.model.push_undo(
-            CmdType.SCHEMA_DEL_LBL,
-            head=head,
-            label=label,
-            label_index=label_index,
-            affected_data=affected,
-        )
+    def _emit_status(self, title: str, message: str, duration: int = 1500):
+        self.statusMessageRequested.emit(title, message, duration)
 
-        if label in definition["labels"]:
-            definition["labels"].remove(label)
-
-        for _, value in self.model.manual_annotations.items():
-            if definition["type"] == "single_label" and value.get(head) == label:
-                value[head] = None
-            elif definition["type"] == "multi_label" and label in value.get(head, []):
-                value[head].remove(label)
-
-        group = self.classification_panel.label_groups.get(head)
-        if group:
-            if hasattr(group, "update_radios"):
-                group.update_radios(definition["labels"])
-            else:
-                group.update_checkboxes(definition["labels"])
-
-        self.display_manual_annotation(self.main.get_current_action_path())
-        self.main.update_save_export_button_state()
+    def _is_active_mode(self) -> bool:
+        return self._active_mode_index == 0

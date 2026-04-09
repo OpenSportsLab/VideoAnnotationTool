@@ -24,7 +24,7 @@ def test_launches_to_welcome_view(window):
     assert window.center_stack.currentIndex() == 0
     assert window.data_dock.isEnabled() is False
     assert window.editor_dock.isEnabled() is False
-    assert window.model.json_loaded is False
+    assert window.dataset_explorer_controller.json_loaded is False
 
 
 @pytest.mark.gui
@@ -38,10 +38,10 @@ def test_import_project_routed_flow_all_modes(window, monkeypatch, synthetic_pro
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
 
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
-    assert window.model.json_loaded is True
-    assert window.model.current_json_path == str(project_json_path)
+    assert window.dataset_explorer_controller.json_loaded is True
+    assert window.dataset_explorer_controller.current_json_path == str(project_json_path)
     assert window.center_stack.currentIndex() == 1
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX[mode]
     assert window.tree_model.rowCount() == 1
@@ -58,20 +58,12 @@ def test_import_project_routed_flow_all_modes(window, monkeypatch, synthetic_pro
 #         def exec(self):
 #             return True
 
-#     class _FakeClassificationTypeDialog:
-#         def __init__(self, parent=None):
-#             self.is_multi_view = False
-
-#         def exec(self):
-#             return True
-
 #     monkeypatch.setattr("controllers.dataset_explorer_controller.ProjectTypeDialog", _FakeProjectTypeDialog)
-#     monkeypatch.setattr("ui.dialogs.ClassificationTypeDialog", _FakeClassificationTypeDialog)
 
-#     window.router.create_new_project_flow()
+#     window.dataset_explorer_controller.create_new_project_flow()
 
-#     assert window.model.json_loaded is True
-#     assert window.model.current_json_path is None
+#     assert window.dataset_explorer_controller.json_loaded is True
+#     assert window.dataset_explorer_controller.current_json_path is None
 #     assert window.center_stack.currentIndex() == 1
 #     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX[mode]
 
@@ -80,13 +72,13 @@ def test_import_project_routed_flow_all_modes(window, monkeypatch, synthetic_pro
 # Workflow: Create/load a project, trigger close flow, and verify full reset back to welcome view.
 def test_close_project_returns_to_welcome(window, monkeypatch):
     window.dataset_explorer_controller.create_new_project("localization")
-    assert window.model.json_loaded is True
+    assert window.dataset_explorer_controller.json_loaded is True
 
     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
-    window.router.close_project()
+    window.dataset_explorer_controller.close_project()
 
-    assert window.model.json_loaded is False
+    assert window.dataset_explorer_controller.json_loaded is False
     assert window.center_stack.currentIndex() == 0
     assert window.tree_model.rowCount() == 0
 
@@ -105,7 +97,7 @@ def test_dataset_explorer_prev_next_sample_buttons_navigate_rows(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
 
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.tree_model.rowCount() == 3
 
     tree = window.dataset_explorer_panel.tree
@@ -164,14 +156,14 @@ def test_dataset_selection_emits_data_id_and_routes_media(
         lambda file_path, auto_play=True: media_calls.append(file_path),
     )
 
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     first_index = window.tree_model.index(0, 0)
     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
     qtbot.wait(50)
 
     assert emitted_ids
     selected_data_id = emitted_ids[-1]
-    selected_entry = window.model.action_item_data[0]
+    selected_entry = window.dataset_explorer_controller.action_item_data[0]
     assert selected_data_id == selected_entry.get("data_id")
 
     assert media_calls
@@ -180,7 +172,7 @@ def test_dataset_selection_emits_data_id_and_routes_media(
 
 
 @pytest.mark.gui
-# Workflow: In classification multi-view, selecting a parent sample routes all views + primary media and emits Data ID.
+# Workflow: In classification multi-input samples, selecting parent routes primary media and emits Data ID.
 def test_classification_multiview_selection_routes_views_and_data_id(
     window,
     monkeypatch,
@@ -223,31 +215,22 @@ def test_classification_multiview_selection_routes_views_and_data_id(
     )
 
     emitted_ids = []
-    shown_views = []
     media_calls = []
     window.dataset_explorer_controller.dataSelected.connect(lambda data_id: emitted_ids.append(data_id))
-    monkeypatch.setattr(
-        window.center_panel,
-        "show_all_views",
-        lambda paths: shown_views.append(list(paths)),
-    )
     monkeypatch.setattr(
         window.media_controller,
         "load_and_play",
         lambda file_path, auto_play=True: media_calls.append(file_path),
     )
 
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     parent_index = window.tree_model.index(0, 0)
     assert parent_index.isValid()
     assert window.tree_model.rowCount(parent_index) == 2
     window.dataset_explorer_panel.tree.setCurrentIndex(parent_index)
     qtbot.wait(50)
 
-    assert window.model.is_multi_view is True
-    assert emitted_ids[-1] == window.model.action_item_data[0].get("data_id")
-    assert shown_views
-    assert len(shown_views[-1]) == 2
+    assert emitted_ids[-1] == window.dataset_explorer_controller.action_item_data[0].get("data_id")
     assert media_calls
 
 
@@ -255,8 +238,8 @@ def test_classification_multiview_selection_routes_views_and_data_id(
 # Workflow: Closing a loaded-but-clean project should not open a confirmation popup.
 def test_close_project_when_clean_skips_confirmation_popup(window, monkeypatch):
     window.dataset_explorer_controller.create_new_project("localization")
-    assert window.model.json_loaded is True
-    window.model.is_data_dirty = False
+    assert window.dataset_explorer_controller.json_loaded is True
+    window.dataset_explorer_controller.is_data_dirty = False
 
     stop_calls = {"count": 0}
     monkeypatch.setattr(
@@ -298,7 +281,7 @@ def test_filter_with_no_visible_samples_clears_media_and_annotation(
         lambda: stop_calls.__setitem__("count", stop_calls["count"] + 1),
     )
 
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.tree_model.rowCount() == 1
     assert window.dataset_explorer_panel.tree.currentIndex().isValid()
 
@@ -330,7 +313,7 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
 
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.tree_model.rowCount() == 1
 
     root_index = window.tree_model.index(0, 0)
@@ -352,13 +335,13 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 # # Workflow: If user cancels close flow, the current workspace remains open and loaded.
 # def test_close_project_cancel_keeps_workspace_open(window, monkeypatch):
 #     window.dataset_explorer_controller.create_new_project("localization")
-#     assert window.model.json_loaded is True
+#     assert window.dataset_explorer_controller.json_loaded is True
 #     assert window.center_stack.currentIndex() == 1
 
 #     monkeypatch.setattr(window, "check_and_close_current_project", lambda: False)
-#     window.router.close_project()
+#     window.dataset_explorer_controller.close_project()
 
-#     assert window.model.json_loaded is True
+#     assert window.dataset_explorer_controller.json_loaded is True
 #     assert window.center_stack.currentIndex() == 1
 
 
@@ -366,12 +349,12 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 # # Workflow: Quit action should route to dataset close when a project is loaded.
 # def test_action_quit_closes_dataset_when_loaded(window, monkeypatch):
 #     window.dataset_explorer_controller.create_new_project("description")
-#     assert window.model.json_loaded is True
+#     assert window.dataset_explorer_controller.json_loaded is True
 
 #     close_calls = {"count": 0}
 #     window_close_calls = {"count": 0}
 #     monkeypatch.setattr(
-#         window.router,
+#         window.dataset_explorer_controller,
 #         "close_project",
 #         lambda: close_calls.__setitem__("count", close_calls["count"] + 1),
 #     )
@@ -390,9 +373,9 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 # @pytest.mark.gui
 # # Workflow: Quit action should close the app window when no project is loaded.
 # def test_action_quit_closes_window_when_unloaded(window, monkeypatch):
-#     window.model.json_loaded = False
+#     window.dataset_explorer_controller.json_loaded = False
 #     close_calls = {"count": 0}
-#     monkeypatch.setattr(window.router, "close_project", lambda: None)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "close_project", lambda: None)
 #     monkeypatch.setattr(
 #         window,
 #         "close",
@@ -406,8 +389,8 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 # @pytest.mark.gui
 # # Workflow: check_and_close_current_project should return False when dialog is canceled.
 # def test_check_and_close_current_project_cancel_returns_false(window, monkeypatch):
-#     window.model.json_loaded = True
-#     window.model.is_data_dirty = True
+#     window.dataset_explorer_controller.json_loaded = True
+#     window.dataset_explorer_controller.is_data_dirty = True
 
 #     def _fake_exec(self):
 #         no_button = next(btn for btn in self.buttons() if btn.text() == "No")

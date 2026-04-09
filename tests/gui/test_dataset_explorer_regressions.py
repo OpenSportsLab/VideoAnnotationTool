@@ -28,7 +28,7 @@ def _open_project(window, monkeypatch, project_json_path: Path):
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
 
 def _select_top_row(window, qtbot, row: int = 0):
@@ -75,7 +75,7 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     assert window.tree_model.rowCount() == 2
 
     _select_top_row(window, qtbot, 0)
-    selected_id = window.model.current_selected_sample_id
+    selected_id = window.dataset_explorer_controller.current_selected_sample_id
     assert selected_id == "clip_1"
 
     for mode_idx in (
@@ -86,7 +86,7 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     ):
         window.right_tabs.setCurrentIndex(mode_idx)
         qtbot.wait(50)
-        assert window.model.current_selected_sample_id == selected_id
+        assert window.dataset_explorer_controller.current_selected_sample_id == selected_id
         assert window.dataset_explorer_panel.tree.currentIndex().isValid()
 
     window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["description"])
@@ -103,10 +103,10 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     assert saved_sample["captions"][0]["text"] == "Mixed caption"
     assert saved_sample["dense_captions"][0]["text"] == "Mixed dense caption"
 
-    window.router.close_project()
+    window.dataset_explorer_controller.close_project()
     _open_project(window, monkeypatch, project_json_path)
 
-    reloaded_sample = window.model.get_sample("clip_1")
+    reloaded_sample = window.dataset_explorer_controller.get_sample("clip_1")
     assert reloaded_sample is not None
     assert reloaded_sample["labels"]["action"]["label"] == "pass"
     assert reloaded_sample["smart_labels"]["_confirmed"] is True
@@ -114,7 +114,7 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     assert reloaded_sample["smart_events"][0]["position_ms"] == 2000
     assert reloaded_sample["captions"][0]["text"] == "Mixed caption"
     assert reloaded_sample["dense_captions"][0]["text"] == "Mixed dense caption"
-    assert window.model.dataset_json["custom_root"] == {"keep": True}
+    assert window.dataset_explorer_controller.dataset_json["custom_root"] == {"keep": True}
 
 
 @pytest.mark.gui
@@ -141,7 +141,7 @@ def test_legacy_task_header_is_preserved_but_does_not_route_initial_tab(
     project_json_path = synthetic_project_json("mixed", item_count=1)
     _open_project(window, monkeypatch, project_json_path)
 
-    assert window.model.dataset_json.get("task") == "video_captioning"
+    assert window.dataset_explorer_controller.dataset_json.get("task") == "video_captioning"
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["classification"]
 
     panel = window.dataset_explorer_panel
@@ -227,9 +227,9 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
     parent_index = _select_top_row(window, qtbot, 0)
     assert window.tree_model.rowCount(parent_index) == 2
 
-    parent_sample_id = window.model.current_selected_sample_id
+    parent_sample_id = window.dataset_explorer_controller.current_selected_sample_id
     parent_action_path = window.get_current_action_path()
-    first_selected_path = window.model.current_selected_input_path
+    first_selected_path = window.dataset_explorer_controller.current_selected_input_path
     first_child_index = window.tree_model.index(0, 0, parent_index)
     first_child_path = first_child_index.data(window.tree_model.FilePathRole)
     child_index = window.tree_model.index(1, 0, parent_index)
@@ -237,16 +237,16 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
 
     assert parent_sample_id == "mv_clip"
     assert parent_action_path == parent_index.data(window.tree_model.FilePathRole)
-    assert first_selected_path in window.model.get_sources_by_id(parent_sample_id)
+    assert first_selected_path in window.dataset_explorer_controller.get_sources_by_id(parent_sample_id)
 
     window.dataset_explorer_panel.tree.setCurrentIndex(child_index)
     qtbot.wait(50)
 
-    assert window.model.current_selected_sample_id == parent_sample_id
-    assert window.model.current_selected_input_path == child_path
+    assert window.dataset_explorer_controller.current_selected_sample_id == parent_sample_id
+    assert window.dataset_explorer_controller.current_selected_input_path == child_path
     assert window.get_current_action_path() == parent_action_path
     assert play_calls[-1] == child_path
-    assert len(window.model.action_item_data) == 1
+    assert len(window.dataset_explorer_controller.action_item_data) == 1
 
     calls_before_first_child = len(play_calls)
     window.dataset_explorer_panel.tree.setCurrentIndex(first_child_index)
@@ -254,7 +254,7 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
 
     assert len(play_calls) == calls_before_first_child + 1
     assert play_calls[-1] == first_child_path
-    assert window.model.current_selected_input_path == first_child_path
+    assert window.dataset_explorer_controller.current_selected_input_path == first_child_path
 
 
 @pytest.mark.gui
@@ -315,15 +315,15 @@ def test_id_normalization_roundtrips_for_duplicate_and_missing_ids(
     project_json_path = synthetic_project_json(fixture_mode)
     _open_project(window, monkeypatch, project_json_path)
 
-    assert [entry["name"] for entry in window.model.action_item_data] == expected_ids
+    assert [entry["name"] for entry in window.dataset_explorer_controller.action_item_data] == expected_ids
     window.dataset_explorer_controller.save_project()
 
     saved = json.loads(project_json_path.read_text(encoding="utf-8"))
     assert [item["id"] for item in saved["data"]] == expected_ids
 
-    window.router.close_project()
+    window.dataset_explorer_controller.close_project()
     _open_project(window, monkeypatch, project_json_path)
-    assert [entry["name"] for entry in window.model.action_item_data] == expected_ids
+    assert [entry["name"] for entry in window.dataset_explorer_controller.action_item_data] == expected_ids
 
 
 @pytest.mark.gui
@@ -350,12 +350,12 @@ def test_rename_sample_id_updates_tree_selection_and_dataset_json(
     assert refreshed_index.data(window.tree_model.DataIdRole) == "renamed_clip"
     assert refreshed_index.data() == "renamed_clip"
 
-    renamed_sample = window.model.get_sample("renamed_clip")
+    renamed_sample = window.dataset_explorer_controller.get_sample("renamed_clip")
     assert renamed_sample is not None
     assert renamed_sample.get("id") == "renamed_clip"
-    assert window.model.get_sample("clip_1") is None
-    assert window.model.current_selected_sample_id == "renamed_clip"
-    assert window.model.is_data_dirty is True
+    assert window.dataset_explorer_controller.get_sample("clip_1") is None
+    assert window.dataset_explorer_controller.current_selected_sample_id == "renamed_clip"
+    assert window.dataset_explorer_controller.is_data_dirty is True
 
 @pytest.mark.gui
 def test_active_tab_switch_reapplies_markers_without_leaking_stale_markers(
@@ -421,7 +421,7 @@ def test_tab_switch_with_selection_does_not_repopulate_tree_or_restart_media(
 
     assert populate_calls["count"] == 0
     assert play_calls == []
-    assert window.model.current_selected_sample_id == "clip_1"
+    assert window.dataset_explorer_controller.current_selected_sample_id == "clip_1"
     assert window.dataset_explorer_panel.tree.currentIndex().isValid()
 
 
@@ -453,8 +453,8 @@ def test_remove_top_level_row_keeps_next_selection_valid(
     qtbot.wait(50)
 
     assert window.tree_model.rowCount() == 1
-    assert window.model.current_selected_sample_id == "clip_2"
-    assert window.get_current_action_path() == window.model.get_path_by_id("clip_2")
+    assert window.dataset_explorer_controller.current_selected_sample_id == "clip_2"
+    assert window.get_current_action_path() == window.dataset_explorer_controller.get_path_by_id("clip_2")
 
 
 @pytest.mark.gui
@@ -471,7 +471,7 @@ def test_remove_child_row_removes_one_input_and_keeps_multiview_sample(
     child_index = window.tree_model.index(0, 0, parent_index)
     assert child_index.isValid()
 
-    original_sample = window.model.get_sample("mv_clip")
+    original_sample = window.dataset_explorer_controller.get_sample("mv_clip")
     assert original_sample is not None
     assert len(original_sample.get("inputs", [])) == 2
 
@@ -481,7 +481,7 @@ def test_remove_child_row_removes_one_input_and_keeps_multiview_sample(
     qtbot.wait(50)
 
     assert window.tree_model.rowCount() == 1
-    remaining_sample = window.model.get_sample("mv_clip")
+    remaining_sample = window.dataset_explorer_controller.get_sample("mv_clip")
     assert remaining_sample is not None
     assert len(remaining_sample.get("inputs", [])) == 1
 
@@ -490,8 +490,8 @@ def test_remove_child_row_removes_one_input_and_keeps_multiview_sample(
     assert window.tree_model.rowCount(refreshed_parent) == 1
     remaining_child = window.tree_model.index(0, 0, refreshed_parent)
     assert remaining_child.isValid()
-    assert window.model.current_selected_sample_id == "mv_clip"
-    assert window.model.current_selected_input_path == remaining_child.data(window.tree_model.FilePathRole)
+    assert window.dataset_explorer_controller.current_selected_sample_id == "mv_clip"
+    assert window.dataset_explorer_controller.current_selected_input_path == remaining_child.data(window.tree_model.FilePathRole)
     assert window.dataset_explorer_panel.tree.currentIndex() == remaining_child
 
 
@@ -515,8 +515,8 @@ def test_remove_only_child_row_removes_whole_single_input_sample(
     qtbot.wait(50)
 
     assert window.tree_model.rowCount() == 0
-    assert window.model.dataset_json["data"] == []
-    assert window.model.current_selected_sample_id == ""
+    assert window.dataset_explorer_controller.dataset_json["data"] == []
+    assert window.dataset_explorer_controller.current_selected_sample_id == ""
 
 
 @pytest.mark.gui
@@ -537,8 +537,8 @@ def test_remove_sample_selects_previous_sample(
     qtbot.wait(50)
 
     assert window.tree_model.rowCount() == 2
-    assert window.model.current_selected_sample_id == "clip_1"
-    assert window.get_current_action_path() == window.model.get_path_by_id("clip_1")
+    assert window.dataset_explorer_controller.current_selected_sample_id == "clip_1"
+    assert window.get_current_action_path() == window.dataset_explorer_controller.get_path_by_id("clip_1")
 
 
 @pytest.mark.gui
@@ -622,8 +622,8 @@ def test_filter_not_labelled_reselects_first_visible_row_for_each_mode(
     window.dataset_explorer_panel.filter_combo.setCurrentIndex(3)
     qtbot.wait(50)
 
-    assert window.model.current_selected_sample_id == "clip_2"
-    assert window.get_current_action_path() == window.model.get_path_by_id("clip_2")
+    assert window.dataset_explorer_controller.current_selected_sample_id == "clip_2"
+    assert window.get_current_action_path() == window.dataset_explorer_controller.get_path_by_id("clip_2")
     assert window.dataset_explorer_panel.tree.isRowHidden(0, window.dataset_explorer_panel.tree.rootIndex())
     assert not window.dataset_explorer_panel.tree.isRowHidden(1, window.dataset_explorer_panel.tree.rootIndex())
 
@@ -646,8 +646,8 @@ def test_filter_smart_labelled_clears_selection_when_mode_has_no_smart_state(
     window.dataset_explorer_panel.filter_combo.setCurrentIndex(2)
     qtbot.wait(50)
 
-    assert window.model.current_selected_sample_id == ""
-    assert window.model.current_selected_input_path is None
+    assert window.dataset_explorer_controller.current_selected_sample_id == ""
+    assert window.dataset_explorer_controller.current_selected_input_path is None
     assert window.center_panel.slider.markers == []
     if mode_idx == MODE_TO_TAB_INDEX["description"]:
         assert not window.description_panel.isEnabled()
@@ -676,7 +676,7 @@ def test_filter_smart_labelled_clears_selection_when_mode_has_no_smart_state(
 #     window.dataset_explorer_controller.handle_add_sample()
 
 #     assert window.tree_model.rowCount() == before_count == 0
-#     assert window.model.dataset_json["data"] == []
+#     assert window.dataset_explorer_controller.dataset_json["data"] == []
 
 
 # @pytest.mark.gui
@@ -706,7 +706,7 @@ def test_filter_smart_labelled_clears_selection_when_mode_has_no_smart_state(
 #     qtbot.wait(50)
 
 #     assert window.tree_model.rowCount() == 2
-#     assert {entry["name"] for entry in window.model.action_item_data} == {"group_a", "group_b"}
+#     assert {entry["name"] for entry in window.dataset_explorer_controller.action_item_data} == {"group_a", "group_b"}
 
 #     for row in range(window.tree_model.rowCount()):
 #         index = window.tree_model.index(row, 0)
@@ -738,7 +738,7 @@ def test_filter_smart_labelled_clears_selection_when_mode_has_no_smart_state(
 #     qtbot.wait(50)
 
 #     assert window.tree_model.rowCount() == 2
-#     assert {entry["name"] for entry in window.model.action_item_data} == {"dup", "dup__2"}
+#     assert {entry["name"] for entry in window.dataset_explorer_controller.action_item_data} == {"dup", "dup__2"}
 
 
 @pytest.mark.gui
@@ -759,10 +759,10 @@ def test_clear_workspace_preserves_headers_schema_and_unknown_keys(
 
     window.dataset_explorer_controller.handle_clear_workspace()
 
-    assert window.model.json_loaded is True
-    assert window.model.dataset_json["data"] == []
-    assert window.model.dataset_json["custom_root"] == {"keep": True}
-    assert "action" in window.model.dataset_json["labels"]
+    assert window.dataset_explorer_controller.json_loaded is True
+    assert window.dataset_explorer_controller.dataset_json["data"] == []
+    assert window.dataset_explorer_controller.dataset_json["custom_root"] == {"keep": True}
+    assert "action" in window.dataset_explorer_controller.dataset_json["labels"]
     assert window.tree_model.rowCount() == 0
     assert not window.description_panel.isEnabled()
 
@@ -786,7 +786,7 @@ def test_clear_workspace_cancel_is_a_noop(window, monkeypatch, qtbot, synthetic_
     window.dataset_explorer_controller.handle_clear_workspace()
 
     assert window.tree_model.rowCount() == 2
-    assert window.model.dataset_json["data"] == before_json["data"]
+    assert window.dataset_explorer_controller.dataset_json["data"] == before_json["data"]
 
 
 @pytest.mark.gui
@@ -814,8 +814,8 @@ def test_save_as_rewrites_paths_autosaves_description_and_promotes_new_recent(
     )
 
     assert window.dataset_explorer_controller.export_project() is True
-    assert Path(window.model.current_json_path) == export_path.resolve()
-    assert window.router.get_recent_projects()[0] == str(export_path.resolve())
+    assert Path(window.dataset_explorer_controller.current_json_path) == export_path.resolve()
+    assert window.dataset_explorer_controller.get_recent_projects()[0] == str(export_path.resolve())
 
     saved = json.loads(export_path.read_text(encoding="utf-8"))
     saved_sample = saved["data"][0]
@@ -830,11 +830,11 @@ def test_save_as_rewrites_paths_autosaves_description_and_promotes_new_recent(
     window.show_welcome_view()
     assert _recent_file_button_text(window) == export_path.name
 
-    window.router.close_project()
+    window.dataset_explorer_controller.close_project()
     _open_project(window, monkeypatch, export_path)
     _select_top_row(window, qtbot, 0)
 
-    assert Path(window.model.action_item_data[0]["path"]).resolve() == expected_video.resolve()
+    assert Path(window.dataset_explorer_controller.action_item_data[0]["path"]).resolve() == expected_video.resolve()
     assert window.description_panel.caption_edit.toPlainText() == final_text
 
 
@@ -857,7 +857,7 @@ def test_save_keeps_current_tree_selection_and_expansion_state(
     tree = window.dataset_explorer_panel.tree
     assert tree.isExpanded(first_parent)
     assert tree.isExpanded(second_parent)
-    assert window.model.current_selected_sample_id == "clip_2"
+    assert window.dataset_explorer_controller.current_selected_sample_id == "clip_2"
 
     window.dataset_explorer_controller.save_project()
     qtbot.wait(50)
@@ -867,7 +867,7 @@ def test_save_keeps_current_tree_selection_and_expansion_state(
     assert refreshed_first.isValid()
     assert refreshed_second.isValid()
     assert refreshed_second.data(window.tree_model.DataIdRole) == "clip_2"
-    assert window.model.current_selected_sample_id == "clip_2"
+    assert window.dataset_explorer_controller.current_selected_sample_id == "clip_2"
     assert tree.isExpanded(refreshed_first)
     assert tree.isExpanded(refreshed_second)
 
@@ -929,16 +929,16 @@ def test_localization_undo_redo_does_not_repopulate_tree_or_restart_media(
     window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["localization"])
     qtbot.wait(50)
 
-    path = window.model.get_path_by_id(window.model.current_selected_sample_id)
+    path = window.dataset_explorer_controller.get_path_by_id(window.dataset_explorer_controller.current_selected_sample_id)
     assert path
-    events = window.model.localization_events.get(path, [])
+    events = window.dataset_explorer_controller.localization_events.get(path, [])
     assert events
     old_event = events[0]
     new_event = dict(old_event)
     new_event["position_ms"] = int(old_event.get("position_ms", 0)) + 250
     window.localization_editor_controller._on_annotation_modified(old_event, new_event)
     qtbot.wait(50)
-    assert window.model.undo_stack
+    assert window.dataset_explorer_controller.undo_stack
 
     populate_calls = {"count": 0}
     monkeypatch.setattr(
@@ -974,17 +974,17 @@ def test_undo_filter_clear_selection_when_selected_row_becomes_hidden(
     _open_project(window, monkeypatch, project_json_path)
     _select_top_row(window, qtbot, 1)
 
-    first_path = window.model.get_path_by_id("clip_1")
-    second_path = window.model.get_path_by_id("clip_2")
+    first_path = window.dataset_explorer_controller.get_path_by_id("clip_1")
+    second_path = window.dataset_explorer_controller.get_path_by_id("clip_2")
     assert first_path
     assert second_path
 
-    window.model.manual_annotations[first_path] = {"action": "pass"}
-    window.model.manual_annotations[second_path] = {"action": "pass"}
+    window.dataset_explorer_controller.manual_annotations[first_path] = {"action": "pass"}
+    window.dataset_explorer_controller.manual_annotations[second_path] = {"action": "pass"}
     window.update_action_item_status(first_path)
     window.update_action_item_status(second_path)
 
-    window.model.push_undo(
+    window.dataset_explorer_controller.push_undo(
         CmdType.ANNOTATION_CONFIRM,
         path=second_path,
         old_data=None,
@@ -993,14 +993,14 @@ def test_undo_filter_clear_selection_when_selected_row_becomes_hidden(
 
     window.dataset_explorer_panel.filter_combo.setCurrentIndex(1)
     qtbot.wait(50)
-    assert window.model.current_selected_sample_id == "clip_2"
+    assert window.dataset_explorer_controller.current_selected_sample_id == "clip_2"
 
     window.history_manager.perform_undo()
     qtbot.wait(50)
 
     tree = window.dataset_explorer_panel.tree
     assert not tree.currentIndex().isValid()
-    assert window.model.current_selected_sample_id == ""
-    assert window.model.current_selected_input_path is None
+    assert window.dataset_explorer_controller.current_selected_sample_id == ""
+    assert window.dataset_explorer_controller.current_selected_input_path is None
     assert not tree.isRowHidden(0, tree.rootIndex())
     assert tree.isRowHidden(1, tree.rootIndex())

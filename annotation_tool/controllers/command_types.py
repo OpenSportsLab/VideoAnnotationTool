@@ -24,7 +24,7 @@ class CmdType(Enum):
     LOC_EVENT_DEL = auto()
     LOC_EVENT_MOD = auto()
 
-    DESC_EDIT = auto()
+    SAMPLE_FIELD_EDIT = auto()
 
     DENSE_EVENT_ADD = auto()
     DENSE_EVENT_DEL = auto()

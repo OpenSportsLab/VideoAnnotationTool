@@ -34,7 +34,7 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["classification"]
     assert window.tree_model.rowCount() == 1
 
@@ -58,7 +58,7 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
 
     # Manual annotation is now saved immediately on selection.
     qtbot.wait(50)
-    assert window.model.manual_annotations[first_path]["action"] == "pass"
+    assert window.dataset_explorer_controller.manual_annotations[first_path]["action"] == "pass"
 
     # 4) Save JSON and verify label is written.
     window.dataset_explorer_controller.save_project()
@@ -67,8 +67,8 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
     assert saved_entry["labels"]["action"]["label"] == "pass"
 
     # 5) Close dataset.
-    window.router.close_project()
-    assert window.model.json_loaded is False
+    window.dataset_explorer_controller.close_project()
+    assert window.dataset_explorer_controller.json_loaded is False
     assert window.center_stack.currentIndex() == 0
 
     # 6) Reopen and verify label persistence in model and UI.
@@ -76,7 +76,7 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     reopened_index = window.tree_model.index(0, 0)
     assert reopened_index.isValid()
@@ -85,7 +85,7 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
 
     reopened_path = window.get_current_action_path()
     assert reopened_path is not None
-    assert window.model.manual_annotations[reopened_path]["action"] == "pass"
+    assert window.dataset_explorer_controller.manual_annotations[reopened_path]["action"] == "pass"
     assert window.classification_panel.get_annotation().get("action") == "pass"
 
     # 7) Edit the label after reload, save again, and verify persistence again.
@@ -98,22 +98,22 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
 
     # Manual annotation is now saved immediately on selection.
     qtbot.wait(50)
-    assert window.model.manual_annotations[reopened_path]["action"] == "shot"
+    assert window.dataset_explorer_controller.manual_annotations[reopened_path]["action"] == "shot"
 
     window.dataset_explorer_controller.save_project()
     saved_data_after_edit = json.loads(project_json_path.read_text(encoding="utf-8"))
     saved_entry_after_edit = next(item for item in saved_data_after_edit.get("data", []) if item.get("id") == "clip_1")
     assert saved_entry_after_edit["labels"]["action"]["label"] == "shot"
 
-    window.router.close_project()
-    assert window.model.json_loaded is False
+    window.dataset_explorer_controller.close_project()
+    assert window.dataset_explorer_controller.json_loaded is False
     assert window.center_stack.currentIndex() == 0
 
     monkeypatch.setattr(
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     final_index = window.tree_model.index(0, 0)
     assert final_index.isValid()
@@ -122,7 +122,7 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
 
     final_path = window.get_current_action_path()
     assert final_path is not None
-    assert window.model.manual_annotations[final_path]["action"] == "shot"
+    assert window.dataset_explorer_controller.manual_annotations[final_path]["action"] == "shot"
     assert window.classification_panel.get_annotation().get("action") == "shot"
 
 
@@ -142,7 +142,7 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
 #         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
-#     window.router.import_annotations()
+#     window.dataset_explorer_controller.import_annotations()
 #     assert window.tree_model.rowCount() == 1
 
 #     first_index = window.tree_model.index(0, 0)
@@ -154,8 +154,8 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
     # qtbot.wait(50)
 
     # assert window.tree_model.rowCount() == 0
-    # assert window.model.action_item_data == []
-    # assert window.model.action_item_map == {}
+    # assert window.dataset_explorer_controller.action_item_data == []
+    # assert window.dataset_explorer_controller.action_item_map == {}
     # assert window.classification_panel.manual_box.isEnabled() is False
 
 
@@ -175,7 +175,7 @@ def test_classification_clear_workspace_resets_state(
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.tree_model.rowCount() == 1
 
     monkeypatch.setattr(
@@ -188,9 +188,9 @@ def test_classification_clear_workspace_resets_state(
     qtbot.wait(50)
 
     assert window.tree_model.rowCount() == 0
-    assert window.model.action_item_data == []
-    assert window.model.json_loaded is True
-    assert window.model.current_json_path == str(project_json_path)
+    assert window.dataset_explorer_controller.action_item_data == []
+    assert window.dataset_explorer_controller.json_loaded is True
+    assert window.dataset_explorer_controller.current_json_path == str(project_json_path)
     assert window.classification_panel.manual_box.isEnabled() is False
 
 
@@ -208,7 +208,7 @@ def test_classification_clear_workspace_resets_state(
 #         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
-#     window.router.import_annotations()
+#     window.dataset_explorer_controller.import_annotations()
 
 #     first_index = window.tree_model.index(0, 0)
 #     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
@@ -225,16 +225,16 @@ def test_classification_clear_workspace_resets_state(
 #     qtbot.mouseClick(panel.confirm_btn, Qt.MouseButton.LeftButton)
 #     qtbot.wait(50)
 
-#     assert window.model.manual_annotations[current_path]["action"] == "shot"
+#     assert window.dataset_explorer_controller.manual_annotations[current_path]["action"] == "shot"
 
 #     window.history_manager.perform_undo()
 #     qtbot.wait(50)
-#     assert current_path not in window.model.manual_annotations
+#     assert current_path not in window.dataset_explorer_controller.manual_annotations
 #     assert window.classification_panel.get_annotation().get("action") in (None, "")
 
 #     window.history_manager.perform_redo()
 #     qtbot.wait(50)
-#     assert window.model.manual_annotations[current_path]["action"] == "shot"
+#     assert window.dataset_explorer_controller.manual_annotations[current_path]["action"] == "shot"
 #     assert window.classification_panel.get_annotation().get("action") == "shot"
 
 
@@ -252,7 +252,7 @@ def test_classification_clear_workspace_resets_state(
 #         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
-#     window.router.import_annotations()
+#     window.dataset_explorer_controller.import_annotations()
 #     assert window.tree_model.rowCount() == 2
 
 #     first_index = window.tree_model.index(0, 0)

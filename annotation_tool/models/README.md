@@ -1,14 +1,28 @@
-# 📦 Data Models & State Management
+# Models Module
 
-This directory now contains lightweight shared exports. The canonical persisted dataset state lives in `controllers/dataset_explorer_controller.py` as one `dataset_json` tree.
+## Role
+Compatibility-only package for shared exports.
 
-## 📂 Module Descriptions
+## Architecture Context
+Runtime and persisted dataset state are not owned here; they are owned by `DatasetExplorerController`.
 
-### `__init__.py`
-* Re-exports shared compatibility symbols such as `CmdType`.
-* The tree model is defined with the dataset explorer panel widget, not in this package.
+## Public Surface
+- `__init__.py`
+  - Re-exports `CmdType` from `controllers.command_types`.
 
-## 🔄 Data Flow
-1. **DatasetExplorerController** owns `dataset_json`, normalizes it, and rebuilds runtime indexes for the tree/UI.
-2. **Mode controllers** mutate sample fragments directly inside `dataset_json`.
-3. **Serialization** writes the full `dataset_json` document back to disk.
+## Key Functions and Responsibilities
+- No model classes currently implemented in this package.
+
+## Business Rules
+- Do not introduce parallel dataset ownership here without explicit architecture change.
+
+## Conventions
+- Keep this package minimal and compatibility-focused.
+
+## Tests
+- Indirectly covered by controller/history tests that import `CmdType`.
+
+## Developer Knowledge
+- Treat this package as compatibility-only unless architecture explicitly changes.
+- If moving shared types here, avoid creating a second source of runtime state.
+- Keep exports minimal to reduce import cycles.

@@ -34,7 +34,7 @@ def test_description_selection_loads_media_and_refreshes_editor(
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     assert window.tree_model.rowCount() == 1
 
@@ -122,7 +122,7 @@ def test_description_multiview_parent_selection_loads_first_child_media(
         lambda file_path, auto_play=True: load_calls.append(file_path),
     )
 
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     assert window.tree_model.rowCount() == 1
 
@@ -156,7 +156,7 @@ def test_description_annotate_save_reload_edit_and_persist(
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     assert window.tree_model.rowCount() == 1
 
@@ -175,7 +175,7 @@ def test_description_annotate_save_reload_edit_and_persist(
 
     target_item = next(
         item
-        for item in window.model.action_item_data
+        for item in window.dataset_explorer_controller.action_item_data
         if item.get("path") == first_path
     )
     assert target_item["captions"][0]["text"] == first_text
@@ -186,14 +186,14 @@ def test_description_annotate_save_reload_edit_and_persist(
     saved_entry = saved_data.get("data", [])[0]
     assert saved_entry["captions"][0]["text"] == first_text
 
-    window.router.close_project()
-    assert window.model.json_loaded is False
+    window.dataset_explorer_controller.close_project()
+    assert window.dataset_explorer_controller.json_loaded is False
 
     monkeypatch.setattr(
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     reopened_index = window.tree_model.index(0, 0)
     assert reopened_index.isValid()
@@ -211,14 +211,14 @@ def test_description_annotate_save_reload_edit_and_persist(
     saved_entry_after_edit = saved_data_after_edit.get("data", [])[0]
     assert saved_entry_after_edit["captions"][0]["text"] == second_text
 
-    window.router.close_project()
-    assert window.model.json_loaded is False
+    window.dataset_explorer_controller.close_project()
+    assert window.dataset_explorer_controller.json_loaded is False
 
     monkeypatch.setattr(
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     final_index = window.tree_model.index(0, 0)
     assert final_index.isValid()
@@ -242,7 +242,7 @@ def test_description_remove_selected_item_clears_editor_state(
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     assert window.tree_model.rowCount() == 1
 
@@ -264,7 +264,7 @@ def test_description_remove_selected_item_clears_editor_state(
     qtbot.wait(50)
     
     assert window.tree_model.rowCount() == 0
-    assert window.model.action_item_data == []
+    assert window.dataset_explorer_controller.action_item_data == []
     assert window.desc_editor_controller.current_action_path is None
     assert window.description_panel.caption_edit.toPlainText() == ""
     assert window.description_panel.caption_edit.isEnabled() is False
@@ -285,10 +285,10 @@ def test_description_clear_workspace_resets_editor_and_model(
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     assert window.tree_model.rowCount() == 1
-    assert window.model.json_loaded is True
+    assert window.dataset_explorer_controller.json_loaded is True
 
     first_index = window.tree_model.index(0, 0)
     assert first_index.isValid()
@@ -307,10 +307,10 @@ def test_description_clear_workspace_resets_editor_and_model(
 
     assert stop_calls
     assert window.tree_model.rowCount() == 0
-    assert window.model.json_loaded is True
-    assert window.model.current_json_path == str(project_json_path)
-    assert window.model.action_item_data == []
-    assert window.model.desc_global_metadata != {}
+    assert window.dataset_explorer_controller.json_loaded is True
+    assert window.dataset_explorer_controller.current_json_path == str(project_json_path)
+    assert window.dataset_explorer_controller.action_item_data == []
+    assert window.dataset_explorer_controller.desc_global_metadata != {}
     assert window.desc_editor_controller.current_action_path is None
     assert window.description_panel.caption_edit.toPlainText() == ""
     assert window.description_panel.caption_edit.isEnabled() is False
@@ -330,7 +330,7 @@ def test_description_clear_workspace_resets_editor_and_model(
 #         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
-#     window.router.import_annotations()
+#     window.dataset_explorer_controller.import_annotations()
 #     assert window.tree_model.rowCount() == 2
 
 #     first_index = window.tree_model.index(0, 0)
@@ -368,7 +368,7 @@ def test_description_clear_workspace_resets_editor_and_model(
 #         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
-#     window.router.import_annotations()
+#     window.dataset_explorer_controller.import_annotations()
 #     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
 #     assert window.tree_model.rowCount() == 1
 

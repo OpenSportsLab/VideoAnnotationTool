@@ -139,9 +139,8 @@ class LocalizationInferenceManager(QObject):
     inference_finished = pyqtSignal(list)
     inference_error = pyqtSignal(str)
     
-    def __init__(self, main_window):
-        super().__init__(main_window)
-        self.main = main_window
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.worker = None
 
     def start_inference(self, video_path: str, start_ms: int, end_ms: int):

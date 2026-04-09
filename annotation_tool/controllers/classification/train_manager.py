@@ -214,7 +214,7 @@ class TrainManager(QObject):
     def __init__(self, classification_controller):
         super().__init__()
         self.controller = classification_controller
-        self.main = classification_controller.main
+        self.model = classification_controller.model
         self.panel = classification_controller.classification_panel
         # Background worker thread instance
         self.worker = None
@@ -238,11 +238,11 @@ class TrainManager(QObject):
             return
 
         # Get the currently loaded JSON annotation file from the main model
-        train_json = self.main.model.current_json_path
+        train_json = self.model.current_json_path
 
         # Require that the currently loaded file is the training annotation file
         if not train_json or "annotations_train" not in train_json:
-            QMessageBox.critical(self.main, "Error", "Please load 'annotations_train.json' first.")
+            QMessageBox.critical(self.panel, "Error", "Please load 'annotations_train.json' first.")
             return
 
         # Collect training parameters from the UI controls
@@ -286,7 +286,7 @@ class TrainManager(QObject):
         if self.worker and self.worker.isRunning():
             # Ask for user confirmation before aborting training
             reply = QMessageBox.question(
-                self.main, "Confirm Stop",
+                self.panel, "Confirm Stop",
                 "Are you sure you want to abort training?\nUnsaved progress in the current epoch will be lost.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
@@ -312,8 +312,8 @@ class TrainManager(QObject):
 
         # Show result feedback and append a final log line
         if success:
-            QMessageBox.information(self.main, "Success", message)
+            QMessageBox.information(self.panel, "Success", message)
             self._append_log(f"\n✅ [SUCCESS] {message}")
         else:
-            QMessageBox.critical(self.main, "Train Error", message)
+            QMessageBox.critical(self.panel, "Train Error", message)
             self._append_log(f"\n❌ [ERROR] {message}")

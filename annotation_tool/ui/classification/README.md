@@ -1,18 +1,69 @@
 # Classification UI
 
-Classification right-panel UI package.
+## Role
+Provides the Classification right-panel widgets and dynamic label-group controls.
 
-## Structure
+## Architecture Context
+- Static layout comes from `classification_annotation_panel.ui`.
+- Runtime dynamic controls and signal plumbing are implemented in `__init__.py`.
+- Business logic is handled by `ClassificationEditorController`.
 
-```text
-ui/classification/
-├── __init__.py
-├── classification_annotation_panel.ui
-└── README.md
-```
+## Public Surface
+### Main Class
+- `ClassificationAnnotationPanel`
 
-## Notes
+### Supporting Classes
+- `NativeDonutChart`
+- `DynamicSingleLabelGroup`
+- `DynamicMultiLabelGroup`
 
-- Main class: `ClassificationAnnotationPanel` (import path: `from ui.classification import ClassificationAnnotationPanel`).
-- `.ui` contains all static layout.
-- Runtime dynamic schema widgets (single/multi-label groups) are injected into `.ui` placeholders from `__init__.py`.
+### Panel Signals
+- `add_head_clicked(str)`
+- `remove_head_clicked(str)`
+- `smart_infer_requested()`
+- `confirm_infer_requested(dict)`
+- `batch_confirm_requested(dict)`
+- `annotation_saved(dict)`
+- `smart_confirm_requested()`
+- `batch_run_requested(int, int)`
+- `hand_clear_requested()`
+- `smart_clear_requested()`
+
+## Key Functions and Responsibilities
+- `setup_dynamic_labels(label_definitions)`
+  - Builds runtime head/label controls from schema.
+- `set_annotation(data)` / `get_annotation()`
+  - Controller-facing read/write surface for manual annotations.
+- `clear_selection()`
+  - Clears all selected label values.
+- `show_inference_loading(is_loading)`
+  - Toggles inference loading state in the panel.
+- `display_inference_result(...)` / `display_batch_inference_result(...)`
+  - Renders smart inference output.
+- `reset_smart_inference()` / `reset_train_ui()`
+  - Resets smart/train related UI state.
+
+## Business Rules
+- Dynamic controls are schema-driven at runtime.
+- UI emits intent signals only; it does not commit dataset mutations.
+- Confidence chart reflects current smart output payload.
+
+## Conventions
+- Keep `.ui` static and reusable.
+- Keep dynamic widget creation in Python (`__init__.py`).
+- Preserve stable API names consumed by controllers/tests.
+
+## Interactions
+- Inbound from controller:
+  - setup dynamic labels, set/get annotation, smart output display.
+- Outbound to controller:
+  - user actions via panel signals listed above.
+
+## Tests
+- `tests/gui/test_workflow_classification.py`
+- `tests/gui/test_signal_decoupling_contract.py`
+
+## Developer Knowledge
+- Dynamic label groups are frequently rebuilt; always reconnect callbacks after rebuilding.
+- Keep signal payload types stable (`dict`, `(int, int)`, etc.) because controller logic expects exact shapes.
+- Donut chart is presentation-only; do not embed inference decision logic in UI class methods.

@@ -84,7 +84,7 @@ def window(qtbot, monkeypatch, tmp_path):
 
     # Use a test-specific QSettings file to isolate from real user data and ensure a clean slate.
     settings_file = tmp_path / "app_settings.ini"
-    main_window.router.settings = QSettings(
+    main_window.dataset_explorer_controller.settings = QSettings(
         str(settings_file),
         QSettings.Format.IniFormat,
     )
@@ -93,8 +93,8 @@ def window(qtbot, monkeypatch, tmp_path):
     yield main_window
 
     # Prevent close confirmation dialogs during teardown.
-    main_window.model.is_data_dirty = False
-    main_window.model.json_loaded = False
+    main_window.dataset_explorer_controller.is_data_dirty = False
+    main_window.dataset_explorer_controller.json_loaded = False
     main_window.close()
 
 

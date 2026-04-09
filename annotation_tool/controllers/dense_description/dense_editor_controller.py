@@ -1,27 +1,34 @@
 import copy
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
-from controllers.command_types import CmdType
-from controllers.media_controller import MediaController
 
-
-class DenseEditorController:
+class DenseEditorController(QObject):
     """
     Dense Description controller.
     Owns dense editor behavior, navigation, and data-ID driven selection handling.
     Dataset add/remove/filter/clear is handled centrally by DatasetExplorerController.
     """
 
-    def __init__(self, main_window, media_controller: MediaController):
-        self.main = main_window
-        self.model = main_window.model
-        self.tree_model = main_window.tree_model
-        self.center_panel = main_window.center_panel
-        self.dense_panel = main_window.dense_panel
-        self.media_controller = media_controller
+    statusMessageRequested = pyqtSignal(str, str, int)
+    saveStateRefreshRequested = pyqtSignal()
+    itemStatusRefreshRequested = pyqtSignal(str)
+    # payload: sample_id, ...
+    denseEventAddRequested = pyqtSignal(str, dict)
+    denseEventModRequested = pyqtSignal(str, dict, dict)
+    denseEventDelRequested = pyqtSignal(str, dict, int)
+
+    def __init__(self, model, tree_model, center_panel, dense_panel, playback_state_provider=None):
+        super().__init__()
+        self.model = model
+        self.tree_model = tree_model
+        self.center_panel = center_panel
+        self.dense_panel = dense_panel
+        self._get_is_playing = playback_state_provider or (lambda: self._is_media_playing)
+        self._is_media_playing = False
+        self._active_mode_index = 0
 
         self.current_sample_id = ""
         self.current_video_path = None
@@ -41,6 +48,14 @@ class DenseEditorController:
         table.annotationDeleted.connect(self._on_delete_single_annotation)
         table.annotationModified.connect(self._on_annotation_modified)
         table.updateTimeForSelectedRequested.connect(self._on_update_time_for_selected)
+
+    def on_mode_changed(self, index: int):
+        self._active_mode_index = index
+        if self._is_active_mode() and self.current_video_path:
+            self.display_events_for_item(self.current_video_path, update_markers=True)
+
+    def on_playback_state_changed(self, is_playing: bool):
+        self._is_media_playing = bool(is_playing)
 
     def reset_ui(self):
         self.dense_panel.table.set_data([])
@@ -66,6 +81,8 @@ class DenseEditorController:
 
         path = self.model.get_path_by_id(data_id)
         if not path:
+            self.current_sample_id = ""
+            self.current_video_path = None
             return
 
         self.current_sample_id = data_id
@@ -78,10 +95,10 @@ class DenseEditorController:
 
     def _on_add_event_requested(self, initial_text: str = ""):
         if not self.current_video_path:
-            QMessageBox.warning(self.main, "Warning", "Please select a sample first.")
+            QMessageBox.warning(self.dense_panel, "Warning", "Please select a sample first.")
             return
 
-        was_playing = self.media_controller.is_playing()
+        was_playing = bool(self._get_is_playing())
         if was_playing:
             self.center_panel.playPauseRequested.emit()
 
@@ -92,7 +109,7 @@ class DenseEditorController:
                 accepted = True
             else:
                 text, accepted = QInputDialog.getMultiLineText(
-                    self.main,
+                    self.dense_panel,
                     "Add New Description",
                     "Description:",
                     "",
@@ -101,26 +118,14 @@ class DenseEditorController:
 
             if not accepted or not text:
                 return
+            if not self.current_sample_id:
+                return
 
             pos_ms = int(self.center_panel.player.position())
             new_event = {"position_ms": pos_ms, "lang": "en", "text": text}
-
-            self.model.push_undo(
-                CmdType.DENSE_EVENT_ADD,
-                video_path=self.current_video_path,
-                event=copy.deepcopy(new_event),
-            )
-
-            if self.current_video_path not in self.model.dense_description_events:
-                self.model.dense_description_events[self.current_video_path] = []
-
-            self.model.dense_description_events[self.current_video_path].append(new_event)
-            self.model.is_data_dirty = True
+            self.denseEventAddRequested.emit(self.current_sample_id, copy.deepcopy(new_event))
             self.display_events_for_item(self.current_video_path)
             self._select_row_for_event(new_event)
-            self.main.update_action_item_status(self.current_video_path)
-            self.main.update_save_export_button_state()
-            self.main.show_temp_msg("Added", "Dense description added.")
         finally:
             if was_playing:
                 self.center_panel.playPauseRequested.emit()
@@ -133,20 +138,16 @@ class DenseEditorController:
 
         events = self.model.dense_description_events.get(self.current_video_path, [])
         try:
-            idx = events.index(old_event)
+            events.index(old_event)
         except ValueError:
             return
-
-        self.model.push_undo(
-            CmdType.DENSE_EVENT_MOD,
-            video_path=self.current_video_path,
-            old_event=copy.deepcopy(old_event),
-            new_event=copy.deepcopy(new_event),
+        if not self.current_sample_id:
+            return
+        self.denseEventModRequested.emit(
+            self.current_sample_id,
+            copy.deepcopy(old_event),
+            copy.deepcopy(new_event),
         )
-
-        events[idx] = new_event
-        self.model.is_data_dirty = True
-        self.main.update_action_item_status(self.current_video_path)
 
         # Defer to avoid mutating model while the table delegate is still committing edits.
         QTimer.singleShot(
@@ -154,8 +155,6 @@ class DenseEditorController:
             lambda: self._refresh_after_event_modification(self.current_video_path, new_event),
         )
 
-        self.main.show_temp_msg("Updated", "Description modified.")
-        self.main.update_save_export_button_state()
 
     def _refresh_after_event_modification(self, path: str, target_event: dict):
         self.display_events_for_item(path)
@@ -171,18 +170,10 @@ class DenseEditorController:
         except ValueError:
             return
 
-        self.model.push_undo(
-            CmdType.DENSE_EVENT_DEL,
-            video_path=self.current_video_path,
-            event=copy.deepcopy(item_data),
-            event_index=event_index,
-        )
-
-        events.pop(event_index)
-        self.model.is_data_dirty = True
+        if not self.current_sample_id:
+            return
+        self.denseEventDelRequested.emit(self.current_sample_id, copy.deepcopy(item_data), event_index)
         self.display_events_for_item(self.current_video_path)
-        self.main.update_action_item_status(self.current_video_path)
-        self.main.update_save_export_button_state()
 
     def _on_update_time_for_selected(self, old_event: dict):
         if not self.current_video_path:
@@ -278,4 +269,4 @@ class DenseEditorController:
         return self.dense_panel.table.model.get_annotation_at(selected_rows[0].row())
 
     def _is_active_mode(self) -> bool:
-        return self.main.right_tabs.currentIndex() == 3
+        return self._active_mode_index == 3

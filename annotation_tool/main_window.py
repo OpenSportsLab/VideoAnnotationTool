@@ -95,34 +95,57 @@ class VideoAnnotationWindow(QMainWindow):
         # Central playback controller.
         self.media_controller = MediaController(self.center_panel.player, self.center_panel.video_widget)
 
-        # Dataset explorer now owns the canonical dataset document.
-        self.dataset_explorer_controller = DatasetExplorerController(
-            main_window=self,
-            panel=self.dataset_explorer_panel,
-            tree_model=self.tree_model,
-            media_controller=self.media_controller,
-        )
-        self.model = self.dataset_explorer_controller
-        self.router = self.dataset_explorer_controller
-
-        # --- Controllers ---
-        self.welcome_controller = WelcomeController(self.welcome_widget, self.router, self)
-        self.history_manager = HistoryManager(self)
-
-        self.classification_editor_controller = ClassificationEditorController(
-            self, self.media_controller
-        )
-        self.localization_editor_controller = LocalizationEditorController(self, self.media_controller)
-        
-        # Description Mode Controller
-        self.desc_editor_controller = DescEditorController(self)
-        
-        # Dense Description Controller
-        self.dense_editor_controller = DenseEditorController(self, self.media_controller)
         # --- Local UI state (icons, etc.) ---
         bright_blue = QColor("#00BFFF")
         self.done_icon = create_checkmark_icon(bright_blue)
         self.empty_icon = QIcon()
+
+        # Dataset explorer now owns the canonical dataset document.
+        self.dataset_explorer_controller = DatasetExplorerController(
+            panel=self.dataset_explorer_panel,
+            tree_model=self.tree_model,
+        )
+        self.dataset_explorer_controller.set_status_icons(self.done_icon, self.empty_icon)
+
+        # --- Controllers ---
+        self.classification_editor_controller = ClassificationEditorController(
+            model=self.dataset_explorer_controller,
+            classification_panel=self.classification_panel,
+            dataset_explorer_panel=self.dataset_explorer_panel,
+            center_panel=self.center_panel,
+            current_action_path_provider=self.get_current_action_path,
+        )
+        self.localization_editor_controller = LocalizationEditorController(
+            model=self.dataset_explorer_controller,
+            tree_model=self.tree_model,
+            center_panel=self.center_panel,
+            localization_panel=self.localization_panel,
+            playback_state_provider=lambda: self.media_controller.is_playing(),
+        )
+
+        # Description Mode Controller
+        self.desc_editor_controller = DescEditorController(
+            description_panel=self.description_panel,
+        )
+
+        # Dense Description Controller
+        self.dense_editor_controller = DenseEditorController(
+            model=self.dataset_explorer_controller,
+            tree_model=self.tree_model,
+            center_panel=self.center_panel,
+            dense_panel=self.dense_panel,
+            playback_state_provider=lambda: self.media_controller.is_playing(),
+        )
+
+        self.history_manager = HistoryManager(
+            model=self.dataset_explorer_controller,
+            tree_model=self.tree_model,
+            current_tab_index_provider=self.right_tabs.currentIndex,
+            current_action_path_provider=self.get_current_action_path,
+            dense_current_video_path_provider=lambda: self.dense_editor_controller.current_video_path,
+            current_filter_index_provider=self.dataset_explorer_panel.filter_combo.currentIndex,
+        )
+        self.welcome_controller = WelcomeController(self.welcome_widget, self.dataset_explorer_controller, self)
 
         # --- Setup ---
         self.connect_signals()
@@ -170,19 +193,22 @@ class VideoAnnotationWindow(QMainWindow):
 
     def reset_all_managers(self):
         """ Clears all mode-specific UIs and returns to Welcome screen. """
-        self.classification_editor_controller.reset_ui()
-        self.localization_editor_controller.reset_ui()
-        self.desc_editor_controller.reset_ui()
-        self.dense_editor_controller.reset_ui()
+        self.reset_editor_panels()
         
         # Also clear the tree model
         self.tree_model.clear()
-        self.model.action_item_map.clear()
+        self.dataset_explorer_controller.action_item_map.clear()
         self.main_window_title = "Action Classifier"
         self.setWindowTitle("Action Classifier")
 
         # Return to Welcome
         self.show_welcome_view()
+
+    def reset_editor_panels(self):
+        self.classification_editor_controller.reset_ui()
+        self.localization_editor_controller.reset_ui()
+        self.desc_editor_controller.reset_ui()
+        self.dense_editor_controller.reset_ui()
 
     def set_project_ui_enabled(self, enabled: bool):
         """Enables/Disables all project-related docks and editors."""
@@ -190,6 +216,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.editor_dock.setEnabled(enabled)
         
         # Also explicitly disable the sub-editors to be safe
+        self._set_annotation_panels_enabled_for_selection(enabled)
+
+    def _set_annotation_panels_enabled_for_selection(self, enabled: bool):
         self.classification_panel.manual_box.setEnabled(enabled)
         self.localization_panel.setEnabled(enabled)
         self.description_panel.setEnabled(enabled)
@@ -201,10 +230,10 @@ class VideoAnnotationWindow(QMainWindow):
         self.editor_dock.setVisible(visible)
 
     # Welcome screen
-    def _safe_import_annotations(self): self.router.import_annotations()
-    def _safe_create_project(self): self.router.create_new_project_flow()
+    def _safe_import_annotations(self): self.dataset_explorer_controller.import_annotations()
+    def _safe_create_project(self): self.dataset_explorer_controller.create_new_project_flow()
     def _safe_close_dataset_or_quit(self):
-        if self.model.json_loaded:
+        if self.dataset_explorer_controller.json_loaded:
             self.dataset_explorer_controller.close_project()
         else:
             self.close()
@@ -221,34 +250,168 @@ class VideoAnnotationWindow(QMainWindow):
         # when it needs global context.
         self.dataset_explorer_controller.dataSelected.connect(self.classification_editor_controller.on_data_selected)
         self.dataset_explorer_controller.dataSelected.connect(self.localization_editor_controller.on_data_selected)
-        self.dataset_explorer_controller.dataSelected.connect(self.desc_editor_controller.on_data_selected)
         self.dataset_explorer_controller.dataSelected.connect(self.dense_editor_controller.on_data_selected)
+        self.dataset_explorer_controller.sampleSelectionChanged.connect(
+            self.desc_editor_controller.on_selected_sample_changed
+        )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
             lambda path, ensure_playback: self.media_controller.route_media_selection(path, ensure_playback)
         )
-        self.dataset_explorer_controller.mediaStopRequested.connect(
-            lambda: self.media_controller.stop()
+        self.dataset_explorer_controller.mediaStopRequested.connect(lambda: self.media_controller.stop())
+        self.dataset_explorer_controller.statusMessageRequested.connect(self.show_temp_msg)
+        self.dataset_explorer_controller.saveStateRefreshRequested.connect(self.update_save_export_button_state)
+        self.dataset_explorer_controller.schemaRefreshRequested.connect(self._refresh_schema_panels)
+        self.dataset_explorer_controller.batchDropdownSyncRequested.connect(
+            self.classification_editor_controller.sync_batch_inference_dropdowns
         )
-        self.right_tabs.currentChanged.connect(self._on_editor_tab_changed)
+        self.dataset_explorer_controller.classificationActionListChanged.connect(
+            self.classification_editor_controller.on_action_items_changed
+        )
+        self.dataset_explorer_controller.workspaceViewRequested.connect(self.show_workspace)
+        self.dataset_explorer_controller.welcomeViewRequested.connect(self.show_welcome_view)
+        self.dataset_explorer_controller.resetEditorsRequested.connect(self.reset_editor_panels)
+        self.dataset_explorer_controller.editorTabRequested.connect(self.right_tabs.setCurrentIndex)
+        self.dataset_explorer_controller.descSaveRequested.connect(self.desc_editor_controller.save_current_annotation)
+        self.dataset_explorer_controller.clearMarkersRequested.connect(lambda: self.center_panel.set_markers([]))
+        self.dataset_explorer_controller.annotationPanelsEnabledRequested.connect(
+            self._set_annotation_panels_enabled_for_selection
+        )
+        self.dataset_explorer_controller.headerDraftMutationRequested.connect(
+            self.history_manager.execute_header_draft_update
+        )
+        self.dataset_explorer_controller.sampleRenameRequested.connect(
+            self.history_manager.execute_sample_id_rename,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self.dataset_explorer_controller.addSamplesRequested.connect(
+            self.history_manager.execute_add_samples
+        )
+        self.dataset_explorer_controller.clearWorkspaceRequested.connect(
+            self.history_manager.execute_clear_workspace
+        )
+        self.dataset_explorer_controller.removeItemMutationRequested.connect(
+            self.history_manager.execute_remove_item
+        )
 
 
         # --- Center panel (Unified Playback) ---
         center_panel.playPauseRequested.connect(self.media_controller.toggle_play_pause)
+        center_panel.muteToggleRequested.connect(self.media_controller.toggle_mute)
         center_panel.seekRelativeRequested.connect(self.media_controller.seek_relative)
-        center_panel.stopRequested.connect(self.media_controller.stop)
+        center_panel.stopRequested.connect(lambda: self.media_controller.stop())
         center_panel.playbackRateRequested.connect(center_panel.set_playback_rate)
-        
-        # --- Classification Editor ---
+        self.media_controller.playbackStateChanged.connect(self.localization_editor_controller.on_playback_state_changed)
+        self.media_controller.playbackStateChanged.connect(self.dense_editor_controller.on_playback_state_changed)
+        self.media_controller.muteStateChanged.connect(center_panel.set_mute_button_state)
+        center_panel.set_mute_button_state(self.media_controller.is_muted())
+
+        # --- Controller shell update signals ---
+        self.classification_editor_controller.statusMessageRequested.connect(self.show_temp_msg)
+        self.classification_editor_controller.saveStateRefreshRequested.connect(self.update_save_export_button_state)
+        self.classification_editor_controller.itemStatusRefreshRequested.connect(self.update_action_item_status)
+        self.classification_editor_controller.filterRefreshRequested.connect(
+            self.dataset_explorer_controller.handle_filter_change
+        )
+        self.classification_editor_controller.manualAnnotationSaveRequested.connect(
+            self.history_manager.execute_classification_manual_annotation
+        )
+        self.classification_editor_controller.schemaHeadAddRequested.connect(
+            self.history_manager.execute_classification_schema_add_head
+        )
+        self.classification_editor_controller.schemaHeadRemoveRequested.connect(
+            self.history_manager.execute_classification_schema_remove_head
+        )
+        self.classification_editor_controller.schemaLabelAddRequested.connect(
+            self.history_manager.execute_classification_schema_add_label
+        )
+        self.classification_editor_controller.schemaLabelRemoveRequested.connect(
+            self.history_manager.execute_classification_schema_remove_label
+        )
+
+        self.localization_editor_controller.statusMessageRequested.connect(self.show_temp_msg)
+        self.localization_editor_controller.saveStateRefreshRequested.connect(self.update_save_export_button_state)
+        self.localization_editor_controller.itemStatusRefreshRequested.connect(self.update_action_item_status)
+        self.localization_editor_controller.locHeadAddRequested.connect(
+            self.history_manager.execute_localization_head_add
+        )
+        self.localization_editor_controller.locHeadRenameRequested.connect(
+            self.history_manager.execute_localization_head_rename
+        )
+        self.localization_editor_controller.locHeadDeleteRequested.connect(
+            self.history_manager.execute_localization_head_delete
+        )
+        self.localization_editor_controller.locLabelAddRequested.connect(
+            self.history_manager.execute_localization_label_add
+        )
+        self.localization_editor_controller.locLabelRenameRequested.connect(
+            self.history_manager.execute_localization_label_rename
+        )
+        self.localization_editor_controller.locLabelDeleteRequested.connect(
+            self.history_manager.execute_localization_label_delete
+        )
+        self.localization_editor_controller.locEventAddRequested.connect(
+            self.history_manager.execute_localization_event_add
+        )
+        self.localization_editor_controller.locEventModRequested.connect(
+            self.history_manager.execute_localization_event_mod
+        )
+        self.localization_editor_controller.locEventDelRequested.connect(
+            self.history_manager.execute_localization_event_delete
+        )
+
+        self.desc_editor_controller.clearMarkersRequested.connect(lambda: self.center_panel.set_markers([]))
+        self.desc_editor_controller.captionsUpdateRequested.connect(
+            self.history_manager.execute_sample_captions_update
+        )
+
+        self.dense_editor_controller.statusMessageRequested.connect(self.show_temp_msg)
+        self.dense_editor_controller.saveStateRefreshRequested.connect(self.update_save_export_button_state)
+        self.dense_editor_controller.itemStatusRefreshRequested.connect(self.update_action_item_status)
+        self.dense_editor_controller.denseEventAddRequested.connect(
+            self.history_manager.execute_dense_event_add
+        )
+        self.dense_editor_controller.denseEventModRequested.connect(
+            self.history_manager.execute_dense_event_mod
+        )
+        self.dense_editor_controller.denseEventDelRequested.connect(
+            self.history_manager.execute_dense_event_del
+        )
+
+        # --- History manager request signals ---
+        self.history_manager.allItemStatusRefreshRequested.connect(self.dataset_explorer_controller.refresh_all_item_statuses)
+        self.history_manager.saveStateRefreshRequested.connect(self.update_save_export_button_state)
+        self.history_manager.statusMessageRequested.connect(self.show_temp_msg)
+        self.history_manager.filterRefreshRequested.connect(self.dataset_explorer_controller.handle_filter_change)
+        self.history_manager.refreshUiAfterUndoRedoRequested.connect(self.refresh_ui_after_undo_redo)
+        self.history_manager.classificationSetupRequested.connect(self.classification_editor_controller.setup_dynamic_ui)
+        self.history_manager.localizationSchemaRefreshRequested.connect(self.localization_editor_controller._refresh_schema_ui)
+        self.history_manager.localizationClipEventsRefreshRequested.connect(
+            self.localization_editor_controller._refresh_current_clip_events
+        )
+        self.history_manager.denseDisplayRequested.connect(self.dense_editor_controller.display_events_for_item)
+        self.history_manager.itemStatusRefreshRequested.connect(self.update_action_item_status)
+        self.history_manager.datasetRestoreRequested.connect(self.dataset_explorer_controller.restore_dataset_json_from_history)
+
+        # --- Mode change fanout ---
+        self.right_tabs.currentChanged.connect(self.dataset_explorer_controller.set_active_mode)
+        self.right_tabs.currentChanged.connect(self.dataset_explorer_controller.handle_active_mode_changed)
+        self.right_tabs.currentChanged.connect(self.classification_editor_controller.on_mode_changed)
+        self.right_tabs.currentChanged.connect(self.localization_editor_controller.on_mode_changed)
+        self.right_tabs.currentChanged.connect(self.desc_editor_controller.on_mode_changed)
+        self.right_tabs.currentChanged.connect(self.dense_editor_controller.on_mode_changed)
+
+        # --- Controllers' internal panel wiring ---
         self.classification_editor_controller.setup_connections()
-
-        # --- Localization Editor ---
         self.localization_editor_controller.setup_connections()
-
-        # --- Description Editor ---
         self.desc_editor_controller.setup_connections()
-
-        # --- Dense Editor ---
         self.dense_editor_controller.setup_connections()
+
+        current_mode = self.right_tabs.currentIndex()
+        self.dataset_explorer_controller.set_active_mode(current_mode)
+        self.classification_editor_controller.on_mode_changed(current_mode)
+        self.localization_editor_controller.on_mode_changed(current_mode)
+        self.desc_editor_controller.on_mode_changed(current_mode)
+        self.dense_editor_controller.on_mode_changed(current_mode)
 
     def _setup_menu_bar(self) -> None:
         from PyQt6.QtGui import QAction
@@ -374,8 +537,9 @@ class VideoAnnotationWindow(QMainWindow):
     # def prepare_new_dense_ui(self) -> None:
     #     self.prepare_new_project_ui()
 
-    def _on_editor_tab_changed(self, _index: int) -> None:
-        self.dataset_explorer_controller.handle_active_mode_changed()
+    def _refresh_schema_panels(self):
+        self.classification_editor_controller.setup_dynamic_ui()
+        self.localization_editor_controller._refresh_schema_ui()
 
     def load_stylesheet(self) -> None:
         style_path = resource_path(os.path.join("style", "style.qss"))
@@ -395,13 +559,17 @@ class VideoAnnotationWindow(QMainWindow):
             event.ignore()
 
     def update_save_export_button_state(self) -> None:
-        has_data = self.model.json_loaded # Simple heuristic for now
-        can_export = self.model.json_loaded
-        can_save = can_export and (self.model.current_json_path is not None) and self.model.is_data_dirty
+        has_data = self.dataset_explorer_controller.json_loaded # Simple heuristic for now
+        can_export = self.dataset_explorer_controller.json_loaded
+        can_save = (
+            can_export
+            and (self.dataset_explorer_controller.current_json_path is not None)
+            and self.dataset_explorer_controller.is_data_dirty
+        )
         self.action_save.setEnabled(can_save)
         self.action_export.setEnabled(can_export)
-        self.action_undo.setEnabled(len(self.model.undo_stack) > 0)
-        self.action_redo.setEnabled(len(self.model.redo_stack) > 0)
+        self.action_undo.setEnabled(len(self.dataset_explorer_controller.undo_stack) > 0)
+        self.action_redo.setEnabled(len(self.dataset_explorer_controller.redo_stack) > 0)
         if hasattr(self, "dataset_explorer_controller"):
             self.dataset_explorer_controller._refresh_json_preview()
 
@@ -441,16 +609,13 @@ class VideoAnnotationWindow(QMainWindow):
         )
 
         if action_path:
-            item = self.model.action_item_map.get(action_path)
+            item = self.dataset_explorer_controller.action_item_map.get(action_path)
             if item:
                 idx = item.index()
                 if idx.isValid() and not self.dataset_explorer_panel.tree.isRowHidden(idx.row(), QModelIndex()):
                     if self.dataset_explorer_panel.tree.currentIndex() != idx:
                         self.dataset_explorer_panel.tree.setCurrentIndex(idx)
 
-        selected_path = self.get_current_action_path()
-        selected_data_id = self.model.get_data_id_by_path(selected_path) if selected_path else None
-        if selected_data_id:
-            self.dataset_explorer_controller.dataSelected.emit(selected_data_id)
+        self.dataset_explorer_controller.reemit_current_selection()
 
         self.update_save_export_button_state()

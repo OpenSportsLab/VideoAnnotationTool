@@ -67,7 +67,7 @@ def test_dataset_header_inspector_renders_known_and_unknown_fields(window, monke
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     panel = window.dataset_explorer_panel
     known = panel.table_header_known
@@ -102,7 +102,7 @@ def test_header_draft_applies_on_save_and_roundtrips(window, monkeypatch, qtbot,
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     panel = window.dataset_explorer_panel
     new_description = "Edited header description"
@@ -110,8 +110,8 @@ def test_header_draft_applies_on_save_and_roundtrips(window, monkeypatch, qtbot,
     _set_known_value(panel, "description", new_description)
     qtbot.wait(50)
 
-    assert window.model.dataset_json.get("description") == new_description
-    assert window.model.project_header_draft == {}
+    assert window.dataset_explorer_controller.dataset_json.get("description") == new_description
+    assert window.dataset_explorer_controller.project_header_draft == {}
 
     window.dataset_explorer_controller.save_project()
 
@@ -121,14 +121,14 @@ def test_header_draft_applies_on_save_and_roundtrips(window, monkeypatch, qtbot,
     assert saved.get("custom_owner") == "qa-team"
     assert "labels" in saved
     assert len(saved.get("data", [])) == 1
-    assert window.model.dataset_json.get("task") == "action_classification"
+    assert window.dataset_explorer_controller.dataset_json.get("task") == "action_classification"
 
-    window.router.close_project()
+    window.dataset_explorer_controller.close_project()
     monkeypatch.setattr(
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     reloaded_panel = window.dataset_explorer_panel
     desc_row = _row_for_key(reloaded_panel.table_header_known, "description")
@@ -147,14 +147,14 @@ def test_header_draft_discard_close_does_not_persist(window, monkeypatch, qtbot,
         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     _set_known_value(window.dataset_explorer_panel, "description", "Unsaved staged description")
     qtbot.wait(50)
-    assert window.model.is_data_dirty is True
+    assert window.dataset_explorer_controller.is_data_dirty is True
 
     monkeypatch.setattr(window.dataset_explorer_controller, "_prompt_unsaved_close_action", lambda: "discard")
-    window.router.close_project()
+    window.dataset_explorer_controller.close_project()
 
     saved = json.loads(project_json_path.read_text(encoding="utf-8"))
     assert saved.get("description") == "Header smoke"

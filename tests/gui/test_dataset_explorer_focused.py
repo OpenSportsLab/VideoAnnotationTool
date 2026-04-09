@@ -2,19 +2,12 @@
 Focused Dataset Explorer controller and panel tests using minimal fixtures.
 """
 
-import types
-
 import pytest
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QDialog, QMessageBox
 
 from controllers.dataset_explorer_controller import DatasetExplorerController
 from ui.dataset_explorer_panel import DatasetExplorerPanel
-
-
-class _DummyMediaController:
-    def stop(self):
-        return None
 
 
 @pytest.fixture
@@ -27,12 +20,7 @@ def explorer_panel_and_controller(qtbot, tmp_path):
     )
     qtbot.addWidget(panel)
 
-    controller = DatasetExplorerController(
-        main_window=types.SimpleNamespace(),
-        panel=panel,
-        tree_model=panel.tree_model,
-        media_controller=_DummyMediaController(),
-    )
+    controller = DatasetExplorerController(panel=panel, tree_model=panel.tree_model)
     controller.settings = QSettings(str(tmp_path / "dataset_explorer_test.ini"), QSettings.Format.IniFormat)
     return panel, controller
 
@@ -179,7 +167,7 @@ def test_available_mode_indices_for_sample_prefers_fixed_order(explorer_panel_an
     assert controller._available_mode_indices_for_sample({"captions": [{"text": ""}]}) == []
 
 
-def test_group_selected_files_and_sample_id_rules_for_single_and_multiview(
+def test_group_selected_files_and_sample_id_rules(
     explorer_panel_and_controller,
     tmp_path,
 ):
@@ -193,14 +181,11 @@ def test_group_selected_files_and_sample_id_rules_for_single_and_multiview(
     file_a2 = str(group_a / "view_2.mp4")
     file_b1 = str(group_b / "view_1.mp4")
 
-    controller.is_multi_view = False
     assert controller._group_selected_files([file_a1, file_a2]) == [[file_a1], [file_a2]]
-    assert controller._sample_id_from_group([file_a1]) == "view_1"
-
-    controller.is_multi_view = True
     grouped = controller._group_selected_files([file_a2, file_b1, file_a1])
-    assert grouped == [[file_a1, file_a2], [file_b1]]
-    assert controller._sample_id_from_group([file_a1, file_a2]) == "group_a"
+    assert grouped == [[file_a2], [file_b1], [file_a1]]
+    assert controller._sample_id_from_group([file_a1]) == "view_1"
+    assert controller._sample_id_from_group([file_a1, file_a2]) == "view_1"
     assert controller._sample_id_from_group([file_b1]) == "view_1"
 
 

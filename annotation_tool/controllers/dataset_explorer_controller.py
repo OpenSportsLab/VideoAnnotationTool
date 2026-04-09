@@ -4,11 +4,11 @@ import json
 import os
 from collections.abc import MutableMapping
 
-from PyQt6.QtCore import QModelIndex, QObject, QSettings, pyqtSignal
+from PyQt6.QtCore import QModelIndex, QObject, QSettings, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from controllers.command_types import CmdType
-from ui.dialogs import NewDatasetDialog, UnsavedChangesDialog
+from ui.dialogs import UnsavedChangesDialog
 from utils import natural_sort_key
 
 
@@ -211,8 +211,27 @@ class DatasetExplorerController(QObject):
     """
 
     dataSelected = pyqtSignal(str)
+    sampleSelectionChanged = pyqtSignal(object)
+    schemaContextChanged = pyqtSignal(dict)
+    classificationActionListChanged = pyqtSignal(list)
     mediaRouteRequested = pyqtSignal(str, bool)
     mediaStopRequested = pyqtSignal()
+    statusMessageRequested = pyqtSignal(str, str, int)
+    saveStateRefreshRequested = pyqtSignal()
+    schemaRefreshRequested = pyqtSignal()
+    batchDropdownSyncRequested = pyqtSignal()
+    workspaceViewRequested = pyqtSignal()
+    welcomeViewRequested = pyqtSignal()
+    resetEditorsRequested = pyqtSignal()
+    editorTabRequested = pyqtSignal(int)
+    descSaveRequested = pyqtSignal()
+    clearMarkersRequested = pyqtSignal()
+    annotationPanelsEnabledRequested = pyqtSignal(bool)
+    headerDraftMutationRequested = pyqtSignal(dict)
+    sampleRenameRequested = pyqtSignal(str, str)
+    addSamplesRequested = pyqtSignal(list)
+    clearWorkspaceRequested = pyqtSignal()
+    removeItemMutationRequested = pyqtSignal(str, str)
 
     SETTINGS_ORG = "OpenSportsLab"
     SETTINGS_APP = "VideoAnnotationTool"
@@ -228,12 +247,17 @@ class DatasetExplorerController(QObject):
     )
     HEADER_EXCLUDED_KEYS = {"data", "labels"}
 
-    def __init__(self, main_window, panel, tree_model, media_controller=None):
+    def __init__(
+        self,
+        panel,
+        tree_model,
+    ):
         super().__init__()
-        self.main = main_window
         self.panel = panel
         self.tree_model = tree_model
-        self.media_controller = media_controller
+        self._active_mode_index = 0
+        self._done_icon = None
+        self._empty_icon = None
 
         self.settings = QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
 
@@ -243,7 +267,6 @@ class DatasetExplorerController(QObject):
         self.current_working_directory = None
         self.json_loaded = False
         self.is_data_dirty = False
-        self.is_multi_view = False
 
         self.undo_stack = []
         self.redo_stack = []
@@ -371,7 +394,6 @@ class DatasetExplorerController(QObject):
         self.current_working_directory = None
         self.json_loaded = False
         self.is_data_dirty = False
-        self.is_multi_view = False
 
         self.undo_stack = []
         self.redo_stack = []
@@ -388,6 +410,11 @@ class DatasetExplorerController(QObject):
         self.current_selected_input_path = None
         self._last_routed_media_path = None
         self._suspend_tree_item_changed = False
+
+        if hasattr(self.tree_model, "clear"):
+            self.tree_model.clear()
+        if hasattr(self.panel, "tree") and self.panel.tree is not None:
+            self.panel.tree.setCurrentIndex(QModelIndex())
 
         if full_reset:
             self.dataset_json = {}
@@ -461,6 +488,30 @@ class DatasetExplorerController(QObject):
             if entry.get("path") == path:
                 return entry.get("data_id")
         return None
+
+    def _emit_selected_sample(self, sample_id: str):
+        if not sample_id:
+            self.sampleSelectionChanged.emit(None)
+            return
+        sample = self.get_sample(sample_id)
+        if not sample:
+            self.sampleSelectionChanged.emit(None)
+            return
+        self.sampleSelectionChanged.emit(copy.deepcopy(sample))
+
+    def _emit_schema_context(self):
+        self.schemaContextChanged.emit(copy.deepcopy(self.label_definitions))
+
+    def _emit_classification_action_list(self):
+        self.classificationActionListChanged.emit(copy.deepcopy(self.action_item_data))
+
+    def _reemit_current_selection(self):
+        selected = self.current_selected_sample_id or ""
+        self.dataSelected.emit(selected)
+        self._emit_selected_sample(selected)
+
+    def reemit_current_selection(self):
+        self._reemit_current_selection()
 
     def has_action_path(self, path: str) -> bool:
         return self.get_data_id_by_path(path) is not None
@@ -647,19 +698,15 @@ class DatasetExplorerController(QObject):
     # Project lifecycle and recents
     # ------------------------------------------------------------------
     def create_new_project_flow(self):
-        dialog = NewDatasetDialog(self.main)
-        if not dialog.exec():
-            return
-
         if not self.check_and_close_current_project():
             return
 
-        self.main.reset_all_managers()
-        self.create_new_project(multiview_grouping=dialog.is_multi_view)
+        self.resetEditorsRequested.emit()
+        self.create_new_project()
 
     def import_annotations(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self.main,
+            self.panel,
             "Select Project JSON",
             "",
             "JSON Files (*.json)",
@@ -674,7 +721,7 @@ class DatasetExplorerController(QObject):
 
         if not os.path.exists(normalized_path):
             QMessageBox.warning(
-                self.main,
+                self.panel,
                 "Dataset Not Found",
                 f"Dataset file does not exist and will be removed from recents:\n{normalized_path}",
             )
@@ -684,17 +731,17 @@ class DatasetExplorerController(QObject):
         if not self.check_and_close_current_project():
             return False
 
-        self.main.reset_all_managers()
+        self.resetEditorsRequested.emit()
 
         try:
             with open(normalized_path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
         except Exception as exc:
-            QMessageBox.critical(self.main, "Error", f"Invalid JSON: {exc}")
+            QMessageBox.critical(self.panel, "Error", f"Invalid JSON: {exc}")
             return False
 
         if not self.load_project(data, normalized_path):
-            QMessageBox.critical(self.main, "Error", "Could not load dataset JSON.")
+            QMessageBox.critical(self.panel, "Error", "Could not load dataset JSON.")
             return False
 
         self._add_recent_project(normalized_path)
@@ -703,7 +750,7 @@ class DatasetExplorerController(QObject):
     def load_project(self, data, file_path):
         normalized, error = self._normalize_dataset_json(data)
         if error:
-            QMessageBox.critical(self.main, "Invalid Dataset", error)
+            QMessageBox.critical(self.panel, "Invalid Dataset", error)
             return False
 
         self.reset(full_reset=True)
@@ -713,52 +760,51 @@ class DatasetExplorerController(QObject):
         self.current_working_directory = self.project_root
         self.json_loaded = True
         self.is_data_dirty = False
-        self.is_multi_view = any(len(sample.get("inputs", [])) > 1 for sample in self.get_samples())
 
         self._rebuild_runtime_index()
-        self.main.show_workspace()
+        self.workspaceViewRequested.emit()
         self._refresh_header_panel()
         self._refresh_schema_panels()
         self.populate_tree()
         self._reconcile_tab_with_current_selection()
-        self.main.update_save_export_button_state()
-        self.main.show_temp_msg(
+        self.saveStateRefreshRequested.emit()
+        self.statusMessageRequested.emit(
             "Loaded",
             f"Loaded {len(self.action_item_data)} samples.",
+            1500,
         )
         return True
 
-    def create_new_project(self, mode=None, multiview_grouping=False):
+    def create_new_project(self, mode=None):
         _ = mode  # Legacy argument kept for compatibility; tab is sample-driven.
-        initial_tab = self.main.right_tabs.currentIndex()
+        initial_tab = self._active_mode_idx()
 
         self.reset(full_reset=True)
         self.dataset_json = self._default_dataset_json()
         self.json_loaded = True
         self.is_data_dirty = True
-        self.is_multi_view = bool(multiview_grouping)
         self._rebuild_runtime_index()
 
-        self.main.show_workspace()
-        self.main.right_tabs.setCurrentIndex(initial_tab)
+        self.workspaceViewRequested.emit()
+        self.editorTabRequested.emit(initial_tab)
         self._refresh_header_panel()
         self._refresh_schema_panels()
         self.populate_tree()
-        self.main.update_save_export_button_state()
-        self.main.show_temp_msg("New Dataset", "Blank dataset ready.")
+        self.saveStateRefreshRequested.emit()
+        self.statusMessageRequested.emit("New Dataset", "Blank dataset ready.", 1500)
 
     def close_project(self):
         if not self.check_and_close_current_project():
             return
 
-        self.main.reset_all_managers()
+        self.resetEditorsRequested.emit()
         self.reset(full_reset=True)
         self.panel.clear_header_rows()
         if hasattr(self.panel, "clear_raw_json_text"):
             self.panel.clear_raw_json_text()
-        self.main.update_save_export_button_state()
-        self.main.show_welcome_view()
-        self.main.show_temp_msg("Project Closed", "Returned to Home Screen", duration=1000)
+        self.saveStateRefreshRequested.emit()
+        self.welcomeViewRequested.emit()
+        self.statusMessageRequested.emit("Project Closed", "Returned to Home Screen", 1000)
 
     def check_and_close_current_project(self) -> bool:
         if not self.json_loaded:
@@ -783,22 +829,22 @@ class DatasetExplorerController(QObject):
         return True
 
     def _prompt_unsaved_close_action(self) -> str:
-        return UnsavedChangesDialog.get_action(self.main)
+        return UnsavedChangesDialog.get_action(self.panel)
 
     def save_project(self):
-        if self.main.right_tabs.currentIndex() == 2:
-            self.main.desc_editor_controller.save_current_annotation()
+        if self._active_mode_idx() == 2:
+            self.descSaveRequested.emit()
 
         if not self.current_json_path:
             return self.export_project()
         return self._write_dataset_json(self.current_json_path)
 
     def export_project(self):
-        if self.main.right_tabs.currentIndex() == 2:
-            self.main.desc_editor_controller.save_current_annotation()
+        if self._active_mode_idx() == 2:
+            self.descSaveRequested.emit()
 
         path, _ = QFileDialog.getSaveFileName(
-            self.main,
+            self.panel,
             "Save Dataset As",
             self.current_json_path or "",
             "JSON (*.json)",
@@ -893,21 +939,7 @@ class DatasetExplorerController(QObject):
     def _on_header_draft_changed(self, draft: dict):
         if not self.json_loaded or not isinstance(draft, dict):
             return
-        before_json = self.snapshot_dataset_json()
-        changed = False
-        for key, value in draft.items():
-            if key in self.HEADER_EDITABLE_KEYS:
-                current_value = self.dataset_json.get(key)
-                if current_value != value:
-                    self.dataset_json[key] = copy.deepcopy(value)
-                    changed = True
-        if not changed:
-            return
-        if not self.push_dataset_json_replace_undo_if_changed(before_json):
-            return
-        self.main.update_save_export_button_state()
-        self._refresh_header_panel()
-        self._refresh_schema_panels()
+        self.headerDraftMutationRequested.emit(copy.deepcopy(draft))
 
     # ------------------------------------------------------------------
     # Runtime/sample indexing
@@ -1108,13 +1140,6 @@ class DatasetExplorerController(QObject):
             # Ignore programmatic item changes (e.g. icon/status updates).
             return
 
-        reserved = {
-            str(sample.get("id"))
-            for sample in self.get_samples()
-            if isinstance(sample, dict) and str(sample.get("id")) != old_sample_id
-        }
-        final_id = self._make_unique_sample_id(requested_id, reserved)
-
         sample = self.get_sample(old_sample_id)
         if not isinstance(sample, dict):
             self._suspend_tree_item_changed = True
@@ -1124,27 +1149,19 @@ class DatasetExplorerController(QObject):
                 self._suspend_tree_item_changed = False
             return
 
-        before_json = self.snapshot_dataset_json()
         self._suspend_tree_item_changed = True
         try:
-            sample["id"] = final_id
-            item.setText(final_id)
-            item.setData(final_id, getattr(self.tree_model, "DataIdRole", 0x0101))
-            for row in range(item.rowCount()):
-                child = item.child(row)
-                if child is not None:
-                    child.setData(final_id, getattr(self.tree_model, "DataIdRole", 0x0101))
+            # History manager owns the mutation; keep UI stable until refresh.
+            item.setText(old_sample_id)
         finally:
             self._suspend_tree_item_changed = False
 
-        self._rebuild_runtime_index()
-        self.push_dataset_json_replace_undo_if_changed(before_json)
-        if self.current_selected_sample_id == old_sample_id:
-            self.current_selected_sample_id = final_id
-            self.dataSelected.emit(final_id)
-        self._refresh_json_preview()
-        self.main.update_save_export_button_state()
-        self.main.show_temp_msg("Renamed", f"Sample id set to '{final_id}'.")
+        # Defer mutation dispatch to avoid re-entering Qt model reset/clear while
+        # still inside the tree_model.itemChanged callback.
+        QTimer.singleShot(
+            0,
+            lambda old_id=old_sample_id, new_id=requested_id: self.sampleRenameRequested.emit(old_id, new_id),
+        )
 
     # ------------------------------------------------------------------
     # Tree population and selection
@@ -1184,15 +1201,14 @@ class DatasetExplorerController(QObject):
             self._clear_selection_for_empty_filtered_view()
 
         self._refresh_json_preview()
-        if hasattr(self.main, "classification_editor_controller"):
-            self.main.classification_editor_controller.sync_batch_inference_dropdowns()
+        self.batchDropdownSyncRequested.emit()
+        self._emit_classification_action_list()
 
     def update_item_status(self, action_path: str):
         item = self.action_item_map.get(action_path)
         if not item:
             return
-        done_icon = getattr(self.main, "done_icon", None)
-        empty_icon = getattr(self.main, "empty_icon", None)
+        done_icon, empty_icon = self._done_icon, self._empty_icon
         if done_icon is not None and empty_icon is not None:
             item.setIcon(done_icon if self.is_action_done(action_path) else empty_icon)
 
@@ -1201,13 +1217,17 @@ class DatasetExplorerController(QObject):
             self.update_item_status(action_path)
 
     def _set_annotation_panels_enabled(self, enabled: bool):
-        self.main.classification_panel.manual_box.setEnabled(enabled)
-        self.main.localization_panel.setEnabled(enabled)
-        self.main.description_panel.setEnabled(enabled)
-        self.main.dense_panel.setEnabled(enabled)
+        self.annotationPanelsEnabledRequested.emit(enabled)
+
+    def set_active_mode(self, index: int):
+        self._active_mode_index = int(index)
+
+    def set_status_icons(self, done_icon, empty_icon):
+        self._done_icon = done_icon
+        self._empty_icon = empty_icon
 
     def _active_mode_idx(self) -> int:
-        return self.main.right_tabs.currentIndex()
+        return int(self._active_mode_index)
 
     def _get_action_index(self, index: QModelIndex) -> QModelIndex:
         if not index.isValid():
@@ -1297,14 +1317,14 @@ class DatasetExplorerController(QObject):
         self.current_selected_input_path = None
         self._last_routed_media_path = None
         self.mediaStopRequested.emit()
-        self.main.center_panel.set_markers([])
+        self.clearMarkersRequested.emit()
 
         current_idx = self.panel.tree.currentIndex()
         if current_idx.isValid():
             self.panel.tree.setCurrentIndex(QModelIndex())
         else:
             self._set_annotation_panels_enabled(False)
-            self.dataSelected.emit("")
+            self._reemit_current_selection()
 
     def _on_selection_changed(self, current, _previous):
         self._set_annotation_panels_enabled(current.isValid())
@@ -1313,7 +1333,7 @@ class DatasetExplorerController(QObject):
             self.current_selected_sample_id = ""
             self.current_selected_input_path = None
             self._last_routed_media_path = None
-            self.dataSelected.emit("")
+            self._reemit_current_selection()
             return
 
         action_idx = self._get_action_index(current)
@@ -1321,7 +1341,7 @@ class DatasetExplorerController(QObject):
             self.current_selected_sample_id = ""
             self.current_selected_input_path = None
             self._last_routed_media_path = None
-            self.dataSelected.emit("")
+            self._reemit_current_selection()
             return
 
         sample_id = action_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
@@ -1329,7 +1349,7 @@ class DatasetExplorerController(QObject):
             self.current_selected_sample_id = ""
             self.current_selected_input_path = None
             self._last_routed_media_path = None
-            self.dataSelected.emit("")
+            self._reemit_current_selection()
             return
 
         selected_path = current.data(getattr(self.tree_model, "FilePathRole", 0x0100))
@@ -1341,7 +1361,7 @@ class DatasetExplorerController(QObject):
             return
 
         self._route_media_for_selection(current, sample_id, ensure_playback=True)
-        self.dataSelected.emit(sample_id)
+        self._reemit_current_selection()
 
     def _sample_supports_mode(self, sample: dict, mode_idx: int) -> bool:
         if not isinstance(sample, dict):
@@ -1370,7 +1390,7 @@ class DatasetExplorerController(QObject):
         target_mode = available_modes[0]
         if target_mode == current_mode:
             return False
-        self.main.right_tabs.setCurrentIndex(target_mode)
+        self.editorTabRequested.emit(target_mode)
         return True
 
     def _reconcile_tab_with_current_selection(self):
@@ -1391,12 +1411,6 @@ class DatasetExplorerController(QObject):
         if not media_paths:
             return
 
-        center_panel = self.main.center_panel
-        if len(media_paths) > 1 and self.is_multi_view and self._active_mode_idx() == 0:
-            self.main.center_panel.show_all_views(media_paths)
-        elif hasattr(center_panel, "view_layout") and hasattr(center_panel, "single_view_widget"):
-            center_panel.view_layout.setCurrentWidget(center_panel.single_view_widget)
-
         preferred = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
         primary_path = preferred or media_paths[0]
         self.current_selected_input_path = primary_path
@@ -1408,13 +1422,16 @@ class DatasetExplorerController(QObject):
         self.mediaRouteRequested.emit(primary_path, ensure_playback)
         self._last_routed_media_path = primary_path
 
-    def handle_active_mode_changed(self):
+    def handle_active_mode_changed(self, mode_idx: int = None):
+        if mode_idx is not None:
+            self.set_active_mode(mode_idx)
         current_idx = self.panel.tree.currentIndex()
         if not current_idx.isValid() or not self.current_selected_sample_id:
-            self.dataSelected.emit("")
+            self.current_selected_sample_id = ""
+            self._reemit_current_selection()
             return
         self._route_media_for_selection(current_idx, self.current_selected_sample_id, ensure_playback=False)
-        self.dataSelected.emit(self.current_selected_sample_id)
+        self._reemit_current_selection()
 
     def navigate_samples(self, step: int):
         tree = self.panel.tree
@@ -1503,20 +1520,10 @@ class DatasetExplorerController(QObject):
         return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp);;All Files (*)"
 
     def _group_selected_files(self, files):
-        if self.is_multi_view:
-            grouped = {}
-            for file_path in files:
-                grouped.setdefault(os.path.dirname(file_path), []).append(file_path)
-            groups = []
-            for paths in grouped.values():
-                groups.append(sorted(paths))
-            return groups
         return [[path] for path in files]
 
     def _sample_id_from_group(self, source_group):
         primary = source_group[0]
-        if self.is_multi_view and len(source_group) > 1:
-            return os.path.basename(os.path.dirname(primary)) or os.path.basename(primary)
         return os.path.splitext(os.path.basename(primary))[0] or os.path.basename(primary)
 
     def _raw_path_for_new_input(self, path: str):
@@ -1551,12 +1558,12 @@ class DatasetExplorerController(QObject):
 
     def handle_add_sample(self):
         if not self.json_loaded:
-            QMessageBox.warning(self.main, "Warning", "Please create or load a dataset first.")
+            QMessageBox.warning(self.panel, "Warning", "Please create or load a dataset first.")
             return
 
         start_dir = self.current_working_directory or self.project_root or ""
         files, _ = QFileDialog.getOpenFileNames(
-            self.main,
+            self.panel,
             "Select Samples to Add",
             start_dir,
             self._sample_file_filter(),
@@ -1566,61 +1573,23 @@ class DatasetExplorerController(QObject):
 
         if not self.current_working_directory:
             self.current_working_directory = os.path.dirname(files[0])
-
-        before_json = self.snapshot_dataset_json()
-        added_count = 0
-        first_sample_id = None
-
-        for source_group in self._group_selected_files(files):
-            sample = self._build_new_sample(source_group)
-            self.get_samples().append(sample)
-            added_count += 1
-            if first_sample_id is None:
-                first_sample_id = sample["id"]
-
-        if added_count <= 0:
-            return
-
-        self.push_dataset_json_replace_undo_if_changed(before_json)
-        self.populate_tree()
-        self.main.update_save_export_button_state()
-        self.main.show_temp_msg("Added", f"Added {added_count} samples.")
-
-        if first_sample_id:
-            entry = self.sample_id_to_entry.get(first_sample_id)
-            item = self.action_item_map.get(entry["path"]) if entry else None
-            if item is not None:
-                self.panel.tree.setCurrentIndex(item.index())
-                self.panel.tree.setFocus()
+        self.addSamplesRequested.emit(list(files))
 
     def handle_clear_workspace(self):
         if not self.json_loaded:
             return
 
-        msg = QMessageBox(self.main)
+        msg = QMessageBox(self.panel)
         msg.setWindowTitle("Clear Workspace")
         msg.setText("Clear workspace? Unsaved changes will be lost.")
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         if msg.exec() != QMessageBox.StandardButton.Yes:
             return
-
-        before_json = self.snapshot_dataset_json()
-        self.mediaStopRequested.emit()
-        self.dataset_json["data"] = []
-        self.push_dataset_json_replace_undo_if_changed(before_json)
-        self._rebuild_runtime_index()
-        self.main.reset_all_managers()
-        self.main.show_workspace()
-        self._refresh_schema_panels()
-        self.populate_tree()
-        self.main.update_save_export_button_state()
-        self.main.show_temp_msg("Cleared", "Workspace reset.")
+        self.clearWorkspaceRequested.emit()
 
     def handle_remove_item(self, index: QModelIndex):
         if not index.isValid():
             return
-
-        pre_remove_expanded_sample_ids = self._expanded_sample_ids_in_tree()
         action_idx = self._get_action_index(index)
         if not action_idx.isValid():
             return
@@ -1628,85 +1597,19 @@ class DatasetExplorerController(QObject):
         sample_id = action_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
         if not sample_id:
             return
-
-        before_json = self.snapshot_dataset_json()
-        is_child_row = index.parent().isValid()
-        removed_parent_row = action_idx.row()
-        removed = False
-        sample_removed = False
-        removed_path = ""
-
-        if is_child_row:
-            child_path = index.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-            removed, sample_removed = self._remove_sample_input_by_path(sample_id, child_path)
-            removed_path = child_path or ""
-        else:
-            sample_path = action_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-            removed = self._remove_sample_by_id(sample_id)
-            sample_removed = removed
-            removed_path = sample_path or ""
-
-        if not removed:
-            return
-
-        self.push_dataset_json_replace_undo_if_changed(before_json)
-        removed_selected = (
-            sample_id == self.current_selected_sample_id
-            if sample_removed
-            else self._fs_path_key(removed_path) == self._fs_path_key(self.current_selected_input_path)
-        )
-        self.populate_tree()
-
-        post_remove_selection = QModelIndex()
-        if sample_removed:
-            post_remove_selection = self._first_visible_top_level_index(removed_parent_row - 1)
-        else:
-            parent_idx = self._top_level_index_for_sample(sample_id)
-            if parent_idx.isValid():
-                child_idx = self._first_child_index_for_parent(parent_idx)
-                post_remove_selection = child_idx if child_idx.isValid() else parent_idx
-
-        if post_remove_selection.isValid():
-            self.panel.tree.setCurrentIndex(post_remove_selection)
-            self.panel.tree.scrollTo(post_remove_selection)
-        self._reapply_expanded_samples(pre_remove_expanded_sample_ids)
-
-        self.main.update_save_export_button_state()
-        self.main.show_temp_msg("Removed", "Sample removed." if sample_removed else "Input removed.")
-
-        if removed_selected and self.tree_model.rowCount() == 0:
-            self._reset_panels_after_removed_path(removed_path)
+        input_path = ""
+        if index.parent().isValid():
+            input_path = index.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
+        self.removeItemMutationRequested.emit(str(sample_id), input_path)
 
     def _reset_panels_after_removed_path(self, _removed_path: str):
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
         self._last_routed_media_path = None
         self.mediaStopRequested.emit()
-        self.main.center_panel.set_markers([])
-
-        self.main.classification_panel.clear_selection()
-        self.main.classification_panel.reset_smart_inference()
-        self.main.classification_panel.manual_box.setEnabled(False)
-
-        self.main.localization_editor_controller.current_video_path = None
-        self.main.localization_editor_controller.current_head = None
-        self.main.localization_panel.table.set_data([])
-        if hasattr(self.main.localization_panel, "smart_widget"):
-            self.main.localization_panel.smart_widget.smart_table.set_data([])
-        self.main.localization_panel.setEnabled(False)
-
-        self.main.desc_editor_controller.current_sample_id = ""
-        self.main.desc_editor_controller.current_action_path = None
-        self.main.description_panel.caption_edit.clear()
-        self.main.description_panel.caption_edit.setEnabled(False)
-        self.main.description_panel.setEnabled(False)
-
-        self.main.dense_editor_controller.current_video_path = None
-        self.main.dense_editor_controller.current_sample_id = ""
-        self.main.dense_panel.table.set_data([])
-        self.main.dense_panel.setEnabled(False)
-
-        self.dataSelected.emit("")
+        self.clearMarkersRequested.emit()
+        self.annotationPanelsEnabledRequested.emit(False)
+        self._reemit_current_selection()
 
     # ------------------------------------------------------------------
     # Save helpers
@@ -1766,7 +1669,7 @@ class DatasetExplorerController(QObject):
             with open(save_path, "w", encoding="utf-8") as handle:
                 json.dump(written, handle, indent=2, ensure_ascii=False)
         except Exception as exc:
-            QMessageBox.critical(self.main, "Save Error", f"Save failed: {exc}")
+            QMessageBox.critical(self.panel, "Save Error", f"Save failed: {exc}")
             return False
 
         self.dataset_json = written
@@ -1777,15 +1680,13 @@ class DatasetExplorerController(QObject):
         self._add_recent_project(self.current_json_path)
         self._rebuild_runtime_index()
         self._refresh_header_panel()
-        self.main.update_save_export_button_state()
-        self.main.show_temp_msg("Saved", f"Saved to {os.path.basename(save_path)}")
+        self.saveStateRefreshRequested.emit()
+        self.statusMessageRequested.emit("Saved", f"Saved to {os.path.basename(save_path)}", 1500)
         return True
 
     # ------------------------------------------------------------------
     # Shared schema/UI refresh
     # ------------------------------------------------------------------
     def _refresh_schema_panels(self):
-        if hasattr(self.main, "classification_editor_controller"):
-            self.main.classification_editor_controller.setup_dynamic_ui()
-        if hasattr(self.main, "localization_editor_controller"):
-            self.main.localization_editor_controller._refresh_schema_ui()
+        self.schemaRefreshRequested.emit()
+        self._emit_schema_context()
