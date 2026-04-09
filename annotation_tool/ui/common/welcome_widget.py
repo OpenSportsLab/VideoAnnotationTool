@@ -70,7 +70,7 @@ class WelcomeWidget(QWidget):
         self.tutorial_btn.setFixedSize(160, 40) 
         self.tutorial_btn.setProperty("class", "welcome_secondary_btn") 
         self.tutorial_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.tutorial_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://www.youtube.com/")))
+        self.tutorial_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://drive.google.com/file/d/1EgQXGMQya06vNMuX_7-OlAUjF_Je-ye_/view?usp=sharing")))
 
         self.github_btn = QPushButton("🐙 GitHub Repo")
         self.github_btn.setFixedSize(160, 40)
