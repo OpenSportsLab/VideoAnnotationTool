@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
+import argparse
 from pathlib import Path
-import sys
 
 IGNORE_DIRS = {
     ".git",
@@ -66,7 +66,18 @@ def walk_tree(root: Path, totals: dict[Path, int], prefix: str = "") -> None:
 
 
 def main():
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
+    parser = argparse.ArgumentParser(
+        description="Count Python lines for a directory tree."
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Path to analyze. Defaults to the current directory.",
+    )
+    args = parser.parse_args()
+
+    root = Path(args.path)
     root = root.resolve()
 
     totals: dict[Path, int] = {}

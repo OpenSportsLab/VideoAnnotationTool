@@ -130,11 +130,7 @@ class VideoAnnotationWindow(QMainWindow):
 
         # Dense Description Controller
         self.dense_editor_controller = DenseEditorController(
-            model=self.dataset_explorer_controller,
-            tree_model=self.tree_model,
-            center_panel=self.center_panel,
             dense_panel=self.dense_panel,
-            playback_state_provider=lambda: self.media_controller.is_playing(),
         )
 
         self.history_manager = HistoryManager(
@@ -250,9 +246,16 @@ class VideoAnnotationWindow(QMainWindow):
         # when it needs global context.
         self.dataset_explorer_controller.dataSelected.connect(self.classification_editor_controller.on_data_selected)
         self.dataset_explorer_controller.dataSelected.connect(self.localization_editor_controller.on_data_selected)
-        self.dataset_explorer_controller.dataSelected.connect(self.dense_editor_controller.on_data_selected)
         self.dataset_explorer_controller.sampleSelectionChanged.connect(
             self.desc_editor_controller.on_selected_sample_changed
+        )
+        self.dataset_explorer_controller.sampleSelectionChanged.connect(
+            lambda sample: self.dense_editor_controller.on_selected_sample_changed(
+                sample,
+                self.dataset_explorer_controller.get_path_by_id(
+                    str(sample.get("id") or "")
+                ) if isinstance(sample, dict) else "",
+            )
         )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
             lambda path, ensure_playback: self.media_controller.route_media_selection(path, ensure_playback)
@@ -301,9 +304,21 @@ class VideoAnnotationWindow(QMainWindow):
         center_panel.stopRequested.connect(lambda: self.media_controller.stop())
         center_panel.playbackRateRequested.connect(center_panel.set_playback_rate)
         self.media_controller.playbackStateChanged.connect(self.localization_editor_controller.on_playback_state_changed)
-        self.media_controller.playbackStateChanged.connect(self.dense_editor_controller.on_playback_state_changed)
+        center_panel.positionChanged.connect(self.dense_editor_controller.on_media_position_changed)
         self.media_controller.muteStateChanged.connect(center_panel.set_mute_button_state)
         center_panel.set_mute_button_state(self.media_controller.is_muted())
+        # Dense add should always pause playback first; no auto-resume behavior.
+        self.dense_panel.addEventRequested.connect(self.media_controller.pause)
+        # Snapshot runtime media position on dense actions.
+        self.dense_panel.addEventRequested.connect(
+            lambda: self.dense_editor_controller.on_media_position_changed(self.center_panel.player.position())
+        )
+        self.dense_panel.updateTimeForSelectedRequested.connect(
+            lambda _event: self.dense_editor_controller.on_media_position_changed(self.center_panel.player.position())
+        )
+        self.dense_panel.eventNavigateRequested.connect(
+            lambda _step: self.dense_editor_controller.on_media_position_changed(self.center_panel.player.position())
+        )
 
         # --- Controller shell update signals ---
         self.classification_editor_controller.statusMessageRequested.connect(self.show_temp_msg)
@@ -376,6 +391,8 @@ class VideoAnnotationWindow(QMainWindow):
         self.dense_editor_controller.denseEventDelRequested.connect(
             self.history_manager.execute_dense_event_del
         )
+        self.dense_editor_controller.mediaSeekRequested.connect(self.center_panel.set_position)
+        self.dense_editor_controller.markersUpdateRequested.connect(self.center_panel.set_markers)
 
         # --- History manager request signals ---
         self.history_manager.allItemStatusRefreshRequested.connect(self.dataset_explorer_controller.refresh_all_item_statuses)

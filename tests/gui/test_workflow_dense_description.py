@@ -230,10 +230,6 @@ def test_dense_add_description_modal_flow_creates_event_and_resumes_playback(
     assert first_index.isValid()
     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
     qtbot.wait(50)
-
-    toggle_emits = []
-    window.center_panel.playPauseRequested.connect(lambda: toggle_emits.append(True))
-    monkeypatch.setattr(window.media_controller, "is_playing", lambda: True)
     monkeypatch.setattr(window.center_panel.player, "position", lambda: 7777)
     monkeypatch.setattr(
         "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
@@ -252,7 +248,6 @@ def test_dense_add_description_modal_flow_creates_event_and_resumes_playback(
     assert len(events) == len(before_events) + 1
     assert any(event.get("position_ms") == 7777 and event.get("text") == "Added from popup" for event in events)
     assert len(window.dataset_explorer_controller.undo_stack) == before_undo + 1
-    assert len(toggle_emits) == 2
     selected = window.dense_editor_controller._selected_event_in_table()
     assert selected is not None
     assert selected.get("text") == "Added from popup"

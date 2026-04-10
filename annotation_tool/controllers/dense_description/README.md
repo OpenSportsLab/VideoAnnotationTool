@@ -4,9 +4,12 @@
 Owns Dense Description mode behavior for timestamped text event CRUD and marker/table synchronization.
 
 ## Architecture Context
-- `DenseEditorController` is selection-driven.
+- `DenseEditorController` is selection-driven and consumes selected sample payloads.
+- Constructor takes only the dense panel object.
+- It consumes panel-level signals/methods and receives resolved sample path context through `MainWindow.connect_signals()` wiring.
+- Runtime playback state and media position are refreshed via signal-slot wiring from `MainWindow.connect_signals()`.
 - Emits add/modify/delete intents to `HistoryManager`.
-- Uses center panel playback position for timing and navigation.
+- Requests media operations and marker updates through outbound signals.
 
 ## Public Surface
 ### Class
@@ -19,14 +22,16 @@ Owns Dense Description mode behavior for timestamped text event CRUD and marker/
 - `denseEventAddRequested(str, dict)`
 - `denseEventModRequested(str, dict, dict)`
 - `denseEventDelRequested(str, dict, int)`
+- `mediaSeekRequested(int)`
+- `markersUpdateRequested(object)`
 
 ## Key Functions and Responsibilities
 - `setup_connections()`
-  - Binds add button, table CRUD, and event navigation.
+  - Binds panel-level add/edit/delete/select/time-update and navigation intents.
 - `on_mode_changed(index)`
   - Refreshes dense display when mode becomes active.
-- `on_data_selected(data_id)`
-  - Loads dense events for selected sample.
+- `on_selected_sample_changed(sample)`
+  - Loads selected sample snapshot and refreshes dense events.
 - `_on_add_event_requested(initial_text="")`
   - Modal add flow; creates event at current time and emits add intent.
 - `_on_annotation_modified(old_event, new_event)`
@@ -34,7 +39,7 @@ Owns Dense Description mode behavior for timestamped text event CRUD and marker/
 - `_on_delete_single_annotation(item_data)`
   - Emits delete intent for selected event.
 - `display_events_for_item(path, update_markers=None)`
-  - Renders sorted events table and timeline markers.
+  - Refreshes currently selected dense display state.
 
 ## Business Rules
 - Add flow requires non-empty text.
@@ -45,13 +50,15 @@ Owns Dense Description mode behavior for timestamped text event CRUD and marker/
 ## Conventions
 - Keep business mutation policy out of UI adapters.
 - Use signal-based mutation requests only.
+- Keep controller-panel boundary clean: use `DenseAnnotationPanel` API (`set_events`, `get_selected_event`, `select_event`, `set_dense_enabled`).
 
 ## Interactions
 - Inbound:
-  - `DatasetExplorerController.dataSelected -> on_data_selected`
-  - `MediaController.playbackStateChanged -> on_playback_state_changed`
+  - `DatasetExplorerController.sampleSelectionChanged -> on_selected_sample_changed`
+  - `MediaCenterPanel.positionChanged -> on_media_position_changed`
 - Outbound:
   - Dense mutation signals -> `HistoryManager.execute_dense_event_*`
+  - Media/marker signals -> `MainWindow.connect_signals()` routing
 
 ## Tests
 - `tests/gui/test_workflow_dense_description.py`
@@ -63,7 +70,7 @@ Owns Dense Description mode behavior for timestamped text event CRUD and marker/
   Add action creates exactly one new event mutation (or no-op on cancel/empty text).
 - Table-edit contract:
   dense event edits should be table-driven and emit old/new payload with no-op guard.
-- Modal pause/resume:
-  preserve symmetric play/pause toggles around modal input when media was already playing.
+- Modal add behavior:
+  Add click is wired in `MainWindow.connect_signals()` to `MediaController.pause`; dense controller does not track playback state and does not auto-resume.
 - Marker contract:
   marker refresh should remain mode-aware and tied to current selected sample path.

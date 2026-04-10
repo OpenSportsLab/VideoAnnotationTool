@@ -65,6 +65,7 @@ High-level module coupling rules:
 - No centralized event bus abstraction.
 - No `DatasetModelFacade`-style abstraction layer.
 - No legacy aliases such as `window.model` / `window.router`; use `window.dataset_explorer_controller`.
+- Mode controllers should only have their panel as constructor arguments.
 
 UI vs Controller split:
 - UI modules:
@@ -127,8 +128,11 @@ Mutation boundary:
 ## Refactoring Principles
 - Prefer deleting legacy compatibility paths instead of adding shims.
 - Prefer one canonical implementation per business operation.
+- Prefer simple, explicit logic over clever or heavily abstracted implementations.
 - Keep constructors minimal and explicit.
 - If logic duplicates across controllers, centralize it in the owner module (usually `HistoryManager` for mutations, `MediaController` for playback).
+- Remove functions that are no longer used after refactors.
+- Eliminate redundant logic and redundant helper functions; keep only the canonical path.
 - Keep files smaller by extracting coherent helpers, not by adding extra orchestration layers.
 
 ## Testing and Change Discipline
@@ -143,11 +147,16 @@ When changing architecture or mutation/playback behavior, update and run relevan
 - `tests/gui/test_workflow_dense_description.py`
 - `tests/gui/test_media_player_controls.py`
 
+Always run the relevant tests after changes to check for regressions before considering work complete.
+
 ## PR/Agent Checklist
 1. Did you keep controller boundaries (no `main_window`, no direct controller-to-controller constructor dependency in scoped modules)?
 2. Did you preserve the 1-or-0 history push rule for mutations?
 3. Did you avoid unnecessary tree repopulate/media restart side effects?
 4. Did you wire new behavior through explicit signals in `MainWindow.connect_signals()`?
 5. Did you avoid reintroducing legacy aliases/facades?
-6. Did you update module README(s) if public behavior/contracts changed?
-7. Did you add or update regression tests for new behavior?
+6. Did you keep the implementation simple and avoid unnecessary complexity?
+7. Did you remove functions that are no longer used?
+8. Did you remove redundant logic/functions and keep one canonical implementation?
+9. Did you update module README(s) if public behavior/contracts changed?
+10. Did you add or update regression tests for new behavior, and run relevant test suites to verify no regressions?

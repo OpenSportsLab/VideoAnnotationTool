@@ -258,6 +258,11 @@ class DenseAnnotationPanel(QWidget):
     Uses only standard widgets in .ui and adapter objects in Python.
     """
     eventNavigateRequested = pyqtSignal(int)
+    addEventRequested = pyqtSignal()
+    eventSelected = pyqtSignal(int)
+    eventDeleted = pyqtSignal(dict)
+    eventModified = pyqtSignal(dict, dict)
+    updateTimeForSelectedRequested = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -284,6 +289,11 @@ class DenseAnnotationPanel(QWidget):
             list_label=self.denseEventsListLabel,
             parent=self,
         )
+        self.input_widget.addEventRequested.connect(self.addEventRequested.emit)
+        self.table.annotationSelected.connect(self.eventSelected.emit)
+        self.table.annotationDeleted.connect(self.eventDeleted.emit)
+        self.table.annotationModified.connect(self.eventModified.emit)
+        self.table.updateTimeForSelectedRequested.connect(self.updateTimeForSelectedRequested.emit)
 
         # Swap in dense model and reconnect table signal wiring.
         self.dense_model = DenseTableModel()
@@ -337,6 +347,39 @@ class DenseAnnotationPanel(QWidget):
         view.setColumnWidth(0, col0)
         view.setColumnWidth(1, col1)
         view.setColumnWidth(2, col2)
+
+    def set_events(self, annotations):
+        self.table.set_data(annotations or [])
+
+    def set_dense_enabled(self, enabled: bool):
+        self.setEnabled(bool(enabled))
+
+    def get_selected_event(self):
+        selection_model = self.table.table.selectionModel()
+        if not selection_model:
+            return None
+        selected_rows = selection_model.selectedRows()
+        if not selected_rows:
+            return None
+        return self.table.model.get_annotation_at(selected_rows[0].row())
+
+    def select_row_by_time(self, time_ms: int, tolerance_ms: int = 20):
+        model = self.table.model
+        for row in range(model.rowCount()):
+            item = model.get_annotation_at(row)
+            if item and abs(item.get("position_ms", 0) - int(time_ms)) < int(tolerance_ms):
+                self.table.table.selectRow(row)
+                return
+
+    def select_event(self, target_event: dict):
+        if not isinstance(target_event, dict):
+            return
+        model = self.table.model
+        for row in range(model.rowCount()):
+            item = model.get_annotation_at(row)
+            if item is target_event or item == target_event:
+                self.table.table.selectRow(row)
+                return
 
     def _retry_dense_column_ratio(self):
         self._pending_column_layout_retry = False

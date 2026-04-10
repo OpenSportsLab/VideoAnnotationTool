@@ -7,6 +7,7 @@ Provides the Dense Description right-panel with table and add-event adapters.
 - Static layout comes from `dense_annotation_panel.ui`.
 - `DenseAnnotationPanel` builds runtime adapters and table model in `__init__.py`.
 - Business logic is handled by `DenseEditorController`.
+- Panel exposes a stable controller-facing API and signal surface.
 
 ## Public Surface
 ### Main Class
@@ -19,6 +20,11 @@ Provides the Dense Description right-panel with table and add-event adapters.
 
 ### Panel Signal
 - `eventNavigateRequested(int)`
+- `addEventRequested()`
+- `eventSelected(int)`
+- `eventDeleted(dict)`
+- `eventModified(dict, dict)`
+- `updateTimeForSelectedRequested(dict)`
 
 ### Table Adapter Signals
 - `annotationSelected(int)`
@@ -32,12 +38,16 @@ Provides the Dense Description right-panel with table and add-event adapters.
 ## Key Functions and Responsibilities
 - `DenseAnnotationPanel.__init__()`
   - Loads `.ui`, initializes adapters/model, configures editing behavior.
+- `set_events(annotations)`
+  - Replaces displayed dense events.
+- `set_dense_enabled(enabled)`
+  - Applies panel enabled/disabled state.
+- `get_selected_event()`, `select_row_by_time(...)`, `select_event(...)`
+  - Controller-facing selection helpers without exposing table internals.
 - `_apply_dense_column_ratio()`
   - Maintains Time/Lang/Description column width ratio.
 - `DenseTableModel.setData(...)`
   - Emits old/new row payload on effective edits.
-- `_DenseTableAdapter.set_data(...)`
-  - Replaces displayed annotations.
 
 ## Business Rules
 - Table emits edit intents; controller validates and persists changes.
@@ -46,7 +56,7 @@ Provides the Dense Description right-panel with table and add-event adapters.
 
 ## Conventions
 - Keep widget layout in `.ui` and adapter behavior in Python.
-- Preserve table adapter API used by controller/tests.
+- Preserve compatibility fields (`table`, `input_widget`) used by tests.
 
 ## Interactions
 - Inbound from controller:

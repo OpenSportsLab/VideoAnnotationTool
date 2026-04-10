@@ -825,6 +825,10 @@ class HistoryManager(QObject):
             path = self._get_dense_current_video_path()
             if path:
                 self.denseDisplayRequested.emit(path)
+            self.refreshUiAfterUndoRedoRequested.emit(
+                self._get_current_action_path() or "",
+                "clear_selection",
+            )
 
     def _apply_state_change(self, cmd, is_undo):
         ctype = cmd["type"]

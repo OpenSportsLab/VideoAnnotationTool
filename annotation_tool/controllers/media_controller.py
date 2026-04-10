@@ -158,6 +158,12 @@ class MediaController(QObject):
             self.player.play()
             self.watchdog_timer.start()
 
+    def play(self):
+        self.player.play()
+        
+    def pause(self):
+        self.player.pause()
+
     def stop(self):
         """Stops playback and cancels all timers."""
         if self.play_timer.isActive():
