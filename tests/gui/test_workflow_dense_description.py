@@ -374,9 +374,11 @@ def test_dense_events_remain_chronological_after_add_modify_delete(
     assert [int(e.get("position_ms", 0)) for e in events] == sorted(int(e.get("position_ms", 0)) for e in events)
 
     # Delete one event and ensure ordering remains canonical.
-    controller._on_delete_single_annotation(events[0])
+    target_deleted_event = copy.deepcopy(events[0])
+    controller._on_delete_single_annotation(target_deleted_event)
     qtbot.wait(50)
     events = list(window.dataset_explorer_controller.dense_description_events.get(path, []))
+    assert not any(event == target_deleted_event for event in events)
     assert [int(e.get("position_ms", 0)) for e in events] == sorted(int(e.get("position_ms", 0)) for e in events)
 
     # Persisted JSON order must match chronological order.

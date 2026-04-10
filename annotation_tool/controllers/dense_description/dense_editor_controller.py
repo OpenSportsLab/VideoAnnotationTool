@@ -86,6 +86,7 @@ class DenseEditorController(QObject):
         self.current_sample_id = sample_id
         self.current_video_path = path
         self._current_sample_snapshot = copy.deepcopy(sample)
+        self._set_snapshot_dense_events(self._current_sample_snapshot.get("dense_captions", []))
         self.dense_panel.set_dense_enabled(True)
         self._refresh_events_display(update_markers=self._is_active_mode())
 
@@ -226,7 +227,9 @@ class DenseEditorController(QObject):
     def _set_snapshot_dense_events(self, events):
         if not isinstance(self._current_sample_snapshot, dict):
             self._current_sample_snapshot = {}
-        self._current_sample_snapshot["dense_captions"] = copy.deepcopy(list(events or []))
+        normalized = copy.deepcopy(list(events or []))
+        normalized.sort(key=self._event_position_ms)
+        self._current_sample_snapshot["dense_captions"] = normalized
 
     def _refresh_events_display(self, update_markers=None):
         current_selection_ms = None
@@ -234,15 +237,15 @@ class DenseEditorController(QObject):
         if isinstance(current_selected_event, dict):
             current_selection_ms = current_selected_event.get("position_ms")
 
-        sorted_events = sorted(self._snapshot_dense_events(), key=lambda x: x.get("position_ms", 0))
-        self.dense_panel.set_events(sorted_events)
+        events = self._snapshot_dense_events()
+        self.dense_panel.set_events(events)
 
         if update_markers is None:
             update_markers = self._is_active_mode()
         if update_markers:
             markers = [
                 {"start_ms": event.get("position_ms", 0), "color": QColor("#FFD700")}
-                for event in sorted_events
+                for event in events
             ]
             self.markersUpdateRequested.emit(markers)
 
@@ -264,6 +267,15 @@ class DenseEditorController(QObject):
             return events.index(target_event)
         except ValueError:
             return -1
+
+    @staticmethod
+    def _event_position_ms(event) -> int:
+        if not isinstance(event, dict):
+            return 0
+        try:
+            return int(event.get("position_ms", 0) or 0)
+        except Exception:
+            return 0
 
     def _is_active_mode(self) -> bool:
         return self._active_mode_index == 3
