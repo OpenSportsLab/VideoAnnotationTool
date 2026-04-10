@@ -27,7 +27,7 @@ class DescEditorController(QObject):
 
     def setup_connections(self):
         """Connect Description editor UI signals to controller actions."""
-        self.description_panel.caption_edit.textChanged.connect(self._on_caption_text_changed)
+        self.description_panel.captionTextChanged.connect(self._on_caption_text_changed)
 
     def on_mode_changed(self, index: int):
         self._active_mode_index = index
@@ -41,8 +41,7 @@ class DescEditorController(QObject):
         self.current_action_path = None
         self._current_sample_snapshot = {}
         self._set_editor_text("")
-        self.description_panel.caption_edit.setEnabled(False)
-        self.description_panel.setEnabled(False)
+        self.description_panel.set_caption_editor_enabled(False)
 
     def on_selected_sample_changed(self, sample):
         """
@@ -54,8 +53,7 @@ class DescEditorController(QObject):
             self.current_action_path = None
             self._set_editor_text("")
             self._current_sample_snapshot = {}
-            self.description_panel.caption_edit.setEnabled(False)
-            self.description_panel.setEnabled(False)
+            self.description_panel.set_caption_editor_enabled(False)
             if self._is_active_mode():
                 self.clearMarkersRequested.emit()
             return
@@ -66,16 +64,14 @@ class DescEditorController(QObject):
             self.current_action_path = None
             self._set_editor_text("")
             self._current_sample_snapshot = {}
-            self.description_panel.caption_edit.setEnabled(False)
-            self.description_panel.setEnabled(False)
+            self.description_panel.set_caption_editor_enabled(False)
             if self._is_active_mode():
                 self.clearMarkersRequested.emit()
             return
 
         self._current_sample_snapshot = copy.deepcopy(sample)
         self.current_action_path = self._extract_primary_path(sample)
-        self.description_panel.caption_edit.setEnabled(True)
-        self.description_panel.setEnabled(True)
+        self.description_panel.set_caption_editor_enabled(True)
         if self._is_active_mode():
             self.clearMarkersRequested.emit()
 
@@ -111,7 +107,7 @@ class DescEditorController(QObject):
     def _set_editor_text(self, text: str):
         self._suspend_autosave = True
         try:
-            self.description_panel.caption_edit.setPlainText(text)
+            self.description_panel.set_caption_text(text)
         finally:
             self._suspend_autosave = False
 
@@ -129,7 +125,7 @@ class DescEditorController(QObject):
         if not self.current_sample_id:
             return False
 
-        text_content = self.description_panel.caption_edit.toPlainText()
+        text_content = self.description_panel.get_caption_text()
         old_captions = copy.deepcopy(self._current_sample_snapshot.get("captions", []))
         new_captions = [{"lang": "en", "text": text_content}]
         if old_captions == new_captions:

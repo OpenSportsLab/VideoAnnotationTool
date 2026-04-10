@@ -6,6 +6,7 @@ Owns Description mode editor behavior for sample-level captions.
 ## Architecture Context
 - `DescEditorController` is selection-driven and operates on the selected sample payload.
 - It emits caption updates to `HistoryManager` and never mutates project lifecycle state.
+- It depends only on the description panel object and consumes panel-level signals/methods (not child widgets directly).
 
 ## Public Surface
 ### Class
@@ -17,7 +18,7 @@ Owns Description mode editor behavior for sample-level captions.
 
 ## Key Functions and Responsibilities
 - `setup_connections()`
-  - Connects caption editor text changes to autosave pipeline.
+  - Connects panel-level caption change signal to autosave pipeline.
 - `on_mode_changed(index)`
   - Tracks active mode and requests marker clear when Description is active.
 - `on_selected_sample_changed(sample)`
@@ -37,6 +38,7 @@ Owns Description mode editor behavior for sample-level captions.
 - Keep parsing/formatting local to controller.
 - Use signals for all persistence side effects.
 - Do not own dataset create/load/save/filter/remove behavior.
+- Keep controller-panel boundary clean: use `DescriptionAnnotationPanel` API (`set_caption_text`, `get_caption_text`, `set_caption_editor_enabled`).
 
 ## Interactions
 - Inbound:

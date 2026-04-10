@@ -5,7 +5,7 @@ Provides the Description right-panel widget for sample captions.
 
 ## Architecture Context
 - Layout is defined in `description_annotation_panel.ui`.
-- `DescriptionAnnotationPanel` is a thin wrapper exposing a stable controller-facing editor reference.
+- `DescriptionAnnotationPanel` is a thin wrapper exposing a stable controller-facing API.
 
 ## Public Surface
 ### Main Class
@@ -14,22 +14,34 @@ Provides the Description right-panel widget for sample captions.
 ### Exposed Attributes
 - `caption_edit` (alias to `descCaptionEdit` from `.ui`)
 
+### Exposed Signal
+- `captionTextChanged()`
+
+### Exposed Methods
+- `set_caption_text(text: str)`
+- `get_caption_text() -> str`
+- `set_caption_editor_enabled(enabled: bool)`
+
 ## Key Functions and Responsibilities
 - `DescriptionAnnotationPanel.__init__()`
-  - Loads `.ui` and sets `caption_edit` alias for controller/test compatibility.
+  - Loads `.ui`, sets `caption_edit` alias for compatibility, and re-emits text changes via `captionTextChanged`.
+- `set_caption_text()` / `get_caption_text()`
+  - Controller-facing text access without exposing widget internals.
+- `set_caption_editor_enabled()`
+  - Applies enabled/disabled state consistently to editor and panel.
 
 ## Business Rules
 - UI layer is passive; controller owns autosave and mutation behavior.
 
 ## Conventions
 - Keep this module intentionally thin.
-- Preserve alias compatibility (`caption_edit`) for controller usage.
+- Preserve alias compatibility (`caption_edit`) for tests and backward compatibility.
 
 ## Interactions
 - Inbound from controller:
-  - text set/reset and enable/disable state.
+  - text set/reset and enable/disable via panel methods.
 - Outbound to controller:
-  - plain text edit signals from `caption_edit`.
+  - `captionTextChanged()`.
 
 ## Tests
 - `tests/gui/test_workflow_description.py`
