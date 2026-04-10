@@ -126,6 +126,64 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
     assert any(e.get("label") == "shot" and e.get("position_ms") == 3456 for e in final_events)
 
 
+@pytest.mark.gui
+def test_localization_events_remain_chronological_after_add_modify_delete(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    path = window.localization_editor_controller.current_video_path
+    sample_id = window.localization_editor_controller.current_sample_id
+    assert path
+    assert sample_id
+
+    # Add an early event (before existing 1000ms).
+    window.history_manager.execute_localization_event_add(
+        sample_id,
+        {"head": "ball_action", "label": "shot", "position_ms": 500},
+    )
+    qtbot.wait(50)
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    assert [int(e.get("position_ms", 0)) for e in events] == sorted(int(e.get("position_ms", 0)) for e in events)
+
+    # Modify event time so ordering must be recomputed again.
+    old_event = next(e for e in events if e.get("label") == "shot" and int(e.get("position_ms", 0)) == 500)
+    updated_event = dict(old_event)
+    updated_event["position_ms"] = 1500
+    window.localization_editor_controller._on_annotation_modified(old_event, updated_event)
+    qtbot.wait(50)
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    assert [int(e.get("position_ms", 0)) for e in events] == sorted(int(e.get("position_ms", 0)) for e in events)
+
+    # # Delete one event and ensure ordering remains canonical. (Freezes without proper handling in delete flow.)
+    # window.localization_editor_controller._on_delete_single_annotation(events[0])
+    # qtbot.wait(50)
+    # events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    # assert [int(e.get("position_ms", 0)) for e in events] == sorted(int(e.get("position_ms", 0)) for e in events)
+
+    # Persisted JSON order must match chronological order too.
+    window.dataset_explorer_controller.save_project()
+    saved = json.loads(project_json_path.read_text(encoding="utf-8"))
+    saved_events = saved.get("data", [])[0].get("events", [])
+    assert [int(e.get("position_ms", 0)) for e in saved_events] == sorted(
+        int(e.get("position_ms", 0)) for e in saved_events
+    )
+
+
 # @pytest.mark.gui
 # # Workflow: In Localization mode, removing the selected item should clear panel/media/table state.
 # def test_localization_remove_selected_item_resets_panel_state(

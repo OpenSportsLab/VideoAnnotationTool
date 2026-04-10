@@ -313,6 +313,7 @@ class HistoryManager(QObject):
                 if touched_path not in self.model.localization_events:
                     self.model.localization_events[touched_path] = []
                 self.model.localization_events[touched_path].append(new_event)
+                self._sort_events_by_time(self.model.localization_events[touched_path])
 
         if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
             return
@@ -383,6 +384,7 @@ class HistoryManager(QObject):
         if video_path not in self.model.localization_events:
             self.model.localization_events[video_path] = []
         self.model.localization_events[video_path].append(event_copy)
+        self._sort_events_by_time(self.model.localization_events[video_path])
 
         self._emit_post_mutation(
             touched_paths=[video_path],
@@ -421,6 +423,7 @@ class HistoryManager(QObject):
                 schema_changed = True
 
         events[index] = copy.deepcopy(new_event)
+        self._sort_events_by_time(events)
         self._emit_post_mutation(
             touched_paths=[video_path],
             refresh_schema=schema_changed,
@@ -444,6 +447,7 @@ class HistoryManager(QObject):
             event_index=event_index,
         )
         events.pop(event_index)
+        self._sort_events_by_time(events)
         self._emit_post_mutation(touched_paths=[video_path])
 
     def execute_sample_field_update(self, sample_id: str, field_name: str, new_value):
@@ -493,6 +497,7 @@ class HistoryManager(QObject):
         if video_path not in self.model.dense_description_events:
             self.model.dense_description_events[video_path] = []
         self.model.dense_description_events[video_path].append(event_copy)
+        self._sort_events_by_time(self.model.dense_description_events[video_path])
 
         self._emit_post_mutation(
             touched_paths=[video_path],
@@ -518,6 +523,7 @@ class HistoryManager(QObject):
             new_event=copy.deepcopy(new_event),
         )
         events[idx] = copy.deepcopy(new_event)
+        self._sort_events_by_time(events)
 
         self._emit_post_mutation(
             touched_paths=[video_path],
@@ -541,6 +547,7 @@ class HistoryManager(QObject):
             event_index=event_index,
         )
         events.pop(event_index)
+        self._sort_events_by_time(events)
         self._emit_post_mutation(touched_paths=[video_path])
 
     def execute_header_draft_update(self, draft: dict):
@@ -789,6 +796,20 @@ class HistoryManager(QObject):
                 return idx
         return -1
 
+    @staticmethod
+    def _event_position_ms(event) -> int:
+        if not isinstance(event, dict):
+            return 0
+        try:
+            return int(event.get("position_ms", 0) or 0)
+        except Exception:
+            return 0
+
+    def _sort_events_by_time(self, events):
+        if not isinstance(events, list):
+            return
+        events.sort(key=self._event_position_ms)
+
     def _refresh_active_view(self):
         """
         Refreshes the currently active UI tab after a state change.
@@ -911,6 +932,7 @@ class HistoryManager(QObject):
                     events.remove(evt)
             else:
                 events.append(evt)
+            self._sort_events_by_time(events)
             self.model.localization_events[path] = events
             self._refresh_active_view()
 
@@ -934,6 +956,8 @@ class HistoryManager(QObject):
                 elif evt in events:
                     events.remove(evt)
 
+            self._sort_events_by_time(events)
+            self.model.localization_events[path] = events
             self._refresh_active_view()
 
         elif ctype == CmdType.LOC_EVENT_MOD:
@@ -951,6 +975,8 @@ class HistoryManager(QObject):
             except ValueError:
                 pass
 
+            self._sort_events_by_time(events)
+            self.model.localization_events[path] = events
             self._refresh_active_view()
 
         elif ctype == CmdType.SAMPLE_FIELD_EDIT:
@@ -977,6 +1003,7 @@ class HistoryManager(QObject):
             else:
                 events.append(evt)
 
+            self._sort_events_by_time(events)
             self.model.dense_description_events[path] = events
             self._refresh_active_view()
 
@@ -1000,6 +1027,8 @@ class HistoryManager(QObject):
                 elif evt in events:
                     events.remove(evt)
 
+            self._sort_events_by_time(events)
+            self.model.dense_description_events[path] = events
             self._refresh_active_view()
 
         elif ctype == CmdType.DENSE_EVENT_MOD:
@@ -1017,6 +1046,8 @@ class HistoryManager(QObject):
             except ValueError:
                 pass
 
+            self._sort_events_by_time(events)
+            self.model.dense_description_events[path] = events
             self._refresh_active_view()
 
         elif ctype == CmdType.SCHEMA_ADD_CAT:
@@ -1044,6 +1075,7 @@ class HistoryManager(QObject):
                         if vid not in self.model.localization_events:
                             self.model.localization_events[vid] = []
                         self.model.localization_events[vid].extend(events_list)
+                        self._sort_events_by_time(self.model.localization_events[vid])
             else:
                 if head in self.model.label_definitions:
                     del self.model.label_definitions[head]
@@ -1127,6 +1159,7 @@ class HistoryManager(QObject):
                             if vid not in self.model.localization_events:
                                 self.model.localization_events[vid] = []
                             self.model.localization_events[vid].extend(events_list)
+                            self._sort_events_by_time(self.model.localization_events[vid])
 
                 else:
                     if isinstance(label_index, int) and 0 <= label_index < len(labels) and labels[label_index] == lbl:
