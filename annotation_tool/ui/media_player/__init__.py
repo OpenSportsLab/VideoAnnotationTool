@@ -140,6 +140,12 @@ class MediaCenterPanel(QWidget):
         self.btn_play_pause.clicked.connect(self.playPauseRequested.emit)
         self.btn_seek_fwd_1.clicked.connect(lambda: self.seekRelativeRequested.emit(1000))
         self.btn_seek_fwd_5.clicked.connect(lambda: self.seekRelativeRequested.emit(5000))
+        self._icon_volume = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume)
+        self._icon_muted = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolumeMuted)
+        self.btn_mute.setText("")
+        self.btn_mute.setIcon(self._icon_volume)
+        self.btn_mute.setToolTip("Mute")
+        self.btn_mute.setAccessibleName("Mute")
         self.btn_mute.clicked.connect(self.muteToggleRequested.emit)
 
         self.btn_speed_025.clicked.connect(lambda: self.playbackRateRequested.emit(0.25))
@@ -186,7 +192,16 @@ class MediaCenterPanel(QWidget):
         self.player.setPlaybackRate(rate)
 
     def set_mute_button_state(self, is_muted: bool):
-        self.btn_mute.setText("Unmute" if is_muted else "Mute")
+        if is_muted:
+            self.btn_mute.setText("")
+            self.btn_mute.setIcon(self._icon_muted)
+            self.btn_mute.setToolTip("Unmute")
+            self.btn_mute.setAccessibleName("Unmute")
+        else:
+            self.btn_mute.setText("")
+            self.btn_mute.setIcon(self._icon_volume)
+            self.btn_mute.setToolTip("Mute")
+            self.btn_mute.setAccessibleName("Mute")
 
     def set_duration(self, ms):
         self.duration = ms
