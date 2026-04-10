@@ -310,8 +310,10 @@ class DenseAnnotationPanel(QWidget):
 
         # Keep the table as the primary expanding region.
         self.denseMainLayout.setStretch(3, 1)
+        self._pending_column_layout_retry = False
 
         QTimer.singleShot(0, self._apply_dense_column_ratio)
+        QTimer.singleShot(80, self._apply_dense_column_ratio)
 
     def _apply_dense_column_ratio(self):
         """
@@ -320,6 +322,11 @@ class DenseAnnotationPanel(QWidget):
         view = self.table.table
         width = view.viewport().width()
         if width <= 0:
+            # During startup the panel can be hidden/not laid out yet.
+            # Retry once on the next frame after it becomes visible.
+            if self.isVisible() and not self._pending_column_layout_retry:
+                self._pending_column_layout_retry = True
+                QTimer.singleShot(16, self._retry_dense_column_ratio)
             return
 
         unit = max(20, width // 7)  # 2 + 1 + 4
@@ -330,6 +337,14 @@ class DenseAnnotationPanel(QWidget):
         view.setColumnWidth(0, col0)
         view.setColumnWidth(1, col1)
         view.setColumnWidth(2, col2)
+
+    def _retry_dense_column_ratio(self):
+        self._pending_column_layout_retry = False
+        self._apply_dense_column_ratio()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._apply_dense_column_ratio)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
