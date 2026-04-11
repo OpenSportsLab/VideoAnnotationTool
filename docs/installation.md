@@ -8,7 +8,7 @@ Pre-built binaries for Windows, macOS, and Linux are available on the [GitHub Re
 
 ## Requirements
 
-- Python **3.11** or later
+- Python **3.12** or later
 - PyQt6
 - Other dependencies (see `requirements.txt`)
 

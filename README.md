@@ -31,7 +31,7 @@ cd VideoAnnotationTool
 ### Step 1 – Create a new Conda environment
 
 ```bash
-conda create -n VideoAnnotationTool python=3.11 -y
+conda create -n VideoAnnotationTool python=3.12 -y
 conda activate VideoAnnotationTool
 ```
 

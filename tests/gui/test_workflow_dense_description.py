@@ -212,7 +212,7 @@ def test_dense_add_button_text_is_defined_in_ui(window):
 
 
 @pytest.mark.gui
-def test_dense_add_description_modal_flow_creates_event_and_resumes_playback(
+def test_dense_add_description_modal_flow_creates_event_at_player_position(
     window,
     monkeypatch,
     qtbot,
@@ -230,7 +230,7 @@ def test_dense_add_description_modal_flow_creates_event_and_resumes_playback(
     assert first_index.isValid()
     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
     qtbot.wait(50)
-    window.dense_editor_controller.on_media_position_changed(7777)
+    monkeypatch.setattr(window.center_panel.player, "position", lambda: 7777)
     monkeypatch.setattr(
         "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
         lambda *args, **kwargs: ("  Added from popup  ", True),

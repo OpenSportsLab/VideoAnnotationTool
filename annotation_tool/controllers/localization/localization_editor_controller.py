@@ -74,6 +74,7 @@ class LocalizationEditorController(QObject):
     def reset_ui(self):
         self.localization_panel.annot_mgmt.update_schema({})
         self.localization_panel.table.set_data([])
+        self.localization_panel.show_inference_loading(False)
         self.localization_panel.setEnabled(False)
         self.current_video_path = None
         self.current_sample_id = ""
@@ -578,6 +579,9 @@ class LocalizationEditorController(QObject):
     def _on_head_smart_inference_requested(self, head_name: str):
         if not self.current_video_path or not self.current_sample_id:
             return
+        if self.inference_manager.has_running_threads():
+            self.statusMessageRequested.emit("Inference", "Localization inference is already running.", 1200)
+            return
 
         labels = self._head_labels(head_name)
         if not labels:
@@ -597,6 +601,7 @@ class LocalizationEditorController(QObject):
             return
 
         self._pending_inference_head = str(head_name or "")
+        self.localization_panel.show_inference_loading(True)
         self.statusMessageRequested.emit("Inference", "Running localization inference...", 1200)
         self.inference_manager.start_inference(
             self.current_video_path,
@@ -646,6 +651,7 @@ class LocalizationEditorController(QObject):
         return 1.0
 
     def _on_inference_success(self, predicted_events: list):
+        self.localization_panel.show_inference_loading(False)
         if not self.current_video_path or not self.current_sample_id:
             self._pending_inference_head = None
             return
@@ -704,6 +710,7 @@ class LocalizationEditorController(QObject):
         self._pending_inference_head = None
 
     def _on_inference_error(self, error_msg: str):
+        self.localization_panel.show_inference_loading(False)
         self._pending_inference_head = None
         QMessageBox.critical(self.localization_panel, "Inference Error", f"Failed to run model:\n{error_msg}")
 

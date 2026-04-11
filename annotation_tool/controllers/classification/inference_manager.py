@@ -887,6 +887,7 @@ class InferenceManager(QObject):
             )
 
         label_map = self._get_label_map_from_config()
+        self.panel.show_inference_loading(True)
         worker = BatchInferenceWorker(
             self.config_path,
             self.base_dir,
@@ -902,6 +903,7 @@ class InferenceManager(QObject):
         worker.start()
 
     def _on_batch_inference_success(self, _metrics: dict, results_list: list):
+        self.panel.show_inference_loading(False)
         if self.model is None:
             return
 
@@ -946,6 +948,7 @@ class InferenceManager(QObject):
             self.controller.saveStateRefreshRequested.emit()
 
     def _on_batch_inference_error(self, error_msg):
+        self.panel.show_inference_loading(False)
         QMessageBox.critical(self.panel, "Batch Inference Error", f"An error occurred during batch inference:\n\n{error_msg}")
 
     def clear_smart_annotations_for_path(self, path: str):
