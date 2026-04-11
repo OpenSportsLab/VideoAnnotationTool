@@ -542,6 +542,15 @@ class LocalizationEditorController(QObject):
         if not self.current_video_path or not self.current_sample_id:
             return
 
+        labels = self._head_labels(head_name)
+        if not labels:
+            QMessageBox.warning(
+                self.localization_panel,
+                "Inference",
+                f"Head '{head_name}' must define at least one label before running smart inference.",
+            )
+            return
+
         model_id = self._prompt_model_id()
         if not model_id:
             return
@@ -552,7 +561,15 @@ class LocalizationEditorController(QObject):
 
         self._pending_inference_head = str(head_name or "")
         self.statusMessageRequested.emit("Inference", "Running localization inference...", 1200)
-        self.inference_manager.start_inference(self.current_video_path, start_ms, end_ms, model_id)
+        self.inference_manager.start_inference(
+            self.current_video_path,
+            start_ms,
+            end_ms,
+            model_id,
+            head_name,
+            labels,
+            self._current_input_fps(),
+        )
 
     def _resolve_unknown_prediction_label(self, head: str, predicted_label: str):
         definition = self._schema_definitions.get(head, {}) if isinstance(self._schema_definitions, dict) else {}
@@ -865,6 +882,28 @@ class LocalizationEditorController(QObject):
                     if path:
                         return path
         return None
+
+    def _current_input_fps(self) -> float:
+        inputs = self._current_sample_snapshot.get("inputs")
+        if isinstance(inputs, list):
+            for input_item in inputs:
+                if not isinstance(input_item, dict):
+                    continue
+                if str(input_item.get("path") or "") != str(self.current_video_path or ""):
+                    continue
+                try:
+                    fps = float(input_item.get("fps") or 25.0)
+                except Exception:
+                    fps = 25.0
+                if fps > 0:
+                    return fps
+        return 25.0
+
+    def _head_labels(self, head_name: str) -> list[str]:
+        definition = self._schema_definitions.get(head_name, {}) if isinstance(self._schema_definitions, dict) else {}
+        if not isinstance(definition, dict):
+            return []
+        return [str(label) for label in list(definition.get("labels", [])) if str(label).strip()]
 
     @staticmethod
     def _event_position_ms(event) -> int:

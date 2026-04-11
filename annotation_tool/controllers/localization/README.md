@@ -10,7 +10,9 @@ Implements Localization (action spotting) behavior, including schema management,
 - Runtime sample/schema/action-list context is supplied through signal-slot wiring in `MainWindow.connect_signals()`.
 - Emits schema/event mutation intents to `HistoryManager`.
 - Uses `LocalizationInferenceManager` for smart inference execution.
+- Smart inference resolves a dedicated `annotation_tool/loc_config.yaml` template, clips the requested time range for inference, and maps predictions back onto the selected head.
 - Emits media seek/marker/toggle intents instead of mutating media widgets directly.
+- OpenSportsLib compatibility matters for Localization: `opensportslib==0.1.0` reintroduced a hard DALI-backed localization path, while the `smart-annotation` feature relies on the older non-DALI localization implementation from `opensportslib==0.0.1.dev18`.
 
 ## Public Surface
 ### Class
@@ -58,6 +60,8 @@ Implements Localization (action spotting) behavior, including schema management,
 - Label add flow can optionally inject an event at current playback time.
 - Pause/resume around modal label dialogs is signal-driven.
 - Smart inference writes directly into canonical `events[]` with `confidence_score`.
+- Smart inference startup passes the selected head labels and input fps into `LocalizationInferenceManager`; the worker should not rely on hardcoded `ball_action` schema classes from config.
+- If localization inference starts failing with `nvidia.dali` / `cupy` import errors on macOS, verify the environment is using the non-DALI OpenSportsLib build rather than `0.1.0`.
 - Confirming (or manually editing) an inferred row removes `confidence_score` only.
 - Table confidence-cell confirmation prompt supports `Yes` (confirm), `No` (reject), `Cancel` (no-op).
 - Rejecting an inferred row deletes the smart-inferred event row.

@@ -4,6 +4,7 @@ Localization mode persistence/editing workflows.
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import Qt
@@ -27,6 +28,70 @@ def _double_click_table_cell(window, qtbot, row: int, col: int):
     rect = table_view.visualRect(idx)
     qtbot.mouseDClick(table_view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
     qtbot.wait(50)
+
+
+@pytest.mark.gui
+def test_localization_inference_manager_uses_checked_in_loc_config(window):
+    manager = type(window.localization_editor_controller.inference_manager)()
+    config_path = Path(manager.config_path)
+
+    assert config_path.name == "loc_config.yaml"
+    assert config_path.is_file()
+    assert config_path.parent.name == "annotation_tool"
+
+
+@pytest.mark.gui
+def test_localization_smart_inference_passes_head_context_to_manager(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    responses = iter([("jeetv/snpro-snbas-2024", True), ("00:00.000", True), ("00:05.000", True)])
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.QInputDialog.getText",
+        lambda *args, **kwargs: next(responses),
+    )
+
+    captured = {}
+
+    def fake_start_inference(video_path, start_ms, end_ms, model_id, head_name, labels, input_fps):
+        captured.update(
+            {
+                "video_path": video_path,
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "model_id": model_id,
+                "head_name": head_name,
+                "labels": list(labels),
+                "input_fps": input_fps,
+            }
+        )
+
+    monkeypatch.setattr(window.localization_editor_controller.inference_manager, "start_inference", fake_start_inference)
+
+    window.localization_editor_controller._on_head_smart_inference_requested("ball_action")
+
+    assert captured["video_path"] == window.localization_editor_controller.current_video_path
+    assert captured["start_ms"] == 0
+    assert captured["end_ms"] == 5000
+    assert captured["model_id"] == "jeetv/snpro-snbas-2024"
+    assert captured["head_name"] == "ball_action"
+    assert captured["labels"] == window.dataset_explorer_controller.label_definitions["ball_action"]["labels"]
+    assert captured["input_fps"] == pytest.approx(25.0)
 
 
 @pytest.mark.gui

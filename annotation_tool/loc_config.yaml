@@ -1,0 +1,131 @@
+TASK: localization
+
+dali: False
+
+DATA:
+  dataset_name: SoccerNet
+  data_dir: ./
+  classes:
+    - PASS
+    - DRIVE
+    - HEADER
+    - HIGH PASS
+    - OUT
+    - CROSS
+    - THROW IN
+    - SHOT
+    - BALL PLAYER BLOCK
+    - PLAYER SUCCESSFUL TACKLE
+    - FREE KICK
+    - GOAL
+
+  epoch_num_frames: 500000
+  mixup: false
+  modality: rgb
+  crop_dim: -1
+  dilate_len: 0
+  clip_len: 100
+  input_fps: 25
+  extract_fps: 2
+  imagenet_mean: [0.485, 0.456, 0.406]
+  imagenet_std: [0.229, 0.224, 0.225]
+  target_height: 224
+  target_width: 398
+
+  train:
+    type: VideoGameWithOpencv
+    classes: ${DATA.classes}
+    output_map: [data, label]
+    video_path: ./
+    path: ./temp.json
+    dataloader:
+      batch_size: 1
+      shuffle: true
+      num_workers: 0
+
+  valid:
+    type: VideoGameWithOpencv
+    classes: ${DATA.classes}
+    output_map: [data, label]
+    video_path: ./
+    path: ./temp.json
+    dataloader:
+      batch_size: 1
+      shuffle: false
+      num_workers: 0
+
+  valid_data_frames:
+    type: VideoGameWithOpencvVideo
+    classes: ${DATA.classes}
+    output_map: [data, label]
+    video_path: ./
+    path: ./temp.json
+    overlap_len: 0
+    dataloader:
+      batch_size: 1
+      shuffle: false
+      num_workers: 0
+
+  test:
+    type: VideoGameWithOpencvVideo
+    classes: ${DATA.classes}
+    output_map: [data, label]
+    results: predictions
+    nms_window: 2
+    metric: tight
+    overlap_len: 50
+    video_path: ./
+    path: ./temp.json
+    dataloader:
+      batch_size: 1
+      shuffle: false
+      num_workers: 0
+
+  challenge:
+    type: VideoGameWithOpencvVideo
+    overlap_len: 50
+    output_map: [data, label]
+    path: ./temp.json
+    dataloader:
+      batch_size: 1
+      shuffle: false
+      num_workers: 0
+
+MODEL:
+  type: E2E
+  runner:
+    type: runner_e2e
+  backbone:
+    type: rny008_gsm
+  head:
+    type: gru
+  multi_gpu: false
+  load_weights: null
+  save_dir: ./checkpoints
+  work_dir: ./checkpoints
+
+TRAIN:
+  type: trainer_e2e
+  num_epochs: 10
+  acc_grad_iter: 1
+  base_num_valid_epochs: 30
+  start_valid_epoch: 4
+  valid_map_every: 1
+  criterion_valid: map
+  criterion:
+    type: CrossEntropyLoss
+  optimizer:
+    type: AdamWithScaler
+    lr: 0.01
+  scheduler:
+    type: ChainedSchedulerE2E
+    acc_grad_iter: 1
+    num_epochs: 10
+    warm_up_epochs: 3
+
+SYSTEM:
+  log_dir: ./logs
+  save_dir: ./checkpoints
+  seed: 42
+  GPU: 0
+  device: cpu
