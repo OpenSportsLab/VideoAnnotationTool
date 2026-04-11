@@ -84,7 +84,7 @@ def window(qtbot, monkeypatch, tmp_path):
 
     # Use a test-specific QSettings file to isolate from real user data and ensure a clean slate.
     settings_file = tmp_path / "app_settings.ini"
-    main_window.router.settings = QSettings(
+    main_window.dataset_explorer_controller.settings = QSettings(
         str(settings_file),
         QSettings.Format.IniFormat,
     )
@@ -93,8 +93,8 @@ def window(qtbot, monkeypatch, tmp_path):
     yield main_window
 
     # Prevent close confirmation dialogs during teardown.
-    main_window.model.is_data_dirty = False
-    main_window.model.json_loaded = False
+    main_window.dataset_explorer_controller.is_data_dirty = False
+    main_window.dataset_explorer_controller.json_loaded = False
     main_window.close()
 
 
@@ -129,6 +129,10 @@ def synthetic_project_json(tmp_path):
         rel_clip_paths = [
             os.path.relpath(source_video_path, start=tmp_path).replace("\\", "/")
             for source_video_path in selected_sources
+        ]
+        extra_rel_clip_paths = [
+            os.path.relpath(source_video_path, start=tmp_path).replace("\\", "/")
+            for source_video_path in source_video_paths[:2]
         ]
 
         classification_data = []
@@ -204,6 +208,42 @@ def synthetic_project_json(tmp_path):
                 }
             )
 
+        mixed_data = []
+        for idx, rel_clip_path in enumerate(rel_clip_paths, start=1):
+            sample = {
+                "id": f"clip_{idx}",
+                "inputs": [
+                    {
+                        "path": rel_clip_path,
+                        "type": "video",
+                        "fps": 25.0,
+                    }
+                ],
+                "metadata": {
+                    "note": f"keep-sample-{idx}",
+                },
+                "custom_sample": {"keep": True, "index": idx},
+            }
+            if idx == 1:
+                sample.update(
+                    {
+                        "labels": {
+                            "action": {"label": "shot", "confidence_score": 0.8},
+                        },
+                        "events": [
+                            {"head": "ball_action", "label": "pass", "position_ms": 1000},
+                            {"head": "ball_action", "label": "shot", "position_ms": 2000, "confidence_score": 0.7},
+                        ],
+                        "captions": [
+                            {"lang": "en", "text": "Mixed caption"},
+                        ],
+                        "dense_captions": [
+                            {"position_ms": 1500, "lang": "en", "text": "Mixed dense caption"},
+                        ],
+                    }
+                )
+            mixed_data.append(sample)
+
         payload_by_mode = {
             "classification": {
                 "version": "2.0",
@@ -252,6 +292,97 @@ def synthetic_project_json(tmp_path):
                     "source": "pytest-qt",
                 },
                 "data": dense_data,
+            },
+            "mixed": {
+                "version": "2.0",
+                "date": "2026-04-06",
+                "task": "video_captioning",
+                "dataset_name": "synthetic_mixed",
+                "description": "Synthetic mixed annotation fixture",
+                "modalities": ["video"],
+                "metadata": {
+                    "source": "pytest-qt",
+                    "owner": "qa",
+                },
+                "custom_root": {"keep": True},
+                "labels": {
+                    "action": {
+                        "type": "single_label",
+                        "labels": ["pass", "shot"],
+                    },
+                    "ball_action": {
+                        "type": "single_label",
+                        "labels": ["pass", "shot"],
+                    },
+                },
+                "data": mixed_data,
+            },
+            "multiview": {
+                "version": "2.0",
+                "date": "2026-04-06",
+                "task": "action_classification",
+                "dataset_name": "synthetic_multiview",
+                "modalities": ["video"],
+                "labels": {
+                    "action": {
+                        "type": "single_label",
+                        "labels": ["pass", "shot"],
+                    }
+                },
+                "data": [
+                    {
+                        "id": "mv_clip",
+                        "inputs": [
+                            {"path": extra_rel_clip_paths[0], "type": "video"},
+                            {"path": extra_rel_clip_paths[1], "type": "video"},
+                        ],
+                        "labels": {},
+                    }
+                ],
+            },
+            "duplicate_id": {
+                "version": "2.0",
+                "date": "2026-04-06",
+                "task": "action_classification",
+                "dataset_name": "synthetic_duplicate_id",
+                "modalities": ["video"],
+                "labels": {
+                    "action": {
+                        "type": "single_label",
+                        "labels": ["pass", "shot"],
+                    }
+                },
+                "data": [
+                    {
+                        "id": "clip_dup",
+                        "inputs": [{"path": extra_rel_clip_paths[0], "type": "video"}],
+                    },
+                    {
+                        "id": "clip_dup",
+                        "inputs": [{"path": extra_rel_clip_paths[1], "type": "video"}],
+                    },
+                ],
+            },
+            "missing_id": {
+                "version": "2.0",
+                "date": "2026-04-06",
+                "task": "action_classification",
+                "dataset_name": "synthetic_missing_id",
+                "modalities": ["video"],
+                "labels": {
+                    "action": {
+                        "type": "single_label",
+                        "labels": ["pass", "shot"],
+                    }
+                },
+                "data": [
+                    {
+                        "inputs": [{"path": extra_rel_clip_paths[0], "type": "video"}],
+                    },
+                    {
+                        "inputs": [{"path": extra_rel_clip_paths[1], "type": "video"}],
+                    },
+                ],
             },
         }
 

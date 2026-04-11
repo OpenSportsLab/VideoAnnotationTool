@@ -29,35 +29,6 @@
     </widget>
    </item>
    <item>
-    <widget class="QLabel" name="denseCurrentTimeLabel">
-     <property name="text">
-      <string>Current Time: 00:00:00.000</string>
-     </property>
-     <property name="alignment">
-      <set>Qt::AlignmentFlag::AlignCenter</set>
-     </property>
-     <property name="class" stdset="0">
-      <string notr="true">dense_time_display</string>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QTextEdit" name="denseDescriptionEdit">
-     <property name="minimumSize">
-      <size>
-       <width>0</width>
-       <height>120</height>
-      </size>
-     </property>
-     <property name="placeholderText">
-      <string>Enter the description of the event here...</string>
-     </property>
-     <property name="class" stdset="0">
-      <string notr="true">dense_desc_editor</string>
-     </property>
-    </widget>
-   </item>
-   <item>
     <widget class="QPushButton" name="denseConfirmBtn">
      <property name="minimumSize">
       <size>
@@ -69,33 +40,10 @@
       <cursorShape>PointingHandCursor</cursorShape>
      </property>
      <property name="text">
-      <string>Confirm Description</string>
+      <string>Add New Description</string>
      </property>
      <property name="class" stdset="0">
       <string notr="true">dense_confirm_btn</string>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QLabel" name="denseEditLabel">
-     <property name="text">
-      <string>Edit Annotation</string>
-     </property>
-     <property name="class" stdset="0">
-      <string notr="true">panel_header_lbl</string>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QPushButton" name="denseSetCurrentTimeBtn">
-     <property name="enabled">
-      <bool>false</bool>
-     </property>
-     <property name="cursor">
-      <cursorShape>PointingHandCursor</cursorShape>
-     </property>
-     <property name="text">
-      <string>Set to Current Video Time</string>
      </property>
     </widget>
    </item>
@@ -148,6 +96,29 @@
       </widget>
      </item>
     </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="denseEditLabel">
+     <property name="text">
+      <string>Selected Event</string>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">panel_header_lbl</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="denseSetCurrentTimeBtn">
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
+     <property name="cursor">
+      <cursorShape>PointingHandCursor</cursorShape>
+     </property>
+     <property name="text">
+      <string>Set to Current Video Time</string>
+     </property>
+    </widget>
    </item>
   </layout>
  </widget>

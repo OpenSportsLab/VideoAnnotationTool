@@ -21,12 +21,12 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
 ):
     # Start from a small imported classification project (1 item).
     project_json_path = synthetic_project_json("classification")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.tree_model.rowCount() == 1
 
     # Add five more clips through the Dataset Explorer Add Data button.
@@ -49,7 +49,7 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
     qtbot.wait(50)
 
     assert window.tree_model.rowCount() == 6
-    added_paths = {entry.get("path") for entry in window.model.action_item_data}
+    added_paths = {entry.get("path") for entry in window.dataset_explorer_controller.action_item_data}
     for added_video in added_video_paths:
         assert str(added_video) in added_paths
 
@@ -65,22 +65,23 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
         assert any(path.endswith(added_video.name) for path in saved_input_paths)
 
     # Reopen and verify all added items still exist in UI/model.
-    window.router.close_project()
+    window.dataset_explorer_controller.close_project()
     assert window.tree_model.rowCount() == 0
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     assert window.tree_model.rowCount() == 6
-    reloaded_names = {entry.get("name") for entry in window.model.action_item_data}
+    reloaded_names = {entry.get("name") for entry in window.dataset_explorer_controller.action_item_data}
     for added_video in added_video_paths:
-        assert added_video.name in reloaded_names
+        assert added_video.stem in reloaded_names
 
     # Remove one of the added items and verify immediate state update.
     target_removed_name = added_video_paths[0].name
+    target_removed_id = added_video_paths[0].stem
     remove_index = None
     for row in range(window.tree_model.rowCount()):
         idx = window.tree_model.index(row, 0)
@@ -96,10 +97,10 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
     qtbot.wait(50)
 
     assert window.tree_model.rowCount() == 5
-    names_after_remove = {entry.get("name") for entry in window.model.action_item_data}
-    assert target_removed_name not in names_after_remove
+    names_after_remove = {entry.get("name") for entry in window.dataset_explorer_controller.action_item_data}
+    assert target_removed_id not in names_after_remove
     for remaining_video in added_video_paths[1:]:
-        assert remaining_video.name in names_after_remove
+        assert remaining_video.stem in names_after_remove
 
     # Save after removal and verify JSON no longer contains removed item.
     window.dataset_explorer_controller.save_project()
@@ -114,20 +115,20 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
         assert any(path.endswith(remaining_video.name) for path in saved_paths_after_remove)
 
     # Reopen once more and confirm deletion persistence.
-    window.router.close_project()
+    window.dataset_explorer_controller.close_project()
     assert window.tree_model.rowCount() == 0
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     assert window.tree_model.rowCount() == 5
-    final_names = {entry.get("name") for entry in window.model.action_item_data}
-    assert target_removed_name not in final_names
+    final_names = {entry.get("name") for entry in window.dataset_explorer_controller.action_item_data}
+    assert target_removed_id not in final_names
     for remaining_video in added_video_paths[1:]:
-        assert remaining_video.name in final_names
+        assert remaining_video.stem in final_names
 
 
 # @pytest.mark.gui
@@ -139,16 +140,16 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
 #     synthetic_project_json,
 # ):
 #     project_json_path = synthetic_project_json("classification")
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 #     monkeypatch.setattr(
-#         "controllers.router.QFileDialog.getOpenFileName",
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
-#     window.router.import_annotations()
+#     window.dataset_explorer_controller.import_annotations()
 #     assert window.tree_model.rowCount() == 1
-#     assert len(window.model.action_item_data) == 1
+#     assert len(window.dataset_explorer_controller.action_item_data) == 1
 
-#     existing_video_path = window.model.action_item_data[0]["path"]
+#     existing_video_path = window.dataset_explorer_controller.action_item_data[0]["path"]
 #     monkeypatch.setattr(
 #         "controllers.classification.classification_editor_controller.QFileDialog.getOpenFileNames",
 #         lambda *args, **kwargs: ([str(existing_video_path)], "Media Files (*.mp4)"),
@@ -157,4 +158,4 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
 #     qtbot.wait(50)
 
 #     assert window.tree_model.rowCount() == 1
-#     assert len(window.model.action_item_data) == 1
+#     assert len(window.dataset_explorer_controller.action_item_data) == 1

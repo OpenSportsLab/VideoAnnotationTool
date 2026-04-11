@@ -241,28 +241,15 @@ class _DenseTableAdapter(QObject):
 
 class _DenseInputAdapter(QObject):
     """
-    Small adapter to preserve the old input-widget API used by controllers.
+    Thin adapter for the dense add button.
     """
 
-    descriptionSubmitted = pyqtSignal(str)
+    addEventRequested = pyqtSignal()
 
-    def __init__(self, time_label, text_editor, submit_btn):
+    def __init__(self, submit_btn):
         super().__init__()
-        self._time_label = time_label
-        self.text_editor = text_editor
         self._submit_btn = submit_btn
-        self._submit_btn.clicked.connect(self._on_submit)
-
-    def update_time(self, time_str: str):
-        self._time_label.setText(f"Current Time: {time_str}")
-
-    def set_text(self, text: str):
-        self.text_editor.setPlainText(text)
-
-    def _on_submit(self):
-        text = self.text_editor.toPlainText().strip()
-        if text:
-            self.descriptionSubmitted.emit(text)
+        self._submit_btn.clicked.connect(self.addEventRequested.emit)
 
 
 class DenseAnnotationPanel(QWidget):
@@ -271,6 +258,11 @@ class DenseAnnotationPanel(QWidget):
     Uses only standard widgets in .ui and adapter objects in Python.
     """
     eventNavigateRequested = pyqtSignal(int)
+    addEventRequested = pyqtSignal()
+    eventSelected = pyqtSignal(int)
+    eventDeleted = pyqtSignal(dict)
+    eventModified = pyqtSignal(dict, dict)
+    updateTimeForSelectedRequested = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -286,15 +278,9 @@ class DenseAnnotationPanel(QWidget):
             ) from exc
 
         # Keep existing QSS hooks used by style.qss.
-        self.denseCurrentTimeLabel.setProperty("class", "dense_time_display")
-        self.denseDescriptionEdit.setProperty("class", "dense_desc_editor")
         self.denseConfirmBtn.setProperty("class", "dense_confirm_btn")
 
-        self.input_widget = _DenseInputAdapter(
-            time_label=self.denseCurrentTimeLabel,
-            text_editor=self.denseDescriptionEdit,
-            submit_btn=self.denseConfirmBtn,
-        )
+        self.input_widget = _DenseInputAdapter(submit_btn=self.denseConfirmBtn)
 
         self.table = _DenseTableAdapter(
             self.denseEventsTableView,
@@ -303,6 +289,11 @@ class DenseAnnotationPanel(QWidget):
             list_label=self.denseEventsListLabel,
             parent=self,
         )
+        self.input_widget.addEventRequested.connect(self.addEventRequested.emit)
+        self.table.annotationSelected.connect(self.eventSelected.emit)
+        self.table.annotationDeleted.connect(self.eventDeleted.emit)
+        self.table.annotationModified.connect(self.eventModified.emit)
+        self.table.updateTimeForSelectedRequested.connect(self.updateTimeForSelectedRequested.emit)
 
         # Swap in dense model and reconnect table signal wiring.
         self.dense_model = DenseTableModel()
@@ -327,11 +318,12 @@ class DenseAnnotationPanel(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         header.setStretchLastSection(False)
 
-        # Top editor + bottom table ratio.
-        self.denseMainLayout.setStretch(2, 1)
-        self.denseMainLayout.setStretch(7, 2)
+        # Keep the table as the primary expanding region.
+        self.denseMainLayout.setStretch(3, 1)
+        self._pending_column_layout_retry = False
 
         QTimer.singleShot(0, self._apply_dense_column_ratio)
+        QTimer.singleShot(80, self._apply_dense_column_ratio)
 
     def _apply_dense_column_ratio(self):
         """
@@ -340,6 +332,11 @@ class DenseAnnotationPanel(QWidget):
         view = self.table.table
         width = view.viewport().width()
         if width <= 0:
+            # During startup the panel can be hidden/not laid out yet.
+            # Retry once on the next frame after it becomes visible.
+            if self.isVisible() and not self._pending_column_layout_retry:
+                self._pending_column_layout_retry = True
+                QTimer.singleShot(16, self._retry_dense_column_ratio)
             return
 
         unit = max(20, width // 7)  # 2 + 1 + 4
@@ -350,6 +347,47 @@ class DenseAnnotationPanel(QWidget):
         view.setColumnWidth(0, col0)
         view.setColumnWidth(1, col1)
         view.setColumnWidth(2, col2)
+
+    def set_events(self, annotations):
+        self.table.set_data(annotations or [])
+
+    def set_dense_enabled(self, enabled: bool):
+        self.setEnabled(bool(enabled))
+
+    def get_selected_event(self):
+        selection_model = self.table.table.selectionModel()
+        if not selection_model:
+            return None
+        selected_rows = selection_model.selectedRows()
+        if not selected_rows:
+            return None
+        return self.table.model.get_annotation_at(selected_rows[0].row())
+
+    def select_row_by_time(self, time_ms: int, tolerance_ms: int = 20):
+        model = self.table.model
+        for row in range(model.rowCount()):
+            item = model.get_annotation_at(row)
+            if item and abs(item.get("position_ms", 0) - int(time_ms)) < int(tolerance_ms):
+                self.table.table.selectRow(row)
+                return
+
+    def select_event(self, target_event: dict):
+        if not isinstance(target_event, dict):
+            return
+        model = self.table.model
+        for row in range(model.rowCount()):
+            item = model.get_annotation_at(row)
+            if item is target_event or item == target_event:
+                self.table.table.selectRow(row)
+                return
+
+    def _retry_dense_column_ratio(self):
+        self._pending_column_layout_retry = False
+        self._apply_dense_column_ratio()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._apply_dense_column_ratio)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

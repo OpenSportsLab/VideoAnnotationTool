@@ -35,45 +35,6 @@
      </property>
     </widget>
    </item>
-   <item>
-    <layout class="QHBoxLayout" name="buttonsLayout">
-     <property name="spacing">
-      <number>10</number>
-     </property>
-     <item>
-      <widget class="QPushButton" name="descClearBtn">
-       <property name="minimumSize">
-        <size>
-         <width>0</width>
-         <height>40</height>
-        </size>
-       </property>
-       <property name="cursor">
-        <cursorShape>PointingHandCursor</cursorShape>
-       </property>
-       <property name="text">
-        <string>Clear</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="descConfirmBtn">
-       <property name="minimumSize">
-        <size>
-         <width>0</width>
-         <height>40</height>
-        </size>
-       </property>
-       <property name="cursor">
-        <cursorShape>PointingHandCursor</cursorShape>
-       </property>
-       <property name="text">
-        <string>Confirm</string>
-       </property>
-      </widget>
-     </item>
-    </layout>
-   </item>
   </layout>
  </widget>
  <resources/>

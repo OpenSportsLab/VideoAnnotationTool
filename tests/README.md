@@ -130,7 +130,7 @@ Each function has an inline workflow header comment that explains setup, action,
 - Recent-dataset storage uses `QSettings` and is redirected to a per-test `.ini` file.
 - Recents persistence behavior: full deduplicated history is stored; welcome UI shows only newest `MAX_RECENT_DATASETS_DISPLAY` entries (currently 10).
 - Assertions check both:
-  - in-memory state (`AppStateModel` and UI widgets), and
+  - in-memory state (`dataset_json`-backed controller state and UI widgets), and
   - serialized JSON output on disk.
 - These are integration-style UI tests, not unit tests.
 

@@ -2,6 +2,7 @@
 Dense Description mode persistence/editing workflows.
 """
 
+import copy
 import json
 
 import pytest
@@ -27,14 +28,14 @@ def test_dense_description_annotate_save_reload_edit_and_persist(
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("dense_description")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     # 1) Open dense description JSON and select first item.
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["dense_description"]
     assert window.tree_model.rowCount() == 1
 
@@ -45,7 +46,7 @@ def test_dense_description_annotate_save_reload_edit_and_persist(
 
     first_path = window.get_current_action_path()
     assert first_path is not None
-    initial_events = window.model.dense_description_events.get(first_path, [])
+    initial_events = window.dataset_explorer_controller.dense_description_events.get(first_path, [])
     assert len(initial_events) >= 1
 
     # 2) Modify the first dense event (text + timestamp).
@@ -55,7 +56,7 @@ def test_dense_description_annotate_save_reload_edit_and_persist(
     first_edit["text"] = "Dense text v1 from GUI test."
     window.dense_editor_controller._on_annotation_modified(old_event, first_edit)
 
-    after_first_edit = window.model.dense_description_events.get(first_path, [])
+    after_first_edit = window.dataset_explorer_controller.dense_description_events.get(first_path, [])
     assert any(e.get("position_ms") == 2100 and e.get("text") == "Dense text v1 from GUI test." for e in after_first_edit)
 
     # 3) Save + close + reopen and verify first edit persisted.
@@ -64,14 +65,14 @@ def test_dense_description_annotate_save_reload_edit_and_persist(
     saved_dense = saved_data.get("data", [])[0].get("dense_captions", [])
     assert any(e.get("position_ms") == 2100 and e.get("text") == "Dense text v1 from GUI test." for e in saved_dense)
 
-    window.router.close_project()
-    assert window.model.json_loaded is False
+    window.dataset_explorer_controller.close_project()
+    assert window.dataset_explorer_controller.json_loaded is False
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     reopened_index = window.tree_model.index(0, 0)
     assert reopened_index.isValid()
@@ -80,7 +81,7 @@ def test_dense_description_annotate_save_reload_edit_and_persist(
 
     reopened_path = window.get_current_action_path()
     assert reopened_path is not None
-    reopened_events = window.model.dense_description_events.get(reopened_path, [])
+    reopened_events = window.dataset_explorer_controller.dense_description_events.get(reopened_path, [])
     assert any(e.get("position_ms") == 2100 and e.get("text") == "Dense text v1 from GUI test." for e in reopened_events)
 
     # 4) Modify again, save, reload, and verify second edit persisted.
@@ -100,14 +101,14 @@ def test_dense_description_annotate_save_reload_edit_and_persist(
         for e in saved_dense_after_edit
     )
 
-    window.router.close_project()
-    assert window.model.json_loaded is False
+    window.dataset_explorer_controller.close_project()
+    assert window.dataset_explorer_controller.json_loaded is False
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     final_index = window.tree_model.index(0, 0)
     assert final_index.isValid()
@@ -116,7 +117,7 @@ def test_dense_description_annotate_save_reload_edit_and_persist(
 
     final_path = window.get_current_action_path()
     assert final_path is not None
-    final_events = window.model.dense_description_events.get(final_path, [])
+    final_events = window.dataset_explorer_controller.dense_description_events.get(final_path, [])
     assert any(
         e.get("position_ms") == 3200 and e.get("text") == "Dense text v2 edited after reload."
         for e in final_events
@@ -132,13 +133,13 @@ def test_dense_description_remove_selected_item_resets_panel_state(
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("dense_description")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["dense_description"]
     assert window.tree_model.rowCount() == 1
 
@@ -158,7 +159,7 @@ def test_dense_description_remove_selected_item_resets_panel_state(
     # qtbot.wait(50)
 
     # assert window.tree_model.rowCount() == 0
-    # assert window.model.action_item_data == []
+    # assert window.dataset_explorer_controller.action_item_data == []
     # assert window.dense_editor_controller.current_video_path is None
     # assert window.dense_panel.input_widget.text_editor.toPlainText() == ""
     # assert window.dense_panel.table.model.rowCount() == 0
@@ -173,16 +174,16 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("dense_description")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["dense_description"]
     assert window.tree_model.rowCount() == 1
-    assert window.model.json_loaded is True
+    assert window.dataset_explorer_controller.json_loaded is True
 
     stop_calls = []
     monkeypatch.setattr(window.media_controller, "stop", lambda: stop_calls.append(True))
@@ -196,14 +197,197 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
 
     assert stop_calls
     assert window.tree_model.rowCount() == 0
-    assert window.model.json_loaded is True
-    assert window.model.current_json_path == str(project_json_path)
-    assert window.model.action_item_data == []
-    assert window.model.dense_global_metadata != {}
+    assert window.dataset_explorer_controller.json_loaded is True
+    assert window.dataset_explorer_controller.current_json_path == str(project_json_path)
+    assert window.dataset_explorer_controller.action_item_data == []
+    assert window.dataset_explorer_controller.dense_global_metadata != {}
     assert window.dense_editor_controller.current_video_path is None
-    assert window.dense_panel.input_widget.text_editor.toPlainText() == ""
     assert window.dense_panel.table.model.rowCount() == 0
     assert window.center_stack.currentIndex() == 1
+
+
+@pytest.mark.gui
+def test_dense_add_button_text_is_defined_in_ui(window):
+    assert window.dense_panel.denseConfirmBtn.text() == "Add New Description"
+
+
+@pytest.mark.gui
+def test_dense_add_description_modal_flow_creates_event_and_resumes_playback(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("dense_description")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+    window.dense_editor_controller.on_media_position_changed(7777)
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
+        lambda *args, **kwargs: ("  Added from popup  ", True),
+    )
+
+    path = window.dense_editor_controller.current_video_path
+    assert path is not None
+    before_events = list(window.dataset_explorer_controller.dense_description_events.get(path, []))
+    before_undo = len(window.dataset_explorer_controller.undo_stack)
+
+    qtbot.mouseClick(window.dense_panel.denseConfirmBtn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    events = list(window.dataset_explorer_controller.dense_description_events.get(path, []))
+    assert len(events) == len(before_events) + 1
+    assert any(event.get("position_ms") == 7777 and event.get("text") == "Added from popup" for event in events)
+    assert len(window.dataset_explorer_controller.undo_stack) == before_undo + 1
+    selected = window.dense_editor_controller._selected_event_in_table()
+    assert selected is not None
+    assert selected.get("text") == "Added from popup"
+
+
+@pytest.mark.gui
+def test_dense_add_description_cancel_and_empty_submit_are_noops(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("dense_description")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    path = window.dense_editor_controller.current_video_path
+    assert path is not None
+
+    before_events = copy.deepcopy(window.dataset_explorer_controller.dense_description_events.get(path, []))
+    before_undo = len(window.dataset_explorer_controller.undo_stack)
+
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
+        lambda *args, **kwargs: ("", False),
+    )
+    qtbot.mouseClick(window.dense_panel.denseConfirmBtn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
+        lambda *args, **kwargs: ("   ", True),
+    )
+    qtbot.mouseClick(window.dense_panel.denseConfirmBtn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    assert window.dataset_explorer_controller.dense_description_events.get(path, []) == before_events
+    assert len(window.dataset_explorer_controller.undo_stack) == before_undo
+
+
+@pytest.mark.gui
+def test_dense_table_description_edit_updates_event_and_history(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("dense_description")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    table_model = window.dense_panel.table.model
+    assert table_model.rowCount() >= 1
+
+    before_undo = len(window.dataset_explorer_controller.undo_stack)
+    cell_idx = table_model.index(0, 2)
+    assert cell_idx.isValid()
+    assert table_model.setData(cell_idx, "Edited via table double-click path")
+    qtbot.wait(50)
+
+    path = window.dense_editor_controller.current_video_path
+    assert path is not None
+    events = window.dataset_explorer_controller.dense_description_events.get(path, [])
+    assert any(event.get("text") == "Edited via table double-click path" for event in events)
+    assert len(window.dataset_explorer_controller.undo_stack) == before_undo + 1
+
+
+@pytest.mark.gui
+def test_dense_events_remain_chronological_after_add_modify_delete(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("dense_description")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.dense_editor_controller
+    path = controller.current_video_path
+    assert path
+
+    # Add an early event (before existing 1000ms).
+    controller.on_media_position_changed(500)
+    controller._on_add_event_requested(initial_text="Early dense event")
+    qtbot.wait(50)
+    events = list(window.dataset_explorer_controller.dense_description_events.get(path, []))
+    assert [int(e.get("position_ms", 0)) for e in events] == sorted(int(e.get("position_ms", 0)) for e in events)
+
+    # Modify event time and ensure ordering is re-applied.
+    old_event = next(e for e in events if e.get("text") == "Early dense event")
+    updated_event = dict(old_event)
+    updated_event["position_ms"] = 1600
+    controller._on_annotation_modified(old_event, updated_event)
+    qtbot.wait(50)
+    events = list(window.dataset_explorer_controller.dense_description_events.get(path, []))
+    assert [int(e.get("position_ms", 0)) for e in events] == sorted(int(e.get("position_ms", 0)) for e in events)
+
+    # Delete one event and ensure ordering remains canonical.
+    target_deleted_event = copy.deepcopy(events[0])
+    controller._on_delete_single_annotation(target_deleted_event)
+    qtbot.wait(50)
+    events = list(window.dataset_explorer_controller.dense_description_events.get(path, []))
+    assert not any(event == target_deleted_event for event in events)
+    assert [int(e.get("position_ms", 0)) for e in events] == sorted(int(e.get("position_ms", 0)) for e in events)
+
+    # Persisted JSON order must match chronological order.
+    window.dataset_explorer_controller.save_project()
+    saved = json.loads(project_json_path.read_text(encoding="utf-8"))
+    saved_events = saved.get("data", [])[0].get("dense_captions", [])
+    assert [int(e.get("position_ms", 0)) for e in saved_events] == sorted(
+        int(e.get("position_ms", 0)) for e in saved_events
+    )
 
 
 # @pytest.mark.gui
@@ -216,14 +400,14 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
 #     synthetic_project_json,
 # ):
 #     project_json_path = synthetic_project_json("dense_description")
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
 #     monkeypatch.setattr(
-#         "controllers.router.QFileDialog.getOpenFileName",
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
 
-#     window.router.import_annotations()
+#     window.dataset_explorer_controller.import_annotations()
 #     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["dense_description"]
 #     assert window.tree_model.rowCount() == 1
 
@@ -235,7 +419,7 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
 #     current_path = window.get_current_action_path()
 #     assert current_path is not None
 
-#     events = window.model.dense_description_events.get(current_path, [])
+#     events = window.dataset_explorer_controller.dense_description_events.get(current_path, [])
 #     assert len(events) >= 1
 #     original_event = events[0]
 #     original_text = original_event["text"]
@@ -254,7 +438,7 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
 #     table_widget.btn_set_time.click()
 #     qtbot.wait(50)
 
-#     updated_events = window.model.dense_description_events.get(current_path, [])
+#     updated_events = window.dataset_explorer_controller.dense_description_events.get(current_path, [])
 #     assert len(updated_events) >= 1
 
 #     assert any(
@@ -281,12 +465,12 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
 #     synthetic_project_json,
 # ):
 #     project_json_path = synthetic_project_json("dense_description")
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 #     monkeypatch.setattr(
-#         "controllers.router.QFileDialog.getOpenFileName",
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
-#     window.router.import_annotations()
+#     window.dataset_explorer_controller.import_annotations()
 
 #     first_index = window.tree_model.index(0, 0)
 #     assert first_index.isValid()
@@ -295,25 +479,25 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
 
 #     current_path = window.get_current_action_path()
 #     assert current_path is not None
-#     initial_count = len(window.model.dense_description_events.get(current_path, []))
+#     initial_count = len(window.dataset_explorer_controller.dense_description_events.get(current_path, []))
 
 #     monkeypatch.setattr(window.center_panel.player, "position", lambda: 5500)
 #     window.dense_panel.input_widget.text_editor.setPlainText("Dense undo/redo test event.")
 #     qtbot.mouseClick(window.dense_panel.denseConfirmBtn, Qt.MouseButton.LeftButton)
 #     qtbot.wait(50)
 
-#     events_after_add = window.model.dense_description_events.get(current_path, [])
+#     events_after_add = window.dataset_explorer_controller.dense_description_events.get(current_path, [])
 #     assert len(events_after_add) == initial_count + 1
 #     assert any(e.get("position_ms") == 5500 and e.get("text") == "Dense undo/redo test event." for e in events_after_add)
 
 #     window.history_manager.perform_undo()
 #     qtbot.wait(50)
-#     events_after_undo = window.model.dense_description_events.get(current_path, [])
+#     events_after_undo = window.dataset_explorer_controller.dense_description_events.get(current_path, [])
 #     assert len(events_after_undo) == initial_count
 #     assert not any(e.get("position_ms") == 5500 and e.get("text") == "Dense undo/redo test event." for e in events_after_undo)
 
 #     window.history_manager.perform_redo()
 #     qtbot.wait(50)
-#     events_after_redo = window.model.dense_description_events.get(current_path, [])
+#     events_after_redo = window.dataset_explorer_controller.dense_description_events.get(current_path, [])
 #     assert len(events_after_redo) == initial_count + 1
 #     assert any(e.get("position_ms") == 5500 and e.get("text") == "Dense undo/redo test event." for e in events_after_redo)

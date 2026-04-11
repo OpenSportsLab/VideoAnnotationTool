@@ -11,9 +11,7 @@ class DescriptionAnnotationPanel(QWidget):
     """
     Description annotation editor panel view loaded from Qt Designer UI.
     """
-
-    confirm_clicked = pyqtSignal()
-    clear_clicked = pyqtSignal()
+    captionTextChanged = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -30,15 +28,18 @@ class DescriptionAnnotationPanel(QWidget):
 
         # Keep existing runtime API expected by controllers/tests.
         self.caption_edit = self.descCaptionEdit
-        self.confirm_btn = self.descConfirmBtn
-        self.clear_btn = self.descClearBtn
+        self.caption_edit.textChanged.connect(self.captionTextChanged.emit)
 
-        # Keep Clear/Confirm width ratio from the previous hand-built widget.
-        self.buttonsLayout.setStretch(0, 1)
-        self.buttonsLayout.setStretch(1, 2)
+    def set_caption_text(self, text: str):
+        self.caption_edit.setPlainText(text or "")
 
-        self.confirm_btn.clicked.connect(self.confirm_clicked.emit)
-        self.clear_btn.clicked.connect(self.clear_clicked.emit)
+    def get_caption_text(self) -> str:
+        return self.caption_edit.toPlainText()
+
+    def set_caption_editor_enabled(self, enabled: bool):
+        enabled = bool(enabled)
+        self.caption_edit.setEnabled(enabled)
+        self.setEnabled(enabled)
 
 
 __all__ = ["DescriptionAnnotationPanel"]

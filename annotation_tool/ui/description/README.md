@@ -1,23 +1,51 @@
 # Description UI
 
-Description right-panel UI package.
+## Role
+Provides the Description right-panel widget for sample captions.
 
-## Structure
+## Architecture Context
+- Layout is defined in `description_annotation_panel.ui`.
+- `DescriptionAnnotationPanel` is a thin wrapper exposing a stable controller-facing API.
 
-```text
-ui/description/
-├── __init__.py
-├── description_annotation_panel.ui
-└── README.md
-```
+## Public Surface
+### Main Class
+- `DescriptionAnnotationPanel`
 
-## Notes
+### Exposed Attributes
+- `caption_edit` (alias to `descCaptionEdit` from `.ui`)
 
-- Main class: `DescriptionAnnotationPanel` (import path: `from ui.description import DescriptionAnnotationPanel`).
-- Exposed surface:
-  - widgets: `caption_edit`, `confirm_btn`, `clear_btn`
-  - signals: `confirm_clicked`, `clear_clicked`
-- QSS object names remain unchanged:
-  - `descCaptionEdit`
-  - `descConfirmBtn`
-  - `descClearBtn`
+### Exposed Signal
+- `captionTextChanged()`
+
+### Exposed Methods
+- `set_caption_text(text: str)`
+- `get_caption_text() -> str`
+- `set_caption_editor_enabled(enabled: bool)`
+
+## Key Functions and Responsibilities
+- `DescriptionAnnotationPanel.__init__()`
+  - Loads `.ui`, sets `caption_edit` alias for compatibility, and re-emits text changes via `captionTextChanged`.
+- `set_caption_text()` / `get_caption_text()`
+  - Controller-facing text access without exposing widget internals.
+- `set_caption_editor_enabled()`
+  - Applies enabled/disabled state consistently to editor and panel.
+
+## Business Rules
+- UI layer is passive; controller owns autosave and mutation behavior.
+
+## Conventions
+- Keep this module intentionally thin.
+- Preserve alias compatibility (`caption_edit`) for tests and backward compatibility.
+
+## Interactions
+- Inbound from controller:
+  - text set/reset and enable/disable via panel methods.
+- Outbound to controller:
+  - `captionTextChanged()`.
+
+## Tests
+- `tests/gui/test_workflow_description.py`
+
+## Developer Knowledge
+- Keep `caption_edit` alias stable; it is a compatibility surface for controller/tests.
+- If layout IDs change in `.ui`, update alias mapping in `__init__.py` immediately.

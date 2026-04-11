@@ -66,6 +66,7 @@ class MediaCenterPanel(QWidget):
     seekRelativeRequested = pyqtSignal(int)
     stopRequested = pyqtSignal()
     playPauseRequested = pyqtSignal()
+    muteToggleRequested = pyqtSignal()
     playbackRateRequested = pyqtSignal(float)
 
     # Timeline/media signals
@@ -139,6 +140,13 @@ class MediaCenterPanel(QWidget):
         self.btn_play_pause.clicked.connect(self.playPauseRequested.emit)
         self.btn_seek_fwd_1.clicked.connect(lambda: self.seekRelativeRequested.emit(1000))
         self.btn_seek_fwd_5.clicked.connect(lambda: self.seekRelativeRequested.emit(5000))
+        self._icon_volume = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume)
+        self._icon_muted = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolumeMuted)
+        self.btn_mute.setText("")
+        self.btn_mute.setIcon(self._icon_volume)
+        self.btn_mute.setToolTip("Mute")
+        self.btn_mute.setAccessibleName("Mute")
+        self.btn_mute.clicked.connect(self.muteToggleRequested.emit)
 
         self.btn_speed_025.clicked.connect(lambda: self.playbackRateRequested.emit(0.25))
         self.btn_speed_050.clicked.connect(lambda: self.playbackRateRequested.emit(0.5))
@@ -183,6 +191,18 @@ class MediaCenterPanel(QWidget):
     def set_playback_rate(self, rate):
         self.player.setPlaybackRate(rate)
 
+    def set_mute_button_state(self, is_muted: bool):
+        if is_muted:
+            self.btn_mute.setText("")
+            self.btn_mute.setIcon(self._icon_muted)
+            self.btn_mute.setToolTip("Unmute")
+            self.btn_mute.setAccessibleName("Unmute")
+        else:
+            self.btn_mute.setText("")
+            self.btn_mute.setIcon(self._icon_volume)
+            self.btn_mute.setToolTip("Mute")
+            self.btn_mute.setAccessibleName("Mute")
+
     def set_duration(self, ms):
         self.duration = ms
         self.slider.setRange(0, ms)
@@ -191,14 +211,6 @@ class MediaCenterPanel(QWidget):
     def set_markers(self, markers):
         self.slider.markers = markers
         self.slider.update()
-
-    def show_all_views(self, paths):
-        """
-        Legacy multi-view hook.
-        This panel now has a single unified view, so we load the first available path.
-        """
-        if paths:
-            self.load_video(paths[0])
 
     # ------------------------------------------------------------------
     # Player/timeline synchronization

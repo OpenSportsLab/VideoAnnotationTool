@@ -1,4 +1,6 @@
-from PyQt6.QtCore import QUrl, QTimer, QObject
+import os
+
+from PyQt6.QtCore import QUrl, QTimer, QObject, pyqtSignal
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtWidgets import QWidget
 
@@ -8,6 +10,9 @@ class MediaController(QObject):
     Now includes a 'Watchdog' mechanism to catch silent hardware decoder failures 
     (e.g., AV1 video fails, but Audio keeps playing causing a zombie black screen).
     """
+    playbackStateChanged = pyqtSignal(bool)
+    muteStateChanged = pyqtSignal(bool)
+
     def __init__(self, player: QMediaPlayer, video_widget: QWidget = None):
         super().__init__()
         self.player = player
@@ -31,12 +36,16 @@ class MediaController(QObject):
         # 3. Connect external player and video signals
         self.player.errorOccurred.connect(self._handle_media_error)
         self.player.mediaStatusChanged.connect(self._handle_media_status) # [NEW] Added status check
+        self.player.playbackStateChanged.connect(self._on_playback_state_changed)
         
         if self.video_widget and hasattr(self.video_widget, 'videoSink'):
             sink = self.video_widget.videoSink()
             if sink:
                 # Every time a pixel frame is actually rendered, this triggers
                 sink.videoFrameChanged.connect(self._on_frame_rendered)
+
+    def _on_playback_state_changed(self, state):
+        self.playbackStateChanged.emit(state == QMediaPlayer.PlaybackState.PlayingState)
 
     def _on_frame_rendered(self, *args):
         """Marks that the GPU successfully decoded and drew at least one frame."""
@@ -94,6 +103,47 @@ class MediaController(QObject):
         if auto_play:
             self.play_timer.start()
 
+    def current_source_path(self) -> str:
+        try:
+            current_source = self.player.source()
+            if current_source.isValid() and current_source.isLocalFile():
+                return current_source.toLocalFile()
+        except Exception:
+            return ""
+        return ""
+
+    def is_playing(self) -> bool:
+        return self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+
+    def route_media_selection(self, target_path: str, ensure_playback: bool = False):
+        if not target_path:
+            return
+
+        current_source_path = self.current_source_path()
+        same_source = self._fs_path_key(current_source_path) == self._fs_path_key(target_path)
+        should_load_and_play = (not same_source) or (ensure_playback and not self.is_playing())
+        if should_load_and_play:
+            self.load_and_play(target_path)
+
+    def is_muted(self) -> bool:
+        audio_output = self.player.audioOutput()
+        if audio_output is None:
+            return False
+        return bool(audio_output.isMuted())
+
+    def set_muted(self, is_muted: bool):
+        audio_output = self.player.audioOutput()
+        if audio_output is None:
+            return
+        target = bool(is_muted)
+        if bool(audio_output.isMuted()) == target:
+            return
+        audio_output.setMuted(target)
+        self.muteStateChanged.emit(target)
+
+    def toggle_mute(self):
+        self.set_muted(not self.is_muted())
+
     def _execute_play(self):
         """Starts playback and launches the Watchdog."""
         self._frame_received = False # Reset the frame flag
@@ -107,6 +157,12 @@ class MediaController(QObject):
             self._frame_received = False
             self.player.play()
             self.watchdog_timer.start()
+
+    def play(self):
+        self.player.play()
+        
+    def pause(self):
+        self.player.pause()
 
     def stop(self):
         """Stops playback and cancels all timers."""
@@ -146,3 +202,8 @@ class MediaController(QObject):
             target = duration
 
         self.player.setPosition(target)
+
+    def _fs_path_key(self, path: str) -> str:
+        if not path:
+            return ""
+        return os.path.normcase(os.path.normpath(path))

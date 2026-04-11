@@ -26,7 +26,7 @@
    <item>
     <widget class="QLabel" name="task_label">
      <property name="text">
-      <string>Task: N/A</string>
+      <string>Classification</string>
      </property>
      <property name="class" stdset="0">
       <string notr="true">editor_task_lbl</string>

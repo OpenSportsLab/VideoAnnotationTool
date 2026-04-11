@@ -1,21 +1,62 @@
-# Controllers: Description
+# Description Controller
 
-Description mode uses a single controller for editor + navigation responsibilities.
+## Role
+Owns Description mode editor behavior for sample-level captions.
 
-## Files
+## Architecture Context
+- `DescEditorController` is selection-driven and operates on the selected sample payload.
+- It emits caption updates to `HistoryManager` and never mutates project lifecycle state.
+- It depends only on the description panel object and consumes panel-level signals/methods (not child widgets directly).
 
-### `desc_editor_controller.py`
+## Public Surface
+### Class
+- `DescEditorController`
 
-Owns Description editor behavior:
+### Outbound Signals
+- `clearMarkersRequested()`
+- `captionsUpdateRequested(str, object)`
 
-- editor signal wiring (`confirm_clicked`, `clear_clicked`)
-- Data-ID based selection text refresh (`on_data_selected`)
-- caption save/clear/reset flows
-- undo/redo command creation (`CmdType.DESC_EDIT`)
-- done-status refresh through the shared tree status path
+## Key Functions and Responsibilities
+- `setup_connections()`
+  - Connects panel-level caption change signal to autosave pipeline.
+- `on_mode_changed(index)`
+  - Tracks active mode and requests marker clear when Description is active.
+- `on_selected_sample_changed(sample)`
+  - Loads selected sample and populates editor text.
+- `save_current_annotation()`
+  - Converts editor text into `captions` payload and emits update if changed.
+- `reset_ui()`
+  - Clears current context and disables panel state.
 
-## Notes
+## Business Rules
+- Autosave debounce is 250 ms.
+- No selected sample => no save.
+- No effective captions diff => no mutation signal.
+- Description flow emits caption-only updates (`captions` field).
 
-- Media routing and sample lifecycle (`add/remove/filter/clear`) are handled in
-  `controllers/dataset_explorer_controller.py`.
-- JSON load/create/save/export remains handled by `controllers/dataset_explorer_controller.py`.
+## Conventions
+- Keep parsing/formatting local to controller.
+- Use signals for all persistence side effects.
+- Do not own dataset create/load/save/filter/remove behavior.
+- Keep controller-panel boundary clean: use `DescriptionAnnotationPanel` API (`set_caption_text`, `get_caption_text`, `set_caption_editor_enabled`).
+
+## Interactions
+- Inbound:
+  - `DatasetExplorerController.sampleSelectionChanged -> on_selected_sample_changed`
+- Outbound:
+  - `captionsUpdateRequested -> HistoryManager.execute_sample_captions_update`
+
+## Tests
+- `tests/gui/test_workflow_description.py`
+- `tests/gui/test_history_stack_contract.py`
+- `tests/gui/test_signal_decoupling_contract.py`
+
+## Developer Knowledge
+- Selection payload contract:
+  `on_selected_sample_changed(sample)` expects a sample dict from `dataset_json["data"][i]` or invalid selection sentinel.
+- Description persistence scope:
+  this controller emits only `captions` updates; avoid introducing unrelated sample mutations here.
+- Autosave:
+  keep `_suspend_autosave` guard when setting editor text programmatically to prevent false writes.
+- Backward compatibility:
+  `current_action_path` is still referenced by tests; keep or migrate tests in lock-step if removing it.

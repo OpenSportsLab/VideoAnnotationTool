@@ -1,38 +1,67 @@
-# Unified Media Center Panel
+# Media Player UI
 
-This package contains the shared center panel used by all modes. The panel is now built from a single Qt Designer UI file and one Python class.
+## Role
+Provides the central video/timeline panel used across all annotation modes.
 
-## Directory Structure
+## Architecture Context
+- `MediaCenterPanel` loads static controls from `media_center_panel.ui`.
+- It hosts `QMediaPlayer`, `QAudioOutput`, and `QVideoWidget` for rendering.
+- Playback business policy (routing/restart guards/watchdog decisions) remains in `MediaController`.
 
-```text
-media_player/
-├── __init__.py             # MediaCenterPanel (logic + direct public API)
-├── media_center_panel.ui   # Designer-controlled layout
-└── README.md
-```
+## Public Surface
+### Main Classes
+- `MediaCenterPanel`
+- `AnnotationSlider`
 
-## Architecture
+### Control Signals
+- `seekRelativeRequested(int)`
+- `stopRequested()`
+- `playPauseRequested()`
+- `muteToggleRequested()`
+- `playbackRateRequested(float)`
 
-- `media_center_panel.ui` defines the visual structure:
-  - video area
-  - timeline row (time label, zoom buttons, scroll area)
-  - playback control rows
-- `MediaCenterPanel` in `__init__.py` loads the `.ui` with `uic.loadUi(...)` and wires runtime behavior:
-  - `QMediaPlayer`, `QAudioOutput`, `QVideoWidget`
-  - custom marker slider painting
-  - zoom/auto-follow timeline behavior
-  - playback button signal emissions
+### Timeline/Media Signals
+- `seekRequested(int)`
+- `positionChanged(int)`
+- `durationChanged(int)`
+- `stateChanged(object)`
 
-## Public API
+### Public Methods
+- `load_video(path)`
+- `play()`, `pause()`, `stop()`, `toggle_play_pause()`
+- `set_position(ms)`, `set_playback_rate(rate)`
+- `set_mute_button_state(is_muted)`
+- `set_duration(ms)`, `set_markers(markers)`
 
-`MediaCenterPanel` exposes direct methods/properties/signals for controllers and `main_window.py`:
+## Key Functions and Responsibilities
+- `_setup_media_player()`: initializes player/audio/video widget wiring.
+- `_setup_timeline()`: initializes slider/scroll/zoom behavior.
+- `_setup_controls()`: maps buttons to emitted control signals.
+- `AnnotationSlider.paintEvent(...)`: draws marker lines on timeline.
 
-- Media: `player`, `video_widget`, `load_video(path)`, `play()`, `pause()`, `stop()`, `set_position(ms)`, `set_playback_rate(rate)`
-- Timeline: `set_duration(ms)`, `set_markers(markers)`, `seekRequested`
-- Playback signals: `playPauseRequested`, `seekRelativeRequested`, `stopRequested`, `playbackRateRequested`
-- Media signals: `positionChanged`, `durationChanged`, `stateChanged`
+## Business Rules
+- UI emits control intents; controller decides route/playback policy.
+- Marker rendering is view-only and mode-agnostic.
 
-## Notes
+## Conventions
+- Keep widget logic and presentation in this module.
+- Keep playback decision logic in `MediaController`.
 
-- UI customizations should be done in `media_center_panel.ui`.
-- Runtime behavior and signal wiring should remain in `__init__.py`.
+## Interactions
+- Inbound from controller:
+  - mute state updates, marker updates, seek/playback updates.
+- Outbound to controller:
+  - playback/mute/seek/playback-rate intents.
+
+## Tests
+- `tests/gui/test_core_lifecycle.py`
+- `tests/gui/test_dataset_explorer_regressions.py`
+- Mode workflow tests that assert playback/marker behavior.
+
+## Developer Knowledge
+- `MediaCenterPanel` owns widget/player primitives, but route/restart logic belongs in `MediaController`.
+- Marker payload contract:
+  list of dicts with at least `start_ms`, optional `color`.
+- Marker color is supplied by the owning mode controller; the media player should render it without imposing mode-specific defaults.
+- Keep control signal names stable (`playPauseRequested`, `muteToggleRequested`, etc.) to avoid wiring regressions.
+- Timeline zoom/scroll behavior is subtle; validate follow-playhead behavior after changes.

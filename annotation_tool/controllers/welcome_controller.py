@@ -8,7 +8,7 @@ class WelcomeController(QObject):
     Owns routing and external link behavior.
     """
 
-    TUTORIAL_URL = "https://www.youtube.com/"
+    TUTORIAL_URL = "https://opensportslab.github.io/VideoAnnotationTool/"
     GITHUB_URL = "https://github.com/OpenSportsLab/VideoAnnotationTool"
 
     def __init__(self, panel, router, parent=None):

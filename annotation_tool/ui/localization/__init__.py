@@ -2,13 +2,16 @@ import os
 
 from PyQt6 import uic
 from PyQt6.QtCore import QAbstractTableModel, QEvent, QObject, Qt, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QColorDialog,
     QHeaderView,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -18,6 +21,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from colors import (
+    localization_label_color_hex,
+    localization_label_hover_hex,
+    localization_label_pressed_hex,
+    localization_label_text_hex,
+    normalize_hex_color,
+)
 from utils import resource_path
 
 
@@ -68,7 +78,8 @@ class _LocalizationTableModel(QAbstractTableModel):
     def __init__(self, annotations=None):
         super().__init__()
         self._data = annotations or []
-        self._headers = ["Time", "Head", "Label"]
+        self._headers = ["Time", "Head", "Label", "Confidence"]
+        self._schema = {}
 
     def rowCount(self, parent=None):
         return len(self._data)
@@ -79,6 +90,8 @@ class _LocalizationTableModel(QAbstractTableModel):
     def flags(self, index):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
+        if index.column() >= 3:
+            return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         return (
             Qt.ItemFlag.ItemIsEnabled
             | Qt.ItemFlag.ItemIsSelectable
@@ -100,6 +113,20 @@ class _LocalizationTableModel(QAbstractTableModel):
                 return item.get("head", "").replace("_", " ")
             if col == 2:
                 return item.get("label", "").replace("_", " ")
+            if col == 3:
+                if "confidence_score" not in item:
+                    return ""
+                try:
+                    return f"{float(item.get('confidence_score') or 0.0) * 100.0:.1f}%"
+                except Exception:
+                    return ""
+
+        if role == Qt.ItemDataRole.BackgroundRole:
+            definition = self._schema.get(item.get("head", ""), {}) if isinstance(self._schema, dict) else {}
+            label_colors = definition.get("label_colors", {}) if isinstance(definition, dict) else {}
+            color = QColor(localization_label_color_hex(item.get("head", ""), item.get("label", ""), label_colors))
+            color.setAlpha(72)
+            return QBrush(color)
 
         if role == Qt.ItemDataRole.UserRole:
             return item
@@ -130,7 +157,11 @@ class _LocalizationTableModel(QAbstractTableModel):
 
         self._data[row] = new_item
         self.itemChanged.emit(old_item, new_item)
-        self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole])
+        self.dataChanged.emit(
+            index,
+            index,
+            [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole, Qt.ItemDataRole.BackgroundRole],
+        )
         return True
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
@@ -142,6 +173,13 @@ class _LocalizationTableModel(QAbstractTableModel):
         self.beginResetModel()
         self._data = annotations
         self.endResetModel()
+
+    def set_schema(self, schema):
+        self._schema = dict(schema or {})
+        if self.rowCount() > 0:
+            top_left = self.index(0, 0)
+            bottom_right = self.index(self.rowCount() - 1, self.columnCount() - 1)
+            self.dataChanged.emit(top_left, bottom_right, [Qt.ItemDataRole.BackgroundRole])
 
     def get_annotation_at(self, row):
         if 0 <= row < len(self._data):
@@ -158,6 +196,8 @@ class _TableAdapter(QObject):
     annotationSelected = pyqtSignal(int)
     annotationModified = pyqtSignal(dict, dict)
     annotationDeleted = pyqtSignal(dict)
+    annotationConfirmRequested = pyqtSignal(dict)
+    annotationRejectRequested = pyqtSignal(dict)
     updateTimeForSelectedRequested = pyqtSignal(dict)
 
     def __init__(
@@ -197,6 +237,7 @@ class _TableAdapter(QObject):
 
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
+        self.table.viewport().installEventFilter(self)
 
         if self.btn_set_time is not None:
             self.btn_set_time.setEnabled(False)
@@ -204,11 +245,25 @@ class _TableAdapter(QObject):
 
         self.current_schema = {}
 
+    def eventFilter(self, watched, event):
+        try:
+            viewport = self.table.viewport()
+        except RuntimeError:
+            return False
+
+        if watched is viewport and event.type() == QEvent.Type.MouseButtonDblClick:
+            index = self.table.indexAt(event.position().toPoint())
+            if index.isValid() and index.column() == 3:
+                self._on_table_double_clicked(index)
+                return True
+        return super().eventFilter(watched, event)
+
     def set_data(self, annotations):
         self.model.set_annotations(annotations)
 
     def set_schema(self, schema):
         self.current_schema = schema
+        self.model.set_schema(schema)
 
     def _on_selection_changed(self, selected, deselected):
         indexes = selected.indexes()
@@ -249,11 +304,43 @@ class _TableAdapter(QObject):
             return
 
         menu = QMenu(self.table)
+        act_confirm = None
+        act_reject = None
+        if isinstance(item, dict) and "confidence_score" in item:
+            act_confirm = menu.addAction("Confirm Annotation")
+            act_reject = menu.addAction("Reject Annotation")
         act_delete = menu.addAction("Delete Event")
         selected_action = menu.exec(self.table.mapToGlobal(pos))
 
+        if act_confirm is not None and selected_action == act_confirm:
+            self.annotationConfirmRequested.emit(item)
+            return
+        if act_reject is not None and selected_action == act_reject:
+            self.annotationRejectRequested.emit(item)
+            return
         if selected_action == act_delete:
             self.annotationDeleted.emit(item)
+
+    def _on_table_double_clicked(self, index):
+        if not index.isValid():
+            return
+        if index.column() != 3:
+            return
+        item = self.model.get_annotation_at(index.row())
+        if not isinstance(item, dict) or "confidence_score" not in item:
+            return
+
+        reply = QMessageBox.question(
+            self.table,
+            "Confirm Annotation",
+            "Confirm this annotation?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.annotationConfirmRequested.emit(item)
+        elif reply == QMessageBox.StandardButton.No:
+            self.annotationRejectRequested.emit(item)
 
 
 class _SpottingTabsAdapter(QObject):
@@ -270,6 +357,8 @@ class _SpottingTabsAdapter(QObject):
     labelAddReq = pyqtSignal(str)
     labelRenameReq = pyqtSignal(str, str)
     labelDeleteReq = pyqtSignal(str, str)
+    labelColorReq = pyqtSignal(str, str, str)
+    smartInferenceRequested = pyqtSignal(str)
 
     def __init__(self, tab_widget: QTabWidget, parent=None):
         super().__init__(parent)
@@ -300,8 +389,9 @@ class _SpottingTabsAdapter(QObject):
 
         heads = sorted(label_definitions.keys())
         for head in heads:
-            labels = label_definitions[head].get("labels", [])
-            page, time_label, scroll = self._create_head_page()
+            definition = label_definitions[head]
+            labels = definition.get("labels", [])
+            page, time_label, scroll, smart_infer_btn = self._create_head_page()
 
             self._tabs.addTab(page, head.replace("_", " "))
             self._head_keys_map.append(head)
@@ -309,7 +399,9 @@ class _SpottingTabsAdapter(QObject):
                 "time_label": time_label,
                 "scroll": scroll,
                 "labels": labels,
+                "label_colors": dict(definition.get("label_colors", {})),
             }
+            smart_infer_btn.clicked.connect(lambda _, h=head: self.smartInferenceRequested.emit(h))
             self._populate_head_buttons(head)
 
         self._plus_tab_index = self._tabs.addTab(QWidget(), "+")
@@ -334,17 +426,6 @@ class _SpottingTabsAdapter(QObject):
             self._tabs.setCurrentIndex(idx)
             self._previous_index = idx
 
-    def eventFilter(self, watched, event):
-        if (
-            watched in self._button_meta
-            and event.type() == QEvent.Type.MouseButtonDblClick
-            and event.button() == Qt.MouseButton.LeftButton
-        ):
-            head, label = self._button_meta[watched]
-            self.labelRenameReq.emit(head, label)
-            return True
-        return super().eventFilter(watched, event)
-
     def _create_head_page(self):
         page = QWidget()
         page_layout = QVBoxLayout(page)
@@ -354,7 +435,13 @@ class _SpottingTabsAdapter(QObject):
         time_label = QLabel("Current Time: 00:00.000")
         time_label.setProperty("class", "spotting_time_lbl")
         time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        page_layout.addWidget(time_label)
+        header_layout = QHBoxLayout()
+        header_layout.addWidget(time_label)
+        header_layout.addStretch()
+        smart_infer_btn = QPushButton("Smart Inference")
+        smart_infer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        header_layout.addWidget(smart_infer_btn)
+        page_layout.addLayout(header_layout)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -362,7 +449,7 @@ class _SpottingTabsAdapter(QObject):
         scroll.setProperty("class", "spotting_scroll_area")
         page_layout.addWidget(scroll)
 
-        return page, time_label, scroll
+        return page, time_label, scroll, smart_infer_btn
 
     def _populate_head_buttons(self, head_name):
         page_info = self._head_pages.get(head_name)
@@ -370,6 +457,7 @@ class _SpottingTabsAdapter(QObject):
             return
 
         labels = page_info["labels"]
+        label_colors = page_info.get("label_colors", {})
         scroll = page_info["scroll"]
 
         old_widget = scroll.takeWidget()
@@ -391,15 +479,14 @@ class _SpottingTabsAdapter(QObject):
             btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setMinimumHeight(28)
-            btn.setStyleSheet("padding: 2px 10px;")
             btn.setProperty("class", "spotting_label_btn")
+            btn.setStyleSheet(self._label_button_stylesheet(head_name, label, label_colors))
 
             btn.clicked.connect(lambda _, h=head_name, l=label: self.spottingTriggered.emit(h, l))
             btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             btn.customContextMenuRequested.connect(
                 lambda _pos, b=btn, h=head_name, l=label: self._show_label_context_menu(b, h, l)
             )
-            btn.installEventFilter(self)
             self._button_meta[btn] = (head_name, label)
 
             btn.adjustSize()
@@ -451,15 +538,50 @@ class _SpottingTabsAdapter(QObject):
 
         scroll.setWidget(grid_container)
 
+    @staticmethod
+    def _label_button_stylesheet(head_name: str, label: str, label_colors: dict | None = None) -> str:
+        base = localization_label_color_hex(head_name, label, label_colors)
+        hover = localization_label_hover_hex(base)
+        pressed = localization_label_pressed_hex(base)
+        text = localization_label_text_hex(base)
+        return (
+            "QPushButton {"
+            f"background-color: {base};"
+            f"color: {text};"
+            f"border: 1px solid {pressed};"
+            "border-radius: 6px;"
+            "font-weight: bold;"
+            "font-size: 13px;"
+            "text-align: center;"
+            "padding: 4px 10px;"
+            "}"
+            "QPushButton:hover {"
+            f"background-color: {hover};"
+            f"border-color: {hover};"
+            "}"
+            "QPushButton:pressed {"
+            f"background-color: {pressed};"
+            f"border-color: {pressed};"
+            "}"
+        )
+
     def _show_label_context_menu(self, button: QPushButton, head_name: str, label: str):
         display_label = label.replace("_", " ")
         menu = QMenu(button)
         rename_action = menu.addAction(f"Rename '{display_label}'")
+        color_action = menu.addAction(f"Change Color for '{display_label}'")
         delete_action = menu.addAction(f"Delete '{display_label}'")
 
         action = menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
         if action == rename_action:
             self.labelRenameReq.emit(head_name, label)
+        elif action == color_action:
+            current_colors = self._head_pages.get(head_name, {}).get("label_colors", {})
+            current_hex = localization_label_color_hex(head_name, label, current_colors)
+            selected = QColorDialog.getColor(QColor(current_hex), button, f"Choose color for '{display_label}'")
+            normalized = normalize_hex_color(selected.name()) if selected.isValid() else None
+            if normalized:
+                self.labelColorReq.emit(head_name, label, normalized)
         elif action == delete_action:
             self.labelDeleteReq.emit(head_name, label)
 
@@ -649,7 +771,13 @@ class LocalizationAnnotationPanel(QWidget):
             list_label=self.handEventsListLabel,
             parent=self,
         )
-        self.smart_widget = _SmartWidgetAdapter(self, self)
+        for idx in reversed(range(self.tabs.count())):
+            if self.tabs.widget(idx) is getattr(self, "smartAnnotationTab", None):
+                self.tabs.removeTab(idx)
+                break
+
+        if self.tabs.count() <= 1:
+            self.tabs.tabBar().hide()
 
         self.tabs.currentChanged.connect(self.tabSwitched.emit)
         self.btn_prev_event.clicked.connect(lambda: self.eventNavigateRequested.emit(-1))

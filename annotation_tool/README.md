@@ -1,92 +1,84 @@
 # Video Annotation Tool
 
-This project is a professional video annotation desktop application built with **PyQt6**. It features a comprehensive **quad-mode** architecture supporting **Whole-Video Classification**, **Action Spotting (Localization)**, **Video Captioning (Description)**, and the newly integrated **Dense Video Captioning (Dense Description)**. 
+## Role
+Desktop PyQt6 application for video annotation across four modes:
+- Classification
+- Localization (action spotting)
+- Description (sample-level captions)
+- Dense Description (timestamped text events)
 
-With the latest update, the Classification mode now features **AI-Powered Smart Annotation**, allowing users to leverage state-of-the-art `opensportslib` models (e.g., MViT) to automatically infer actions via single or batch processing.
+## Architecture Overview
+The app is organized into three runtime layers plus shell composition:
+- Shell composition: `main_window.py`
+- Controller/business layer: `controllers/`
+- View layer: `ui/`
+- Styling/assets: `style/`, `image/`
 
-The project follows a modular **MVC (Model-View-Controller)** design pattern to ensure strict separation of concerns. It leverages **Qt's Model/View architecture** for resource management and a unified **Media Controller** to ensure stable, high-performance video playback across all modalities.
+The canonical persisted in-memory state is a single `dataset_json` owned by `DatasetExplorerController`.
 
----
+## Submodule Responsibilities
+- `main.py`
+  - Entry point: initializes `QApplication` and opens `VideoAnnotationWindow`.
+- `main_window.py`
+  - Composition root and signal wiring.
+  - Owns docks/tabs layout, menu actions, shortcuts, and shell-level feedback.
+- `controllers/`
+  - Dataset lifecycle, mutation/undo-redo, media playback control, mode-specific editor logic.
+- `ui/`
+  - Widgets/adapters, `.ui` loading, user-intent signal emission.
+- `models/`
+  - Compatibility exports only (`CmdType`).
 
-## 📂 Project Structure Overview
+## Core Runtime Flow
+1. User creates or opens a dataset from shell actions.
+2. `DatasetExplorerController` loads/normalizes JSON and populates tree/indexes.
+3. Tree selection emits selection context to editors + media route request.
+4. Editors render state and emit mutation intents.
+5. `HistoryManager` applies tracked mutations and pushes undo commands.
+6. Undo/redo replays command transitions and emits refresh intents.
 
-```text
-annotation_tool/
-├── main.py                     # Application entry point
-├── viewer.py                   # Main Window controller (Orchestrator)
-├── utils.py                    # Helper functions and constants
-├── config.yaml                 # [NEW] Inference configuration for opensportslib models
-├── __init__.py                 # Package initialization
-│
-├── models/                     # [Model Layer] Data Structures & State
-│   ├── app_state.py            # Global State, Undo/Redo Stacks, & JSON Validation
-│   └── project_tree.py         # Shared QStandardItemModel for the sidebar tree
-│
-├── controllers/                # [Controller Layer] Business Logic
-│   ├── router.py               # Mode detection & Project lifecycle management
-│   ├── history_manager.py      # Universal Undo/Redo system (Supports Batch Annotations)
-│   ├── media_controller.py     # Unified playback logic (Anti-freeze/Visual clearing)
-│   ├── dataset_explorer_controller.py # Shared dataset tree + lifecycle flows
-│   ├── welcome_controller.py   # Welcome screen actions + recent datasets wiring
-│   ├── classification/         # Logic for Classification mode
-│   │   ├── __init__.py
-│   │   ├── classification_editor_controller.py # Unified classification mode controller
-│   │   ├── inference_manager.py                # AI Smart Annotation helper
-│   │   └── train_manager.py                    # Training helper
-│   ├── localization/           # Logic for Action Spotting (Localization) mode
-│   │   └── __init__.py
-│   ├── description/            # Logic for Global Captioning (Description) mode
-│   │   └── __init__.py
-│   └── dense_description/      # Logic for Dense Captioning (Text-at-Timestamp)
-│       ├── __init__.py
-│       └── dense_editor_controller.py # Dense editor logic + explorer delegation
-│
-├── ui/                         # [View Layer] Interface Definitions
-│   ├── dialogs.py                # Shared dialogs (project type, media errors, etc.)
-│   ├── welcome_widget/           # Welcome screen package
-│   ├── dataset_explorer_panel/   # Left-dock dataset explorer package
-│   ├── media_player/             # Center media/timeline package
-│   ├── classification/           # Classification right-panel package
-│   ├── localization/             # Localization right-panel package
-│   ├── description/              # Description right-panel package
-│   └── dense_description/        # Dense Description right-panel package
-│
-└── style/                      # Visual theme assets
-    └── style.qss               # Centralized Dark mode stylesheet
-```
----
+## Data Contracts
+- Project root object (`dataset_json`) includes (non-exhaustive):
+  - `version`, `date`, `dataset_name`, `description`, `metadata`, `labels`, `data`
+- Sample object (`dataset_json["data"][i]`) typically includes:
+  - `id`, `inputs`, `labels`, `events`, `captions`, `dense_captions`
+  - Classification smart prediction marker: `labels[head].confidence_score` (optional float)
+- Input item: `{ "type": "video", "path": "..." }`
+- Localization event: `{ "head": str, "label": str, "position_ms": int }`
+- Dense event: `{ "position_ms": int, "lang": str, "text": str }`
+- Caption list (Description): `[ { "lang": str, "text": str, ...optional } ]`
 
-## 📝 Detailed Module Descriptions
+## Conventions
+- Signal-first cross-module communication; `main_window.py` wires interactions.
+- Controllers should not own `MainWindow`.
+- Mutation contract: push history only on effective diff (no-op edits do not add stack entries).
+- Media routing/business decisions are centralized in `MediaController`.
+- UI modules remain presentation-focused.
 
-### 1. Core Infrastructure & Routing
+## Key Tests
+- Architecture/wiring: `tests/gui/test_signal_decoupling_contract.py`
+- Dataset lifecycle and routing: `tests/gui/test_core_lifecycle.py`, `tests/gui/test_dataset_explorer_regressions.py`
+- History contract: `tests/gui/test_history_stack_contract.py`
+- Mode workflows:
+  - `tests/gui/test_workflow_classification.py`
+  - `tests/gui/test_workflow_localization.py`
+  - `tests/gui/test_workflow_description.py`
+  - `tests/gui/test_workflow_dense_description.py`
 
-* **`main.py`**: Initializes the `QApplication` and the high-level event loop.
-* **`viewer.py`**: The heart of the application. It instantiates all Managers, connects signals between UI components and Logic Controllers, and implements `stop_all_players()` to prevent media resource leaks during mode switching.
-* **`router.py`**: Features a heuristic detection engine that identifies project types from JSON keys (e.g., detecting `"dense"` tasks to trigger the Dense Description mode).
-* **`media_controller.py`**: Manages the "Stop -> Load -> Delay -> Play" sequence to eliminate black screens and GPU buffer artifacts.
+## Non-goals
+- This package README is architectural documentation, not a user tutorial.
+- Per-class signal/method details live in submodule READMEs.
 
-### 2. The Model Layer (`/models`)
-
-* **`app_state.py`**: Maintains the "Source of Truth" for the application. It stores `manual_annotations` (Class), `localization_events` (Loc), and `dense_description_events` (Dense). It also contains strict JSON Schema validators for each task.
-* **`project_tree.py`**: A `QStandardItemModel` used by all modes to display clips in the sidebar.
-
-### 3. Modality Logic (`/controllers`)
-
-* **`localization_editor_controller.py`**: Logic for "Spotting" (mapping a label to a timestamp), schema management, table/timeline sync, and localization explorer delegation.
-* **`dense_editor_controller.py`**: Logic for mapping free-text descriptions to timestamps, timeline sync, CRUD + undo/redo, and Dense-mode explorer add/remove/filter/clear delegation.
-
-### 4. The View Layer (`/ui`)
-
-* Shared shell widgets live directly under `ui/`: `welcome_widget/`, `dataset_explorer_panel/`, `media_player/`, and `dialogs.py`.
-* Each mode package is flat and self-contained (`__init__.py` + `.ui` + `README.md`).
-* Example: `dense_description/dense_annotation_panel.ui` defines Dense right-panel layout and editable table area.
-
----
-
-## 🚀 Getting Started
-
-1. **Select Mode**: Launch the app and use the "New Project" wizard to select one of the four modes.
-2. **Import**: The `AppRouter` will automatically detect the correct modality if you import an existing JSON.
-3. **Annotate**:
-* In **Dense mode**, navigate to a point in the video, type your description in the right panel, and click "Add Description".
-* Use the **Timeline** to jump between existing text annotations.
+## Developer Knowledge
+- Source of truth:
+  `DatasetExplorerController.dataset_json` is the canonical persisted state in memory.
+- Mutation rule:
+  effective dataset changes should create exactly one undo command; no-op changes should create none.
+- Wiring rule:
+  cross-module behavior should be connected in `VideoAnnotationWindow.connect_signals()` rather than hard-coding controller-to-controller calls.
+- Media rule:
+  playback routing/state logic belongs in `MediaController`; editor and explorer modules should emit intent signals.
+- Selection rule:
+  tree selection drives editor refresh and media routing; avoid hidden side effects outside selection handlers.
+- Safe extension checklist:
+  add signal contract -> wire in `main_window.py` -> add no-op guard if mutating -> add/update GUI regression tests.

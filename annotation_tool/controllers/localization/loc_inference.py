@@ -1,9 +1,83 @@
-import os
-import json
-import tempfile
-import yaml
 import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+import yaml
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
+
+
+def _base_dir() -> str:
+    if hasattr(sys, "_MEIPASS"):
+        return sys._MEIPASS
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def _safe_current_working_directory() -> str:
+    try:
+        return os.getcwd()
+    except FileNotFoundError:
+        fallback = _base_dir()
+        os.chdir(fallback)
+        return fallback
+
+
+def _restore_current_working_directory(path: str):
+    target = path or _base_dir()
+    try:
+        os.chdir(target)
+    except FileNotFoundError:
+        os.chdir(_base_dir())
+
+
+def _resolve_ffmpeg_executable() -> str:
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        ffmpeg_path = shutil.which("ffmpeg")
+        if ffmpeg_path:
+            return ffmpeg_path
+    raise FileNotFoundError(
+        "Could not find an FFmpeg executable. Install imageio-ffmpeg or make ffmpeg available on PATH."
+    )
+
+
+def _ms_to_ffmpeg_time(ms: int) -> str:
+    ms = max(0, int(ms or 0))
+    seconds = ms // 1000
+    return f"{seconds // 3600:02}:{(seconds % 3600) // 60:02}:{seconds % 60:02}.{ms % 1000:03}"
+
+
+def _build_temp_dataset(video_path: str, input_fps: float, head_name: str, labels: list[str]) -> dict:
+    default_label = labels[0] if labels else "Unknown"
+    return {
+        "version": "2.0",
+        "task": "action_spotting",
+        "labels": {head_name: {"type": "single_label", "labels": list(labels)}},
+        "data": [
+            {
+                "id": "inf_vid",
+                "inputs": [{"path": video_path, "type": "video", "fps": float(input_fps or 25.0)}],
+                "events": [{"head": head_name, "label": default_label, "position_ms": 0}],
+            }
+        ],
+    }
+
+
+def _runtime_confidence(event: dict) -> float:
+    for key in ("confidence_score", "confidence", "score"):
+        if key not in event:
+            continue
+        try:
+            return max(0.0, min(1.0, float(event.get(key) or 0.0)))
+        except Exception:
+            return 1.0
+    return 1.0
 
 class LocInferenceWorker(QThread):
     """
@@ -13,119 +87,168 @@ class LocInferenceWorker(QThread):
     finished_signal = pyqtSignal(list)
     error_signal = pyqtSignal(str)
 
-    def __init__(self, video_path, start_ms, end_ms, config_path):
+    def __init__(self, video_path, start_ms, end_ms, config_path, model_id, head_name, labels, input_fps):
         super().__init__()
         self.video_path = os.path.abspath(video_path)
         self.start_ms = start_ms
         self.end_ms = end_ms
         self.config_path = config_path
+        self.model_id = str(model_id or "jeetv/snpro-snbas-2024")
+        self.target_head = str(head_name or "ball_action")
+        self.labels = [str(label) for label in list(labels or []) if str(label).strip()]
+        self.input_fps = float(input_fps or 25.0)
+
+    def _clip_video_if_needed(self, tmp_dir: str) -> tuple[str, int]:
+        if self.start_ms <= 0 and self.end_ms <= 0:
+            return self.video_path, 0
+
+        clip_video_path = os.path.join(tmp_dir, "clipped_segment.mp4")
+        cmd = [
+            _resolve_ffmpeg_executable(),
+            "-y",
+            "-ss",
+            _ms_to_ffmpeg_time(self.start_ms),
+            "-i",
+            self.video_path,
+        ]
+        if self.end_ms > 0:
+            duration_ms = max(0, self.end_ms - self.start_ms)
+            cmd.extend(["-t", _ms_to_ffmpeg_time(duration_ms)])
+        cmd.extend(["-c", "copy", clip_video_path])
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        return clip_video_path, self.start_ms
+
+    def _build_runtime_config(self, tmp_dir: str, tmp_input_json: str) -> tuple[str, list[str]]:
+        with open(self.config_path, "r", encoding="utf-8") as handle:
+            config_dict = yaml.safe_load(handle) or {}
+
+        data_cfg = config_dict.setdefault("DATA", {})
+        model_labels = [str(label) for label in list(data_cfg.get("classes", [])) if str(label).strip()]
+        if not model_labels:
+            model_labels = list(self.labels)
+            data_cfg["classes"] = list(model_labels)
+        data_cfg["input_fps"] = int(round(self.input_fps)) if self.input_fps > 0 else 25
+
+        test_cfg = data_cfg.setdefault("test", {})
+        test_cfg["video_path"] = tmp_dir
+        test_cfg["path"] = tmp_input_json
+        test_cfg["results"] = "predictions"
+        dataloader_cfg = test_cfg.setdefault("dataloader", {})
+        dataloader_cfg["pin_memory"] = False
+        dataloader_cfg["num_workers"] = 0
+
+        model_cfg = config_dict.setdefault("MODEL", {})
+        model_cfg["multi_gpu"] = False
+        model_cfg["save_dir"] = os.path.join(tmp_dir, "checkpoints")
+        model_cfg["work_dir"] = os.path.join(tmp_dir, "checkpoints")
+
+        system_cfg = config_dict.setdefault("SYSTEM", {})
+        system_cfg["work_dir"] = tmp_dir
+        system_cfg["save_dir"] = os.path.join(tmp_dir, "checkpoints")
+        system_cfg["log_dir"] = os.path.join(tmp_dir, "logs")
+        system_cfg["device"] = "cpu"
+        system_cfg["GPU"] = -1
+        system_cfg["gpu_id"] = -1
+
+        temp_config_path = os.path.join(tmp_dir, "temp_config.yaml")
+        with open(temp_config_path, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(config_dict, handle, sort_keys=False)
+
+        return temp_config_path, model_labels
+
+    @staticmethod
+    def _find_prediction_json(tmp_dir: str) -> str:
+        patterns = [
+            os.path.join(tmp_dir, "**", "predictions_test_epoch_*.json"),
+            os.path.join(tmp_dir, "**", "predictions*.json"),
+            os.path.join(tmp_dir, "**", "*.json"),
+        ]
+        candidates = []
+        for pattern in patterns:
+            candidates.extend(glob.glob(pattern, recursive=True))
+
+        filtered = []
+        for candidate in candidates:
+            filename = os.path.basename(candidate)
+            if filename.startswith("temp_"):
+                continue
+            filtered.append(candidate)
+
+        if not filtered:
+            raise FileNotFoundError(f"Could not find any generated prediction JSON in {tmp_dir}")
+        return max(filtered, key=os.path.getctime)
 
     def run(self):
         try:
+            if not self.labels:
+                raise ValueError("Localization inference requires at least one label in the selected head.")
+
             # Import library inside thread to avoid blocking main thread at startup
             from opensportslib import model
-            
+
+            original_cwd = _safe_current_working_directory()
             with tempfile.TemporaryDirectory() as tmp_dir:
-                tmp_input_json = os.path.join(tmp_dir, "temp_test.json")
-                tmp_config_yaml = os.path.join(tmp_dir, "temp_config.yaml")
-                tmp_output_json = os.path.join(tmp_dir, "predictions.json")
-                
-                # --- 1. Load and dynamically patch the YAML config ---
-                with open(self.config_path, 'r', encoding='utf-8') as f:
-                    config_dict = yaml.safe_load(f)
-                
-                classes = config_dict.get("DATA", {}).get("classes", [])
-                
-                # 🚀 [MAC CPU ADAPTATION & PATH FIXES] 🚀
-                # Force CPU mode and disable Multi-GPU dynamically
-                if "SYSTEM" not in config_dict: config_dict["SYSTEM"] = {}
-                config_dict["SYSTEM"]["work_dir"] = tmp_dir
-                config_dict["SYSTEM"]["device"] = "cpu"
-                config_dict["SYSTEM"]["GPU"] = 0
-                config_dict["SYSTEM"]["gpu_id"] = 0
-                config_dict["SYSTEM"]["save_dir"] = os.path.join(tmp_dir, "checkpoints")
-                
-                if "MODEL" not in config_dict: config_dict["MODEL"] = {}
-                config_dict["MODEL"]["multi_gpu"] = False
-                
-                # Override dataloader paths for test
-                if "DATA" in config_dict and "test" in config_dict["DATA"]:
-                    config_dict["DATA"]["test"]["video_path"] = os.path.dirname(self.video_path)
-                    config_dict["DATA"]["test"]["path"] = tmp_input_json
-                    config_dict["DATA"]["test"]["results"] = "predictions"
-                
-                with open(tmp_config_yaml, 'w', encoding='utf-8') as f:
-                    yaml.dump(config_dict, f)
-
-                # --- 2. Create temporary JSON for the single video ---
-                test_data = {
-                    "version": "2.0",
-                    "task": "action_spotting",
-                    "labels": {"ball_action": {"type": "single_label", "labels": classes}},
-                    "data": [{
-                        "id": "inf_vid",
-                        "inputs": [{"path": self.video_path, "type": "video", "fps": 25.0}],
-                        # Must include a dummy event to bypass the DataLoader
-                        "events": [{"head": "ball_action", "label": classes[0] if classes else "Unknown", "position_ms": 0}]
-                    }]
-                }
-                with open(tmp_input_json, 'w', encoding='utf-8') as f:
-                    json.dump(test_data, f)
-                
-                # --- 3. Execute model inference ---
-                loc_model = model.localization(config=tmp_config_yaml)
-                
                 try:
-                    # Run inference. This will definitely throw a FileNotFoundError because the underlying evaluator cannot find the file
-                    loc_model.infer(
-                        test_set=tmp_input_json, 
-                        pretrained="jeetv/snpro-snbas-2024"
-                    )
-                except FileNotFoundError:
-                    # [Critical Fix 4]: Bossy ignore!
-                    # Since the error occurs during the evaluation phase after inference is completed, we just catch the error directly,
-                    # pretend nothing happened, and proceed to the next step to extract the generated JSON from the nested folder.
-                    pass
-                
-                # --- 4. Parse result JSON ---
-                # Recursively search for all .json files in the temp folder (perfectly pierces through nested checkpoints/xxx folders)
-                search_pattern = os.path.join(tmp_dir, "**", "*.json")
-                all_jsons = glob.glob(search_pattern, recursive=True)
-                
-                valid_preds = []
-                for f in all_jsons:
-                    filename = os.path.basename(f)
-                    # Exclude the input data and config files we generated ourselves
-                    if "temp_test" not in filename and "temp_config" not in filename:
-                        valid_preds.append(f)
-                
-                if valid_preds:
-                    # Find the most recently generated one (to prevent interference from multiple old files)
-                    actual_output_json = max(valid_preds, key=os.path.getctime)
-                else:
-                    raise FileNotFoundError(f"Could not find any generated prediction JSON in {tmp_dir}/checkpoints/")
+                    os.chdir(tmp_dir)
+                    tmp_input_json = os.path.join(tmp_dir, "temp_test.json")
 
-                predicted_events = []
-                if os.path.exists(actual_output_json):
-                    with open(actual_output_json, 'r', encoding='utf-8') as f:
-                        output_data = json.load(f)
-                    
-                    raw_evts = output_data.get("data", [{}])[0].get("events", [])
-                    for evt in raw_evts:
-                        p_ms = int(evt.get("position_ms", 0))
-                        
-                        if p_ms == 0 and evt.get("label") == (classes[0] if classes else "Unknown"):
-                            continue
-                            
-                        if p_ms >= self.start_ms and (self.end_ms == 0 or p_ms <= self.end_ms):
-                            predicted_events.append({
-                                "head": evt.get("head", "ball_action"),
-                                "label": evt.get("label", "Unknown"),
-                                "position_ms": p_ms
-                            })
-                
-                self.finished_signal.emit(predicted_events)
-                
+                    clip_video_path, clip_offset_ms = self._clip_video_if_needed(tmp_dir)
+                    tmp_config_yaml, runtime_labels = self._build_runtime_config(tmp_dir, tmp_input_json)
+
+                    test_data = _build_temp_dataset(
+                        clip_video_path,
+                        self.input_fps,
+                        self.target_head,
+                        runtime_labels,
+                    )
+                    with open(tmp_input_json, "w", encoding="utf-8") as handle:
+                        json.dump(test_data, handle)
+
+                    loc_model = model.localization(config=tmp_config_yaml)
+                    known_eval_error = None
+                    try:
+                        loc_model.infer(
+                            test_set=tmp_input_json,
+                            pretrained=self.model_id
+                        )
+                    except FileNotFoundError as exc:
+                        known_eval_error = exc
+
+                    actual_output_json = None
+                    try:
+                        actual_output_json = self._find_prediction_json(tmp_dir)
+                    except FileNotFoundError:
+                        if known_eval_error is not None:
+                            raise known_eval_error
+                        raise
+
+                    predicted_events = []
+                    if os.path.exists(actual_output_json):
+                        with open(actual_output_json, "r", encoding="utf-8") as handle:
+                            output_data = json.load(handle)
+
+                        raw_evts = output_data.get("data", [{}])[0].get("events", [])
+                        for evt in raw_evts:
+                            p_ms = int(evt.get("position_ms", 0) or 0)
+
+                            if p_ms == 0 and evt.get("label") == (runtime_labels[0] if runtime_labels else "Unknown"):
+                                continue
+                            absolute_ms = p_ms + clip_offset_ms
+                            if self.end_ms > 0 and absolute_ms > self.end_ms:
+                                continue
+
+                            predicted_events.append(
+                                {
+                                    "head": self.target_head,
+                                    "label": evt.get("label", "Unknown"),
+                                    "position_ms": absolute_ms,
+                                    "confidence_score": _runtime_confidence(evt),
+                                }
+                            )
+
+                    self.finished_signal.emit(predicted_events)
+                finally:
+                    _restore_current_working_directory(original_cwd)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -139,23 +262,66 @@ class LocalizationInferenceManager(QObject):
     inference_finished = pyqtSignal(list)
     inference_error = pyqtSignal(str)
     
-    def __init__(self, main_window):
-        super().__init__(main_window)
-        self.main = main_window
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.worker = None
+        self.base_dir = _base_dir()
+        self.config_path = os.path.join(self.base_dir, "loc_config.yaml")
 
-    def start_inference(self, video_path: str, start_ms: int, end_ms: int):
-        if self.worker and self.worker.isRunning(): return
-        config_path = os.path.join(os.getcwd(), "loc_config.yaml")
-        self.worker = LocInferenceWorker(video_path, start_ms, end_ms, config_path)
-        self.worker.finished_signal.connect(self._on_finished)
-        self.worker.error_signal.connect(self._on_error)
-        self.worker.start()
+    def _attach_thread_cleanup(self, worker: QThread):
+        worker.finished.connect(lambda worker_ref=worker: self._on_worker_thread_finished(worker_ref))
+
+    def _on_worker_thread_finished(self, worker_ref: QThread):
+        if self.worker is worker_ref:
+            self.worker = None
+        worker_ref.deleteLater()
+
+    def has_running_threads(self) -> bool:
+        return bool(self.worker is not None and self.worker.isRunning())
+
+    def shutdown_threads(self, wait_ms: int = 2500) -> bool:
+        worker = self.worker
+        if worker is None:
+            return True
+        if worker.isRunning():
+            worker.requestInterruption()
+            if wait_ms <= 0 or not worker.wait(wait_ms):
+                return False
+        if self.worker is worker:
+            self.worker = None
+        worker.deleteLater()
+        return True
+
+    def start_inference(
+        self,
+        video_path: str,
+        start_ms: int,
+        end_ms: int,
+        model_id: str,
+        head_name: str,
+        labels: list[str],
+        input_fps: float,
+    ):
+        if self.worker and self.worker.isRunning():
+            return
+        worker = LocInferenceWorker(
+            video_path,
+            start_ms,
+            end_ms,
+            self.config_path,
+            model_id,
+            head_name,
+            labels,
+            input_fps,
+        )
+        worker.finished_signal.connect(self._on_finished)
+        worker.error_signal.connect(self._on_error)
+        self._attach_thread_cleanup(worker)
+        self.worker = worker
+        worker.start()
 
     def _on_finished(self, events):
         self.inference_finished.emit(events)
-        self.worker = None
 
     def _on_error(self, err_msg):
         self.inference_error.emit(err_msg)
-        self.worker = None

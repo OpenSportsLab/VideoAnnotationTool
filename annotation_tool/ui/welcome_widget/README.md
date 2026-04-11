@@ -1,42 +1,54 @@
-# Welcome Widget
+# Welcome Widget UI
 
-This package contains the landing screen view for project entry points.
+## Role
+Provides the landing screen for project entry actions and recent-project rendering.
 
-## Directory Structure
+## Architecture Context
+- `WelcomeWidget` is a passive view.
+- `WelcomeController` handles routing and recent-project interactions.
 
-```text
-welcome_widget/
-├── __init__.py        # WelcomeWidget view and UI binding
-├── welcome_widget.ui  # Designer-controlled layout
-└── README.md
-```
+## Public Surface
+### Main Class
+- `WelcomeWidget`
 
-## Responsibilities
+### Signals
+- `createProjectRequested()`
+- `importProjectRequested()`
+- `tutorialRequested()`
+- `githubRequested()`
+- `recentProjectRequested(str)`
+- `recentProjectRemoveRequested(str)`
 
-- `WelcomeWidget` loads the `.ui` file and applies welcome-page setup.
-- The widget exposes action signals only:
-  - `createProjectRequested`
-  - `importProjectRequested`
-  - `tutorialRequested`
-  - `githubRequested`
-  - `recentProjectRequested(str)`
-  - `recentProjectRemoveRequested(str)`
-- The widget renders recent datasets through:
-  - `set_recent_projects(paths: list[str])`
-  - per-row file name button (clickable open)
-  - per-row folder path label (non-clickable)
-  - per-row remove button (`×`) to delete from recents
-- The widget does not perform routing/business logic.
+### Public Methods
+- `set_recent_projects(paths: list[str])`
 
-## Recent Projects Behavior
+## Key Functions and Responsibilities
+- `_load_logo()`
+  - Loads logo image from `image/logo.png`.
+- `_setup_connections()`
+  - Connects static UI buttons to widget signals.
+- `_build_recent_row(path)`
+  - Builds one recent-project row with open/remove actions.
 
-- The recent list is view-only and signal-driven.
-- Clicking the file name emits `recentProjectRequested(path)`.
-- Clicking `×` emits `recentProjectRemoveRequested(path)`.
-- Persistence is not handled in the widget; `AppRouter` stores recents via `QSettings`.
-- Router persists all unique opened datasets (newest first, deduplicated); widget displays only the top 5.
+## Business Rules
+- Widget does not persist recents.
+- Widget does not open/remove datasets directly.
 
-## Notes
+## Conventions
+- Keep recent list rendering deterministic and signal-based.
+- Keep routing in controllers, not widget methods.
 
-- Edit layout in `welcome_widget.ui`.
-- Keep runtime behavior (logo load + signal wiring) in `__init__.py`.
+## Interactions
+- Inbound from controller:
+  - `set_recent_projects(...)` model-to-view update.
+- Outbound to controller:
+  - create/import/link/recent action signals.
+
+## Tests
+- Covered by lifecycle and decoupling tests indirectly.
+
+## Developer Knowledge
+- Recent list is purely view rendering; persistence is owned by dataset controller via settings.
+- Keep recent row UX consistent:
+  filename click opens project, remove button only removes from recents.
+- External links are routed by `WelcomeController`; avoid embedding URL policy in the widget.

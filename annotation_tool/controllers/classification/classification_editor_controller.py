@@ -1,28 +1,44 @@
 import copy
 
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
 
-from controllers.media_controller import MediaController
-from models import CmdType
 from utils import natural_sort_key
 
 from .inference_manager import InferenceManager
 from .train_manager import TrainManager
 
 
-class ClassificationEditorController:
+class ClassificationEditorController(QObject):
     """
     Single controller for Classification mode.
     Owns annotation logic and smart/train helper wiring.
-    Dataset add/remove/filter/clear is handled centrally by DatasetExplorerController.
+    Dataset loading and explorer state updates are handled centrally by DatasetExplorerController.
     """
 
-    def __init__(self, main_window, media_controller: MediaController):
-        self.main = main_window
-        self.model = main_window.model
-        self.media_controller = media_controller
-        self.panel = main_window.classification_panel
-        self.dataset_explorer_panel = main_window.dataset_explorer_panel
+    statusMessageRequested = pyqtSignal(str, str, int)
+    saveStateRefreshRequested = pyqtSignal()
+    itemStatusRefreshRequested = pyqtSignal(str)
+    # payload: sample_id, cleaned_annotation, show_feedback
+    manualAnnotationSaveRequested = pyqtSignal(str, object, bool)
+    schemaHeadAddRequested = pyqtSignal(str, dict)
+    schemaHeadRenameRequested = pyqtSignal(str, str)
+    schemaHeadRemoveRequested = pyqtSignal(str)
+    schemaLabelAddRequested = pyqtSignal(str, str)
+    schemaLabelRemoveRequested = pyqtSignal(str, str)
+
+    def __init__(self, classification_panel):
+        super().__init__()
+        self.classification_panel = classification_panel
+        self._active_mode_index = 0
+        self._action_items_cache = []
+        self._action_path_by_sample_id = {}
+        self._schema_definitions = {}
+        self._preferred_head = None
+
+        self.current_sample_id = ""
+        self.current_action_path = None
+        self._current_sample_snapshot = {}
 
         # Helper services remain separate, but are now owned by this controller.
         self.inference_manager = InferenceManager(self)
@@ -32,35 +48,67 @@ class ClassificationEditorController:
     # Lifecycle / Wiring
     # ---------------------------------------------------------------------
     def setup_connections(self):
-        self.panel.annotation_saved.connect(self.save_manual_annotation)
-        self.panel.smart_confirm_requested.connect(self.confirm_smart_annotation_as_manual)
-        self.panel.hand_clear_requested.connect(self.clear_current_manual_annotation)
-        self.panel.smart_clear_requested.connect(self.clear_current_smart_annotation)
-        self.panel.add_head_clicked.connect(self.handle_add_label_head)
-        self.panel.remove_head_clicked.connect(self.handle_remove_label_head)
-        self.panel.smart_infer_requested.connect(self.inference_manager.start_inference)
-        self.panel.confirm_infer_requested.connect(self.save_manual_annotation)
+        self.classification_panel.annotation_saved.connect(self.save_manual_annotation)
+        self.classification_panel.hand_clear_requested.connect(self.clear_current_manual_annotation)
+        self.classification_panel.head_add_requested.connect(self.handle_add_label_head)
+        self.classification_panel.head_rename_requested.connect(self.handle_rename_label_head)
+        self.classification_panel.head_delete_requested.connect(self.handle_remove_label_head)
+        self.classification_panel.head_selected.connect(self._on_head_selected)
+        self.classification_panel.head_smart_infer_requested.connect(self.inference_manager.start_head_inference)
+        self.classification_panel.head_smart_confirm_requested.connect(self.confirm_smart_annotation_head)
+        self.classification_panel.head_smart_reject_requested.connect(self.reject_smart_annotation_head)
+        self.classification_panel.confirm_infer_requested.connect(self.save_manual_annotation)
+
+    def on_mode_changed(self, index: int):
+        self._active_mode_index = index
+
+    def shutdown_background_tasks(self, wait_ms: int = 2500) -> bool:
+        return self.inference_manager.shutdown_threads(wait_ms=wait_ms)
 
     def reset_ui(self):
-        self.panel.clear_dynamic_labels()
-        self.panel.manual_box.setEnabled(False)
-        self.panel.reset_smart_inference()
-        self.panel.reset_train_ui()
+        self.classification_panel.clear_dynamic_labels()
+        self.classification_panel.manual_box.setEnabled(False)
+        self.current_sample_id = ""
+        self.current_action_path = None
+        self._current_sample_snapshot = {}
+        self._preferred_head = None
+        self.classification_panel.reset_smart_inference()
+        self.classification_panel.reset_train_ui()
 
     def setup_dynamic_ui(self):
-        self.panel.setup_dynamic_labels(self.model.label_definitions)
-        self.panel.task_label.setText(f"Task: {self.model.current_task_name}")
+        preferred_head = self._preferred_head or self.classification_panel.get_current_head()
+        self.classification_panel.setup_dynamic_labels(self._schema_definitions, selected_head=preferred_head)
+        if preferred_head in self._schema_definitions:
+            self.classification_panel.set_current_head(preferred_head)
+        self._preferred_head = None
         self._connect_dynamic_type_buttons()
+
+    def on_schema_context_changed(self, schema: dict):
+        self._schema_definitions = copy.deepcopy(schema) if isinstance(schema, dict) else {}
+        self.setup_dynamic_ui()
+        self.display_manual_annotation()
 
     def sync_batch_inference_dropdowns(self):
         sorted_list = sorted(
-            self.model.action_item_data, key=lambda data: natural_sort_key(data.get("name", ""))
+            list(self._action_items_cache or []),
+            key=lambda data: natural_sort_key(data.get("name", "")),
         )
-        action_names = [data["name"] for data in sorted_list]
-        self.panel.update_action_list(action_names)
+        action_names = [data.get("name", "") for data in sorted_list if data.get("name")]
+        self.classification_panel.update_action_list(action_names)
+
+    def on_action_items_changed(self, action_items: list):
+        self._action_items_cache = list(action_items or [])
+        self._action_path_by_sample_id = {}
+        for item in self._action_items_cache:
+            if not isinstance(item, dict):
+                continue
+            sample_id = str(item.get("data_id") or item.get("id") or "")
+            path = str(item.get("path") or "")
+            if sample_id and path:
+                self._action_path_by_sample_id[sample_id] = path
 
     def _connect_dynamic_type_buttons(self):
-        for head, group in self.panel.label_groups.items():
+        for head, group in self.classification_panel.label_groups.items():
             try:
                 group.add_btn.clicked.disconnect()
             except Exception:
@@ -78,339 +126,297 @@ class ClassificationEditorController:
             group.remove_label_signal.connect(
                 lambda lbl, _, selected_head=head: self.remove_custom_type(selected_head, lbl)
             )
-            group.value_changed.connect(
-                lambda _, value, selected_head=head: self.handle_ui_selection_change(selected_head, value)
-            )
+            # Manual annotations now persist immediately on value changes.
+            group.value_changed.connect(self._on_manual_label_value_changed)
+
+    def _on_manual_label_value_changed(self, *_args):
+        self.save_manual_annotation(show_feedback=False)
 
     # ---------------------------------------------------------------------
     # Selection / Display
     # ---------------------------------------------------------------------
-    def on_data_selected(self, data_id: str):
-        if self.main.right_tabs.currentIndex() != 0:
+    def on_selected_sample_changed(self, sample):
+        self.current_sample_id = ""
+        self.current_action_path = None
+        self._current_sample_snapshot = {}
+
+        if not isinstance(sample, dict):
+            self.classification_panel.manual_box.setEnabled(False)
+            self.classification_panel.clear_selection()
+            self.classification_panel.chart_widget.setVisible(False)
             return
 
-        if not data_id:
-            self.panel.manual_box.setEnabled(False)
-            self.panel.clear_selection()
+        sample_id = str(sample.get("id") or "")
+        path = str(self._action_path_by_sample_id.get(sample_id) or self._extract_primary_path(sample) or "")
+        if not sample_id or not path:
+            self.classification_panel.manual_box.setEnabled(False)
+            self.classification_panel.clear_selection()
+            self.classification_panel.chart_widget.setVisible(False)
             return
 
-        path = self.model.get_path_by_id(data_id)
-        if not path:
-            self.panel.manual_box.setEnabled(False)
-            self.panel.clear_selection()
-            return
-
-        self.display_manual_annotation(path)
-        self.panel.manual_box.setEnabled(True)
-        center_panel = self.main.center_panel
-        if hasattr(center_panel, "view_layout"):
-            center_panel.view_layout.setCurrentWidget(center_panel.single_view_widget)
+        self.current_sample_id = sample_id
+        self.current_action_path = path
+        self._current_sample_snapshot = copy.deepcopy(sample)
+        self.display_manual_annotation()
+        self.classification_panel.manual_box.setEnabled(True)
 
     # ---------------------------------------------------------------------
     # Classification Annotation + Schema
     # ---------------------------------------------------------------------
     def confirm_smart_annotation_as_manual(self):
-        if self.panel.is_batch_mode_active:
-            batch_preds = self.panel.pending_batch_results
-            if not batch_preds:
-                self.main.show_temp_msg("Notice", "No batch predictions to confirm.")
-                return
+        self.inference_manager.confirm_smart_annotation_as_manual()
 
-            old_batch_data = {}
-            new_batch_data = {}
-            confirmed_count = 0
+    def confirm_smart_annotation_head(self, head: str):
+        self.inference_manager.confirm_smart_annotation_for_head(head)
 
-            for path, pred_data in batch_preds.items():
-                old_batch_data[path] = copy.deepcopy(self.model.smart_annotations.get(path))
+    def reject_smart_annotation_head(self, head: str):
+        self.inference_manager.reject_smart_annotation_for_head(head)
 
-                if isinstance(pred_data, str):
-                    head = next(iter(self.model.label_definitions.keys()), "action")
-                    formatted_data = {head: {"label": pred_data, "conf_dict": {pred_data: 1.0}}}
-                elif isinstance(pred_data, dict) and "label" in pred_data:
-                    head = next(iter(self.model.label_definitions.keys()), "action")
-                    formatted_data = {head: copy.deepcopy(pred_data)}
-                else:
-                    formatted_data = copy.deepcopy(pred_data)
+    def _on_head_selected(self, head: str):
+        self._preferred_head = str(head or "") or None
 
-                for _, head_data in formatted_data.items():
-                    if isinstance(head_data, dict) and "label" in head_data and "conf_dict" not in head_data:
-                        confidence = head_data.get("confidence", 1.0)
-                        head_data["conf_dict"] = {head_data["label"]: confidence}
-                        remaining = 1.0 - confidence
-                        if remaining > 0.001:
-                            head_data["conf_dict"]["Other Uncertainties"] = remaining
-
-                formatted_data["_confirmed"] = True
-                new_batch_data[path] = copy.deepcopy(formatted_data)
-                self.model.smart_annotations[path] = formatted_data
-                self.main.update_action_item_status(path)
-                confirmed_count += 1
-
-            self.model.push_undo(
-                CmdType.BATCH_SMART_ANNOTATION_RUN,
-                old_data=old_batch_data,
-                new_data=new_batch_data,
-            )
-            self.model.is_data_dirty = True
-            self.main.show_temp_msg(
-                "Saved", f"Batch Smart Annotations confirmed for {confirmed_count} items.", 2000
-            )
-            self.panel.reset_smart_inference()
-        else:
-            path = self.main.get_current_action_path()
-            if not path:
-                return
-
-            smart_data = self.model.smart_annotations.get(path)
-            if not smart_data:
-                self.main.show_temp_msg("Notice", "No smart annotation available to confirm.")
-                return
-
-            old_data = copy.deepcopy(smart_data)
-            self.model.smart_annotations[path]["_confirmed"] = True
-            self.model.is_data_dirty = True
-            new_data = copy.deepcopy(self.model.smart_annotations[path])
-
-            self.model.push_undo(
-                CmdType.SMART_ANNOTATION_RUN,
-                path=path,
-                old_data=old_data,
-                new_data=new_data,
-            )
-            self.main.update_action_item_status(path)
-            self.main.show_temp_msg("Saved", "Smart Annotation confirmed independently.", 1000)
-
-        self.main.update_save_export_button_state()
-        self.main.dataset_explorer_controller.handle_filter_change(
-            self.dataset_explorer_panel.filter_combo.currentIndex()
-        )
-
-    def save_manual_annotation(self, override_data=None):
-        path = self.main.get_current_action_path()
-        if not path:
+    def save_manual_annotation(self, override_data=None, show_feedback: bool = True):
+        if not self.current_sample_id:
             return
 
-        raw_data = override_data if override_data is not None else self.panel.get_annotation()
+        raw_data = override_data if override_data is not None else self.classification_panel.get_annotation()
         cleaned = {key: value for key, value in raw_data.items() if value}
         if not cleaned:
             cleaned = None
 
-        old_data = copy.deepcopy(self.model.manual_annotations.get(path))
-        self.model.push_undo(
-            CmdType.ANNOTATION_CONFIRM,
-            path=path,
-            old_data=old_data,
-            new_data=cleaned,
-        )
+        old_data = self._manual_payload_to_panel(self._current_sample_snapshot.get("labels"))
+        normalized_old = old_data if old_data else None
+        if normalized_old == cleaned:
+            return
 
-        if cleaned:
-            self.model.manual_annotations[path] = cleaned
-            self.main.show_temp_msg("Saved", "Annotation saved.", 1000)
-        else:
-            self.model.manual_annotations.pop(path, None)
-            self.main.show_temp_msg("Cleared", "Annotation cleared.", 1000)
-
-        self.main.update_action_item_status(path)
-        self.main.update_save_export_button_state()
-        self.main.dataset_explorer_controller.handle_filter_change(
-            self.dataset_explorer_panel.filter_combo.currentIndex()
-        )
+        self.manualAnnotationSaveRequested.emit(self.current_sample_id, copy.deepcopy(cleaned), show_feedback)
+        self._set_snapshot_manual_annotation(cleaned)
 
     def clear_current_manual_annotation(self):
-        path = self.main.get_current_action_path()
-        if not path:
+        if not self.current_sample_id:
             return
 
-        old_data = copy.deepcopy(self.model.manual_annotations.get(path))
+        old_data = self._manual_payload_to_panel(self._current_sample_snapshot.get("labels"))
         if old_data:
-            self.model.push_undo(
-                CmdType.ANNOTATION_CONFIRM,
-                path=path,
-                old_data=old_data,
-                new_data=None,
-            )
-            self.model.manual_annotations.pop(path, None)
-            self.main.update_action_item_status(path)
-            self.main.update_save_export_button_state()
-            self.main.show_temp_msg("Cleared", "Selection cleared.")
+            self.manualAnnotationSaveRequested.emit(self.current_sample_id, None, True)
+            self._set_snapshot_manual_annotation(None)
 
-        self.panel.clear_selection()
+        self.classification_panel.clear_selection()
 
     def clear_current_smart_annotation(self):
-        path = self.main.get_current_action_path()
-        if not path:
-            return
+        self.inference_manager.clear_current_smart_annotation()
 
-        old_smart = copy.deepcopy(self.model.smart_annotations.get(path))
-        if old_smart:
-            self.model.push_undo(
-                CmdType.SMART_ANNOTATION_RUN,
-                path=path,
-                old_data=old_smart,
-                new_data=None,
-            )
-            self.model.smart_annotations.pop(path, None)
-            self.model.is_data_dirty = True
-            self.main.show_temp_msg("Cleared", "Smart Annotation cleared.", 1000)
-            self.main.update_save_export_button_state()
-
-        self.panel.chart_widget.setVisible(False)
-        self.panel.batch_result_text.setVisible(False)
-
-    def display_manual_annotation(self, path):
-        data = self.model.manual_annotations.get(path, {})
-        self.panel.set_annotation(data)
-
-        smart_data = self.model.smart_annotations.get(path, {})
-        if smart_data:
-            for _, smart_item in smart_data.items():
-                if not isinstance(smart_item, dict):
+    def display_manual_annotation(self):
+        data = self._manual_payload_to_panel(self._current_sample_snapshot.get("labels"))
+        self.classification_panel.set_annotation(data)
+        labels_payload = self._current_sample_snapshot.get("labels")
+        if isinstance(labels_payload, dict):
+            for head, payload in labels_payload.items():
+                if not isinstance(payload, dict):
                     continue
-                self.panel.chart_widget.update_chart(
-                    smart_item.get("label", ""),
-                    smart_item.get("conf_dict", {}),
-                )
-                self.panel.chart_widget.setVisible(True)
-                break
-
-    def handle_ui_selection_change(self, head, new_val):
-        if self.main.history_manager._is_undoing_redoing:
-            return
-
-        path = self.main.get_current_action_path()
-        if not path:
-            return
-
-        old_val = self.model.manual_annotations.get(path, {}).get(head)
-        for command in reversed(self.model.undo_stack):
-            if (
-                command["type"] == CmdType.UI_CHANGE
-                and command["path"] == path
-                and command["head"] == head
-            ):
-                old_val = command["new_val"]
-                break
-
-        self.model.push_undo(
-            CmdType.UI_CHANGE,
-            path=path,
-            head=head,
-            old_val=old_val,
-            new_val=new_val,
-        )
+                label = payload.get("label")
+                if label in (None, ""):
+                    continue
+                if "confidence_score" not in payload:
+                    continue
+                try:
+                    score = float(payload.get("confidence_score") or 0.0)
+                except Exception:
+                    score = 0.0
+                self.classification_panel.set_head_smart_state(head, str(label), score, True)
 
     def handle_add_label_head(self, name):
         clean = name.strip().replace(" ", "_").lower()
-        if not clean or clean in self.model.label_definitions:
+        if not clean:
+            return
+        if any(existing.lower() == clean.lower() for existing in self._schema_definitions):
             return
 
-        msg = QMessageBox(self.main)
-        msg.setText(f"Type for '{name}'?")
-        btn_single = msg.addButton("Single Label", QMessageBox.ButtonRole.ActionRole)
-        btn_multi = msg.addButton("Multi Label", QMessageBox.ButtonRole.ActionRole)
-        msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        msg.exec()
-
-        label_type = (
-            "single_label"
-            if msg.clickedButton() == btn_single
-            else "multi_label" if msg.clickedButton() == btn_multi else None
-        )
+        label_type = self._prompt_head_type(clean)
         if not label_type:
             return
 
         definition = {"type": label_type, "labels": []}
-        self.model.push_undo(CmdType.SCHEMA_ADD_CAT, head=clean, definition=definition)
-        self.model.label_definitions[clean] = definition
-        self.panel.new_head_edit.clear()
-        self.setup_dynamic_ui()
+        self._preferred_head = clean
+        self.schemaHeadAddRequested.emit(clean, copy.deepcopy(definition))
+
+    def handle_rename_label_head(self, old_head: str, new_name: str):
+        clean = str(new_name or "").strip().replace(" ", "_").lower()
+        if not old_head or old_head not in self._schema_definitions:
+            return
+        if not clean or clean == old_head:
+            return
+        if any(existing.lower() == clean.lower() for existing in self._schema_definitions if existing != old_head):
+            self._emit_status("Duplicate", "Category exists.")
+            return
+
+        self._preferred_head = clean
+        self.schemaHeadRenameRequested.emit(old_head, clean)
 
     def handle_remove_label_head(self, head):
-        if head not in self.model.label_definitions:
+        if head not in self._schema_definitions:
             return
-        if QMessageBox.question(self.main, "Remove", f"Remove '{head}'?") == QMessageBox.StandardButton.No:
+        if QMessageBox.question(self.classification_panel, "Remove", f"Remove '{head}'?") == QMessageBox.StandardButton.No:
             return
-
-        affected = {}
-        for key, value in self.model.manual_annotations.items():
-            if head in value:
-                affected[key] = copy.deepcopy(value[head])
-
-        self.model.push_undo(
-            CmdType.SCHEMA_DEL_CAT,
-            head=head,
-            definition=copy.deepcopy(self.model.label_definitions[head]),
-            affected_data=affected,
-        )
-
-        del self.model.label_definitions[head]
-        for key in affected:
-            del self.model.manual_annotations[key][head]
-            if not self.model.manual_annotations[key]:
-                del self.model.manual_annotations[key]
-            self.main.update_action_item_status(key)
-
-        self.setup_dynamic_ui()
-        self.display_manual_annotation(self.main.get_current_action_path())
+        if self._preferred_head == head:
+            self._preferred_head = None
+        self.schemaHeadRemoveRequested.emit(head)
 
     def add_custom_type(self, head):
-        group = self.panel.label_groups.get(head)
-        if not group:
+        group = self.classification_panel.label_groups.get(head)
+        definition = self._schema_definitions.get(head, {})
+        if not group or not definition:
             return
 
         text = group.input_field.text().strip()
         if not text:
             return
 
-        labels = self.model.label_definitions[head]["labels"]
+        labels = definition.get("labels", [])
         if any(label.lower() == text.lower() for label in labels):
-            self.main.show_temp_msg("Duplicate", "Label exists.", icon=QMessageBox.Icon.Warning)
+            self._emit_status("Duplicate", "Label exists.")
             return
 
-        self.model.push_undo(CmdType.SCHEMA_ADD_LBL, head=head, label=text)
-        labels.append(text)
-        labels.sort()
-
-        if hasattr(group, "update_radios"):
-            group.update_radios(labels)
-        else:
-            group.update_checkboxes(labels)
-
+        self.schemaLabelAddRequested.emit(head, text)
         group.input_field.clear()
 
     def remove_custom_type(self, head, label):
-        definition = self.model.label_definitions[head]
-        if len(definition["labels"]) <= 1:
+        definition = self._schema_definitions.get(head, {})
+        labels = definition.get("labels", [])
+        if label not in labels:
             return
+        self.schemaLabelRemoveRequested.emit(head, label)
 
-        affected = {}
-        for key, value in self.model.manual_annotations.items():
-            if definition["type"] == "single_label" and value.get(head) == label:
-                affected[key] = label
-            elif definition["type"] == "multi_label" and label in value.get(head, []):
-                affected[key] = copy.deepcopy(value[head])
+    def _emit_status(self, title: str, message: str, duration: int = 1500):
+        self.statusMessageRequested.emit(title, message, duration)
 
-        self.model.push_undo(
-            CmdType.SCHEMA_DEL_LBL,
-            head=head,
-            label=label,
-            affected_data=affected,
-        )
+    def get_current_action_path(self):
+        return self.current_action_path
 
-        if label in definition["labels"]:
-            definition["labels"].remove(label)
+    def get_current_sample_id(self):
+        return self.current_sample_id
 
-        for _, value in self.model.manual_annotations.items():
-            if definition["type"] == "single_label" and value.get(head) == label:
-                value[head] = None
-            elif definition["type"] == "multi_label" and label in value.get(head, []):
-                value[head].remove(label)
+    @staticmethod
+    def _extract_primary_path(sample: dict):
+        inputs = sample.get("inputs")
+        if isinstance(inputs, list):
+            for input_item in inputs:
+                if isinstance(input_item, dict):
+                    path = input_item.get("path")
+                    if path:
+                        return path
+        return None
 
-        group = self.panel.label_groups.get(head)
-        if group:
-            if hasattr(group, "update_radios"):
-                group.update_radios(definition["labels"])
+    @staticmethod
+    def _manual_payload_to_panel(labels_payload) -> dict:
+        if not isinstance(labels_payload, dict):
+            return {}
+        out = {}
+        for head, payload in labels_payload.items():
+            value = None
+            if isinstance(payload, dict):
+                if isinstance(payload.get("labels"), list):
+                    value = list(payload.get("labels") or [])
+                elif "label" in payload:
+                    value = payload.get("label")
+            elif isinstance(payload, list):
+                value = list(payload)
             else:
-                group.update_checkboxes(definition["labels"])
+                value = payload
+            if value not in (None, "", []):
+                out[head] = value
+        return out
 
-        self.display_manual_annotation(self.main.get_current_action_path())
+    @staticmethod
+    def _panel_annotation_to_sample_labels(data) -> dict:
+        if not isinstance(data, dict):
+            return {}
+        out = {}
+        for head, value in data.items():
+            if value in (None, "", []):
+                continue
+            if isinstance(value, list):
+                out[head] = {"labels": list(value)}
+            else:
+                out[head] = {"label": value}
+        return out
+
+    def _set_snapshot_manual_annotation(self, cleaned):
+        if not isinstance(self._current_sample_snapshot, dict):
+            self._current_sample_snapshot = {}
+        serialized = self._panel_annotation_to_sample_labels(cleaned)
+        if serialized:
+            self._current_sample_snapshot["labels"] = serialized
+        else:
+            self._current_sample_snapshot.pop("labels", None)
+
+    def set_current_smart_annotation_snapshot(self, _path: str, smart_data):
+        if not isinstance(self._current_sample_snapshot, dict):
+            self._current_sample_snapshot = {}
+        labels = self._current_sample_snapshot.get("labels")
+        if not isinstance(labels, dict):
+            labels = {}
+            self._current_sample_snapshot["labels"] = labels
+
+        if isinstance(smart_data, dict):
+            for head, payload in smart_data.items():
+                if payload is None:
+                    labels.pop(head, None)
+                elif isinstance(payload, dict) and payload:
+                    labels[head] = copy.deepcopy(payload)
+                else:
+                    labels.pop(head, None)
+        elif smart_data is None:
+            # Clear smart state from all heads in current snapshot only.
+            for head, payload in list(labels.items()):
+                if isinstance(payload, dict) and "confidence_score" in payload:
+                    updated = copy.deepcopy(payload)
+                    updated.pop("confidence_score", None)
+                    if updated:
+                        labels[head] = updated
+                    else:
+                        labels.pop(head, None)
+
+    def _prompt_head_type(self, head_name: str):
+        msg = QMessageBox(self.classification_panel)
+        msg.setText(f"Type for '{head_name}'?")
+        btn_single = msg.addButton("Single Label", QMessageBox.ButtonRole.ActionRole)
+        btn_multi = msg.addButton("Multi Label", QMessageBox.ButtonRole.ActionRole)
+        msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        msg.exec()
+
+        if msg.clickedButton() == btn_single:
+            return "single_label"
+        if msg.clickedButton() == btn_multi:
+            return "multi_label"
+        return None
+
+        if not labels:
+            self._current_sample_snapshot.pop("labels", None)
+
+    @staticmethod
+    def _smart_chart_payload_from_labels(labels_payload):
+        if not isinstance(labels_payload, dict):
+            return None
+        for payload in labels_payload.values():
+            if not isinstance(payload, dict):
+                continue
+            label = payload.get("label")
+            if label in (None, ""):
+                continue
+            if "confidence_score" not in payload:
+                continue
+            try:
+                score = float(payload.get("confidence_score") or 0.0)
+            except Exception:
+                score = 0.0
+            score = max(0.0, min(1.0, score))
+            conf_dict = {str(label): score}
+            remaining = max(0.0, 1.0 - score)
+            if remaining > 0.001:
+                conf_dict["Other Uncertainties"] = remaining
+            return str(label), conf_dict
+        return None
+
+    def _is_active_mode(self) -> bool:
+        return self._active_mode_index == 0

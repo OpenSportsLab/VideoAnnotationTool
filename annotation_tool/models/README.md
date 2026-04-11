@@ -1,35 +1,28 @@
-# 📦 Data Models & State Management
+# Models Module
 
-This directory contains the **Model** layer of the MVC architecture. It is responsible for data storage, state validation, and providing standard interfaces for the View layer (`ui/`) and Controller layer (`controllers/`).
+## Role
+Compatibility-only package for shared exports.
 
-## 📂 Module Descriptions
+## Architecture Context
+Runtime and persisted dataset state are not owned here; they are owned by `DatasetExplorerController`.
 
-### 1. `app_state.py` (Core Logic)
-* **Purpose:** The central repository for the application's runtime state.
-* **Key Class:** **`AppStateModel`**
-    * **Responsibility:**
-        * Stores Project Metadata (Path, Task Name, Modalities).
-        * Manages JSON Schema Definitions (`label_definitions`).
-        * Stores Annotation Data (Classification labels & Localization events).
-        * Manages the **Undo/Redo Stack**.
-    * **Validation:** Contains logic to validate imported JSON structures (`validate_gac_json`, `validate_loc_json`).
-* **Key Enum:** **`CmdType`**
-    * Defines types of commands (e.g., `SCHEMA_ADD_LBL`, `LOC_EVENT_ADD`) used by the `HistoryManager` to track user actions.
+## Public Surface
+- `__init__.py`
+  - Re-exports `CmdType` from `controllers.command_types`.
 
-### 2. `project_tree.py` (UI Data Model)
-* **Purpose:** A specialized Qt Model for the Left Sidebar (Clip Explorer).
-* **Key Class:** **`ProjectTreeModel`**
-    * **Inheritance:** `QStandardItemModel`
-    * **Responsibility:**
-        * Adapts the raw data list into a hierarchical format suitable for `QTreeView`.
-        * Handles standard Item data (Display Name, Icon) and User Roles (File Path).
-        * Allows the UI to be decoupled from the raw list logic.
-    * **Usage:**
-        * Instantiated in `viewer.py`.
-        * Shared across both Classification and Localization views.
-        * Manipulated by Controllers (`NavigationManager`, `LocalizationEditorController`).
+## Key Functions and Responsibilities
+- No model classes currently implemented in this package.
 
-## 🔄 Data Flow
-1. **Controllers** update `AppStateModel` (business data) and `ProjectTreeModel` (UI list data) simultaneously.
-2. **Views** (`QTreeView`) automatically reflect changes in `ProjectTreeModel` via Qt signals (`rowsInserted`, etc.).
-3. **Serialization** (Save/Export) reads directly from `AppStateModel`.
+## Business Rules
+- Do not introduce parallel dataset ownership here without explicit architecture change.
+
+## Conventions
+- Keep this package minimal and compatibility-focused.
+
+## Tests
+- Indirectly covered by controller/history tests that import `CmdType`.
+
+## Developer Knowledge
+- Treat this package as compatibility-only unless architecture explicitly changes.
+- If moving shared types here, avoid creating a second source of runtime state.
+- Keep exports minimal to reduce import cycles.

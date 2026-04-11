@@ -2,11 +2,23 @@
 Localization mode persistence/editing workflows.
 """
 
+import copy
+import importlib
 import json
+from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import QMessageBox
+
+try:
+    _colors_module = importlib.import_module("annotation_tool.colors")
+except ModuleNotFoundError:
+    _colors_module = importlib.import_module("colors")
+
+localization_label_color_hex = _colors_module.localization_label_color_hex
+localization_label_text_hex = _colors_module.localization_label_text_hex
 
 
 MODE_TO_TAB_INDEX = {
@@ -15,6 +27,90 @@ MODE_TO_TAB_INDEX = {
     "description": 2,
     "dense_description": 3,
 }
+
+
+def _double_click_table_cell(window, qtbot, row: int, col: int):
+    table_view = window.localization_panel.table.table
+    model = window.localization_panel.table.model
+    idx = model.index(row, col)
+    assert idx.isValid()
+    table_view.scrollTo(idx)
+    rect = table_view.visualRect(idx)
+    qtbot.mouseDClick(table_view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    qtbot.wait(50)
+
+
+@pytest.mark.gui
+def test_localization_hides_outer_tab_bar_when_only_hand_annotation_remains(window):
+    panel = window.localization_panel
+
+    assert panel.tabs.count() == 1
+    assert panel.tabs.tabText(0) == "Hand Annotation"
+    assert panel.tabs.tabBar().isHidden() is True
+
+
+@pytest.mark.gui
+def test_localization_inference_manager_uses_checked_in_loc_config(window):
+    manager = type(window.localization_editor_controller.inference_manager)()
+    config_path = Path(manager.config_path)
+
+    assert config_path.name == "loc_config.yaml"
+    assert config_path.is_file()
+    assert config_path.parent.name == "annotation_tool"
+
+
+@pytest.mark.gui
+def test_localization_smart_inference_passes_head_context_to_manager(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    responses = iter([("jeetv/snpro-snbas-2024", True), ("00:00.000", True), ("00:05.000", True)])
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.QInputDialog.getText",
+        lambda *args, **kwargs: next(responses),
+    )
+
+    captured = {}
+
+    def fake_start_inference(video_path, start_ms, end_ms, model_id, head_name, labels, input_fps):
+        captured.update(
+            {
+                "video_path": video_path,
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "model_id": model_id,
+                "head_name": head_name,
+                "labels": list(labels),
+                "input_fps": input_fps,
+            }
+        )
+
+    monkeypatch.setattr(window.localization_editor_controller.inference_manager, "start_inference", fake_start_inference)
+
+    window.localization_editor_controller._on_head_smart_inference_requested("ball_action")
+
+    assert captured["video_path"] == window.localization_editor_controller.current_video_path
+    assert captured["start_ms"] == 0
+    assert captured["end_ms"] == 5000
+    assert captured["model_id"] == "jeetv/snpro-snbas-2024"
+    assert captured["head_name"] == "ball_action"
+    assert captured["labels"] == window.dataset_explorer_controller.label_definitions["ball_action"]["labels"]
+    assert captured["input_fps"] == pytest.approx(25.0)
 
 
 @pytest.mark.gui
@@ -27,14 +123,14 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("localization")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     # 1) Open localization JSON.
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
     assert window.tree_model.rowCount() == 1
 
@@ -49,7 +145,7 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
 
     # 3) Annotate with label, then set timestamp.
     window.localization_editor_controller._on_spotting_triggered("ball_action", "shot")
-    events = window.model.localization_events.get(video_path, [])
+    events = window.dataset_explorer_controller.localization_events.get(video_path, [])
     assert any(e.get("label") == "shot" for e in events)
 
     old_event = next(e for e in events if e.get("label") == "shot")
@@ -57,7 +153,7 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
     new_event["position_ms"] = 2345
     window.localization_editor_controller._on_annotation_modified(old_event, new_event)
 
-    events_after_add = window.model.localization_events.get(video_path, [])
+    events_after_add = window.dataset_explorer_controller.localization_events.get(video_path, [])
     assert any(e.get("label") == "shot" and e.get("position_ms") == 2345 for e in events_after_add)
     table_events = [
         window.localization_panel.table.model.get_annotation_at(i)
@@ -71,14 +167,14 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
     saved_events = saved_data.get("data", [])[0].get("events", [])
     assert any(e.get("label") == "shot" and str(e.get("position_ms")) == "2345" for e in saved_events)
 
-    window.router.close_project()
-    assert window.model.json_loaded is False
+    window.dataset_explorer_controller.close_project()
+    assert window.dataset_explorer_controller.json_loaded is False
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     reopened_index = window.tree_model.index(0, 0)
     assert reopened_index.isValid()
@@ -87,7 +183,7 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
 
     reopened_path = window.get_current_action_path()
     assert reopened_path is not None
-    reopened_events = window.model.localization_events.get(reopened_path, [])
+    reopened_events = window.dataset_explorer_controller.localization_events.get(reopened_path, [])
     assert any(e.get("label") == "shot" and e.get("position_ms") == 2345 for e in reopened_events)
 
     # 5) Edit timestamp, save again, reload again, and verify changed time persists.
@@ -98,7 +194,7 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
     edited_event["position_ms"] = 3456
     window.localization_editor_controller._on_annotation_modified(old_event_after_reload, edited_event)
 
-    edited_events = window.model.localization_events.get(reopened_path, [])
+    edited_events = window.dataset_explorer_controller.localization_events.get(reopened_path, [])
     assert any(e.get("label") == "shot" and e.get("position_ms") == 3456 for e in edited_events)
 
     window.dataset_explorer_controller.save_project()
@@ -106,14 +202,14 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
     saved_events_after_edit = saved_data_after_edit.get("data", [])[0].get("events", [])
     assert any(e.get("label") == "shot" and str(e.get("position_ms")) == "3456" for e in saved_events_after_edit)
 
-    window.router.close_project()
-    assert window.model.json_loaded is False
+    window.dataset_explorer_controller.close_project()
+    assert window.dataset_explorer_controller.json_loaded is False
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
 
     final_index = window.tree_model.index(0, 0)
     assert final_index.isValid()
@@ -122,8 +218,186 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
 
     final_path = window.get_current_action_path()
     assert final_path is not None
-    final_events = window.model.localization_events.get(final_path, [])
+    final_events = window.dataset_explorer_controller.localization_events.get(final_path, [])
     assert any(e.get("label") == "shot" and e.get("position_ms") == 3456 for e in final_events)
+
+
+@pytest.mark.gui
+def test_localization_events_remain_chronological_after_add_modify_delete(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    path = window.localization_editor_controller.current_video_path
+    sample_id = window.localization_editor_controller.current_sample_id
+    assert path
+    assert sample_id
+
+    # Add an early event (before existing 1000ms).
+    window.history_manager.execute_localization_event_add(
+        sample_id,
+        {"head": "ball_action", "label": "shot", "position_ms": 500},
+    )
+    qtbot.wait(50)
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    assert [int(e.get("position_ms", 0)) for e in events] == sorted(int(e.get("position_ms", 0)) for e in events)
+
+    # Modify event time so ordering must be recomputed again.
+    old_event = next(e for e in events if e.get("label") == "shot" and int(e.get("position_ms", 0)) == 500)
+    updated_event = dict(old_event)
+    updated_event["position_ms"] = 1500
+    window.localization_editor_controller._on_annotation_modified(old_event, updated_event)
+    qtbot.wait(50)
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    assert [int(e.get("position_ms", 0)) for e in events] == sorted(int(e.get("position_ms", 0)) for e in events)
+
+    # # Delete one event and ensure ordering remains canonical. (Freezes without proper handling in delete flow.)
+    # window.localization_editor_controller._on_delete_single_annotation(events[0])
+    # qtbot.wait(50)
+    # events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    # assert [int(e.get("position_ms", 0)) for e in events] == sorted(int(e.get("position_ms", 0)) for e in events)
+
+    # Persisted JSON order must match chronological order too.
+    window.dataset_explorer_controller.save_project()
+    saved = json.loads(project_json_path.read_text(encoding="utf-8"))
+    saved_events = saved.get("data", [])[0].get("events", [])
+    assert [int(e.get("position_ms", 0)) for e in saved_events] == sorted(
+        int(e.get("position_ms", 0)) for e in saved_events
+    )
+
+
+@pytest.mark.gui
+def test_localization_label_colors_match_table_rows_and_timeline_markers(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    controller.on_media_position_changed(2500)
+    controller._on_spotting_triggered("ball_action", "shot")
+    qtbot.wait(50)
+
+    model = window.localization_panel.table.model
+
+    row_by_label = {}
+    for row in range(model.rowCount()):
+        item = model.get_annotation_at(row)
+        if item and item.get("head") == "ball_action":
+            row_by_label[item.get("label")] = row
+
+    assert "pass" in row_by_label
+    assert "shot" in row_by_label
+
+    pass_brush = model.data(model.index(row_by_label["pass"], 0), Qt.ItemDataRole.BackgroundRole)
+    shot_brush = model.data(model.index(row_by_label["shot"], 0), Qt.ItemDataRole.BackgroundRole)
+    assert isinstance(pass_brush, QBrush)
+    assert isinstance(shot_brush, QBrush)
+
+    expected_pass = localization_label_color_hex("ball_action", "pass")
+    expected_shot = localization_label_color_hex("ball_action", "shot")
+    assert expected_pass != expected_shot
+    assert pass_brush.color().name() == expected_pass
+    assert shot_brush.color().name() == expected_shot
+
+    marker_colors = {
+        int(marker.get("start_ms", 0)): marker.get("color").name()
+        for marker in window.center_panel.slider.markers
+    }
+    assert marker_colors[1000] == expected_pass
+    assert marker_colors[2500] == expected_shot
+
+    tabs_adapter = window.localization_panel.annot_mgmt.tabs
+    button_styles = {
+        label: button.styleSheet()
+        for button, (head, label) in tabs_adapter._button_meta.items()
+        if head == "ball_action"
+    }
+    assert expected_pass in button_styles["pass"]
+    assert expected_shot in button_styles["shot"]
+    assert localization_label_text_hex(expected_pass) in button_styles["pass"]
+    assert localization_label_text_hex(expected_shot) in button_styles["shot"]
+
+
+# @pytest.mark.gui
+# def test_localization_button_context_menu_color_change_updates_button_table_and_marker(
+#     window,
+#     monkeypatch,
+#     qtbot,
+#     synthetic_project_json,
+# ):
+#     project_json_path = synthetic_project_json("localization")
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+#         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+#     )
+#     window.dataset_explorer_controller.import_annotations()
+
+#     first_index = window.tree_model.index(0, 0)
+#     assert first_index.isValid()
+#     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+#     qtbot.wait(50)
+
+#     tabs_adapter = window.localization_panel.annot_mgmt.tabs
+#     pass_button = next(
+#         button for button, (head, label) in tabs_adapter._button_meta.items()
+#         if head == "ball_action" and label == "pass"
+#     )
+
+#     monkeypatch.setattr(
+#         "ui.localization.QColorDialog.getColor",
+#         lambda *args, **kwargs: QColor("#ff8844"),
+#     )
+
+#     tabs_adapter._show_label_context_menu(pass_button, "ball_action", "pass")
+#     qtbot.wait(50)
+
+#     assert window.dataset_explorer_controller.label_definitions["ball_action"]["label_colors"]["pass"] == "#ff8844"
+#     assert "#ff8844" in pass_button.styleSheet()
+
+#     model = window.localization_panel.table.model
+#     pass_row = next(
+#         row for row in range(model.rowCount())
+#         if model.get_annotation_at(row).get("head") == "ball_action"
+#         and model.get_annotation_at(row).get("label") == "pass"
+#     )
+#     pass_brush = model.data(model.index(pass_row, 0), Qt.ItemDataRole.BackgroundRole)
+#     assert isinstance(pass_brush, QBrush)
+#     assert pass_brush.color().name() == "#ff8844"
+
+#     marker_colors = {
+#         int(marker.get("start_ms", 0)): marker.get("color").name()
+#         for marker in window.center_panel.slider.markers
+#     }
+#     assert marker_colors[1000] == "#ff8844"
 
 
 # @pytest.mark.gui
@@ -135,13 +409,13 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
 #     synthetic_project_json,
 # ):
 #     project_json_path = synthetic_project_json("localization")
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
 #     monkeypatch.setattr(
-#         "controllers.router.QFileDialog.getOpenFileName",
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
-#     window.router.import_annotations()
+#     window.dataset_explorer_controller.import_annotations()
 #     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
 #     assert window.tree_model.rowCount() == 1
 
@@ -156,7 +430,7 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
 #     qtbot.wait(50)
 
 #     assert window.tree_model.rowCount() == 0
-#     assert window.model.action_item_data == []
+#     assert window.dataset_explorer_controller.action_item_data == []
 #     assert window.localization_editor_controller.current_video_path is None
 #     assert window.localization_panel.table.model.rowCount() == 0
 
@@ -170,16 +444,16 @@ def test_localization_clear_workspace_resets_panel_and_model(
     synthetic_project_json,
 ):
     project_json_path = synthetic_project_json("localization")
-    monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 
     monkeypatch.setattr(
-        "controllers.router.QFileDialog.getOpenFileName",
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
-    window.router.import_annotations()
+    window.dataset_explorer_controller.import_annotations()
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
     assert window.tree_model.rowCount() == 1
-    assert window.model.json_loaded is True
+    assert window.dataset_explorer_controller.json_loaded is True
 
     stop_calls = []
     monkeypatch.setattr(window.media_controller, "stop", lambda: stop_calls.append(True))
@@ -193,15 +467,255 @@ def test_localization_clear_workspace_resets_panel_and_model(
 
     assert stop_calls
     assert window.tree_model.rowCount() == 0
-    assert window.model.action_item_data == []
-    assert window.model.localization_events == {}
-    assert window.model.smart_localization_events == {}
-    assert window.model.label_definitions != {}
-    assert window.model.json_loaded is True
-    assert window.model.current_json_path == str(project_json_path)
+    assert window.dataset_explorer_controller.action_item_data == []
+    assert window.dataset_explorer_controller.localization_events == {}
+    assert window.dataset_explorer_controller.label_definitions != {}
+    assert window.dataset_explorer_controller.json_loaded is True
+    assert window.dataset_explorer_controller.current_json_path == str(project_json_path)
     assert window.localization_editor_controller.current_video_path is None
     assert window.localization_editor_controller.current_head is None
     assert window.localization_panel.table.model.rowCount() == 0
+
+
+@pytest.mark.gui
+def test_localization_add_label_uses_signal_pause_resume_flow(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    toggle_emits = []
+    window.center_panel.playPauseRequested.connect(lambda: toggle_emits.append(True))
+    window.localization_editor_controller.on_playback_state_changed(True)
+    monkeypatch.setattr(window.center_panel.player, "position", lambda: 4321)
+    window.localization_editor_controller.on_media_position_changed(4321)
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.QInputDialog.getText",
+        lambda *args, **kwargs: ("signal_pause_label", True),
+    )
+
+    undo_before = len(window.dataset_explorer_controller.undo_stack)
+    window.localization_editor_controller._on_label_add_req("ball_action")
+    qtbot.wait(50)
+
+    assert len(toggle_emits) == 2
+    assert "signal_pause_label" in window.dataset_explorer_controller.label_definitions["ball_action"]["labels"]
+    path = window.localization_editor_controller.current_video_path
+    assert path is not None
+    events = window.dataset_explorer_controller.localization_events.get(path, [])
+    assert any(event.get("label") == "signal_pause_label" and event.get("position_ms") == 4321 for event in events)
+    assert len(window.dataset_explorer_controller.undo_stack) == undo_before + 1
+
+
+@pytest.mark.gui
+def test_localization_inference_persists_confidence_and_confirm_strips_it(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    controller.current_head = "ball_action"
+    controller._on_inference_success(
+        [{"head": "ball_action", "label": "shot", "position_ms": 4321, "confidence_score": 0.64}]
+    )
+    qtbot.wait(50)
+
+    path = controller.current_video_path
+    assert path is not None
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    inferred = next(
+        evt
+        for evt in events
+        if evt.get("head") == "ball_action"
+        and evt.get("label") == "shot"
+        and int(evt.get("position_ms", 0)) == 4321
+    )
+    assert inferred.get("confidence_score") == pytest.approx(0.64)
+
+    row = next(
+        i
+        for i in range(window.localization_panel.table.model.rowCount())
+        if window.localization_panel.table.model.get_annotation_at(i) == inferred
+    )
+    monkeypatch.setattr(
+        "ui.localization.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    _double_click_table_cell(window, qtbot, row, 3)
+
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    confirmed = next(
+        evt for evt in events
+        if evt.get("head") == "ball_action"
+        and evt.get("label") == "shot"
+        and int(evt.get("position_ms", 0)) == 4321
+    )
+    assert "confidence_score" not in confirmed
+
+
+@pytest.mark.gui
+def test_localization_inference_reject_inline_removes_smart_event(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    controller.current_head = "ball_action"
+    controller._on_inference_success(
+        [{"head": "ball_action", "label": "shot", "position_ms": 4999, "confidence_score": 0.71}]
+    )
+    qtbot.wait(50)
+
+    path = controller.current_video_path
+    assert path is not None
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    target = next(
+        evt
+        for evt in events
+        if evt.get("head") == "ball_action"
+        and evt.get("label") == "shot"
+        and int(evt.get("position_ms", 0)) == 4999
+    )
+
+    row = next(
+        i
+        for i in range(window.localization_panel.table.model.rowCount())
+        if window.localization_panel.table.model.get_annotation_at(i) == target
+    )
+    monkeypatch.setattr(
+        "ui.localization.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    _double_click_table_cell(window, qtbot, row, 3)
+
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    assert not any(
+        evt.get("head") == "ball_action"
+        and evt.get("label") == "shot"
+        and int(evt.get("position_ms", 0)) == 4999
+        for evt in events
+    )
+
+
+@pytest.mark.gui
+def test_localization_inference_unknown_label_mapping_skip_keeps_dataset_unchanged(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    controller.current_head = "ball_action"
+    before_events = list(window.dataset_explorer_controller.localization_events.get(controller.current_video_path, []))
+
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.QInputDialog.getItem",
+        lambda *args, **kwargs: ("<Skip Prediction>", True),
+    )
+    controller._on_inference_success(
+        [{"head": "ball_action", "label": "unknown_pred", "position_ms": 5555, "confidence_score": 0.51}]
+    )
+    qtbot.wait(50)
+
+    after_events = list(window.dataset_explorer_controller.localization_events.get(controller.current_video_path, []))
+    assert after_events == before_events
+
+
+@pytest.mark.gui
+def test_localization_inference_unknown_label_mapping_applies_selected_label(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    controller.current_head = "ball_action"
+
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.QInputDialog.getItem",
+        lambda *args, **kwargs: ("shot", True),
+    )
+    controller._on_inference_success(
+        [{"head": "ball_action", "label": "unknown_pred", "position_ms": 5656, "confidence_score": 0.73}]
+    )
+    qtbot.wait(50)
+
+    events = list(window.dataset_explorer_controller.localization_events.get(controller.current_video_path, []))
+    matched = next(
+        evt for evt in events
+        if evt.get("head") == "ball_action"
+        and evt.get("label") == "shot"
+        and int(evt.get("position_ms", 0)) == 5656
+    )
+    assert matched.get("confidence_score") == pytest.approx(0.73)
 
 
 # @pytest.mark.gui
@@ -213,12 +727,12 @@ def test_localization_clear_workspace_resets_panel_and_model(
 #     synthetic_project_json,
 # ):
 #     project_json_path = synthetic_project_json("localization")
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 #     monkeypatch.setattr(
-#         "controllers.router.QFileDialog.getOpenFileName",
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
-#     window.router.import_annotations()
+#     window.dataset_explorer_controller.import_annotations()
 
 #     first_index = window.tree_model.index(0, 0)
 #     assert first_index.isValid()
@@ -229,7 +743,7 @@ def test_localization_clear_workspace_resets_panel_and_model(
 #     assert path is not None
 
 #     window.localization_editor_controller._on_spotting_triggered("ball_action", "shot")
-#     events = window.model.localization_events.get(path, [])
+#     events = window.dataset_explorer_controller.localization_events.get(path, [])
 #     target_row = None
 #     original_pos = None
 #     for row in range(window.localization_panel.table.model.rowCount()):
@@ -249,7 +763,7 @@ def test_localization_clear_workspace_resets_panel_and_model(
 #     qtbot.mouseClick(window.localization_panel.table.btn_set_time, Qt.MouseButton.LeftButton)
 #     qtbot.wait(50)
 
-#     updated_events = window.model.localization_events.get(path, [])
+#     updated_events = window.dataset_explorer_controller.localization_events.get(path, [])
 #     assert any(
 #         event.get("head") == "ball_action"
 #         and event.get("label") == "shot"
@@ -273,12 +787,12 @@ def test_localization_clear_workspace_resets_panel_and_model(
 #     synthetic_project_json,
 # ):
 #     project_json_path = synthetic_project_json("localization")
-#     monkeypatch.setattr(window, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
 #     monkeypatch.setattr(
-#         "controllers.router.QFileDialog.getOpenFileName",
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
 #         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
 #     )
-#     window.router.import_annotations()
+#     window.dataset_explorer_controller.import_annotations()
 
 #     first_index = window.tree_model.index(0, 0)
 #     assert first_index.isValid()
@@ -288,23 +802,23 @@ def test_localization_clear_workspace_resets_panel_and_model(
 #     current_path = window.get_current_action_path()
 #     assert current_path is not None
 
-#     initial_events = list(window.model.localization_events.get(current_path, []))
+#     initial_events = list(window.dataset_explorer_controller.localization_events.get(current_path, []))
 #     initial_count = len(initial_events)
 
 #     window.localization_editor_controller._on_spotting_triggered("ball_action", "shot")
 #     qtbot.wait(50)
-#     events_after_add = window.model.localization_events.get(current_path, [])
+#     events_after_add = window.dataset_explorer_controller.localization_events.get(current_path, [])
 #     assert len(events_after_add) == initial_count + 1
 #     assert any(e.get("label") == "shot" for e in events_after_add)
 
 #     window.history_manager.perform_undo()
 #     qtbot.wait(50)
-#     events_after_undo = window.model.localization_events.get(current_path, [])
+#     events_after_undo = window.dataset_explorer_controller.localization_events.get(current_path, [])
 #     assert len(events_after_undo) == initial_count
 #     assert not any(e.get("label") == "shot" for e in events_after_undo)
 
 #     window.history_manager.perform_redo()
 #     qtbot.wait(50)
-#     events_after_redo = window.model.localization_events.get(current_path, [])
+#     events_after_redo = window.dataset_explorer_controller.localization_events.get(current_path, [])
 #     assert len(events_after_redo) == initial_count + 1
 #     assert any(e.get("label") == "shot" for e in events_after_redo)

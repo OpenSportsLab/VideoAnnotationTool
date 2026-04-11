@@ -1,132 +1,177 @@
 import copy
-import os
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, QSettings, pyqtSignal
 from PyQt6.QtGui import QColor
-from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
-from controllers.media_controller import MediaController
-from models import CmdType
-
+from colors import localization_label_color_hex, normalize_hex_color
 from .loc_inference import LocalizationInferenceManager
 
 
-class LocalizationEditorController:
+class LocalizationEditorController(QObject):
     """
     Localization controller.
-    Owns localization editor logic, data-ID driven selection handling, navigation,
+    Owns localization editor logic, sample-driven selection handling, navigation,
     and smart inference actions.
-    Dataset add/remove/filter/clear is handled centrally by DatasetExplorerController.
     """
 
-    def __init__(self, main_window, media_controller: MediaController):
-        self.main = main_window
-        self.model = main_window.model
-        self.tree_model = main_window.tree_model
+    statusMessageRequested = pyqtSignal(str, str, int)
+    saveStateRefreshRequested = pyqtSignal()
+    itemStatusRefreshRequested = pyqtSignal(str)
+    locHeadAddRequested = pyqtSignal(str)
+    locHeadRenameRequested = pyqtSignal(str, str)
+    locHeadDeleteRequested = pyqtSignal(str)
+    # payload: sample_id, head, label_name, event_position_ms, create_event
+    locLabelAddRequested = pyqtSignal(str, str, str, int, bool)
+    locLabelRenameRequested = pyqtSignal(str, str, str)
+    locLabelDeleteRequested = pyqtSignal(str, str)
+    locLabelColorSetRequested = pyqtSignal(str, str, str)
+    # payload: sample_id, ...
+    locEventAddRequested = pyqtSignal(str, dict)
+    locEventModRequested = pyqtSignal(str, dict, dict)
+    locEventDelRequested = pyqtSignal(str, dict, int)
+    # payload: sample_id, full events list
+    locEventsSetRequested = pyqtSignal(str, object)
 
-        self.center_panel = main_window.center_panel
-        self.right_panel = main_window.localization_panel
+    # Media intents emitted to MainWindow wiring.
+    mediaSeekRequested = pyqtSignal(int)
+    markersUpdateRequested = pyqtSignal(object)
+    mediaTogglePlaybackRequested = pyqtSignal()
 
-        self.inference_manager = LocalizationInferenceManager(self.main)
+    SETTINGS_ORG = "OpenSportsLab"
+    SETTINGS_APP = "VideoAnnotationTool"
+    SETTINGS_MODEL_KEY = "localization/last_inference_model"
+    DEFAULT_MODEL = "jeetv/snpro-snbas-2024"
+
+    def __init__(self, localization_panel):
+        super().__init__()
+        self.localization_panel = localization_panel
+
+        self.inference_manager = LocalizationInferenceManager(self.localization_panel)
         self.inference_manager.inference_finished.connect(self._on_inference_success)
         self.inference_manager.inference_error.connect(self._on_inference_error)
-        self.media_controller = media_controller
+
+        self._schema_definitions = {}
+        self._action_paths_cache = []
+        self._action_path_by_sample_id = {}
+
+        self._is_media_playing = False
+        self._last_media_position_ms = 0
+        self._media_duration_ms = 0
+        self._active_mode_index = 0
+        self._pending_inference_head = None
 
         self.current_video_path = None
+        self.current_sample_id = ""
         self.current_head = None
+        self._current_sample_snapshot = {}
+
+        self.settings = QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
 
     # -------------------------------------------------------------------------
     # Lifecycle / Wiring
     # -------------------------------------------------------------------------
     def reset_ui(self):
-        self.right_panel.annot_mgmt.update_schema({})
-        self.right_panel.table.set_data([])
-        if hasattr(self.right_panel, "smart_widget"):
-            self.right_panel.smart_widget.smart_table.set_data([])
-        self.right_panel.setEnabled(False)
+        self.localization_panel.annot_mgmt.update_schema({})
+        self.localization_panel.table.set_data([])
+        self.localization_panel.setEnabled(False)
         self.current_video_path = None
+        self.current_sample_id = ""
         self.current_head = None
+        self._current_sample_snapshot = {}
+        self._pending_inference_head = None
 
     def setup_connections(self):
-        self.right_panel.eventNavigateRequested.connect(self._navigate_annotation)
+        self.localization_panel.eventNavigateRequested.connect(self._navigate_annotation)
 
-        if hasattr(self.right_panel, "smart_widget"):
-            smart_ui = self.right_panel.smart_widget
-            smart_ui.setTimeRequested.connect(self._on_smart_set_time)
-            smart_ui.runInferenceRequested.connect(self._run_localization_inference)
-            smart_ui.confirmSmartRequested.connect(self._confirm_smart_events)
-            smart_ui.clearSmartRequested.connect(self._clear_smart_events)
-            self.right_panel.tabs.currentChanged.connect(self._on_tab_switched)
-
-        self.center_panel.positionChanged.connect(self._on_media_position_changed)
-
-        tabs = self.right_panel.annot_mgmt.tabs
-        table = self.right_panel.table
+        tabs = self.localization_panel.annot_mgmt.tabs
+        table = self.localization_panel.table
 
         tabs.headAdded.connect(self._on_head_added)
         tabs.headRenamed.connect(self._on_head_renamed)
         tabs.headDeleted.connect(self._on_head_deleted)
         tabs.headSelected.connect(self._on_head_selected)
+        tabs.smartInferenceRequested.connect(self._on_head_smart_inference_requested)
 
         tabs.spottingTriggered.connect(self._on_spotting_triggered)
         tabs.labelAddReq.connect(self._on_label_add_req)
         tabs.labelRenameReq.connect(self._on_label_rename_req)
         tabs.labelDeleteReq.connect(self._on_label_delete_req)
+        tabs.labelColorReq.connect(self._on_label_color_req)
 
-        table.annotationSelected.connect(lambda ms: self.center_panel.set_position(ms))
+        table.annotationSelected.connect(self._on_table_annotation_selected)
         table.annotationDeleted.connect(self._on_delete_single_annotation)
         table.annotationModified.connect(self._on_annotation_modified)
+        table.annotationConfirmRequested.connect(self._on_confirm_single_annotation)
+        table.annotationRejectRequested.connect(self._on_reject_single_annotation)
         table.updateTimeForSelectedRequested.connect(self._on_update_time_for_selected)
 
-    # -------------------------------------------------------------------------
+    def shutdown_background_tasks(self, wait_ms: int = 2500) -> bool:
+        return self.inference_manager.shutdown_threads(wait_ms=wait_ms)
+
+    def on_mode_changed(self, index: int):
+        self._active_mode_index = index
+        if self._is_active_mode() and self.current_video_path:
+            self._display_events_for_item(self.current_video_path, update_markers=True)
+
+    def on_playback_state_changed(self, is_playing: bool):
+        self._is_media_playing = bool(is_playing)
+
+    def on_media_position_changed(self, ms: int):
+        self._last_media_position_ms = max(0, int(ms))
+        time_str = self._fmt_ms_full(self._last_media_position_ms)
+        self.localization_panel.annot_mgmt.tabs.update_current_time(time_str)
+
+    def on_media_duration_changed(self, ms: int):
+        self._media_duration_ms = max(0, int(ms))
+
+    def on_schema_context_changed(self, schema: dict):
+        self._schema_definitions = self._normalize_schema(schema)
+        self._refresh_schema_ui()
+
+    def on_action_items_changed(self, action_items: list):
+        paths = []
+        by_sample = {}
+        for item in list(action_items or []):
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            sample_id = str(item.get("data_id") or item.get("id") or "")
+            if path:
+                paths.append(path)
+            if sample_id and path:
+                by_sample[sample_id] = str(path)
+        self._action_paths_cache = paths
+        self._action_path_by_sample_id = by_sample
+
+    def on_selected_sample_changed(self, sample):
+        self._set_selected_sample_snapshot(sample)
+        if not self.current_video_path:
+            if self._is_active_mode():
+                self.markersUpdateRequested.emit([])
+            return
+
+        self._display_events_for_item(self.current_video_path, update_markers=self._is_active_mode())
+
     # -------------------------------------------------------------------------
     # Selection / Playback / Annotation logic
     # -------------------------------------------------------------------------
-    def _on_media_position_changed(self, ms):
-        time_str = self._fmt_ms_full(ms)
-        self.right_panel.annot_mgmt.tabs.update_current_time(time_str)
+    def _on_table_annotation_selected(self, ms: int):
+        self._last_media_position_ms = max(0, int(ms))
+        self.mediaSeekRequested.emit(int(ms))
 
     def _on_update_time_for_selected(self, old_event):
         if not self.current_video_path:
             return
-        current_ms = self.center_panel.player.position()
+        current_ms = max(0, int(self._last_media_position_ms))
         new_event = old_event.copy()
         new_event["position_ms"] = current_ms
         self._on_annotation_modified(old_event, new_event)
 
-    def on_data_selected(self, data_id: str):
-        if self.main.right_tabs.currentIndex() != 1:
-            return
-
-        if not data_id:
-            self.current_video_path = None
-            self.right_panel.table.set_data([])
-            if hasattr(self.right_panel, "smart_widget"):
-                self.right_panel.smart_widget.smart_table.set_data([])
-            self.right_panel.setEnabled(False)
-            return
-
-        path = self.model.get_path_by_id(data_id)
-        if not path:
-            self.current_video_path = None
-            self.right_panel.setEnabled(False)
-            return
-
-        if path == self.current_video_path:
-            return
-
-        if path and os.path.exists(path):
-            self.current_video_path = path
-            self.right_panel.setEnabled(True)
-            self._display_events_for_item(path)
-        elif path:
-            QMessageBox.warning(self.main, "Error", f"File not found: {path}")
-
     # --- Head Management ---
     def handle_add_head(self):
         text, ok = QInputDialog.getText(
-            self.main,
+            self.localization_panel,
             "New Category",
             "Enter name for new Category (Head):",
         )
@@ -137,44 +182,48 @@ class LocalizationEditorController:
         self.current_head = head_name
 
     def _on_head_added(self, head_name):
-        if any(h.lower() == head_name.lower() for h in self.model.label_definitions):
-            self.main.show_temp_msg(
+        if any(h.lower() == head_name.lower() for h in self._schema_definitions):
+            self.statusMessageRequested.emit(
                 "Error",
                 f"Head '{head_name}' already exists!",
-                icon=QMessageBox.Icon.Warning,
+                1500,
             )
             return
-        definition = {"type": "single_label", "labels": []}
-        self.model.push_undo(CmdType.SCHEMA_ADD_CAT, head=head_name, definition=definition)
-        self.model.label_definitions[head_name] = definition
-        self.model.is_data_dirty = True
+        self.locHeadAddRequested.emit(head_name)
+        self._schema_definitions[head_name] = {"type": "single_label", "labels": []}
         self._refresh_schema_ui()
-        self.right_panel.annot_mgmt.tabs.set_current_head(head_name)
-        self.main.show_temp_msg("Head Added", f"Created '{head_name}'")
-        self.main.update_save_export_button_state()
+        self.localization_panel.annot_mgmt.tabs.set_current_head(head_name)
 
     def _on_head_renamed(self, old_name, new_name):
         if old_name == new_name:
             return
-        if any(h.lower() == new_name.lower() for h in self.model.label_definitions):
-            self.main.show_temp_msg("Error", "Name already exists!", icon=QMessageBox.Icon.Warning)
+        if old_name not in self._schema_definitions:
             return
-        self.model.push_undo(CmdType.SCHEMA_REN_CAT, old_name=old_name, new_name=new_name)
-        self.model.label_definitions[new_name] = self.model.label_definitions.pop(old_name)
-        for _, events in self.model.localization_events.items():
-            for evt in events:
-                if evt.get("head") == old_name:
-                    evt["head"] = new_name
-        self.model.is_data_dirty = True
+        if any(h.lower() == new_name.lower() for h in self._schema_definitions if h != old_name):
+            self.statusMessageRequested.emit("Error", "Name already exists!", 1500)
+            return
+
+        old_definition = copy.deepcopy(self._schema_definitions.get(old_name, {"type": "single_label", "labels": []}))
+        self.locHeadRenameRequested.emit(old_name, new_name)
+
+        if old_name in self._schema_definitions:
+            self._schema_definitions[new_name] = self._schema_definitions.pop(old_name)
+        elif new_name not in self._schema_definitions:
+            self._schema_definitions[new_name] = old_definition
+
+        events = self._snapshot_events()
+        for evt in events:
+            if evt.get("head") == old_name:
+                evt["head"] = new_name
+        self._set_snapshot_events(events)
+
         self._refresh_schema_ui()
-        self.right_panel.annot_mgmt.tabs.set_current_head(new_name)
+        self.localization_panel.annot_mgmt.tabs.set_current_head(new_name)
         self._refresh_current_clip_events()
-        self.main.show_temp_msg("Head Renamed", "Updated events.")
-        self.main.update_save_export_button_state()
 
     def _on_head_deleted(self, head_name):
         res = QMessageBox.warning(
-            self.main,
+            self.localization_panel,
             "Delete Head",
             f"Delete head '{head_name}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
@@ -182,85 +231,77 @@ class LocalizationEditorController:
         if res != QMessageBox.StandardButton.Yes:
             return
 
-        loc_affected = {}
-        for vid_path, events in self.model.localization_events.items():
-            affected_evts = [copy.deepcopy(e) for e in events if e.get("head") == head_name]
-            if affected_evts:
-                loc_affected[vid_path] = affected_evts
+        self.locHeadDeleteRequested.emit(head_name)
 
-        definition = copy.deepcopy(self.model.label_definitions.get(head_name))
-        self.model.push_undo(
-            CmdType.SCHEMA_DEL_CAT,
-            head=head_name,
-            definition=definition,
-            loc_affected_events=loc_affected,
-        )
+        self._schema_definitions.pop(head_name, None)
+        events = [e for e in self._snapshot_events() if e.get("head") != head_name]
+        self._set_snapshot_events(events)
 
-        if head_name in self.model.label_definitions:
-            del self.model.label_definitions[head_name]
-
-        for vid_path in self.model.localization_events:
-            self.model.localization_events[vid_path] = [
-                e for e in self.model.localization_events[vid_path] if e.get("head") != head_name
-            ]
-
-        self.model.is_data_dirty = True
         self._refresh_schema_ui()
         self._refresh_current_clip_events()
-        self.main.show_temp_msg("Head Deleted", "Removed.")
-        self.main.update_save_export_button_state()
 
     # --- Label Management ---
     def _on_label_add_req(self, head):
-        player = self.center_panel.player
-        was_playing = player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-        if was_playing:
-            player.pause()
-        current_pos = player.position()
+        definition = self._schema_definitions.get(head, {})
+        if not definition:
+            return
 
-        text, ok = QInputDialog.getText(self.main, "Add Label", f"Add label to '{head}':")
+        was_playing = bool(self._is_media_playing)
+        if was_playing:
+            self.mediaTogglePlaybackRequested.emit()
+        current_pos = max(0, int(self._last_media_position_ms))
+
+        text, ok = QInputDialog.getText(self.localization_panel, "Add Label", f"Add label to '{head}':")
         if not ok or not text.strip():
             if was_playing:
-                player.play()
+                self.mediaTogglePlaybackRequested.emit()
             return
 
         label_name = text.strip()
-        labels_list = self.model.label_definitions[head].get("labels", [])
+        labels_list = definition.get("labels", [])
         if any(l.lower() == label_name.lower() for l in labels_list):
-            self.main.show_temp_msg("Error", "Label exists!", icon=QMessageBox.Icon.Warning)
+            self.statusMessageRequested.emit("Error", "Label exists!", 1500)
             if was_playing:
-                player.play()
+                self.mediaTogglePlaybackRequested.emit()
             return
 
-        self.model.push_undo(CmdType.SCHEMA_ADD_LBL, head=head, label=label_name)
-        labels_list.append(label_name)
-        self.model.is_data_dirty = True
+        if not self.current_sample_id:
+            if was_playing:
+                self.mediaTogglePlaybackRequested.emit()
+            return
+
+        self.locLabelAddRequested.emit(
+            self.current_sample_id,
+            head,
+            label_name,
+            int(current_pos),
+            bool(self.current_video_path),
+        )
+
+        updated_labels = list(labels_list)
+        updated_labels.append(label_name)
+        updated_labels.sort()
+        self._schema_definitions[head]["labels"] = updated_labels
 
         if self.current_video_path:
-            new_event = {"head": head, "label": label_name, "position_ms": current_pos}
-            self.model.push_undo(
-                CmdType.LOC_EVENT_ADD,
-                video_path=self.current_video_path,
-                event=new_event,
-            )
-            if self.current_video_path not in self.model.localization_events:
-                self.model.localization_events[self.current_video_path] = []
-            self.model.localization_events[self.current_video_path].append(new_event)
+            events = self._snapshot_events()
+            events.append({"head": head, "label": label_name, "position_ms": int(current_pos)})
+            self._set_snapshot_events(events)
+            self._display_events_for_item(self.current_video_path)
+            self.refresh_tree_icons(self.current_video_path)
 
         self._refresh_schema_ui()
-        self.right_panel.annot_mgmt.tabs.set_current_head(head)
-        if self.current_video_path:
-            self._display_events_for_item(self.current_video_path)
-            self.refresh_tree_icons()
-        self.main.show_temp_msg("Added", f"{head}: {label_name}")
-        self.main.update_save_export_button_state()
+        self.localization_panel.annot_mgmt.tabs.set_current_head(head)
 
         if was_playing:
-            player.play()
+            self.mediaTogglePlaybackRequested.emit()
 
     def _on_label_rename_req(self, head, old_label):
+        if head not in self._schema_definitions:
+            return
+
         new_label, ok = QInputDialog.getText(
-            self.main,
+            self.localization_panel,
             "Rename Label",
             f"Rename '{old_label}' to:",
             text=old_label,
@@ -269,29 +310,36 @@ class LocalizationEditorController:
             return
 
         new_label = new_label.strip()
-        labels_list = self.model.label_definitions[head].get("labels", [])
+        labels_list = self._schema_definitions[head].get("labels", [])
         if any(l.lower() == new_label.lower() for l in labels_list if l != old_label):
-            self.main.show_temp_msg("Error", "Label exists!", icon=QMessageBox.Icon.Warning)
+            self.statusMessageRequested.emit("Error", "Label exists!", 1500)
             return
 
-        self.model.push_undo(CmdType.SCHEMA_REN_LBL, head=head, old_lbl=old_label, new_lbl=new_label)
-        index = labels_list.index(old_label)
-        labels_list[index] = new_label
+        self.locLabelRenameRequested.emit(head, old_label, new_label)
 
-        for _, events in self.model.localization_events.items():
-            for evt in events:
-                if evt.get("head") == head and evt.get("label") == old_label:
-                    evt["label"] = new_label
+        updated_labels = [new_label if lbl == old_label else lbl for lbl in labels_list]
+        self._schema_definitions[head]["labels"] = sorted(updated_labels)
+        label_colors = dict(self._schema_definitions[head].get("label_colors", {}))
+        if old_label in label_colors:
+            label_colors[new_label] = label_colors.pop(old_label)
+        if label_colors:
+            self._schema_definitions[head]["label_colors"] = label_colors
+        else:
+            self._schema_definitions[head].pop("label_colors", None)
 
-        self.model.is_data_dirty = True
+        events = self._snapshot_events()
+        for evt in events:
+            if evt.get("head") == head and evt.get("label") == old_label:
+                evt["label"] = new_label
+        self._set_snapshot_events(events)
+
         self._refresh_schema_ui()
-        self.right_panel.annot_mgmt.tabs.set_current_head(head)
+        self.localization_panel.annot_mgmt.tabs.set_current_head(head)
         self._refresh_current_clip_events()
-        self.main.update_save_export_button_state()
 
     def _on_label_delete_req(self, head, label):
         res = QMessageBox.warning(
-            self.main,
+            self.localization_panel,
             "Delete Label",
             f"Delete '{label}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
@@ -299,150 +347,416 @@ class LocalizationEditorController:
         if res != QMessageBox.StandardButton.Yes:
             return
 
-        loc_affected = {}
-        for vid_path, events in self.model.localization_events.items():
-            aff = [copy.deepcopy(e) for e in events if e.get("head") == head and e.get("label") == label]
-            if aff:
-                loc_affected[vid_path] = aff
+        self.locLabelDeleteRequested.emit(head, label)
 
-        self.model.push_undo(
-            CmdType.SCHEMA_DEL_LBL,
-            head=head,
-            label=label,
-            loc_affected_events=loc_affected,
-        )
-        labels_list = self.model.label_definitions[head].get("labels", [])
-        if label in labels_list:
-            labels_list.remove(label)
+        labels = list(self._schema_definitions.get(head, {}).get("labels", []))
+        self._schema_definitions.setdefault(head, {"type": "single_label", "labels": []})
+        self._schema_definitions[head]["labels"] = [lbl for lbl in labels if lbl != label]
+        label_colors = dict(self._schema_definitions[head].get("label_colors", {}))
+        label_colors.pop(label, None)
+        if label_colors:
+            self._schema_definitions[head]["label_colors"] = label_colors
+        else:
+            self._schema_definitions[head].pop("label_colors", None)
 
-        for vid_path in self.model.localization_events:
-            events = self.model.localization_events[vid_path]
-            self.model.localization_events[vid_path] = [
-                e for e in events if not (e.get("head") == head and e.get("label") == label)
-            ]
+        events = [
+            evt
+            for evt in self._snapshot_events()
+            if not (evt.get("head") == head and evt.get("label") == label)
+        ]
+        self._set_snapshot_events(events)
 
-        self.model.is_data_dirty = True
         self._refresh_schema_ui()
-        self.right_panel.annot_mgmt.tabs.set_current_head(head)
+        self.localization_panel.annot_mgmt.tabs.set_current_head(head)
         self._refresh_current_clip_events()
-        self.main.update_save_export_button_state()
+
+    def _on_label_color_req(self, head: str, label: str, color_hex: str):
+        if head not in self._schema_definitions:
+            return
+        if label not in self._schema_definitions.get(head, {}).get("labels", []):
+            return
+
+        normalized = normalize_hex_color(color_hex)
+        if not normalized:
+            return
+
+        current_colors = dict(self._schema_definitions[head].get("label_colors", {}))
+        if current_colors.get(label) == normalized:
+            return
+
+        self.locLabelColorSetRequested.emit(head, label, normalized)
+        current_colors[label] = normalized
+        self._schema_definitions[head]["label_colors"] = current_colors
+        self._refresh_schema_ui()
+        self.localization_panel.annot_mgmt.tabs.set_current_head(head)
+        self._refresh_current_clip_events()
 
     # --- Spotting (Data Creation) ---
     def _on_spotting_triggered(self, head, label):
-        if not self.current_video_path:
-            QMessageBox.warning(self.main, "Warning", "No sample selected.")
+        if not self.current_video_path or not self.current_sample_id:
+            QMessageBox.warning(self.localization_panel, "Warning", "No sample selected.")
             return
 
-        pos_ms = self.center_panel.player.position()
+        pos_ms = max(0, int(self._last_media_position_ms))
         new_event = {"head": head, "label": label, "position_ms": pos_ms}
-        self.model.push_undo(CmdType.LOC_EVENT_ADD, video_path=self.current_video_path, event=new_event)
+        self.locEventAddRequested.emit(self.current_sample_id, copy.deepcopy(new_event))
 
-        if self.current_video_path not in self.model.localization_events:
-            self.model.localization_events[self.current_video_path] = []
-        self.model.localization_events[self.current_video_path].append(new_event)
+        events = self._snapshot_events()
+        events.append(copy.deepcopy(new_event))
+        self._set_snapshot_events(events)
 
-        self.model.is_data_dirty = True
         self._display_events_for_item(self.current_video_path)
-        self.refresh_tree_icons()
-        self.main.show_temp_msg("Event Created", f"{head}: {label}")
-        self.main.update_save_export_button_state()
+        self.refresh_tree_icons(self.current_video_path)
         self._reselect_event(new_event)
 
     # --- Table Modification ---
+    def _normalize_event_for_manual_edit(self, event: dict) -> dict:
+        updated = copy.deepcopy(event)
+        if isinstance(updated, dict):
+            updated.pop("confidence_score", None)
+        return updated
+
     def _on_annotation_modified(self, old_event, new_event):
-        events = self.model.localization_events.get(self.current_video_path, [])
+        if not self.current_video_path:
+            return
+
+        normalized_new = self._normalize_event_for_manual_edit(new_event)
+        if old_event == normalized_new:
+            return
+
+        events = self._snapshot_events()
         index = self._find_event_index(events, old_event)
         if index < 0:
             return
+        if not self.current_sample_id:
+            return
 
-        self.model.push_undo(
-            CmdType.LOC_EVENT_MOD,
-            video_path=self.current_video_path,
-            old_event=copy.deepcopy(old_event),
-            new_event=new_event,
+        self.locEventModRequested.emit(
+            self.current_sample_id,
+            copy.deepcopy(old_event),
+            copy.deepcopy(normalized_new),
         )
 
-        new_head = new_event["head"]
-        new_label = new_event["label"]
-        schema_changed = False
-
-        if new_head not in self.model.label_definitions:
-            self.model.label_definitions[new_head] = {"type": "single_label", "labels": []}
-            schema_changed = True
-
-        if new_label and new_label != "???":
-            labels_list = self.model.label_definitions[new_head]["labels"]
-            if not any(l.lower() == new_label.lower() for l in labels_list):
-                labels_list.append(new_label)
-                schema_changed = True
-
-        events[index] = new_event
-        self.model.is_data_dirty = True
-
-        if schema_changed:
-            self._refresh_schema_ui()
-            self.right_panel.annot_mgmt.tabs.set_current_head(new_head)
+        events[index] = copy.deepcopy(normalized_new)
+        self._set_snapshot_events(events)
 
         self._display_events_for_item(self.current_video_path)
-        self.refresh_tree_icons()
-        self.main.show_temp_msg("Event Updated", "Modified")
-        self.main.update_save_export_button_state()
-        self._reselect_event(new_event)
+        self.refresh_tree_icons(self.current_video_path)
+        self._reselect_event(normalized_new)
 
-    def _on_delete_single_annotation(self, item_data):
-        events = self.model.localization_events.get(self.current_video_path, [])
+    def _on_confirm_single_annotation(self, item_data):
+        if not isinstance(item_data, dict) or "confidence_score" not in item_data:
+            return
+        if not self.current_video_path or not self.current_sample_id:
+            return
+
+        events = self._snapshot_events()
         index = self._find_event_index(events, item_data)
         if index < 0:
             return
 
-        reply = QMessageBox.question(
-            self.main,
-            "Delete Event",
-            "Delete this event?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        updated_event = copy.deepcopy(events[index])
+        updated_event.pop("confidence_score", None)
+        if updated_event == events[index]:
             return
 
-        self.model.push_undo(
-            CmdType.LOC_EVENT_DEL,
-            video_path=self.current_video_path,
-            event=copy.deepcopy(events[index]),
+        self.locEventModRequested.emit(
+            self.current_sample_id,
+            copy.deepcopy(events[index]),
+            copy.deepcopy(updated_event),
         )
-        events.pop(index)
-        self.model.is_data_dirty = True
+
+        events[index] = updated_event
+        self._set_snapshot_events(events)
+
         self._display_events_for_item(self.current_video_path)
-        self.refresh_tree_icons()
-        self.main.update_save_export_button_state()
+        self.refresh_tree_icons(self.current_video_path)
+        self._reselect_event(updated_event)
+
+    def _on_reject_single_annotation(self, item_data):
+        if not isinstance(item_data, dict) or "confidence_score" not in item_data:
+            return
+        if not self.current_video_path or not self.current_sample_id:
+            return
+
+        events = self._snapshot_events()
+        index = self._find_event_index(events, item_data)
+        if index < 0:
+            return
+
+        self.locEventDelRequested.emit(
+            self.current_sample_id,
+            copy.deepcopy(events[index]),
+            index,
+        )
+
+        events.pop(index)
+        self._set_snapshot_events(events)
+        self._display_events_for_item(self.current_video_path)
+        self.refresh_tree_icons(self.current_video_path)
+
+    def _on_delete_single_annotation(self, item_data):
+        if not self.current_video_path:
+            return
+
+        events = self._snapshot_events()
+        index = self._find_event_index(events, item_data)
+        if index < 0:
+            return
+
+        # reply = QMessageBox.question(
+        #     self.localization_panel,
+        #     "Delete Event",
+        #     "Delete this event?",
+        #     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        # )
+        # if reply != QMessageBox.StandardButton.Yes:
+        #     return
+        if not self.current_sample_id:
+            return
+
+        self.locEventDelRequested.emit(
+            self.current_sample_id,
+            copy.deepcopy(events[index]),
+            index,
+        )
+
+        events.pop(index)
+        self._set_snapshot_events(events)
+        self._display_events_for_item(self.current_video_path)
+        self.refresh_tree_icons(self.current_video_path)
+
+    # --- Smart inference integration ---
+    def _prompt_model_id(self):
+        current = str(self.settings.value(self.SETTINGS_MODEL_KEY, self.DEFAULT_MODEL) or self.DEFAULT_MODEL)
+        model_id, ok = QInputDialog.getText(
+            self.localization_panel,
+            "Localization Inference Model",
+            "Model id:",
+            text=current,
+        )
+        if not ok:
+            return None
+        clean = str(model_id or "").strip()
+        if not clean:
+            QMessageBox.warning(self.localization_panel, "Inference", "Model id cannot be empty.")
+            return None
+        self.settings.setValue(self.SETTINGS_MODEL_KEY, clean)
+        self.settings.sync()
+        return clean
+
+    def _prompt_inference_range(self):
+        start_default = self._fmt_ms_short(0)
+        end_default_ms = self._media_duration_ms if self._media_duration_ms > 0 else 0
+        end_default = self._fmt_ms_short(end_default_ms)
+
+        start_text, ok = QInputDialog.getText(
+            self.localization_panel,
+            "Inference Start",
+            "Start time (mm:ss.mmm):",
+            text=start_default,
+        )
+        if not ok:
+            return None, None
+
+        end_text, ok = QInputDialog.getText(
+            self.localization_panel,
+            "Inference End",
+            "End time (mm:ss.mmm):",
+            text=end_default,
+        )
+        if not ok:
+            return None, None
+
+        start_ms = self._parse_mmss_to_ms(start_text, 0)
+        end_ms = self._parse_mmss_to_ms(end_text, end_default_ms)
+        if end_ms != 0 and end_ms <= start_ms:
+            QMessageBox.warning(self.localization_panel, "Invalid Range", "End time must be greater than Start time.")
+            return None, None
+        return start_ms, end_ms
+
+    def _on_head_smart_inference_requested(self, head_name: str):
+        if not self.current_video_path or not self.current_sample_id:
+            return
+
+        labels = self._head_labels(head_name)
+        if not labels:
+            QMessageBox.warning(
+                self.localization_panel,
+                "Inference",
+                f"Head '{head_name}' must define at least one label before running smart inference.",
+            )
+            return
+
+        model_id = self._prompt_model_id()
+        if not model_id:
+            return
+
+        start_ms, end_ms = self._prompt_inference_range()
+        if start_ms is None:
+            return
+
+        self._pending_inference_head = str(head_name or "")
+        self.statusMessageRequested.emit("Inference", "Running localization inference...", 1200)
+        self.inference_manager.start_inference(
+            self.current_video_path,
+            start_ms,
+            end_ms,
+            model_id,
+            head_name,
+            labels,
+            self._current_input_fps(),
+        )
+
+    def _resolve_unknown_prediction_label(self, head: str, predicted_label: str):
+        definition = self._schema_definitions.get(head, {}) if isinstance(self._schema_definitions, dict) else {}
+        labels = list(definition.get("labels", [])) if isinstance(definition, dict) else []
+
+        clean_pred = str(predicted_label or "").strip()
+        if not labels or clean_pred in labels:
+            return clean_pred
+
+        options = [*labels, "<Skip Prediction>"]
+        mapped, ok = QInputDialog.getItem(
+            self.localization_panel,
+            "Map Predicted Label",
+            f"Map '{clean_pred}' to:",
+            options,
+            0,
+            False,
+        )
+        if not ok or mapped == "<Skip Prediction>":
+            return None
+        return str(mapped)
+
+    @staticmethod
+    def _prediction_confidence(event: dict) -> float:
+        if not isinstance(event, dict):
+            return 1.0
+        if "confidence_score" in event:
+            try:
+                return max(0.0, min(1.0, float(event.get("confidence_score") or 0.0)))
+            except Exception:
+                return 1.0
+        if "confidence" in event:
+            try:
+                return max(0.0, min(1.0, float(event.get("confidence") or 0.0)))
+            except Exception:
+                return 1.0
+        return 1.0
+
+    def _on_inference_success(self, predicted_events: list):
+        if not self.current_video_path or not self.current_sample_id:
+            self._pending_inference_head = None
+            return
+
+        target_head = str(self._pending_inference_head or self.current_head or "")
+        if not target_head:
+            self._pending_inference_head = None
+            return
+
+        current_events = self._snapshot_events()
+        existing_keys = {
+            (
+                str(evt.get("head") or ""),
+                str(evt.get("label") or ""),
+                int(self._event_position_ms(evt)),
+            )
+            for evt in current_events
+            if isinstance(evt, dict)
+        }
+
+        appended_count = 0
+        for raw in list(predicted_events or []):
+            if not isinstance(raw, dict):
+                continue
+
+            mapped_label = self._resolve_unknown_prediction_label(target_head, raw.get("label"))
+            if not mapped_label:
+                continue
+
+            position_ms = self._event_position_ms(raw)
+            event = {
+                "head": target_head,
+                "label": mapped_label,
+                "position_ms": int(position_ms),
+                "confidence_score": self._prediction_confidence(raw),
+            }
+            event_key = (event["head"], event["label"], event["position_ms"])
+            if event_key in existing_keys:
+                continue
+            existing_keys.add(event_key)
+            current_events.append(event)
+            appended_count += 1
+
+        if appended_count == 0:
+            self.statusMessageRequested.emit("Inference", "No new events added.", 1200)
+            self._pending_inference_head = None
+            return
+
+        self._set_snapshot_events(current_events)
+        self.locEventsSetRequested.emit(self.current_sample_id, self._snapshot_events())
+
+        self.statusMessageRequested.emit("Inference", f"Added {appended_count} inferred event(s).", 1500)
+        self.saveStateRefreshRequested.emit()
+        self._display_events_for_item(self.current_video_path)
+        self.refresh_tree_icons(self.current_video_path)
+        self._pending_inference_head = None
+
+    def _on_inference_error(self, error_msg: str):
+        self._pending_inference_head = None
+        QMessageBox.critical(self.localization_panel, "Inference Error", f"Failed to run model:\n{error_msg}")
 
     # --- Helper Refresh Methods ---
     def _refresh_schema_ui(self):
-        self.right_panel.table.set_schema(self.model.label_definitions)
-        self.right_panel.annot_mgmt.update_schema(self.model.label_definitions)
+        self.localization_panel.table.set_schema(self._schema_definitions)
+        self.localization_panel.annot_mgmt.update_schema(self._schema_definitions)
 
     def _refresh_current_clip_events(self):
-        if self.current_video_path:
-            self._display_events_for_item(self.current_video_path)
+        if not self.current_video_path:
+            return
+        self._display_events_for_item(self.current_video_path)
 
-    def refresh_tree_icons(self):
-        for path, item in self.model.action_item_map.items():
-            events = self.model.localization_events.get(path, [])
-            item.setIcon(self.main.done_icon if events else self.main.empty_icon)
+    def refresh_tree_icons(self, path=None):
+        if path:
+            self.itemStatusRefreshRequested.emit(path)
+            return
 
-    def _display_events_for_item(self, path):
-        events = self.model.localization_events.get(path, [])
-        # Keep original event dict references so table-originated edits/deletes map back
-        # to the same objects stored in the model.
-        display_data = sorted(events, key=lambda x: x.get("position_ms", 0))
-        self.right_panel.table.set_data(display_data)
-        markers = [{"start_ms": e.get("position_ms", 0), "color": QColor("#00BFFF")} for e in events]
-        self.center_panel.set_markers(markers)
+        for cached_path in self._action_paths_cache:
+            self.itemStatusRefreshRequested.emit(cached_path)
+
+    def _display_events_for_item(self, path, update_markers=None):
+        if path and path != self.current_video_path:
+            return
+
+        events = self._snapshot_events()
+        display_data = sorted(events, key=lambda x: self._event_position_ms(x))
+        self.localization_panel.table.set_data(display_data)
+
+        if update_markers is None:
+            update_markers = self._is_active_mode()
+        if update_markers:
+            label_colors_by_head = {
+                head: dict(definition.get("label_colors", {}))
+                for head, definition in self._schema_definitions.items()
+                if isinstance(definition, dict)
+            }
+            markers = [
+                {
+                    "start_ms": e.get("position_ms", 0),
+                    "color": QColor(
+                        localization_label_color_hex(
+                            e.get("head", ""),
+                            e.get("label", ""),
+                            label_colors_by_head.get(e.get("head", ""), {}),
+                        )
+                    ),
+                }
+                for e in display_data
+            ]
+            self.markersUpdateRequested.emit(markers)
 
     def _find_event_index(self, events, event):
-        """
-        Locate an event by exact dict equality first, then by event identity fields.
-        This keeps edit/delete robust if table rows carry shallow copies.
-        """
         try:
             return events.index(event)
         except ValueError:
@@ -464,14 +778,12 @@ class LocalizationEditorController:
         if not self.current_video_path:
             return
 
-        hand_events = self.model.localization_events.get(self.current_video_path, [])
-        smart_events = self.model.smart_localization_events.get(self.current_video_path, [])
-        events = [*hand_events, *smart_events]
+        events = self._snapshot_events()
         if not events:
             return
 
-        sorted_events = sorted(events, key=lambda x: x.get("position_ms", 0))
-        current_pos = self.center_panel.player.position()
+        sorted_events = sorted(events, key=lambda x: self._event_position_ms(x))
+        current_pos = max(0, int(self._last_media_position_ms))
         target_time = None
         if step > 0:
             for event in sorted_events:
@@ -483,18 +795,14 @@ class LocalizationEditorController:
                 if event.get("position_ms", 0) < current_pos - 100:
                     target_time = event.get("position_ms")
                     break
+
         if target_time is not None:
-            self.center_panel.set_position(target_time)
-            # Keep current tab unchanged. If the event is not in the active table,
-            # we still seek video but do not force tab-switching.
-            active_tab = self.right_panel.tabs.currentIndex()
-            if active_tab == 1:
-                self._select_row_by_time_in_table(self.right_panel.smart_widget.smart_table, target_time)
-            else:
-                self._select_row_by_time_in_table(self.right_panel.table, target_time)
+            self._last_media_position_ms = max(0, int(target_time))
+            self.mediaSeekRequested.emit(int(target_time))
+            self._select_row_by_time_in_table(self.localization_panel.table, target_time)
 
     def _select_row_by_time(self, time_ms):
-        self._select_row_by_time_in_table(self.right_panel.table, time_ms)
+        self._select_row_by_time_in_table(self.localization_panel.table, time_ms)
 
     def _select_row_by_time_in_table(self, table_adapter, time_ms):
         model = table_adapter.model
@@ -507,8 +815,8 @@ class LocalizationEditorController:
                 break
 
     def _reselect_event(self, target_event):
-        model = self.right_panel.table.model
-        table_view = self.right_panel.table.table
+        model = self.localization_panel.table.model
+        table_view = self.localization_panel.table.table
 
         table_view.selectionModel().blockSignals(True)
 
@@ -525,8 +833,8 @@ class LocalizationEditorController:
                 idx = model.index(row, 0)
                 table_view.selectRow(row)
                 table_view.scrollTo(idx)
-                if hasattr(self.right_panel.table, "btn_set_time"):
-                    self.right_panel.table.btn_set_time.setEnabled(True)
+                if hasattr(self.localization_panel.table, "btn_set_time"):
+                    self.localization_panel.table.btn_set_time.setEnabled(True)
                 break
 
         table_view.selectionModel().blockSignals(False)
@@ -537,86 +845,128 @@ class LocalizationEditorController:
         hours = minutes // 60
         return f"{hours:02}:{minutes % 60:02}:{seconds % 60:02}.{ms % 1000:03}"
 
+    @staticmethod
+    def _fmt_ms_short(ms: int) -> str:
+        ms = max(0, int(ms or 0))
+        seconds = ms // 1000
+        minutes = seconds // 60
+        return f"{minutes:02}:{seconds % 60:02}.{ms % 1000:03}"
+
+    @staticmethod
+    def _parse_mmss_to_ms(text: str, fallback: int = 0) -> int:
+        value = (text or "").strip()
+        if not value:
+            return max(0, int(fallback))
+
+        try:
+            parts = value.split(":")
+            if len(parts) == 3:
+                hours = int(parts[0])
+                minutes = int(parts[1])
+                sec_parts = parts[2].split(".")
+                seconds = int(sec_parts[0])
+                millis = int(sec_parts[1]) if len(sec_parts) > 1 else 0
+                return max(0, ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis)
+            if len(parts) == 2:
+                minutes = int(parts[0])
+                sec_parts = parts[1].split(".")
+                seconds = int(sec_parts[0])
+                millis = int(sec_parts[1]) if len(sec_parts) > 1 else 0
+                return max(0, (minutes * 60 + seconds) * 1000 + millis)
+            if len(parts) == 1:
+                return max(0, int(float(parts[0]) * 1000))
+        except Exception:
+            pass
+
+        return max(0, int(fallback))
+
     # -------------------------------------------------------------------------
-    # Smart Annotation Control
+    # Snapshot helpers
     # -------------------------------------------------------------------------
-    def _on_smart_set_time(self, target: str):
-        player = self.center_panel.player
-        current_ms = player.position()
-        time_str = self._fmt_ms_full(current_ms)
-        self.right_panel.smart_widget.update_time_display(target, time_str, current_ms)
-
-    def _run_localization_inference(self, start_ms: int, end_ms: int):
-        if not self.current_video_path:
-            return
-        if start_ms >= end_ms and end_ms != 0:
-            QMessageBox.warning(self.main, "Invalid Range", "End time must be greater than Start time.")
+    def _set_selected_sample_snapshot(self, sample):
+        if not isinstance(sample, dict):
+            self._clear_selected_sample_state()
             return
 
-        self.main.show_temp_msg("Smart Inference", "Running OpenSportsLib Localization Model...")
-        self.right_panel.smart_widget.btn_run_infer.setEnabled(False)
-        self.inference_manager.start_inference(self.current_video_path, start_ms, end_ms)
-
-    def _on_inference_success(self, predicted_events: list):
-        self.right_panel.smart_widget.btn_run_infer.setEnabled(True)
-        if not self.current_video_path:
+        sample_id = str(sample.get("id") or "")
+        path = str(self._action_path_by_sample_id.get(sample_id) or self._extract_primary_path(sample) or "")
+        if not sample_id or not path:
+            self._clear_selected_sample_state()
             return
 
-        self.model.smart_localization_events[self.current_video_path] = predicted_events
-        self.main.show_temp_msg("Smart Inference", f"Success: Found {len(predicted_events)} events.")
+        self.current_sample_id = sample_id
+        self.current_video_path = path
+        self._current_sample_snapshot = copy.deepcopy(sample)
+        self.localization_panel.setEnabled(True)
 
-        if self.right_panel.tabs.currentIndex() == 1:
-            self._display_smart_events(self.current_video_path)
+    def _clear_selected_sample_state(self):
+        self.current_video_path = None
+        self.current_sample_id = ""
+        self.current_head = None
+        self._current_sample_snapshot = {}
+        self.localization_panel.table.set_data([])
+        self.localization_panel.setEnabled(False)
 
-    def _on_inference_error(self, error_msg: str):
-        self.right_panel.smart_widget.btn_run_infer.setEnabled(True)
-        QMessageBox.critical(self.main, "Inference Error", f"Failed to run model:\n{error_msg}")
+    def _snapshot_events(self):
+        events = self._current_sample_snapshot.get("events", [])
+        if not isinstance(events, list):
+            return []
+        return copy.deepcopy(events)
 
-    def _confirm_smart_events(self):
-        if not self.current_video_path:
-            return
+    def _set_snapshot_events(self, events):
+        if not isinstance(self._current_sample_snapshot, dict):
+            self._current_sample_snapshot = {}
+        normalized = [copy.deepcopy(evt) for evt in list(events or []) if isinstance(evt, dict)]
+        normalized.sort(key=self._event_position_ms)
+        self._current_sample_snapshot["events"] = normalized
 
-        smart_events = self.model.smart_localization_events.get(self.current_video_path, [])
-        if not smart_events:
-            return
+    @staticmethod
+    def _normalize_schema(schema: dict) -> dict:
+        if not isinstance(schema, dict):
+            return {}
+        return copy.deepcopy(schema)
 
-        if self.current_video_path not in self.model.localization_events:
-            self.model.localization_events[self.current_video_path] = []
+    @staticmethod
+    def _extract_primary_path(sample: dict):
+        inputs = sample.get("inputs")
+        if isinstance(inputs, list):
+            for input_item in inputs:
+                if isinstance(input_item, dict):
+                    path = input_item.get("path")
+                    if path:
+                        return path
+        return None
 
-        self.model.localization_events[self.current_video_path].extend(smart_events)
-        self.model.localization_events[self.current_video_path].sort(key=lambda x: x.get("position_ms", 0))
+    def _current_input_fps(self) -> float:
+        inputs = self._current_sample_snapshot.get("inputs")
+        if isinstance(inputs, list):
+            for input_item in inputs:
+                if not isinstance(input_item, dict):
+                    continue
+                if str(input_item.get("path") or "") != str(self.current_video_path or ""):
+                    continue
+                try:
+                    fps = float(input_item.get("fps") or 25.0)
+                except Exception:
+                    fps = 25.0
+                if fps > 0:
+                    return fps
+        return 25.0
 
-        self.model.smart_localization_events[self.current_video_path] = []
-        self._display_smart_events(self.current_video_path)
+    def _head_labels(self, head_name: str) -> list[str]:
+        definition = self._schema_definitions.get(head_name, {}) if isinstance(self._schema_definitions, dict) else {}
+        if not isinstance(definition, dict):
+            return []
+        return [str(label) for label in list(definition.get("labels", [])) if str(label).strip()]
 
-        self.main.show_temp_msg(
-            "Smart Spotting",
-            "Predictions confirmed and merged into Hand Annotations.",
-        )
-        self.model.is_data_dirty = True
-        self.main.update_save_export_button_state()
+    @staticmethod
+    def _event_position_ms(event) -> int:
+        if not isinstance(event, dict):
+            return 0
+        try:
+            return int(event.get("position_ms", 0) or 0)
+        except Exception:
+            return 0
 
-    def _clear_smart_events(self):
-        if not self.current_video_path:
-            return
-        self.model.smart_localization_events[self.current_video_path] = []
-        self._display_smart_events(self.current_video_path)
-        self.main.show_temp_msg("Smart Spotting", "Cleared smart predictions.")
-
-    def _display_smart_events(self, video_path: str):
-        events = self.model.smart_localization_events.get(video_path, [])
-        self.right_panel.smart_widget.smart_table.set_data(events)
-        markers = [
-            {"start_ms": evt.get("position_ms", 0), "color": QColor("deepskyblue")}
-            for evt in events
-        ]
-        self.center_panel.set_markers(markers)
-
-    def _on_tab_switched(self, index: int):
-        if not self.current_video_path:
-            return
-
-        if index == 0:
-            self._display_events_for_item(self.current_video_path)
-        elif index == 1:
-            self._display_smart_events(self.current_video_path)
+    def _is_active_mode(self) -> bool:
+        return self._active_mode_index == 1
