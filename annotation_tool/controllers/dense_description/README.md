@@ -30,7 +30,7 @@ Owns Dense Description mode behavior for timestamped text event CRUD and marker/
   - Binds panel-level add/edit/delete/select/time-update and navigation intents.
 - `on_mode_changed(index)`
   - Refreshes dense display when mode becomes active.
-- `on_selected_sample_changed(sample)`
+- `on_selected_sample_changed(sample, resolved_path="")`
   - Loads selected sample snapshot and refreshes dense events.
 - `_on_add_event_requested(initial_text="")`
   - Modal add flow; creates event at current time and emits add intent.

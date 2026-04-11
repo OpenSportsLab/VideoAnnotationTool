@@ -285,8 +285,9 @@ def test_localization_add_label_uses_signal_pause_resume_flow(
 
     toggle_emits = []
     window.center_panel.playPauseRequested.connect(lambda: toggle_emits.append(True))
-    monkeypatch.setattr(window.media_controller, "is_playing", lambda: True)
+    window.localization_editor_controller.on_playback_state_changed(True)
     monkeypatch.setattr(window.center_panel.player, "position", lambda: 4321)
+    window.localization_editor_controller.on_media_position_changed(4321)
     monkeypatch.setattr(
         "controllers.localization.localization_editor_controller.QInputDialog.getText",
         lambda *args, **kwargs: ("signal_pause_label", True),

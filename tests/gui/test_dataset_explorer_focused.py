@@ -14,7 +14,7 @@ from ui.dataset_explorer_panel import DatasetExplorerPanel
 def explorer_panel_and_controller(qtbot, tmp_path):
     panel = DatasetExplorerPanel(
         tree_title="Data",
-        filter_items=["Show All", "Show Hand Labelled", "Show Smart Labelled", "Show Not Labelled"],
+        filter_items=["Show All", "Show Labelled", "Show Smart Labelled", "Show Not Labelled"],
         clear_text="Clear All",
         enable_context_menu=True,
     )

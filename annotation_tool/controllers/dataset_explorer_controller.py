@@ -466,9 +466,31 @@ class DatasetExplorerController(QObject):
     def get_sample_by_path(self, path: str):
         if not path:
             return None
+        path = str(path)
+
+        # Fast exact match on canonical runtime path.
         for entry in self.action_item_data:
             if entry.get("path") == path:
                 return entry["sample_ref"]
+
+        # Compatibility: accept equivalent source paths (relative/absolute).
+        candidate_keys = []
+        raw_key = self._fs_path_key(path)
+        if raw_key:
+            candidate_keys.append(raw_key)
+        resolved_key = self._fs_path_key(self._resolve_media_path(path))
+        if resolved_key and resolved_key not in candidate_keys:
+            candidate_keys.append(resolved_key)
+        if not candidate_keys:
+            return None
+
+        for entry in self.action_item_data:
+            entry_key = self._fs_path_key(entry.get("path"))
+            if entry_key in candidate_keys:
+                return entry["sample_ref"]
+            for source_path in list(entry.get("source_files", [])):
+                if self._fs_path_key(source_path) in candidate_keys:
+                    return entry["sample_ref"]
         return None
 
     def get_item_by_id(self, data_id: str):
@@ -484,6 +506,11 @@ class DatasetExplorerController(QObject):
         return list(entry.get("source_files", []))
 
     def get_data_id_by_path(self, path: str):
+        sample = self.get_sample_by_path(path)
+        if isinstance(sample, dict):
+            sample_id = sample.get("id")
+            if sample_id:
+                return str(sample_id)
         for entry in self.action_item_data:
             if entry.get("path") == path:
                 return entry.get("data_id")
@@ -666,23 +693,24 @@ class DatasetExplorerController(QObject):
         sample = self.get_sample_by_path(path)
         if not sample:
             return
-        for field in ("labels", "smart_labels", "events", "smart_events", "captions", "dense_captions"):
+        for field in (
+            "labels",
+            "smart_labels",
+            "smart_label",
+            "events",
+            "smart_events",
+            "smart_event",
+            "captions",
+            "dense_captions",
+        ):
             sample.pop(field, None)
 
     def is_action_done(self, action_path: str) -> bool:
         sample = self.get_sample_by_path(action_path)
         if not sample:
             return False
-        if _ManualAnnotationRecord(sample):
-            return True
-        if sample.get("events"):
-            return True
-        if sample.get("dense_captions"):
-            return True
-        captions = sample.get("captions", [])
-        if any(isinstance(cap, dict) and str(cap.get("text", "")).strip() for cap in captions):
-            return True
-        return False
+        hand_labelled, smart_labelled = self._label_state_for_sample(sample)
+        return bool(hand_labelled or smart_labelled)
 
     def set_sample_captions(self, sample_id: str, captions):
         sample = self.get_sample(sample_id)
@@ -992,6 +1020,24 @@ class DatasetExplorerController(QObject):
                 inputs = []
                 sample["inputs"] = inputs
             sample["metadata"] = sample.get("metadata", {}) if isinstance(sample.get("metadata"), dict) else {}
+
+            # Legacy key compatibility: keep one canonical smart field per domain.
+            if "smart_label" in sample and "smart_labels" not in sample:
+                legacy_smart_label = sample.get("smart_label")
+                if isinstance(legacy_smart_label, dict):
+                    sample["smart_labels"] = copy.deepcopy(legacy_smart_label)
+                elif legacy_smart_label:
+                    sample["smart_labels"] = {"value": legacy_smart_label}
+            if "smart_event" in sample and "smart_events" not in sample:
+                legacy_smart_event = sample.get("smart_event")
+                if isinstance(legacy_smart_event, list):
+                    sample["smart_events"] = copy.deepcopy(legacy_smart_event)
+                elif isinstance(legacy_smart_event, dict):
+                    sample["smart_events"] = [copy.deepcopy(legacy_smart_event)]
+                elif legacy_smart_event:
+                    sample["smart_events"] = []
+            sample.pop("smart_label", None)
+            sample.pop("smart_event", None)
 
             if "events" in sample and isinstance(sample["events"], list):
                 for event in sample["events"]:
@@ -1367,9 +1413,9 @@ class DatasetExplorerController(QObject):
         if not isinstance(sample, dict):
             return False
         if mode_idx == 0:
-            return bool(_ManualAnnotationRecord(sample)) or bool(sample.get("smart_labels"))
+            return bool(_ManualAnnotationRecord(sample)) or bool(sample.get("smart_labels")) or bool(sample.get("smart_label"))
         if mode_idx == 1:
-            return bool(sample.get("events")) or bool(sample.get("smart_events"))
+            return bool(sample.get("events")) or bool(sample.get("smart_events")) or bool(sample.get("smart_event"))
         if mode_idx == 2:
             captions = sample.get("captions", [])
             return any(isinstance(cap, dict) and str(cap.get("text", "")).strip() for cap in captions)
@@ -1463,9 +1509,9 @@ class DatasetExplorerController(QObject):
             if item is None:
                 continue
 
-            path = item.data(getattr(self.tree_model, "FilePathRole", 0x0100))
             data_id = item.data(getattr(self.tree_model, "DataIdRole", 0x0101))
-            hand_labelled, smart_labelled = self._label_state_for_mode(path, data_id)
+            sample = self.get_sample(str(data_id or ""))
+            hand_labelled, smart_labelled = self._label_state_for_sample(sample)
 
             hide = False
             if index == 1 and not hand_labelled:
@@ -1493,25 +1539,35 @@ class DatasetExplorerController(QObject):
 
         self._clear_selection_for_empty_filtered_view()
 
-    def _label_state_for_mode(self, path: str, data_id: str):
-        sample = self.get_sample(data_id)
-        if not sample:
+    def _label_state_for_sample(self, sample):
+        if not isinstance(sample, dict):
             return False, False
 
-        mode_idx = self._active_mode_idx()
-        if mode_idx == 0:
-            hand = bool(_ManualAnnotationRecord(sample))
-            smart = bool(sample.get("smart_labels", {}).get("_confirmed", False))
-            return hand, smart
-        if mode_idx == 1:
-            return bool(sample.get("events")), bool(sample.get("smart_events"))
-        if mode_idx == 2:
-            captions = sample.get("captions", [])
-            hand = any(isinstance(cap, dict) and str(cap.get("text", "")).strip() for cap in captions)
-            return hand, False
-        if mode_idx == 3:
-            return bool(sample.get("dense_captions")), False
-        return False, False
+        captions = sample.get("captions", [])
+        has_caption_text = any(
+            isinstance(cap, dict) and str(cap.get("text", "")).strip()
+            for cap in captions
+        )
+
+        hand = bool(_ManualAnnotationRecord(sample)) or bool(sample.get("events")) or bool(sample.get("dense_captions")) or has_caption_text
+        smart = self._has_smart_labels(sample) or self._has_smart_events(sample)
+        return bool(hand), bool(smart)
+
+    @staticmethod
+    def _has_smart_labels(sample: dict) -> bool:
+        smart_labels = sample.get("smart_labels")
+        if smart_labels:
+            return True
+        legacy = sample.get("smart_label")
+        return bool(legacy)
+
+    @staticmethod
+    def _has_smart_events(sample: dict) -> bool:
+        smart_events = sample.get("smart_events")
+        if smart_events:
+            return True
+        legacy = sample.get("smart_event")
+        return bool(legacy)
 
     # ------------------------------------------------------------------
     # Sample add/remove/clear
@@ -1645,10 +1701,14 @@ class DatasetExplorerController(QObject):
                 sample.pop("labels", None)
             if not sample.get("smart_labels"):
                 sample.pop("smart_labels", None)
+            if not sample.get("smart_label"):
+                sample.pop("smart_label", None)
             if not sample.get("events"):
                 sample.pop("events", None)
             if not sample.get("smart_events"):
                 sample.pop("smart_events", None)
+            if not sample.get("smart_event"):
+                sample.pop("smart_event", None)
             if not sample.get("captions"):
                 sample.pop("captions", None)
             if not sample.get("dense_captions"):

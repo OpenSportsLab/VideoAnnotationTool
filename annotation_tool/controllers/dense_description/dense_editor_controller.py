@@ -9,7 +9,7 @@ class DenseEditorController(QObject):
     """
     Dense Description controller.
     Owns dense editor behavior, navigation, and sample-driven selection handling.
-    Dataset add/remove/filter/clear is handled centrally by DatasetExplorerController.
+    Dataset loading and explorer state updates are handled centrally by DatasetExplorerController.
     """
 
     statusMessageRequested = pyqtSignal(str, str, int)

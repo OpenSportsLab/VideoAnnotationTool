@@ -630,7 +630,7 @@ def test_filter_not_labelled_reselects_first_visible_row_for_each_mode(
 
 @pytest.mark.gui
 @pytest.mark.parametrize("mode_idx", [2, 3])
-def test_filter_smart_labelled_clears_selection_when_mode_has_no_smart_state(
+def test_filter_smart_labelled_uses_sample_state_across_modes(
     window,
     monkeypatch,
     qtbot,
@@ -646,13 +646,10 @@ def test_filter_smart_labelled_clears_selection_when_mode_has_no_smart_state(
     window.dataset_explorer_panel.filter_combo.setCurrentIndex(2)
     qtbot.wait(50)
 
-    assert window.dataset_explorer_controller.current_selected_sample_id == ""
-    assert window.dataset_explorer_controller.current_selected_input_path is None
-    assert window.center_panel.slider.markers == []
-    if mode_idx == MODE_TO_TAB_INDEX["description"]:
-        assert not window.description_panel.isEnabled()
-    else:
-        assert not window.dense_panel.isEnabled()
+    assert window.dataset_explorer_controller.current_selected_sample_id == "clip_1"
+    assert window.dataset_explorer_controller.current_selected_input_path == window.get_current_action_path()
+    assert not window.dataset_explorer_panel.tree.isRowHidden(0, window.dataset_explorer_panel.tree.rootIndex())
+    assert window.dataset_explorer_panel.tree.isRowHidden(1, window.dataset_explorer_panel.tree.rootIndex())
 
 
 # @pytest.mark.gui

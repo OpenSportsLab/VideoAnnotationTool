@@ -91,6 +91,20 @@ def test_dataset_explorer_constructor_is_strict_panel_tree_model_only():
 
 
 @pytest.mark.gui
+def test_classification_constructor_is_panel_only():
+    signature = inspect.signature(ClassificationEditorController.__init__)
+    params = [name for name in signature.parameters if name != "self"]
+    assert params == ["classification_panel"]
+
+
+@pytest.mark.gui
+def test_localization_constructor_is_panel_only():
+    signature = inspect.signature(LocalizationEditorController.__init__)
+    params = [name for name in signature.parameters if name != "self"]
+    assert params == ["localization_panel"]
+
+
+@pytest.mark.gui
 def test_decoupled_controllers_do_not_use_self_main_access():
     repo_root = Path(__file__).resolve().parents[2]
     targets = [
@@ -157,7 +171,6 @@ def test_mainwindow_connect_signals_uses_direct_controller_wiring_contract():
         "self.right_tabs.currentChanged.connect(self.desc_editor_controller.on_mode_changed)",
         "self.right_tabs.currentChanged.connect(self.dense_editor_controller.on_mode_changed)",
         "self.dataset_explorer_controller.statusMessageRequested.connect(self.show_temp_msg)",
-        "self.classification_editor_controller.filterRefreshRequested.connect(",
         "self.history_manager.refreshUiAfterUndoRedoRequested.connect(self.refresh_ui_after_undo_redo)",
         "self.classification_editor_controller.manualAnnotationSaveRequested.connect(",
         "self.history_manager.execute_classification_manual_annotation",

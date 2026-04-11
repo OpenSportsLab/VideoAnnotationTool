@@ -214,7 +214,7 @@ class TrainManager(QObject):
     def __init__(self, classification_controller):
         super().__init__()
         self.controller = classification_controller
-        self.model = classification_controller.model
+        self.model = None
         self.panel = classification_controller.classification_panel
         # Background worker thread instance
         self.worker = None
@@ -232,9 +232,14 @@ class TrainManager(QObject):
         self.panel.btn_start_train.clicked.connect(self.start_training)
         self.panel.btn_stop_train.clicked.connect(self.stop_training)
 
+    def set_dataset_model(self, model):
+        self.model = model
+
     def start_training(self):
         # Prevent launching a second training job while one is already running
         if self.worker and self.worker.isRunning():
+            return
+        if self.model is None:
             return
 
         # Get the currently loaded JSON annotation file from the main model

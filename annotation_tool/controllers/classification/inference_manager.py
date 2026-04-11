@@ -321,7 +321,7 @@ class InferenceManager(QObject):
     def __init__(self, classification_controller):
         super().__init__()
         self.controller = classification_controller
-        self.model = classification_controller.model
+        self.model = None
         self.panel = classification_controller.classification_panel
         
         if hasattr(sys, '_MEIPASS'):
@@ -335,6 +335,9 @@ class InferenceManager(QObject):
         
         self.panel.batch_run_requested.connect(self.start_batch_inference)
         self.panel.batch_confirm_requested.connect(self.confirm_batch_inference)
+
+    def set_dataset_model(self, model):
+        self.model = model
 
     def _get_label_map_from_config(self) -> dict:
         """
@@ -364,12 +367,14 @@ class InferenceManager(QObject):
         return label_map
 
     def start_inference(self):
+        if self.model is None:
+            return
         if not os.path.exists(self.config_path):
             QMessageBox.critical(self.panel, "Error", f"config.yaml not found at:\n{self.config_path}")
             return
 
         current_json_path = self.model.current_json_path
-        current_video_path = self.controller._get_current_action_path()
+        current_video_path = self.controller.get_current_action_path()
         if not current_video_path:
             QMessageBox.warning(self.panel, "Warning", "Please select an action/video from the list first.")
             return
@@ -388,6 +393,10 @@ class InferenceManager(QObject):
         self.worker.start()
 
     def _on_inference_success(self, target_head, label, conf_dict):
+        if self.model is None:
+            self.panel.show_inference_loading(False)
+            self.worker = None
+            return
         # Auto-create the schema (Category) if it's a completely blank/new project
         if target_head not in self.model.label_definitions:
             if self.worker:
@@ -397,11 +406,11 @@ class InferenceManager(QObject):
                     "type": "single_label",
                     "labels": sorted(default_labels)
                 }
-                # Force UI regeneration to display radio buttons
-                self.controller.setup_dynamic_ui()
+                # Force UI regeneration to display radio buttons.
+                self.controller.on_schema_context_changed(copy.deepcopy(self.model.label_definitions))
 
         # [NEW] Save raw inference result to smart_annotations memory
-        current_video_path = self.controller._get_current_action_path()
+        current_video_path = self.controller.get_current_action_path()
         if not current_video_path:
             self.panel.show_inference_loading(False)
             self.worker = None
@@ -425,6 +434,8 @@ class InferenceManager(QObject):
         if current_video_path not in self.model.smart_annotations:
             self.model.smart_annotations[current_video_path] = {}
         self.model.smart_annotations[current_video_path] = new_data
+        self.controller.set_current_smart_annotation_snapshot(current_video_path, new_data)
+        self.controller.itemStatusRefreshRequested.emit(current_video_path)
 
         self.model.is_data_dirty = True
         self.panel.display_inference_result(target_head, label, conf_dict)
@@ -437,6 +448,8 @@ class InferenceManager(QObject):
         self.worker = None
 
     def start_batch_inference(self, start_idx: int, end_idx: int):
+        if self.model is None:
+            return
         if not os.path.exists(self.config_path):
             QMessageBox.critical(self.panel, "Error", f"config.yaml not found at:\n{self.config_path}")
             return
@@ -473,6 +486,10 @@ class InferenceManager(QObject):
         self.batch_worker.start()
 
     def _on_batch_inference_success(self, metrics: dict, results_list: list):
+        if self.model is None:
+            self.panel.show_inference_loading(False)
+            self.batch_worker = None
+            return
         # Auto-create the schema (Category) if it's a completely blank/new project
         target_head = "action"
         if target_head not in self.model.label_definitions:
@@ -482,7 +499,7 @@ class InferenceManager(QObject):
                     "type": "single_label",
                     "labels": sorted(default_labels)
                 }
-                self.controller.setup_dynamic_ui()
+                self.controller.on_schema_context_changed(copy.deepcopy(self.model.label_definitions))
 
         # Start building the output text without the accuracy metrics
         text = "BATCH INFERENCE PREDICTIONS:\n\n"
@@ -529,6 +546,8 @@ class InferenceManager(QObject):
         # Apply new data to model
         for path, data in new_batch_data.items():
             self.model.smart_annotations[path] = data
+            self.controller.set_current_smart_annotation_snapshot(path, data)
+            self.controller.itemStatusRefreshRequested.emit(path)
 
         self.model.is_data_dirty = True
         self.panel.display_batch_inference_result(text, batch_predictions)
@@ -540,10 +559,117 @@ class InferenceManager(QObject):
         QMessageBox.critical(self.panel, "Batch Inference Error", f"An error occurred during batch inference:\n\n{error_msg}")
         self.batch_worker = None
 
+    def confirm_smart_annotation_as_manual(self):
+        if self.model is None:
+            return
+
+        if self.panel.is_batch_mode_active:
+            batch_preds = self.panel.pending_batch_results
+            if not batch_preds:
+                self.controller._emit_status("Notice", "No batch predictions to confirm.")
+                return
+
+            old_batch_data = {}
+            new_batch_data = {}
+            confirmed_count = 0
+
+            for path, pred_data in batch_preds.items():
+                old_batch_data[path] = copy.deepcopy(self.model.smart_annotations.get(path))
+
+                if isinstance(pred_data, str):
+                    head = next(iter(self.model.label_definitions.keys()), "action")
+                    formatted_data = {head: {"label": pred_data, "conf_dict": {pred_data: 1.0}}}
+                elif isinstance(pred_data, dict) and "label" in pred_data:
+                    head = next(iter(self.model.label_definitions.keys()), "action")
+                    formatted_data = {head: copy.deepcopy(pred_data)}
+                else:
+                    formatted_data = copy.deepcopy(pred_data)
+
+                for _, head_data in formatted_data.items():
+                    if isinstance(head_data, dict) and "label" in head_data and "conf_dict" not in head_data:
+                        confidence = head_data.get("confidence", 1.0)
+                        head_data["conf_dict"] = {head_data["label"]: confidence}
+                        remaining = 1.0 - confidence
+                        if remaining > 0.001:
+                            head_data["conf_dict"]["Other Uncertainties"] = remaining
+
+                formatted_data["_confirmed"] = True
+                new_batch_data[path] = copy.deepcopy(formatted_data)
+                self.model.smart_annotations[path] = formatted_data
+                self.controller.set_current_smart_annotation_snapshot(path, formatted_data)
+                self.controller.itemStatusRefreshRequested.emit(path)
+                confirmed_count += 1
+
+            self.model.push_undo(
+                CmdType.BATCH_SMART_ANNOTATION_RUN,
+                old_data=old_batch_data,
+                new_data=new_batch_data,
+            )
+            self.model.is_data_dirty = True
+            self.controller._emit_status("Saved", f"Batch Smart Annotations confirmed for {confirmed_count} items.", 2000)
+            self.panel.reset_smart_inference()
+            self.controller.saveStateRefreshRequested.emit()
+            return
+
+        path = self.controller.get_current_action_path()
+        if not path:
+            return
+
+        smart_data = self.model.smart_annotations.get(path)
+        if not smart_data:
+            self.controller._emit_status("Notice", "No smart annotation available to confirm.")
+            return
+
+        old_data = copy.deepcopy(smart_data)
+        new_data = copy.deepcopy(smart_data)
+        new_data["_confirmed"] = True
+        if new_data == old_data:
+            return
+
+        self.model.smart_annotations[path] = copy.deepcopy(new_data)
+        self.controller.set_current_smart_annotation_snapshot(path, new_data)
+        self.model.is_data_dirty = True
+        self.model.push_undo(
+            CmdType.SMART_ANNOTATION_RUN,
+            path=path,
+            old_data=old_data,
+            new_data=new_data,
+        )
+        self.controller.itemStatusRefreshRequested.emit(path)
+        self.controller._emit_status("Saved", "Smart Annotation confirmed independently.", 1000)
+        self.controller.saveStateRefreshRequested.emit()
+
+    def clear_current_smart_annotation(self):
+        if self.model is None:
+            return
+        path = self.controller.get_current_action_path()
+        if not path:
+            return
+
+        old_smart = copy.deepcopy(self.model.smart_annotations.get(path))
+        if old_smart:
+            self.model.push_undo(
+                CmdType.SMART_ANNOTATION_RUN,
+                path=path,
+                old_data=old_smart,
+                new_data=None,
+            )
+            self.model.smart_annotations.pop(path, None)
+            self.controller.set_current_smart_annotation_snapshot(path, None)
+            self.model.is_data_dirty = True
+            self.controller.itemStatusRefreshRequested.emit(path)
+            self.controller._emit_status("Cleared", "Smart Annotation cleared.", 1000)
+            self.controller.saveStateRefreshRequested.emit()
+
+        self.panel.chart_widget.setVisible(False)
+        self.panel.batch_result_text.setVisible(False)
+
     def confirm_batch_inference(self, results: dict):
         """
         [MODIFIED] Acknowledge batch inference without polluting Hand Annotations.
         """
+        if self.model is None:
+            return
         before_json = self.model.snapshot_dataset_json()
         applied_count = 0
 
@@ -555,6 +681,7 @@ class InferenceManager(QObject):
                 if self.model.smart_annotations[path].get("_confirmed"):
                     continue
                 self.model.smart_annotations[path]["_confirmed"] = True
+                self.controller.set_current_smart_annotation_snapshot(path, self.model.smart_annotations[path])
                 self.controller.itemStatusRefreshRequested.emit(path)
                 applied_count += 1
 

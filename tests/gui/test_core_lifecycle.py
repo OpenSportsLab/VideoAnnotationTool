@@ -322,7 +322,7 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
     tree = window.dataset_explorer_panel.tree
     combo = window.dataset_explorer_panel.filter_combo
 
-    combo.setCurrentIndex(1)  # Show Hand Labelled
+    combo.setCurrentIndex(1)  # Show Labelled
     window.dataset_explorer_controller.handle_filter_change(1)
     assert tree.isRowHidden(0, root_index.parent()) is False
 

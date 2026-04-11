@@ -450,6 +450,52 @@ class HistoryManager(QObject):
         self._sort_events_by_time(events)
         self._emit_post_mutation(touched_paths=[video_path])
 
+    def execute_localization_smart_events_set(self, sample_id: str, smart_events):
+        video_path = self._path_for_sample(sample_id)
+        if not video_path:
+            return
+
+        normalized = [copy.deepcopy(evt) for evt in list(smart_events or []) if isinstance(evt, dict)]
+        self._sort_events_by_time(normalized)
+
+        before_json = self.model.snapshot_dataset_json()
+        self.model.smart_localization_events[video_path] = normalized
+        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
+            return
+        self._emit_post_mutation(touched_paths=[video_path])
+
+    def execute_localization_smart_events_confirm(self, sample_id: str):
+        video_path = self._path_for_sample(sample_id)
+        if not video_path:
+            return
+
+        smart_events = [copy.deepcopy(evt) for evt in self.model.smart_localization_events.get(video_path, [])]
+        if not smart_events:
+            return
+
+        before_json = self.model.snapshot_dataset_json()
+        current_events = [copy.deepcopy(evt) for evt in self.model.localization_events.get(video_path, [])]
+        current_events.extend(smart_events)
+        self._sort_events_by_time(current_events)
+        self.model.localization_events[video_path] = current_events
+        self.model.smart_localization_events[video_path] = []
+        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
+            return
+        self._emit_post_mutation(touched_paths=[video_path])
+
+    def execute_localization_smart_events_clear(self, sample_id: str):
+        video_path = self._path_for_sample(sample_id)
+        if not video_path:
+            return
+        if not self.model.smart_localization_events.get(video_path):
+            return
+
+        before_json = self.model.snapshot_dataset_json()
+        self.model.smart_localization_events[video_path] = []
+        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
+            return
+        self._emit_post_mutation(touched_paths=[video_path])
+
     def execute_sample_field_update(self, sample_id: str, field_name: str, new_value):
         if not sample_id or not field_name:
             return

@@ -5,9 +5,12 @@ Implements Localization (action spotting) behavior, including schema management,
 
 ## Architecture Context
 - `LocalizationEditorController` orchestrates Localization panel behavior.
-- Receives selection context from `DatasetExplorerController`.
-- Emits schema/event mutation intents to `HistoryManager`.
+- Constructor takes only the localization panel object.
+- Controller does not own dataset model state (`self.model` is not used).
+- Runtime sample/schema/action-list context is supplied through signal-slot wiring in `MainWindow.connect_signals()`.
+- Emits schema/event/smart-event mutation intents to `HistoryManager`.
 - Uses `LocalizationInferenceManager` for smart inference execution.
+- Emits media seek/marker/toggle intents instead of mutating media widgets directly.
 
 ## Public Surface
 ### Class
@@ -26,6 +29,12 @@ Implements Localization (action spotting) behavior, including schema management,
 - `locEventAddRequested(str, dict)`
 - `locEventModRequested(str, dict, dict)`
 - `locEventDelRequested(str, dict, int)`
+- `locSmartEventsSetRequested(str, object)`
+- `locSmartEventsConfirmRequested(str)`
+- `locSmartEventsClearRequested(str)`
+- `mediaSeekRequested(int)`
+- `markersUpdateRequested(object)`
+- `mediaTogglePlaybackRequested()`
 
 ### Helper
 - `LocalizationInferenceManager`
@@ -33,10 +42,10 @@ Implements Localization (action spotting) behavior, including schema management,
 ## Key Functions and Responsibilities
 - `setup_connections()`
   - Wires tabs/tables/smart widgets to controller actions.
-- `on_mode_changed(index)`
-  - Refreshes markers/table according to active sub-tab.
-- `on_data_selected(data_id)`
-  - Loads selected sample context into Localization panel.
+- `on_selected_sample_changed(sample, resolved_path="")`
+  - Loads selected sample snapshot into Localization panel.
+- `on_schema_context_changed(schema)`
+  - Rebuilds schema-driven localization controls from runtime schema context.
 - Head/label functions:
   - `_on_head_added`, `_on_head_renamed`, `_on_head_deleted`
   - `_on_label_add_req`, `_on_label_rename_req`, `_on_label_delete_req`
@@ -50,15 +59,18 @@ Implements Localization (action spotting) behavior, including schema management,
 - Event modify/delete requires event existence and valid selection.
 - Label add flow can optionally inject an event at current playback time.
 - Pause/resume around modal label dialogs is signal-driven.
+- Smart event set/confirm/clear is persisted through explicit history-manager signals.
 
 ## Conventions
 - Emit mutation intents; do not apply persisted mutation policy locally.
 - Keep marker/table display in controller, widget layout in UI package.
 - Respect no-op guard behavior for unchanged edits.
+- Keep constructor boundary clean: panel-only constructor.
 
 ## Interactions
 - Inbound:
-  - `DatasetExplorerController.dataSelected -> on_data_selected`
+  - `DatasetExplorerController.sampleSelectionChanged -> on_selected_sample_changed`
+  - `DatasetExplorerController.schemaContextChanged -> on_schema_context_changed`
   - `MediaController.playbackStateChanged -> on_playback_state_changed`
 - Outbound:
   - Mutation signals -> `HistoryManager.execute_*`
