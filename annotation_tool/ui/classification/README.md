@@ -18,8 +18,10 @@ Provides the Classification right-panel widgets and dynamic label-group controls
 - `DynamicMultiLabelGroup`
 
 ### Panel Signals
-- `add_head_clicked(str)`
-- `remove_head_clicked(str)`
+- `head_add_requested(str)`
+- `head_rename_requested(str, str)`
+- `head_delete_requested(str)`
+- `head_selected(str)`
 - `head_smart_infer_requested(str)`
 - `head_smart_confirm_requested(str)`
 - `head_smart_reject_requested(str)`
@@ -31,11 +33,13 @@ Provides the Classification right-panel widgets and dynamic label-group controls
 
 ## Key Functions and Responsibilities
 - `setup_dynamic_labels(label_definitions)`
-  - Builds runtime head/label controls from schema.
+  - Rebuilds the schema-driven head tabs and their per-head label controls.
 - `set_annotation(data)` / `get_annotation()`
   - Controller-facing read/write surface for manual annotations.
 - `clear_selection()`
   - Clears all selected label values.
+- `set_current_head(head_name)` / `get_current_head()`
+  - Keeps the selected category tab stable across schema refreshes when possible.
 - `show_inference_loading(is_loading)`
   - Toggles inference loading state in the panel.
 - `display_inference_result(...)`
@@ -45,6 +49,8 @@ Provides the Classification right-panel widgets and dynamic label-group controls
 
 ## Business Rules
 - Dynamic controls are schema-driven at runtime.
+- Category management is tab-driven; the old category editor is hidden.
+- A trailing `+` tab creates a new category, and tab context actions own rename/delete.
 - UI emits intent signals only; it does not commit dataset mutations.
 - Smart state is rendered at row level inside each head group.
 - The training tab is intentionally hidden for now; keep the train widgets/API stable behind the panel until the training flow is repaired.

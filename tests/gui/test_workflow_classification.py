@@ -38,6 +38,57 @@ def test_classification_train_tab_is_hidden(
 
 
 @pytest.mark.gui
+def test_classification_head_tabs_manage_schema(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    controller = window.classification_editor_controller
+    panel = window.classification_panel
+    monkeypatch.setattr(controller, "_prompt_head_type", lambda _name: "single_label")
+    monkeypatch.setattr(
+        "ui.classification.QInputDialog.getText",
+        lambda *args, **kwargs: ("Game Phase", True),
+    )
+    monkeypatch.setattr(
+        "controllers.classification.classification_editor_controller.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    assert panel.schema_box.isVisible() is False
+    assert panel.head_tabs_widget.tabText(panel.head_tabs_widget.count() - 1) == "+"
+    assert panel.get_current_head() == "action"
+
+    panel._on_head_tab_bar_clicked(panel._plus_tab_index)
+    qtbot.wait(50)
+
+    assert "game_phase" in window.dataset_explorer_controller.label_definitions
+    assert panel.get_current_head() == "game_phase"
+
+    panel.head_rename_requested.emit("game_phase", "Play Type")
+    qtbot.wait(50)
+
+    assert "play_type" in window.dataset_explorer_controller.label_definitions
+    assert "game_phase" not in window.dataset_explorer_controller.label_definitions
+    assert panel.get_current_head() == "play_type"
+
+    panel.head_delete_requested.emit("play_type")
+    qtbot.wait(50)
+
+    assert "play_type" not in window.dataset_explorer_controller.label_definitions
+    assert panel.head_tabs_widget.tabText(panel.head_tabs_widget.count() - 1) == "+"
+
+
+@pytest.mark.gui
 # Workflow: Classification annotation round-trip with edit:
 # 1) annotate + save + reopen (label persists), then 2) modify label + save + reopen (new label persists).
 def test_classification_annotate_save_reload_edit_labels_and_persist(

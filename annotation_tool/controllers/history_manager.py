@@ -126,6 +126,31 @@ class HistoryManager(QObject):
             status_msg=f"Created '{clean}'.",
         )
 
+    def execute_classification_schema_rename_head(self, old_name: str, new_name: str):
+        if old_name == new_name:
+            return
+        if old_name not in self.model.label_definitions:
+            return
+        if any(head.lower() == new_name.lower() for head in self.model.label_definitions if head != old_name):
+            return
+
+        touched_paths = []
+        self.model.push_undo(CmdType.SCHEMA_REN_CAT, old_name=old_name, new_name=new_name)
+        self.model.label_definitions[new_name] = self.model.label_definitions.pop(old_name)
+
+        for path, annotations in self.model.manual_annotations.items():
+            if old_name not in annotations:
+                continue
+            annotations[new_name] = annotations.pop(old_name)
+            touched_paths.append(path)
+
+        self._emit_post_mutation(
+            touched_paths=touched_paths,
+            refresh_schema=True,
+            status_title="Head Renamed",
+            status_msg=f"Renamed '{old_name}' to '{new_name}'.",
+        )
+
     def execute_classification_schema_remove_head(self, head: str):
         if not head or head not in self.model.label_definitions:
             return

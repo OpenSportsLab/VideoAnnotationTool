@@ -88,6 +88,31 @@ def test_history_contract_classification_mutations(window, monkeypatch, qtbot, s
     window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["classification"])
     qtbot.wait(50)
 
+    controller = window.classification_editor_controller
+    monkeypatch.setattr(controller, "_prompt_head_type", lambda _name: "single_label")
+    monkeypatch.setattr(
+        "controllers.classification.classification_editor_controller.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    _assert_mutating_action_creates_single_history_entry(
+        window,
+        qtbot,
+        lambda: controller.handle_add_label_head("history_head"),
+    )
+
+    _assert_mutating_action_creates_single_history_entry(
+        window,
+        qtbot,
+        lambda: controller.handle_rename_label_head("history_head", "history_head_renamed"),
+    )
+
+    _assert_mutating_action_creates_single_history_entry(
+        window,
+        qtbot,
+        lambda: controller.handle_remove_label_head("history_head_renamed"),
+    )
+
     def _select_shot_label():
         panel = window.classification_panel
         group = panel.label_groups["action"]

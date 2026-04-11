@@ -669,6 +669,9 @@ QTabWidget[class="spotting_tabs"]::pane {
     border-radius: 4px;
     background: #2E2E2E;
 }
+QTabWidget[class="spotting_tabs"]::tab-bar {
+    alignment: center;
+}
 QTabWidget[class="spotting_tabs"] > QTabBar::tab {
     background: #3A3A3A;
     color: #BBB;

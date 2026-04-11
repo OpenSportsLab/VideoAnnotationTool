@@ -22,6 +22,7 @@ Implements Classification mode behavior and coordinates smart inference/train he
 - `itemStatusRefreshRequested(str)`
 - `manualAnnotationSaveRequested(str, object, bool)`
 - `schemaHeadAddRequested(str, dict)`
+- `schemaHeadRenameRequested(str, str)`
 - `schemaHeadRemoveRequested(str)`
 - `schemaLabelAddRequested(str, str)`
 - `schemaLabelRemoveRequested(str, str)`
@@ -32,7 +33,7 @@ Implements Classification mode behavior and coordinates smart inference/train he
 
 ## Key Functions and Responsibilities
 - `setup_connections()`
-  - Connects classification panel UI actions to controller actions.
+  - Connects classification panel UI actions, including head-tab add/rename/delete intents, to controller actions.
 - `on_selected_sample_changed(sample)`
   - Refreshes manual/smart display for selected sample snapshot.
 - `on_schema_context_changed(schema)`
@@ -49,7 +50,8 @@ Implements Classification mode behavior and coordinates smart inference/train he
 ## Business Rules
 - Manual tab changes save immediately when effective value differs.
 - No-op saves (same normalized annotation) do nothing.
-- Schema operations enforce duplicate checks.
+- Schema operations enforce duplicate checks and route through `HistoryManager`.
+- Head/category management is tab-driven; create still prompts for `single_label` vs `multi_label`.
 - Smart inference is persisted in `labels[head]` with `confidence_score`.
 - Confirming smart annotation removes `confidence_score` only.
 - Rejecting/clearing smart annotation restores pre-inference manual state (or removes head if none existed).

@@ -349,6 +349,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.classification_editor_controller.schemaHeadAddRequested.connect(
             self.history_manager.execute_classification_schema_add_head
         )
+        self.classification_editor_controller.schemaHeadRenameRequested.connect(
+            self.history_manager.execute_classification_schema_rename_head
+        )
         self.classification_editor_controller.schemaHeadRemoveRequested.connect(
             self.history_manager.execute_classification_schema_remove_head
         )

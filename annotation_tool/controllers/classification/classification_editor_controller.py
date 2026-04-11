@@ -22,6 +22,7 @@ class ClassificationEditorController(QObject):
     # payload: sample_id, cleaned_annotation, show_feedback
     manualAnnotationSaveRequested = pyqtSignal(str, object, bool)
     schemaHeadAddRequested = pyqtSignal(str, dict)
+    schemaHeadRenameRequested = pyqtSignal(str, str)
     schemaHeadRemoveRequested = pyqtSignal(str)
     schemaLabelAddRequested = pyqtSignal(str, str)
     schemaLabelRemoveRequested = pyqtSignal(str, str)
@@ -33,6 +34,7 @@ class ClassificationEditorController(QObject):
         self._action_items_cache = []
         self._action_path_by_sample_id = {}
         self._schema_definitions = {}
+        self._preferred_head = None
 
         self.current_sample_id = ""
         self.current_action_path = None
@@ -48,11 +50,13 @@ class ClassificationEditorController(QObject):
     def setup_connections(self):
         self.classification_panel.annotation_saved.connect(self.save_manual_annotation)
         self.classification_panel.hand_clear_requested.connect(self.clear_current_manual_annotation)
+        self.classification_panel.head_add_requested.connect(self.handle_add_label_head)
+        self.classification_panel.head_rename_requested.connect(self.handle_rename_label_head)
+        self.classification_panel.head_delete_requested.connect(self.handle_remove_label_head)
+        self.classification_panel.head_selected.connect(self._on_head_selected)
         self.classification_panel.head_smart_infer_requested.connect(self.inference_manager.start_head_inference)
         self.classification_panel.head_smart_confirm_requested.connect(self.confirm_smart_annotation_head)
         self.classification_panel.head_smart_reject_requested.connect(self.reject_smart_annotation_head)
-        self.classification_panel.add_head_clicked.connect(self.handle_add_label_head)
-        self.classification_panel.remove_head_clicked.connect(self.handle_remove_label_head)
         self.classification_panel.confirm_infer_requested.connect(self.save_manual_annotation)
 
     def on_mode_changed(self, index: int):
@@ -67,11 +71,16 @@ class ClassificationEditorController(QObject):
         self.current_sample_id = ""
         self.current_action_path = None
         self._current_sample_snapshot = {}
+        self._preferred_head = None
         self.classification_panel.reset_smart_inference()
         self.classification_panel.reset_train_ui()
 
     def setup_dynamic_ui(self):
-        self.classification_panel.setup_dynamic_labels(self._schema_definitions)
+        preferred_head = self._preferred_head or self.classification_panel.get_current_head()
+        self.classification_panel.setup_dynamic_labels(self._schema_definitions, selected_head=preferred_head)
+        if preferred_head in self._schema_definitions:
+            self.classification_panel.set_current_head(preferred_head)
+        self._preferred_head = None
         self._connect_dynamic_type_buttons()
 
     def on_schema_context_changed(self, schema: dict):
@@ -163,6 +172,9 @@ class ClassificationEditorController(QObject):
     def reject_smart_annotation_head(self, head: str):
         self.inference_manager.reject_smart_annotation_for_head(head)
 
+    def _on_head_selected(self, head: str):
+        self._preferred_head = str(head or "") or None
+
     def save_manual_annotation(self, override_data=None, show_feedback: bool = True):
         if not self.current_sample_id:
             return
@@ -215,33 +227,39 @@ class ClassificationEditorController(QObject):
 
     def handle_add_label_head(self, name):
         clean = name.strip().replace(" ", "_").lower()
-        if not clean or clean in self._schema_definitions:
+        if not clean:
+            return
+        if any(existing.lower() == clean.lower() for existing in self._schema_definitions):
             return
 
-        msg = QMessageBox(self.classification_panel)
-        msg.setText(f"Type for '{name}'?")
-        btn_single = msg.addButton("Single Label", QMessageBox.ButtonRole.ActionRole)
-        btn_multi = msg.addButton("Multi Label", QMessageBox.ButtonRole.ActionRole)
-        msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        msg.exec()
-
-        label_type = (
-            "single_label"
-            if msg.clickedButton() == btn_single
-            else "multi_label" if msg.clickedButton() == btn_multi else None
-        )
+        label_type = self._prompt_head_type(clean)
         if not label_type:
             return
 
         definition = {"type": label_type, "labels": []}
+        self._preferred_head = clean
         self.schemaHeadAddRequested.emit(clean, copy.deepcopy(definition))
-        self.classification_panel.new_head_edit.clear()
+
+    def handle_rename_label_head(self, old_head: str, new_name: str):
+        clean = str(new_name or "").strip().replace(" ", "_").lower()
+        if not old_head or old_head not in self._schema_definitions:
+            return
+        if not clean or clean == old_head:
+            return
+        if any(existing.lower() == clean.lower() for existing in self._schema_definitions if existing != old_head):
+            self._emit_status("Duplicate", "Category exists.")
+            return
+
+        self._preferred_head = clean
+        self.schemaHeadRenameRequested.emit(old_head, clean)
 
     def handle_remove_label_head(self, head):
         if head not in self._schema_definitions:
             return
         if QMessageBox.question(self.classification_panel, "Remove", f"Remove '{head}'?") == QMessageBox.StandardButton.No:
             return
+        if self._preferred_head == head:
+            self._preferred_head = None
         self.schemaHeadRemoveRequested.emit(head)
 
     def add_custom_type(self, head):
@@ -358,6 +376,20 @@ class ClassificationEditorController(QObject):
                         labels[head] = updated
                     else:
                         labels.pop(head, None)
+
+    def _prompt_head_type(self, head_name: str):
+        msg = QMessageBox(self.classification_panel)
+        msg.setText(f"Type for '{head_name}'?")
+        btn_single = msg.addButton("Single Label", QMessageBox.ButtonRole.ActionRole)
+        btn_multi = msg.addButton("Multi Label", QMessageBox.ButtonRole.ActionRole)
+        msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        msg.exec()
+
+        if msg.clickedButton() == btn_single:
+            return "single_label"
+        if msg.clickedButton() == btn_multi:
+            return "multi_label"
+        return None
 
         if not labels:
             self._current_sample_snapshot.pop("labels", None)

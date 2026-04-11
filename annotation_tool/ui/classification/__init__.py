@@ -9,10 +9,14 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QRadioButton,
+    QScrollArea,
+    QTabWidget,
     QToolTip,
     QVBoxLayout,
     QWidget,
@@ -171,15 +175,9 @@ class DynamicSingleLabelGroup(QWidget):
         self.btn_smart_infer.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_smart_infer.clicked.connect(lambda: self.smart_infer_requested.emit(self.head_name))
 
-        self.btn_del_cat = QPushButton("×")
-        self.btn_del_cat.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_del_cat.setProperty("class", "icon_remove_btn")
-        self.btn_del_cat.clicked.connect(lambda: self.remove_category_signal.emit(self.head_name))
-
         header_layout.addWidget(self.lbl_head)
         header_layout.addWidget(self.btn_smart_infer)
         header_layout.addStretch()
-        header_layout.addWidget(self.btn_del_cat)
         self.layout.addLayout(header_layout)
 
         self.radio_group = QButtonGroup(self)
@@ -189,6 +187,7 @@ class DynamicSingleLabelGroup(QWidget):
         self.radio_container = QWidget()
         self.radio_layout = QVBoxLayout(self.radio_container)
         self.radio_layout.setContentsMargins(5, 0, 0, 0)
+        self.radio_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.layout.addWidget(self.radio_container)
         self._smart_controls_by_label = {}
 
@@ -329,19 +328,15 @@ class DynamicMultiLabelGroup(QWidget):
         self.btn_smart_infer.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_smart_infer.clicked.connect(lambda: self.smart_infer_requested.emit(self.head_name))
 
-        self.btn_del_cat = QPushButton("×")
-        self.btn_del_cat.setProperty("class", "icon_remove_btn")
-        self.btn_del_cat.clicked.connect(lambda: self.remove_category_signal.emit(self.head_name))
-
         header_layout.addWidget(self.lbl_head)
         header_layout.addWidget(self.btn_smart_infer)
         header_layout.addStretch()
-        header_layout.addWidget(self.btn_del_cat)
         self.layout.addLayout(header_layout)
 
         self.checkbox_container = QWidget()
         self.checkbox_layout = QVBoxLayout(self.checkbox_container)
         self.checkbox_layout.setContentsMargins(5, 0, 0, 0)
+        self.checkbox_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.layout.addWidget(self.checkbox_container)
 
         input_layout = QHBoxLayout()
@@ -459,6 +454,10 @@ class ClassificationAnnotationPanel(QWidget):
     add_head_clicked = pyqtSignal(str)
     remove_head_clicked = pyqtSignal(str)
     style_mode_changed = pyqtSignal(str)
+    head_add_requested = pyqtSignal(str)
+    head_rename_requested = pyqtSignal(str, str)
+    head_delete_requested = pyqtSignal(str)
+    head_selected = pyqtSignal(str)
 
     head_smart_infer_requested = pyqtSignal(str)
     head_smart_confirm_requested = pyqtSignal(str)
@@ -489,9 +488,15 @@ class ClassificationAnnotationPanel(QWidget):
         self.full_action_names = []
         self.label_groups = {}
         self._smart_state_by_head = {}
+        self._ignore_head_tab_change = False
+        self._head_keys_map = []
+        self._head_pages = {}
+        self._plus_tab_index = -1
+        self._previous_head_tab_index = -1
 
         self.tabs.setElideMode(Qt.TextElideMode.ElideNone)
         self.tabs.tabBar().setExpanding(False)
+        self.tabs.setTabBarAutoHide(True)
         self.tabs.setStyleSheet(
             """
             QTabBar::tab {
@@ -506,7 +511,23 @@ class ClassificationAnnotationPanel(QWidget):
             """
         )
 
-        self.add_head_btn.clicked.connect(lambda: self.add_head_clicked.emit(self.new_head_edit.text()))
+        self.schema_box.setVisible(False)
+
+        self.head_tabs_widget = QTabWidget(self.manual_box)
+        self.head_tabs_widget.setDocumentMode(True)
+        self.head_tabs_widget.setTabBarAutoHide(False)
+        self.head_tabs_widget.setElideMode(Qt.TextElideMode.ElideNone)
+        self.head_tabs_widget.setUsesScrollButtons(True)
+        self.head_tabs_widget.tabBar().setExpanding(False)
+        self.head_tabs_widget.tabBar().setElideMode(Qt.TextElideMode.ElideNone)
+        self.head_tabs_widget.setProperty("class", "spotting_tabs")
+        self.head_tabs_widget.tabBar().tabBarClicked.connect(self._on_head_tab_bar_clicked)
+        self.head_tabs_widget.currentChanged.connect(self._on_head_tab_changed)
+        self.head_tabs_widget.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.head_tabs_widget.tabBar().customContextMenuRequested.connect(self._show_head_tab_context_menu)
+        self.manualLayout.insertWidget(0, self.head_tabs_widget)
+        self.manualScrollArea.setVisible(False)
+
         # Smart inference is now per head in dynamic group headers.
         self.confirm_btn.setVisible(False)
         self.confirm_btn.setEnabled(False)
@@ -531,6 +552,116 @@ class ClassificationAnnotationPanel(QWidget):
                 if self.tabs.widget(idx) is tab_widget:
                     self.tabs.removeTab(idx)
                     break
+        self.tabs.tabBar().setVisible(self.tabs.count() > 1)
+
+    def _create_head_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea(page)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        layout.addWidget(scroll)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        scroll.setWidget(content)
+        return page, scroll, content_layout
+
+    def _rebuild_head_tabs(self, label_definitions, selected_head=None):
+        preferred_head = selected_head or self.get_current_head()
+
+        self._ignore_head_tab_change = True
+        self.head_tabs_widget.clear()
+        self._head_keys_map = []
+        self._head_pages = {}
+        self._plus_tab_index = -1
+        self._previous_head_tab_index = -1
+
+        for head in sorted(label_definitions.keys()):
+            page, scroll, content_layout = self._create_head_page()
+            self.head_tabs_widget.addTab(page, head.replace("_", " "))
+            self._head_keys_map.append(head)
+            self._head_pages[head] = {"page": page, "scroll": scroll, "content_layout": content_layout}
+
+        self._plus_tab_index = self.head_tabs_widget.addTab(QWidget(), "+")
+        self._ignore_head_tab_change = False
+
+        if preferred_head in self._head_keys_map:
+            self.set_current_head(preferred_head)
+            return
+
+        if self._head_keys_map:
+            self.head_tabs_widget.setCurrentIndex(0)
+            self._previous_head_tab_index = 0
+            self.head_selected.emit(self._head_keys_map[0])
+
+    def _on_head_tab_bar_clicked(self, index):
+        if index != self._plus_tab_index or index == -1:
+            return
+
+        name, ok = QInputDialog.getText(
+            self,
+            "New Category",
+            "Enter name for new category:",
+        )
+        if ok and name.strip():
+            self.head_add_requested.emit(name.strip())
+
+        if self._previous_head_tab_index >= 0:
+            self.head_tabs_widget.setCurrentIndex(self._previous_head_tab_index)
+
+    def _on_head_tab_changed(self, index):
+        if self._ignore_head_tab_change:
+            return
+        if index == -1 or index == self._plus_tab_index:
+            return
+        if 0 <= index < len(self._head_keys_map):
+            head = self._head_keys_map[index]
+            self._previous_head_tab_index = index
+            self.head_selected.emit(head)
+
+    def _show_head_tab_context_menu(self, pos):
+        index = self.head_tabs_widget.tabBar().tabAt(pos)
+        if index == -1 or index == self._plus_tab_index:
+            return
+        if not (0 <= index < len(self._head_keys_map)):
+            return
+
+        head_name = self._head_keys_map[index]
+        menu = QMenu(self.head_tabs_widget)
+        rename_action = menu.addAction(f"Rename '{head_name}'")
+        delete_action = menu.addAction(f"Delete '{head_name}'")
+
+        action = menu.exec(self.head_tabs_widget.tabBar().mapToGlobal(pos))
+        if action == rename_action:
+            new_name, ok = QInputDialog.getText(
+                self.head_tabs_widget,
+                "Rename Category",
+                f"Rename '{head_name}' to:",
+                text=head_name,
+            )
+            if ok and new_name.strip() and new_name.strip() != head_name:
+                self.head_rename_requested.emit(head_name, new_name.strip())
+        elif action == delete_action:
+            self.head_delete_requested.emit(head_name)
+
+    def get_current_head(self):
+        index = self.head_tabs_widget.currentIndex()
+        if 0 <= index < len(self._head_keys_map):
+            return self._head_keys_map[index]
+        return None
+
+    def set_current_head(self, head_name):
+        if head_name not in self._head_keys_map:
+            return
+        index = self._head_keys_map.index(head_name)
+        self.head_tabs_widget.setCurrentIndex(index)
+        self._previous_head_tab_index = index
 
     def _configure_train_defaults(self):
         self.spin_epochs.clear()
@@ -657,28 +788,24 @@ class ClassificationAnnotationPanel(QWidget):
     def clear_dynamic_labels(self):
         self.setup_dynamic_labels({})
 
-    def setup_dynamic_labels(self, label_definitions):
-        while self.label_container_layout.count():
-            item = self.label_container_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
+    def setup_dynamic_labels(self, label_definitions, selected_head=None):
+        self._rebuild_head_tabs(label_definitions, selected_head=selected_head)
         self.label_groups = {}
-        for head, definition in label_definitions.items():
+        for head, definition in sorted(label_definitions.items()):
             group_type = definition.get("type", "single_label")
             if group_type == "single_label":
                 group = DynamicSingleLabelGroup(head, definition)
             else:
                 group = DynamicMultiLabelGroup(head, definition)
 
-            group.remove_category_signal.connect(self.remove_head_clicked.emit)
             group.smart_infer_requested.connect(self.head_smart_infer_requested.emit)
             group.smart_confirm_requested.connect(self.head_smart_confirm_requested.emit)
             group.smart_reject_requested.connect(self.head_smart_reject_requested.emit)
-            self.label_container_layout.addWidget(group)
+            page_info = self._head_pages.get(head)
+            if page_info is not None:
+                page_info["content_layout"].addWidget(group)
+                page_info["content_layout"].addStretch()
             self.label_groups[head] = group
-
-        self.label_container_layout.addStretch()
 
     def set_annotation(self, data):
         self.reset_smart_inference()
