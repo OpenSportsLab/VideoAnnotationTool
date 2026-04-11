@@ -18,6 +18,26 @@ MODE_TO_TAB_INDEX = {
 
 
 @pytest.mark.gui
+def test_classification_train_tab_is_hidden(
+    window,
+    monkeypatch,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    window.dataset_explorer_controller.import_annotations()
+
+    panel = window.classification_panel
+    tab_labels = [panel.tabs.tabText(idx).strip().lower() for idx in range(panel.tabs.count())]
+    assert "train" not in tab_labels
+
+
+@pytest.mark.gui
 # Workflow: Classification annotation round-trip with edit:
 # 1) annotate + save + reopen (label persists), then 2) modify label + save + reopen (new label persists).
 def test_classification_annotate_save_reload_edit_labels_and_persist(

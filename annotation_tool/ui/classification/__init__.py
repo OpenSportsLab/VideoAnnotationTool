@@ -512,11 +512,7 @@ class ClassificationAnnotationPanel(QWidget):
         self.confirm_btn.setEnabled(False)
         self.clear_sel_btn.clicked.connect(self.on_clear_clicked)
 
-        # Remove deprecated Smart Annotation tab from the UI.
-        for idx in reversed(range(self.tabs.count())):
-            if self.tabs.widget(idx) is getattr(self, "smart_box", None):
-                self.tabs.removeTab(idx)
-                break
+        self._remove_disabled_tabs()
 
         self.chart_widget = NativeDonutChart(self)
         self.chart_widget.setVisible(False)
@@ -525,6 +521,16 @@ class ClassificationAnnotationPanel(QWidget):
         self.clear_dynamic_labels()
         self.manual_box.setEnabled(False)
         self._update_confirm_button_state()
+
+    def _remove_disabled_tabs(self):
+        disabled_tabs = [getattr(self, "smart_box", None), getattr(self, "train_box", None)]
+        for tab_widget in disabled_tabs:
+            if tab_widget is None:
+                continue
+            for idx in reversed(range(self.tabs.count())):
+                if self.tabs.widget(idx) is tab_widget:
+                    self.tabs.removeTab(idx)
+                    break
 
     def _configure_train_defaults(self):
         self.spin_epochs.clear()

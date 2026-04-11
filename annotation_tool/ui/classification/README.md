@@ -47,6 +47,7 @@ Provides the Classification right-panel widgets and dynamic label-group controls
 - Dynamic controls are schema-driven at runtime.
 - UI emits intent signals only; it does not commit dataset mutations.
 - Smart state is rendered at row level inside each head group.
+- The training tab is intentionally hidden for now; keep the train widgets/API stable behind the panel until the training flow is repaired.
 
 ## Conventions
 - Keep `.ui` static and reusable.
