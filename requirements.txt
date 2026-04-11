@@ -1,8 +1,11 @@
 PyQt6
 pyinstaller
 torch-geometric==2.7.0
-opensportslib
+opensportslib==0.1.1
+datasets==4.8.2
 imageio-ffmpeg==0.6.0
 lightning==2.6.1
 tabulate==0.10.0
 wandb
+pytest
+pytest-qt
