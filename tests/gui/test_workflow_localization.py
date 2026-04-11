@@ -3,12 +3,22 @@ Localization mode persistence/editing workflows.
 """
 
 import copy
+import importlib
 import json
 from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import QMessageBox
+
+try:
+    _colors_module = importlib.import_module("annotation_tool.colors")
+except ModuleNotFoundError:
+    _colors_module = importlib.import_module("colors")
+
+localization_label_color_hex = _colors_module.localization_label_color_hex
+localization_label_text_hex = _colors_module.localization_label_text_hex
 
 
 MODE_TO_TAB_INDEX = {
@@ -259,6 +269,126 @@ def test_localization_events_remain_chronological_after_add_modify_delete(
     assert [int(e.get("position_ms", 0)) for e in saved_events] == sorted(
         int(e.get("position_ms", 0)) for e in saved_events
     )
+
+
+@pytest.mark.gui
+def test_localization_label_colors_match_table_rows_and_timeline_markers(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    controller.on_media_position_changed(2500)
+    controller._on_spotting_triggered("ball_action", "shot")
+    qtbot.wait(50)
+
+    model = window.localization_panel.table.model
+
+    row_by_label = {}
+    for row in range(model.rowCount()):
+        item = model.get_annotation_at(row)
+        if item and item.get("head") == "ball_action":
+            row_by_label[item.get("label")] = row
+
+    assert "pass" in row_by_label
+    assert "shot" in row_by_label
+
+    pass_brush = model.data(model.index(row_by_label["pass"], 0), Qt.ItemDataRole.BackgroundRole)
+    shot_brush = model.data(model.index(row_by_label["shot"], 0), Qt.ItemDataRole.BackgroundRole)
+    assert isinstance(pass_brush, QBrush)
+    assert isinstance(shot_brush, QBrush)
+
+    expected_pass = localization_label_color_hex("ball_action", "pass")
+    expected_shot = localization_label_color_hex("ball_action", "shot")
+    assert expected_pass != expected_shot
+    assert pass_brush.color().name() == expected_pass
+    assert shot_brush.color().name() == expected_shot
+
+    marker_colors = {
+        int(marker.get("start_ms", 0)): marker.get("color").name()
+        for marker in window.center_panel.slider.markers
+    }
+    assert marker_colors[1000] == expected_pass
+    assert marker_colors[2500] == expected_shot
+
+    tabs_adapter = window.localization_panel.annot_mgmt.tabs
+    button_styles = {
+        label: button.styleSheet()
+        for button, (head, label) in tabs_adapter._button_meta.items()
+        if head == "ball_action"
+    }
+    assert expected_pass in button_styles["pass"]
+    assert expected_shot in button_styles["shot"]
+    assert localization_label_text_hex(expected_pass) in button_styles["pass"]
+    assert localization_label_text_hex(expected_shot) in button_styles["shot"]
+
+
+# @pytest.mark.gui
+# def test_localization_button_context_menu_color_change_updates_button_table_and_marker(
+#     window,
+#     monkeypatch,
+#     qtbot,
+#     synthetic_project_json,
+# ):
+#     project_json_path = synthetic_project_json("localization")
+#     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+#     monkeypatch.setattr(
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+#         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+#     )
+#     window.dataset_explorer_controller.import_annotations()
+
+#     first_index = window.tree_model.index(0, 0)
+#     assert first_index.isValid()
+#     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+#     qtbot.wait(50)
+
+#     tabs_adapter = window.localization_panel.annot_mgmt.tabs
+#     pass_button = next(
+#         button for button, (head, label) in tabs_adapter._button_meta.items()
+#         if head == "ball_action" and label == "pass"
+#     )
+
+#     monkeypatch.setattr(
+#         "ui.localization.QColorDialog.getColor",
+#         lambda *args, **kwargs: QColor("#ff8844"),
+#     )
+
+#     tabs_adapter._show_label_context_menu(pass_button, "ball_action", "pass")
+#     qtbot.wait(50)
+
+#     assert window.dataset_explorer_controller.label_definitions["ball_action"]["label_colors"]["pass"] == "#ff8844"
+#     assert "#ff8844" in pass_button.styleSheet()
+
+#     model = window.localization_panel.table.model
+#     pass_row = next(
+#         row for row in range(model.rowCount())
+#         if model.get_annotation_at(row).get("head") == "ball_action"
+#         and model.get_annotation_at(row).get("label") == "pass"
+#     )
+#     pass_brush = model.data(model.index(pass_row, 0), Qt.ItemDataRole.BackgroundRole)
+#     assert isinstance(pass_brush, QBrush)
+#     assert pass_brush.color().name() == "#ff8844"
+
+#     marker_colors = {
+#         int(marker.get("start_ms", 0)): marker.get("color").name()
+#         for marker in window.center_panel.slider.markers
+#     }
+#     assert marker_colors[1000] == "#ff8844"
 
 
 # @pytest.mark.gui

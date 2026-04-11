@@ -19,6 +19,7 @@ class CmdType(Enum):
     SCHEMA_ADD_LBL = auto()
     SCHEMA_DEL_LBL = auto()
     SCHEMA_REN_LBL = auto()
+    SCHEMA_SET_LBL_COLOR = auto()
 
     LOC_EVENT_ADD = auto()
     LOC_EVENT_DEL = auto()

@@ -170,10 +170,10 @@ class HistoryManager(QObject):
         del self.model.label_definitions[head]
         touched_paths = []
         for key in list(affected.keys()):
-            if head in self.model.manual_annotations.get(key, {}):
-                del self.model.manual_annotations[key][head]
-                if not self.model.manual_annotations[key]:
-                    del self.model.manual_annotations[key]
+            annotations = self.model.manual_annotations.get(key)
+            if annotations is None or head not in annotations:
+                continue
+            del annotations[head]
             touched_paths.append(key)
 
         self._emit_post_mutation(
@@ -360,6 +360,9 @@ class HistoryManager(QObject):
         self.model.push_undo(CmdType.SCHEMA_REN_LBL, head=head, old_lbl=old_label, new_lbl=new_label)
         index = labels_list.index(old_label)
         labels_list[index] = new_label
+        label_colors = self.model.label_definitions.get(head, {}).get("label_colors", {})
+        if old_label in label_colors:
+            label_colors[new_label] = label_colors.pop(old_label)
 
         for _, events in self.model.localization_events.items():
             for evt in events:
@@ -385,11 +388,17 @@ class HistoryManager(QObject):
             head=head,
             label=label,
             label_index=label_index,
+            label_color=copy.deepcopy(self.model.label_definitions.get(head, {}).get("label_colors", {}).get(label)),
             loc_affected_events=loc_affected,
         )
 
         if label in labels_list:
             labels_list.remove(label)
+        label_colors = self.model.label_definitions.get(head, {}).get("label_colors", {})
+        if label in label_colors:
+            del label_colors[label]
+            if not label_colors:
+                self.model.label_definitions.get(head, {}).pop("label_colors", None)
 
         for vid_path in list(self.model.localization_events.keys()):
             events = self.model.localization_events[vid_path]
@@ -397,6 +406,28 @@ class HistoryManager(QObject):
                 e for e in events if not (e.get("head") == head and e.get("label") == label)
             ]
 
+        self._emit_post_mutation(refresh_schema=True)
+
+    def execute_localization_label_color_set(self, head: str, label: str, color_hex: str):
+        definition = self.model.label_definitions.get(head, {})
+        labels_list = definition.get("labels", []) if isinstance(definition, dict) else []
+        if label not in labels_list:
+            return
+
+        old_color = copy.deepcopy(definition.get("label_colors", {}).get(label))
+        if old_color == color_hex:
+            return
+
+        self.model.push_undo(
+            CmdType.SCHEMA_SET_LBL_COLOR,
+            head=head,
+            label=label,
+            old_color=old_color,
+            new_color=color_hex,
+        )
+
+        label_colors = definition.setdefault("label_colors", {})
+        label_colors[label] = color_hex
         self._emit_post_mutation(refresh_schema=True)
 
     def execute_localization_event_add(self, sample_id: str, new_event: dict):
@@ -1217,11 +1248,22 @@ class HistoryManager(QObject):
                             self.model.localization_events[vid].extend(events_list)
                             self._sort_events_by_time(self.model.localization_events[vid])
 
+                    label_color = cmd.get("label_color")
+                    if label_color is not None:
+                        label_colors = self.model.label_definitions[head].setdefault("label_colors", {})
+                        label_colors[lbl] = label_color
+
                 else:
                     if isinstance(label_index, int) and 0 <= label_index < len(labels) and labels[label_index] == lbl:
                         labels.pop(label_index)
                     elif lbl in labels:
                         labels.remove(lbl)
+
+                    label_colors = self.model.label_definitions[head].get("label_colors", {})
+                    if lbl in label_colors:
+                        del label_colors[lbl]
+                        if not label_colors:
+                            self.model.label_definitions[head].pop("label_colors", None)
 
                     if "affected_data" in cmd:
                         for key in cmd["affected_data"]:
@@ -1256,6 +1298,9 @@ class HistoryManager(QObject):
                 if src in labels:
                     idx = labels.index(src)
                     labels[idx] = dst
+                label_colors = self.model.label_definitions[head].get("label_colors", {})
+                if src in label_colors:
+                    label_colors[dst] = label_colors.pop(src)
 
             for anno in self.model.manual_annotations.values():
                 val = anno.get(head)
@@ -1268,5 +1313,23 @@ class HistoryManager(QObject):
                 for evt in events:
                     if evt.get("head") == head and evt.get("label") == src:
                         evt["label"] = dst
+
+            self._refresh_active_view()
+
+        elif ctype == CmdType.SCHEMA_SET_LBL_COLOR:
+            head = cmd["head"]
+            lbl = cmd["label"]
+            target_color = cmd.get("old_color") if is_undo else cmd.get("new_color")
+
+            if head in self.model.label_definitions and lbl in self.model.label_definitions[head].get("labels", []):
+                if target_color is None:
+                    label_colors = self.model.label_definitions[head].get("label_colors", {})
+                    if lbl in label_colors:
+                        del label_colors[lbl]
+                    if not label_colors:
+                        self.model.label_definitions[head].pop("label_colors", None)
+                else:
+                    label_colors = self.model.label_definitions[head].setdefault("label_colors", {})
+                    label_colors[lbl] = target_color
 
             self._refresh_active_view()

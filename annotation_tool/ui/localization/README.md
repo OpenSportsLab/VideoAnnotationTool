@@ -35,9 +35,11 @@ Provides the Localization right-panel plus adapters for spotting tabs, hand even
   - Loads `.ui`, builds adapters, wires navigation buttons.
 - `_SpottingTabsAdapter.update_schema(label_definitions)`
   - Rebuilds head tabs and spotting buttons.
+  - Spotting buttons use the same deterministic label colors as table rows and timeline markers.
 - `_TableAdapter.set_data(annotations)`
   - Displays editable event rows with a `Confidence` column for smart events.
   - Double-clicking a confidence cell opens a Yes/No/Cancel dialog to confirm/reject/ignore.
+  - Applies deterministic per-label row colors so the table stays visually aligned with timeline markers.
 - `_SmartWidgetAdapter`
   - Emits smart inference range/confirm/clear requests.
 
@@ -45,6 +47,7 @@ Provides the Localization right-panel plus adapters for spotting tabs, hand even
 - Table edit emits old/new payloads; controller decides mutation validity.
 - Tabs adapter manages head/label UX including add/rename/delete requests.
 - Smart event actions are emitted as intent only; persistence remains in controller/history layer.
+- Table row background color is derived from the same label-color mapping used for timeline markers.
 
 ## Conventions
 - Keep adapter APIs stable for controller calls/signals.

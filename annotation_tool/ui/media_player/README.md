@@ -62,5 +62,6 @@ Provides the central video/timeline panel used across all annotation modes.
 - `MediaCenterPanel` owns widget/player primitives, but route/restart logic belongs in `MediaController`.
 - Marker payload contract:
   list of dicts with at least `start_ms`, optional `color`.
+- Marker color is supplied by the owning mode controller; the media player should render it without imposing mode-specific defaults.
 - Keep control signal names stable (`playPauseRequested`, `muteToggleRequested`, etc.) to avoid wiring regressions.
 - Timeline zoom/scroll behavior is subtle; validate follow-playhead behavior after changes.

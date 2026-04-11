@@ -4,6 +4,7 @@ from PyQt6.QtCore import QObject, QSettings, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
+from colors import localization_label_color_hex, normalize_hex_color
 from .loc_inference import LocalizationInferenceManager
 
 
@@ -24,6 +25,7 @@ class LocalizationEditorController(QObject):
     locLabelAddRequested = pyqtSignal(str, str, str, int, bool)
     locLabelRenameRequested = pyqtSignal(str, str, str)
     locLabelDeleteRequested = pyqtSignal(str, str)
+    locLabelColorSetRequested = pyqtSignal(str, str, str)
     # payload: sample_id, ...
     locEventAddRequested = pyqtSignal(str, dict)
     locEventModRequested = pyqtSignal(str, dict, dict)
@@ -95,6 +97,7 @@ class LocalizationEditorController(QObject):
         tabs.labelAddReq.connect(self._on_label_add_req)
         tabs.labelRenameReq.connect(self._on_label_rename_req)
         tabs.labelDeleteReq.connect(self._on_label_delete_req)
+        tabs.labelColorReq.connect(self._on_label_color_req)
 
         table.annotationSelected.connect(self._on_table_annotation_selected)
         table.annotationDeleted.connect(self._on_delete_single_annotation)
@@ -316,6 +319,13 @@ class LocalizationEditorController(QObject):
 
         updated_labels = [new_label if lbl == old_label else lbl for lbl in labels_list]
         self._schema_definitions[head]["labels"] = sorted(updated_labels)
+        label_colors = dict(self._schema_definitions[head].get("label_colors", {}))
+        if old_label in label_colors:
+            label_colors[new_label] = label_colors.pop(old_label)
+        if label_colors:
+            self._schema_definitions[head]["label_colors"] = label_colors
+        else:
+            self._schema_definitions[head].pop("label_colors", None)
 
         events = self._snapshot_events()
         for evt in events:
@@ -342,6 +352,12 @@ class LocalizationEditorController(QObject):
         labels = list(self._schema_definitions.get(head, {}).get("labels", []))
         self._schema_definitions.setdefault(head, {"type": "single_label", "labels": []})
         self._schema_definitions[head]["labels"] = [lbl for lbl in labels if lbl != label]
+        label_colors = dict(self._schema_definitions[head].get("label_colors", {}))
+        label_colors.pop(label, None)
+        if label_colors:
+            self._schema_definitions[head]["label_colors"] = label_colors
+        else:
+            self._schema_definitions[head].pop("label_colors", None)
 
         events = [
             evt
@@ -350,6 +366,27 @@ class LocalizationEditorController(QObject):
         ]
         self._set_snapshot_events(events)
 
+        self._refresh_schema_ui()
+        self.localization_panel.annot_mgmt.tabs.set_current_head(head)
+        self._refresh_current_clip_events()
+
+    def _on_label_color_req(self, head: str, label: str, color_hex: str):
+        if head not in self._schema_definitions:
+            return
+        if label not in self._schema_definitions.get(head, {}).get("labels", []):
+            return
+
+        normalized = normalize_hex_color(color_hex)
+        if not normalized:
+            return
+
+        current_colors = dict(self._schema_definitions[head].get("label_colors", {}))
+        if current_colors.get(label) == normalized:
+            return
+
+        self.locLabelColorSetRequested.emit(head, label, normalized)
+        current_colors[label] = normalized
+        self._schema_definitions[head]["label_colors"] = current_colors
         self._refresh_schema_ui()
         self.localization_panel.annot_mgmt.tabs.set_current_head(head)
         self._refresh_current_clip_events()
@@ -699,7 +736,24 @@ class LocalizationEditorController(QObject):
         if update_markers is None:
             update_markers = self._is_active_mode()
         if update_markers:
-            markers = [{"start_ms": e.get("position_ms", 0), "color": QColor("#00BFFF")} for e in display_data]
+            label_colors_by_head = {
+                head: dict(definition.get("label_colors", {}))
+                for head, definition in self._schema_definitions.items()
+                if isinstance(definition, dict)
+            }
+            markers = [
+                {
+                    "start_ms": e.get("position_ms", 0),
+                    "color": QColor(
+                        localization_label_color_hex(
+                            e.get("head", ""),
+                            e.get("label", ""),
+                            label_colors_by_head.get(e.get("head", ""), {}),
+                        )
+                    ),
+                }
+                for e in display_data
+            ]
             self.markersUpdateRequested.emit(markers)
 
     def _find_event_index(self, events, event):

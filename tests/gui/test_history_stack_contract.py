@@ -8,6 +8,7 @@ import copy
 from pathlib import Path
 
 import pytest
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QMessageBox
 
 
@@ -251,6 +252,12 @@ def test_history_contract_localization_event_and_schema_mutations(window, monkey
             controller.current_video_path = original_path
 
     _assert_mutating_action_creates_single_history_entry(window, qtbot, _add_label_without_event_injection)
+
+    _assert_mutating_action_creates_single_history_entry(
+        window,
+        qtbot,
+        lambda: controller._on_label_color_req("ball_action", "pass", QColor("#ff8844").name()),
+    )
 
     monkeypatch.setattr(
         "controllers.localization.localization_editor_controller.QInputDialog.getText",

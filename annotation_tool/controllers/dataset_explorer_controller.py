@@ -110,6 +110,12 @@ class _ManualAnnotationsProxy(MutableMapping):
             raise KeyError(path)
         sample.pop("labels", None)
 
+    def __contains__(self, path):
+        try:
+            return bool(_ManualAnnotationRecord(self._sample(path)))
+        except KeyError:
+            return False
+
     def __iter__(self):
         for entry in self.owner.action_item_data:
             sample = entry["sample_ref"]

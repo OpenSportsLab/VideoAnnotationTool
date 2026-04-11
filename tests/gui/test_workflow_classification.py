@@ -89,6 +89,50 @@ def test_classification_head_tabs_manage_schema(
 
 
 @pytest.mark.gui
+def test_classification_removing_last_head_clears_sample_labels_without_crash(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    monkeypatch.setattr(
+        "controllers.classification.classification_editor_controller.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    sample_path = window.get_current_action_path()
+    assert sample_path is not None
+
+    panel = window.classification_panel
+    action_group = panel.label_groups["action"]
+    pass_btn = next(btn for btn in action_group.radio_group.buttons() if btn.text() == "pass")
+    qtbot.mouseClick(pass_btn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    assert window.dataset_explorer_controller.manual_annotations[sample_path]["action"] == "pass"
+
+    panel.head_delete_requested.emit("action")
+    qtbot.wait(50)
+
+    assert "action" not in window.dataset_explorer_controller.label_definitions
+    assert sample_path not in window.dataset_explorer_controller.manual_annotations
+    assert panel.head_tabs_widget.tabText(panel.head_tabs_widget.count() - 1) == "+"
+
+
+@pytest.mark.gui
 # Workflow: Classification annotation round-trip with edit:
 # 1) annotate + save + reopen (label persists), then 2) modify label + save + reopen (new label persists).
 def test_classification_annotate_save_reload_edit_labels_and_persist(

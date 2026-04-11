@@ -70,6 +70,7 @@ Implements Localization (action spotting) behavior, including schema management,
 ## Conventions
 - Emit mutation intents; do not apply persisted mutation policy locally.
 - Keep marker/table display in controller, widget layout in UI package.
+- Timeline markers should reuse the same label-color mapping as the Localization table rows.
 - Respect no-op guard behavior for unchanged edits.
 - Keep constructor boundary clean: panel-only constructor.
 

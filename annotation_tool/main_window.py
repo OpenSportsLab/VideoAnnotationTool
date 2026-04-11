@@ -388,6 +388,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.localization_editor_controller.locLabelDeleteRequested.connect(
             self.history_manager.execute_localization_label_delete
         )
+        self.localization_editor_controller.locLabelColorSetRequested.connect(
+            self.history_manager.execute_localization_label_color_set
+        )
         self.localization_editor_controller.locEventAddRequested.connect(
             self.history_manager.execute_localization_event_add
         )
