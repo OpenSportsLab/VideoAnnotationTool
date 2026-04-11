@@ -368,6 +368,46 @@ def test_classification_smart_inference_persists_confidence_and_confirm_strips_i
 
 
 @pytest.mark.gui
+def test_classification_inference_loading_cue_toggles_controls(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    panel = window.classification_panel
+    group = panel.label_groups["action"]
+
+    panel.show_inference_loading(True)
+    qtbot.wait(50)
+
+    assert panel._inference_loading_dialog.isVisible() is True
+    assert group.btn_smart_infer.isEnabled() is False
+    assert group.btn_smart_infer.text() == "Loading..."
+    assert panel.head_tabs_widget.isEnabled() is False
+
+    panel.show_inference_loading(False)
+    qtbot.wait(50)
+
+    assert panel._inference_loading_dialog.isVisible() is False
+    assert group.btn_smart_infer.isEnabled() is True
+    assert group.btn_smart_infer.text() == "Smart Inference"
+    assert panel.head_tabs_widget.isEnabled() is True
+
+
+@pytest.mark.gui
 def test_classification_clear_smart_restores_manual_or_removes_label_when_no_manual(
     window,
     monkeypatch,
