@@ -41,7 +41,8 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
 - Project root object (`dataset_json`) includes (non-exhaustive):
   - `version`, `date`, `dataset_name`, `description`, `metadata`, `labels`, `data`
 - Sample object (`dataset_json["data"][i]`) typically includes:
-  - `id`, `inputs`, `labels`, `smart_labels`, `events`, `smart_events`, `captions`, `dense_captions`
+  - `id`, `inputs`, `labels`, `events`, `captions`, `dense_captions`
+  - Classification smart prediction marker: `labels[head].confidence_score` (optional float)
 - Input item: `{ "type": "video", "path": "..." }`
 - Localization event: `{ "head": str, "label": str, "position_ms": int }`
 - Dense event: `{ "position_ms": int, "lang": str, "text": str }`

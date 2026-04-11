@@ -13,12 +13,13 @@ class LocInferenceWorker(QThread):
     finished_signal = pyqtSignal(list)
     error_signal = pyqtSignal(str)
 
-    def __init__(self, video_path, start_ms, end_ms, config_path):
+    def __init__(self, video_path, start_ms, end_ms, config_path, model_id):
         super().__init__()
         self.video_path = os.path.abspath(video_path)
         self.start_ms = start_ms
         self.end_ms = end_ms
         self.config_path = config_path
+        self.model_id = str(model_id or "jeetv/snpro-snbas-2024")
 
     def run(self):
         try:
@@ -79,7 +80,7 @@ class LocInferenceWorker(QThread):
                     # Run inference. This will definitely throw a FileNotFoundError because the underlying evaluator cannot find the file
                     loc_model.infer(
                         test_set=tmp_input_json, 
-                        pretrained="jeetv/snpro-snbas-2024"
+                        pretrained=self.model_id
                     )
                 except FileNotFoundError:
                     # [Critical Fix 4]: Bossy ignore!
@@ -118,10 +119,22 @@ class LocInferenceWorker(QThread):
                             continue
                             
                         if p_ms >= self.start_ms and (self.end_ms == 0 or p_ms <= self.end_ms):
+                            confidence_score = 1.0
+                            if "confidence_score" in evt:
+                                try:
+                                    confidence_score = float(evt.get("confidence_score") or 0.0)
+                                except Exception:
+                                    confidence_score = 1.0
+                            elif "confidence" in evt:
+                                try:
+                                    confidence_score = float(evt.get("confidence") or 0.0)
+                                except Exception:
+                                    confidence_score = 1.0
                             predicted_events.append({
                                 "head": evt.get("head", "ball_action"),
                                 "label": evt.get("label", "Unknown"),
-                                "position_ms": p_ms
+                                "position_ms": p_ms,
+                                "confidence_score": max(0.0, min(1.0, confidence_score)),
                             })
                 
                 self.finished_signal.emit(predicted_events)
@@ -143,18 +156,43 @@ class LocalizationInferenceManager(QObject):
         super().__init__(parent)
         self.worker = None
 
-    def start_inference(self, video_path: str, start_ms: int, end_ms: int):
-        if self.worker and self.worker.isRunning(): return
+    def _attach_thread_cleanup(self, worker: QThread):
+        worker.finished.connect(lambda worker_ref=worker: self._on_worker_thread_finished(worker_ref))
+
+    def _on_worker_thread_finished(self, worker_ref: QThread):
+        if self.worker is worker_ref:
+            self.worker = None
+        worker_ref.deleteLater()
+
+    def has_running_threads(self) -> bool:
+        return bool(self.worker is not None and self.worker.isRunning())
+
+    def shutdown_threads(self, wait_ms: int = 2500) -> bool:
+        worker = self.worker
+        if worker is None:
+            return True
+        if worker.isRunning():
+            worker.requestInterruption()
+            if wait_ms <= 0 or not worker.wait(wait_ms):
+                return False
+        if self.worker is worker:
+            self.worker = None
+        worker.deleteLater()
+        return True
+
+    def start_inference(self, video_path: str, start_ms: int, end_ms: int, model_id: str):
+        if self.worker and self.worker.isRunning():
+            return
         config_path = os.path.join(os.getcwd(), "loc_config.yaml")
-        self.worker = LocInferenceWorker(video_path, start_ms, end_ms, config_path)
-        self.worker.finished_signal.connect(self._on_finished)
-        self.worker.error_signal.connect(self._on_error)
-        self.worker.start()
+        worker = LocInferenceWorker(video_path, start_ms, end_ms, config_path, model_id)
+        worker.finished_signal.connect(self._on_finished)
+        worker.error_signal.connect(self._on_error)
+        self._attach_thread_cleanup(worker)
+        self.worker = worker
+        worker.start()
 
     def _on_finished(self, events):
         self.inference_finished.emit(events)
-        self.worker = None
 
     def _on_error(self, err_msg):
         self.inference_error.emit(err_msg)
-        self.worker = None

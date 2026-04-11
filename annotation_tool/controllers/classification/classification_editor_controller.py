@@ -31,6 +31,7 @@ class ClassificationEditorController(QObject):
         self.classification_panel = classification_panel
         self._active_mode_index = 0
         self._action_items_cache = []
+        self._action_path_by_sample_id = {}
         self._schema_definitions = {}
 
         self.current_sample_id = ""
@@ -46,16 +47,19 @@ class ClassificationEditorController(QObject):
     # ---------------------------------------------------------------------
     def setup_connections(self):
         self.classification_panel.annotation_saved.connect(self.save_manual_annotation)
-        self.classification_panel.smart_confirm_requested.connect(self.confirm_smart_annotation_as_manual)
         self.classification_panel.hand_clear_requested.connect(self.clear_current_manual_annotation)
-        self.classification_panel.smart_clear_requested.connect(self.clear_current_smart_annotation)
+        self.classification_panel.head_smart_infer_requested.connect(self.inference_manager.start_head_inference)
+        self.classification_panel.head_smart_confirm_requested.connect(self.confirm_smart_annotation_head)
+        self.classification_panel.head_smart_reject_requested.connect(self.reject_smart_annotation_head)
         self.classification_panel.add_head_clicked.connect(self.handle_add_label_head)
         self.classification_panel.remove_head_clicked.connect(self.handle_remove_label_head)
-        self.classification_panel.smart_infer_requested.connect(self.inference_manager.start_inference)
         self.classification_panel.confirm_infer_requested.connect(self.save_manual_annotation)
 
     def on_mode_changed(self, index: int):
         self._active_mode_index = index
+
+    def shutdown_background_tasks(self, wait_ms: int = 2500) -> bool:
+        return self.inference_manager.shutdown_threads(wait_ms=wait_ms)
 
     def reset_ui(self):
         self.classification_panel.clear_dynamic_labels()
@@ -85,6 +89,14 @@ class ClassificationEditorController(QObject):
 
     def on_action_items_changed(self, action_items: list):
         self._action_items_cache = list(action_items or [])
+        self._action_path_by_sample_id = {}
+        for item in self._action_items_cache:
+            if not isinstance(item, dict):
+                continue
+            sample_id = str(item.get("data_id") or item.get("id") or "")
+            path = str(item.get("path") or "")
+            if sample_id and path:
+                self._action_path_by_sample_id[sample_id] = path
 
     def _connect_dynamic_type_buttons(self):
         for head, group in self.classification_panel.label_groups.items():
@@ -109,14 +121,12 @@ class ClassificationEditorController(QObject):
             group.value_changed.connect(self._on_manual_label_value_changed)
 
     def _on_manual_label_value_changed(self, *_args):
-        if self.classification_panel.tabs.currentIndex() != 0:
-            return
         self.save_manual_annotation(show_feedback=False)
 
     # ---------------------------------------------------------------------
     # Selection / Display
     # ---------------------------------------------------------------------
-    def on_selected_sample_changed(self, sample, resolved_path: str = ""):
+    def on_selected_sample_changed(self, sample):
         self.current_sample_id = ""
         self.current_action_path = None
         self._current_sample_snapshot = {}
@@ -128,7 +138,7 @@ class ClassificationEditorController(QObject):
             return
 
         sample_id = str(sample.get("id") or "")
-        path = str(resolved_path or self._extract_primary_path(sample) or "")
+        path = str(self._action_path_by_sample_id.get(sample_id) or self._extract_primary_path(sample) or "")
         if not sample_id or not path:
             self.classification_panel.manual_box.setEnabled(False)
             self.classification_panel.clear_selection()
@@ -146,6 +156,12 @@ class ClassificationEditorController(QObject):
     # ---------------------------------------------------------------------
     def confirm_smart_annotation_as_manual(self):
         self.inference_manager.confirm_smart_annotation_as_manual()
+
+    def confirm_smart_annotation_head(self, head: str):
+        self.inference_manager.confirm_smart_annotation_for_head(head)
+
+    def reject_smart_annotation_head(self, head: str):
+        self.inference_manager.reject_smart_annotation_for_head(head)
 
     def save_manual_annotation(self, override_data=None, show_feedback: bool = True):
         if not self.current_sample_id:
@@ -181,19 +197,21 @@ class ClassificationEditorController(QObject):
     def display_manual_annotation(self):
         data = self._manual_payload_to_panel(self._current_sample_snapshot.get("labels"))
         self.classification_panel.set_annotation(data)
-
-        smart_data = self._current_sample_snapshot.get("smart_labels", {})
-        self.classification_panel.chart_widget.setVisible(False)
-        if smart_data:
-            for _, smart_item in smart_data.items():
-                if not isinstance(smart_item, dict):
+        labels_payload = self._current_sample_snapshot.get("labels")
+        if isinstance(labels_payload, dict):
+            for head, payload in labels_payload.items():
+                if not isinstance(payload, dict):
                     continue
-                self.classification_panel.chart_widget.update_chart(
-                    smart_item.get("label", ""),
-                    smart_item.get("conf_dict", {}),
-                )
-                self.classification_panel.chart_widget.setVisible(True)
-                break
+                label = payload.get("label")
+                if label in (None, ""):
+                    continue
+                if "confidence_score" not in payload:
+                    continue
+                try:
+                    score = float(payload.get("confidence_score") or 0.0)
+                except Exception:
+                    score = 0.0
+                self.classification_panel.set_head_smart_state(head, str(label), score, True)
 
     def handle_add_label_head(self, name):
         clean = name.strip().replace(" ", "_").lower()
@@ -247,7 +265,7 @@ class ClassificationEditorController(QObject):
     def remove_custom_type(self, head, label):
         definition = self._schema_definitions.get(head, {})
         labels = definition.get("labels", [])
-        if len(labels) <= 1:
+        if label not in labels:
             return
         self.schemaLabelRemoveRequested.emit(head, label)
 
@@ -256,6 +274,9 @@ class ClassificationEditorController(QObject):
 
     def get_current_action_path(self):
         return self.current_action_path
+
+    def get_current_sample_id(self):
+        return self.current_sample_id
 
     @staticmethod
     def _extract_primary_path(sample: dict):
@@ -297,9 +318,9 @@ class ClassificationEditorController(QObject):
             if value in (None, "", []):
                 continue
             if isinstance(value, list):
-                out[head] = {"labels": list(value), "confidence": 1.0, "manual": True}
+                out[head] = {"labels": list(value)}
             else:
-                out[head] = {"label": value, "confidence": 1.0, "manual": True}
+                out[head] = {"label": value}
         return out
 
     def _set_snapshot_manual_annotation(self, cleaned):
@@ -311,15 +332,59 @@ class ClassificationEditorController(QObject):
         else:
             self._current_sample_snapshot.pop("labels", None)
 
-    def set_current_smart_annotation_snapshot(self, path: str, smart_data):
-        if not path or path != self.current_action_path:
-            return
+    def set_current_smart_annotation_snapshot(self, _path: str, smart_data):
         if not isinstance(self._current_sample_snapshot, dict):
             self._current_sample_snapshot = {}
-        if isinstance(smart_data, dict) and smart_data:
-            self._current_sample_snapshot["smart_labels"] = copy.deepcopy(smart_data)
-        else:
-            self._current_sample_snapshot.pop("smart_labels", None)
+        labels = self._current_sample_snapshot.get("labels")
+        if not isinstance(labels, dict):
+            labels = {}
+            self._current_sample_snapshot["labels"] = labels
+
+        if isinstance(smart_data, dict):
+            for head, payload in smart_data.items():
+                if payload is None:
+                    labels.pop(head, None)
+                elif isinstance(payload, dict) and payload:
+                    labels[head] = copy.deepcopy(payload)
+                else:
+                    labels.pop(head, None)
+        elif smart_data is None:
+            # Clear smart state from all heads in current snapshot only.
+            for head, payload in list(labels.items()):
+                if isinstance(payload, dict) and "confidence_score" in payload:
+                    updated = copy.deepcopy(payload)
+                    updated.pop("confidence_score", None)
+                    if updated:
+                        labels[head] = updated
+                    else:
+                        labels.pop(head, None)
+
+        if not labels:
+            self._current_sample_snapshot.pop("labels", None)
+
+    @staticmethod
+    def _smart_chart_payload_from_labels(labels_payload):
+        if not isinstance(labels_payload, dict):
+            return None
+        for payload in labels_payload.values():
+            if not isinstance(payload, dict):
+                continue
+            label = payload.get("label")
+            if label in (None, ""):
+                continue
+            if "confidence_score" not in payload:
+                continue
+            try:
+                score = float(payload.get("confidence_score") or 0.0)
+            except Exception:
+                score = 0.0
+            score = max(0.0, min(1.0, score))
+            conf_dict = {str(label): score}
+            remaining = max(0.0, 1.0 - score)
+            if remaining > 0.001:
+                conf_dict["Other Uncertainties"] = remaining
+            return str(label), conf_dict
+        return None
 
     def _is_active_mode(self) -> bool:
         return self._active_mode_index == 0

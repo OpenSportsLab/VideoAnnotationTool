@@ -194,6 +194,217 @@ def test_classification_clear_workspace_resets_state(
     assert window.classification_panel.manual_box.isEnabled() is False
 
 
+@pytest.mark.gui
+def test_classification_smart_inference_persists_confidence_and_confirm_strips_it(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.classification_editor_controller
+    path = controller.get_current_action_path()
+    assert path
+    sample = window.dataset_explorer_controller.get_sample_by_path(path)
+    assert isinstance(sample, dict)
+    initial_labels = sample.get("labels", {})
+    if "action" in initial_labels:
+        assert "confidence_score" not in initial_labels["action"]
+
+    controller.inference_manager._on_inference_success(
+        "action",
+        "shot",
+        {"shot": 0.87, "Other Uncertainties": 0.13},
+    )
+    qtbot.wait(50)
+
+    sample = window.dataset_explorer_controller.get_sample_by_path(path)
+    assert isinstance(sample, dict)
+    assert sample["labels"]["action"]["label"] == "shot"
+    assert sample["labels"]["action"]["confidence_score"] == pytest.approx(0.87)
+
+    smart_widgets = window.classification_panel.get_head_row_smart_widgets("action", "shot")
+    assert smart_widgets is not None
+    conf_btn, accept_btn, reject_btn = smart_widgets
+    assert conf_btn.isVisible()
+    assert accept_btn.isVisible()
+    assert reject_btn.isVisible()
+    assert "87.0%" in conf_btn.text()
+
+    qtbot.mouseClick(accept_btn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    sample = window.dataset_explorer_controller.get_sample_by_path(path)
+    assert isinstance(sample, dict)
+    assert sample["labels"]["action"]["label"] == "shot"
+    assert "confidence_score" not in sample["labels"]["action"]
+
+
+@pytest.mark.gui
+def test_classification_clear_smart_restores_manual_or_removes_label_when_no_manual(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.classification_editor_controller
+    path = controller.get_current_action_path()
+    assert path
+
+    # With manual baseline present, clear restores the previous manual label.
+    panel = window.classification_panel
+    group = panel.label_groups["action"]
+    pass_btn = next(btn for btn in group.radio_group.buttons() if btn.text() == "pass")
+    qtbot.mouseClick(pass_btn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    controller.inference_manager._on_inference_success(
+        "action",
+        "shot",
+        {"shot": 0.91, "Other Uncertainties": 0.09},
+    )
+    qtbot.wait(50)
+    smart_widgets = window.classification_panel.get_head_row_smart_widgets("action", "shot")
+    assert smart_widgets is not None
+    _conf_btn, _accept_btn, reject_btn = smart_widgets
+    qtbot.mouseClick(reject_btn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    sample = window.dataset_explorer_controller.get_sample_by_path(path)
+    assert isinstance(sample, dict)
+    assert sample["labels"]["action"]["label"] == "pass"
+    assert "confidence_score" not in sample["labels"]["action"]
+
+    # Without manual baseline, clear removes the smart annotation head.
+    controller.clear_current_manual_annotation()
+    qtbot.wait(50)
+    controller.inference_manager._on_inference_success(
+        "action",
+        "shot",
+        {"shot": 0.91, "Other Uncertainties": 0.09},
+    )
+    qtbot.wait(50)
+    smart_widgets = window.classification_panel.get_head_row_smart_widgets("action", "shot")
+    assert smart_widgets is not None
+    _conf_btn, _accept_btn, reject_btn = smart_widgets
+    qtbot.mouseClick(reject_btn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+    sample = window.dataset_explorer_controller.get_sample_by_path(path)
+    assert isinstance(sample, dict)
+    assert "labels" not in sample or "action" not in sample.get("labels", {})
+
+
+@pytest.mark.gui
+def test_classification_unknown_prediction_label_mapping_applies_selected_label(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    monkeypatch.setattr(
+        "controllers.classification.inference_manager.QInputDialog.getItem",
+        lambda *args, **kwargs: ("pass", True),
+    )
+    controller = window.classification_editor_controller
+    controller.inference_manager._on_inference_success(
+        "action",
+        "unknown_pred",
+        {"unknown_pred": 0.83},
+    )
+    qtbot.wait(50)
+
+    path = controller.get_current_action_path()
+    assert path
+    sample = window.dataset_explorer_controller.get_sample_by_path(path)
+    assert isinstance(sample, dict)
+    assert sample["labels"]["action"]["label"] == "pass"
+    assert sample["labels"]["action"]["confidence_score"] == pytest.approx(0.83)
+
+    controller.inference_manager._on_inference_success(
+        "action",
+        "shot",
+        {"shot": 0.75, "Other Uncertainties": 0.25},
+    )
+    qtbot.wait(50)
+    smart_widgets = window.classification_panel.get_head_row_smart_widgets("action", "shot")
+    assert smart_widgets is not None
+    _conf_btn, _accept_btn, reject_btn = smart_widgets
+    qtbot.mouseClick(reject_btn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    sample = window.dataset_explorer_controller.get_sample_by_path(path)
+    assert isinstance(sample, dict)
+    assert "labels" not in sample or "action" not in sample.get("labels", {})
+
+
+@pytest.mark.gui
+def test_classification_schema_label_delete_allows_removing_last_label(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.classification_editor_controller
+    controller.remove_custom_type("action", "pass")
+    qtbot.wait(50)
+    controller.remove_custom_type("action", "shot")
+    qtbot.wait(50)
+
+    labels = window.dataset_explorer_controller.label_definitions["action"]["labels"]
+    assert labels == []
+
+
 # @pytest.mark.gui
 # # Workflow: In Classification mode, save an annotation then verify undo/redo toggles it in model and editor.
 # def test_classification_undo_redo_manual_annotation_roundtrip(

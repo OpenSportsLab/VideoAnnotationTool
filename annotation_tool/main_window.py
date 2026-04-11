@@ -1,7 +1,7 @@
 import copy
 import os
 
-from PyQt6.QtCore import Qt, QModelIndex
+from PyQt6.QtCore import Qt, QModelIndex, QTimer
 from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QDockWidget, QMainWindow, QStackedWidget, QTabWidget
 
@@ -136,6 +136,13 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.welcome_controller = WelcomeController(self.welcome_widget, self.dataset_explorer_controller, self)
 
+        # Coalesce repeated status-triggered filter refreshes to avoid UI stalls
+        # during rapid annotation mutations.
+        self._status_filter_refresh_timer = QTimer(self)
+        self._status_filter_refresh_timer.setSingleShot(True)
+        self._status_filter_refresh_timer.setInterval(3000)
+        self._status_filter_refresh_timer.timeout.connect(self._refresh_filter_after_status_update)
+
         # --- Setup ---
         self.connect_signals()
         self.load_stylesheet()
@@ -242,20 +249,10 @@ class VideoAnnotationWindow(QMainWindow):
         # but the controller will internally call MainWindow dispatchers
         # when it needs global context.
         self.dataset_explorer_controller.sampleSelectionChanged.connect(
-            lambda sample: self.classification_editor_controller.on_selected_sample_changed(
-                sample,
-                self.dataset_explorer_controller.get_path_by_id(
-                    str(sample.get("id") or "")
-                ) if isinstance(sample, dict) else "",
-            )
+            self.classification_editor_controller.on_selected_sample_changed
         )
         self.dataset_explorer_controller.sampleSelectionChanged.connect(
-            lambda sample: self.localization_editor_controller.on_selected_sample_changed(
-                sample,
-                self.dataset_explorer_controller.get_path_by_id(
-                    str(sample.get("id") or "")
-                ) if isinstance(sample, dict) else "",
-            )
+            self.localization_editor_controller.on_selected_sample_changed
         )
         self.dataset_explorer_controller.sampleSelectionChanged.connect(
             self.desc_editor_controller.on_selected_sample_changed
@@ -325,6 +322,7 @@ class VideoAnnotationWindow(QMainWindow):
         center_panel.playbackRateRequested.connect(center_panel.set_playback_rate)
         self.media_controller.playbackStateChanged.connect(self.localization_editor_controller.on_playback_state_changed)
         center_panel.positionChanged.connect(self.localization_editor_controller.on_media_position_changed)
+        center_panel.durationChanged.connect(self.localization_editor_controller.on_media_duration_changed)
         center_panel.positionChanged.connect(self.dense_editor_controller.on_media_position_changed)
         self.media_controller.muteStateChanged.connect(center_panel.set_mute_button_state)
         center_panel.set_mute_button_state(self.media_controller.is_muted())
@@ -396,14 +394,8 @@ class VideoAnnotationWindow(QMainWindow):
         self.localization_editor_controller.locEventDelRequested.connect(
             self.history_manager.execute_localization_event_delete
         )
-        self.localization_editor_controller.locSmartEventsSetRequested.connect(
-            self.history_manager.execute_localization_smart_events_set
-        )
-        self.localization_editor_controller.locSmartEventsConfirmRequested.connect(
-            self.history_manager.execute_localization_smart_events_confirm
-        )
-        self.localization_editor_controller.locSmartEventsClearRequested.connect(
-            self.history_manager.execute_localization_smart_events_clear
+        self.localization_editor_controller.locEventsSetRequested.connect(
+            self.history_manager.execute_localization_events_set
         )
 
         self.desc_editor_controller.clearMarkersRequested.connect(lambda: self.center_panel.set_markers([]))
@@ -616,6 +608,22 @@ class VideoAnnotationWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         if self.dataset_explorer_controller.check_and_close_current_project():
+            if not self.classification_editor_controller.shutdown_background_tasks(wait_ms=2500):
+                self.show_temp_msg(
+                    "Inference Running",
+                    "Classification inference is still running. Please wait and close again.",
+                    2500,
+                )
+                event.ignore()
+                return
+            if not self.localization_editor_controller.shutdown_background_tasks(wait_ms=2500):
+                self.show_temp_msg(
+                    "Inference Running",
+                    "Localization inference is still running. Please wait and close again.",
+                    2500,
+                )
+                event.ignore()
+                return
             self.media_controller.stop()
             event.accept()
         else:
@@ -657,8 +665,16 @@ class VideoAnnotationWindow(QMainWindow):
     def update_action_item_status(self, action_path: str) -> None:
         """Updates the icon state for an item (Done/Not Done check)."""
         self.dataset_explorer_controller.update_item_status(action_path)
+        if not self._status_filter_refresh_timer.isActive():
+            self._status_filter_refresh_timer.start()
+
+    def _refresh_filter_after_status_update(self) -> None:
+        filter_idx = self.dataset_explorer_panel.filter_combo.currentIndex()
+        # "Show All" does not depend on label state filtering.
+        if filter_idx == 0:
+            return
         self.dataset_explorer_controller.handle_filter_change(
-            self.dataset_explorer_panel.filter_combo.currentIndex()
+            filter_idx
         )
 
     def setup_dynamic_ui(self) -> None:

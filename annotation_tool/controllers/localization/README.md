@@ -1,14 +1,14 @@
 # Localization Controllers
 
 ## Role
-Implements Localization (action spotting) behavior, including schema management, event CRUD, and smart inference workflows.
+Implements Localization (action spotting) behavior, including schema management, event CRUD, and per-head smart inference workflows.
 
 ## Architecture Context
 - `LocalizationEditorController` orchestrates Localization panel behavior.
 - Constructor takes only the localization panel object.
 - Controller does not own dataset model state (`self.model` is not used).
 - Runtime sample/schema/action-list context is supplied through signal-slot wiring in `MainWindow.connect_signals()`.
-- Emits schema/event/smart-event mutation intents to `HistoryManager`.
+- Emits schema/event mutation intents to `HistoryManager`.
 - Uses `LocalizationInferenceManager` for smart inference execution.
 - Emits media seek/marker/toggle intents instead of mutating media widgets directly.
 
@@ -29,9 +29,7 @@ Implements Localization (action spotting) behavior, including schema management,
 - `locEventAddRequested(str, dict)`
 - `locEventModRequested(str, dict, dict)`
 - `locEventDelRequested(str, dict, int)`
-- `locSmartEventsSetRequested(str, object)`
-- `locSmartEventsConfirmRequested(str)`
-- `locSmartEventsClearRequested(str)`
+- `locEventsSetRequested(str, object)`
 - `mediaSeekRequested(int)`
 - `markersUpdateRequested(object)`
 - `mediaTogglePlaybackRequested()`
@@ -41,8 +39,8 @@ Implements Localization (action spotting) behavior, including schema management,
 
 ## Key Functions and Responsibilities
 - `setup_connections()`
-  - Wires tabs/tables/smart widgets to controller actions.
-- `on_selected_sample_changed(sample, resolved_path="")`
+  - Wires spotting tabs/table actions to controller behavior.
+- `on_selected_sample_changed(sample)`
   - Loads selected sample snapshot into Localization panel.
 - `on_schema_context_changed(schema)`
   - Rebuilds schema-driven localization controls from runtime schema context.
@@ -52,14 +50,18 @@ Implements Localization (action spotting) behavior, including schema management,
 - Event functions:
   - `_on_spotting_triggered`, `_on_annotation_modified`, `_on_delete_single_annotation`
 - Smart flows:
-  - `_run_localization_inference`, `_confirm_smart_events`, `_clear_smart_events`
+  - `_on_head_smart_inference_requested`, `_on_inference_success`, `_on_confirm_single_annotation`, `_on_reject_single_annotation`
 
 ## Business Rules
 - Schema operations enforce duplicate/name validity checks.
 - Event modify/delete requires event existence and valid selection.
 - Label add flow can optionally inject an event at current playback time.
 - Pause/resume around modal label dialogs is signal-driven.
-- Smart event set/confirm/clear is persisted through explicit history-manager signals.
+- Smart inference writes directly into canonical `events[]` with `confidence_score`.
+- Confirming (or manually editing) an inferred row removes `confidence_score` only.
+- Table confidence-cell confirmation prompt supports `Yes` (confirm), `No` (reject), `Cancel` (no-op).
+- Rejecting an inferred row deletes the smart-inferred event row.
+- Unknown predicted labels are mapped via popup per inference run.
 
 ## Conventions
 - Emit mutation intents; do not apply persisted mutation policy locally.

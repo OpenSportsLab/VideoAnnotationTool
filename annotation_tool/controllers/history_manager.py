@@ -185,7 +185,7 @@ class HistoryManager(QObject):
 
         definition = self.model.label_definitions[head]
         labels = definition.get("labels", [])
-        if len(labels) <= 1 or label not in labels:
+        if label not in labels:
             return
 
         affected = {}
@@ -450,48 +450,16 @@ class HistoryManager(QObject):
         self._sort_events_by_time(events)
         self._emit_post_mutation(touched_paths=[video_path])
 
-    def execute_localization_smart_events_set(self, sample_id: str, smart_events):
+    def execute_localization_events_set(self, sample_id: str, events):
         video_path = self._path_for_sample(sample_id)
         if not video_path:
             return
 
-        normalized = [copy.deepcopy(evt) for evt in list(smart_events or []) if isinstance(evt, dict)]
+        normalized = [copy.deepcopy(evt) for evt in list(events or []) if isinstance(evt, dict)]
         self._sort_events_by_time(normalized)
 
         before_json = self.model.snapshot_dataset_json()
-        self.model.smart_localization_events[video_path] = normalized
-        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
-            return
-        self._emit_post_mutation(touched_paths=[video_path])
-
-    def execute_localization_smart_events_confirm(self, sample_id: str):
-        video_path = self._path_for_sample(sample_id)
-        if not video_path:
-            return
-
-        smart_events = [copy.deepcopy(evt) for evt in self.model.smart_localization_events.get(video_path, [])]
-        if not smart_events:
-            return
-
-        before_json = self.model.snapshot_dataset_json()
-        current_events = [copy.deepcopy(evt) for evt in self.model.localization_events.get(video_path, [])]
-        current_events.extend(smart_events)
-        self._sort_events_by_time(current_events)
-        self.model.localization_events[video_path] = current_events
-        self.model.smart_localization_events[video_path] = []
-        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
-            return
-        self._emit_post_mutation(touched_paths=[video_path])
-
-    def execute_localization_smart_events_clear(self, sample_id: str):
-        video_path = self._path_for_sample(sample_id)
-        if not video_path:
-            return
-        if not self.model.smart_localization_events.get(video_path):
-            return
-
-        before_json = self.model.snapshot_dataset_json()
-        self.model.smart_localization_events[video_path] = []
+        self.model.localization_events[video_path] = normalized
         if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
             return
         self._emit_post_mutation(touched_paths=[video_path])
@@ -796,6 +764,24 @@ class HistoryManager(QObject):
 
         sample[field_name] = copy.deepcopy(value)
 
+    def _set_classification_head_payload(self, path: str, head: str, payload):
+        sample = self.model.get_sample_by_path(path)
+        if not isinstance(sample, dict) or not head:
+            return
+
+        labels = sample.get("labels")
+        if not isinstance(labels, dict):
+            labels = {}
+            sample["labels"] = labels
+
+        if payload is None:
+            labels.pop(head, None)
+        else:
+            labels[head] = copy.deepcopy(payload)
+
+        if not labels:
+            sample.pop("labels", None)
+
     def _emit_schema_refresh(self):
         self.classificationSetupRequested.emit()
         self.localizationSchemaRefreshRequested.emit()
@@ -951,22 +937,21 @@ class HistoryManager(QObject):
 
         elif ctype == CmdType.SMART_ANNOTATION_RUN:
             path = cmd["path"]
+            head = cmd.get("head")
             data = cmd["old_data"] if is_undo else cmd["new_data"]
-            if data:
-                self.model.smart_annotations[path] = copy.deepcopy(data)
-            else:
-                if path in self.model.smart_annotations:
-                    del self.model.smart_annotations[path]
+            if head:
+                self._set_classification_head_payload(path, head, data)
             self._refresh_active_view()
 
         elif ctype == CmdType.BATCH_SMART_ANNOTATION_RUN:
             batch_data = cmd["old_data"] if is_undo else cmd["new_data"]
             for path, data in batch_data.items():
-                if data:
-                    self.model.smart_annotations[path] = copy.deepcopy(data)
-                else:
-                    if path in self.model.smart_annotations:
-                        del self.model.smart_annotations[path]
+                if not isinstance(data, dict):
+                    continue
+                for head, payload in data.items():
+                    if not isinstance(head, str):
+                        continue
+                    self._set_classification_head_payload(path, head, payload)
             self._refresh_active_view()
 
         elif ctype == CmdType.LOC_EVENT_ADD:

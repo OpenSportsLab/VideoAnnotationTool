@@ -26,6 +26,8 @@ Provides the Localization right-panel plus adapters for spotting tabs, hand even
 - `annotationSelected(int)`
 - `annotationModified(dict, dict)`
 - `annotationDeleted(dict)`
+- `annotationConfirmRequested(dict)`
+- `annotationRejectRequested(dict)`
 - `updateTimeForSelectedRequested(dict)`
 
 ## Key Functions and Responsibilities
@@ -34,14 +36,15 @@ Provides the Localization right-panel plus adapters for spotting tabs, hand even
 - `_SpottingTabsAdapter.update_schema(label_definitions)`
   - Rebuilds head tabs and spotting buttons.
 - `_TableAdapter.set_data(annotations)`
-  - Displays editable event rows.
+  - Displays editable event rows with a `Confidence` column for smart events.
+  - Double-clicking a confidence cell opens a Yes/No/Cancel dialog to confirm/reject/ignore.
 - `_SmartWidgetAdapter`
   - Emits smart inference range/confirm/clear requests.
 
 ## Business Rules
 - Table edit emits old/new payloads; controller decides mutation validity.
 - Tabs adapter manages head/label UX including add/rename/delete requests.
-- Smart widget only emits intent; no persistence logic.
+- Smart event actions are emitted as intent only; persistence remains in controller/history layer.
 
 ## Conventions
 - Keep adapter APIs stable for controller calls/signals.

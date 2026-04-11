@@ -228,20 +228,11 @@ def synthetic_project_json(tmp_path):
                 sample.update(
                     {
                         "labels": {
-                            "action": {"label": "pass", "confidence": 1.0, "manual": True},
-                        },
-                        "smart_labels": {
-                            "action": {
-                                "label": "shot",
-                                "conf_dict": {"shot": 0.8, "Other Uncertainties": 0.2},
-                            },
-                            "_confirmed": True,
+                            "action": {"label": "shot", "confidence_score": 0.8},
                         },
                         "events": [
                             {"head": "ball_action", "label": "pass", "position_ms": 1000},
-                        ],
-                        "smart_events": [
-                            {"head": "ball_action", "label": "shot", "position_ms": 2000},
+                            {"head": "ball_action", "label": "shot", "position_ms": 2000, "confidence_score": 0.7},
                         ],
                         "captions": [
                             {"lang": "en", "text": "Mixed caption"},

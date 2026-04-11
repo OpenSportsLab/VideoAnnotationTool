@@ -2,6 +2,7 @@
 Localization mode persistence/editing workflows.
 """
 
+import copy
 import json
 
 import pytest
@@ -15,6 +16,17 @@ MODE_TO_TAB_INDEX = {
     "description": 2,
     "dense_description": 3,
 }
+
+
+def _double_click_table_cell(window, qtbot, row: int, col: int):
+    table_view = window.localization_panel.table.table
+    model = window.localization_panel.table.model
+    idx = model.index(row, col)
+    assert idx.isValid()
+    table_view.scrollTo(idx)
+    rect = table_view.visualRect(idx)
+    qtbot.mouseDClick(table_view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    qtbot.wait(50)
 
 
 @pytest.mark.gui
@@ -253,7 +265,6 @@ def test_localization_clear_workspace_resets_panel_and_model(
     assert window.tree_model.rowCount() == 0
     assert window.dataset_explorer_controller.action_item_data == []
     assert window.dataset_explorer_controller.localization_events == {}
-    assert window.dataset_explorer_controller.smart_localization_events == {}
     assert window.dataset_explorer_controller.label_definitions != {}
     assert window.dataset_explorer_controller.json_loaded is True
     assert window.dataset_explorer_controller.current_json_path == str(project_json_path)
@@ -304,6 +315,203 @@ def test_localization_add_label_uses_signal_pause_resume_flow(
     events = window.dataset_explorer_controller.localization_events.get(path, [])
     assert any(event.get("label") == "signal_pause_label" and event.get("position_ms") == 4321 for event in events)
     assert len(window.dataset_explorer_controller.undo_stack) == undo_before + 1
+
+
+@pytest.mark.gui
+def test_localization_inference_persists_confidence_and_confirm_strips_it(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    controller.current_head = "ball_action"
+    controller._on_inference_success(
+        [{"head": "ball_action", "label": "shot", "position_ms": 4321, "confidence_score": 0.64}]
+    )
+    qtbot.wait(50)
+
+    path = controller.current_video_path
+    assert path is not None
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    inferred = next(
+        evt
+        for evt in events
+        if evt.get("head") == "ball_action"
+        and evt.get("label") == "shot"
+        and int(evt.get("position_ms", 0)) == 4321
+    )
+    assert inferred.get("confidence_score") == pytest.approx(0.64)
+
+    row = next(
+        i
+        for i in range(window.localization_panel.table.model.rowCount())
+        if window.localization_panel.table.model.get_annotation_at(i) == inferred
+    )
+    monkeypatch.setattr(
+        "ui.localization.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    _double_click_table_cell(window, qtbot, row, 3)
+
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    confirmed = next(
+        evt for evt in events
+        if evt.get("head") == "ball_action"
+        and evt.get("label") == "shot"
+        and int(evt.get("position_ms", 0)) == 4321
+    )
+    assert "confidence_score" not in confirmed
+
+
+@pytest.mark.gui
+def test_localization_inference_reject_inline_removes_smart_event(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    controller.current_head = "ball_action"
+    controller._on_inference_success(
+        [{"head": "ball_action", "label": "shot", "position_ms": 4999, "confidence_score": 0.71}]
+    )
+    qtbot.wait(50)
+
+    path = controller.current_video_path
+    assert path is not None
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    target = next(
+        evt
+        for evt in events
+        if evt.get("head") == "ball_action"
+        and evt.get("label") == "shot"
+        and int(evt.get("position_ms", 0)) == 4999
+    )
+
+    row = next(
+        i
+        for i in range(window.localization_panel.table.model.rowCount())
+        if window.localization_panel.table.model.get_annotation_at(i) == target
+    )
+    monkeypatch.setattr(
+        "ui.localization.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+    _double_click_table_cell(window, qtbot, row, 3)
+
+    events = list(window.dataset_explorer_controller.localization_events.get(path, []))
+    assert not any(
+        evt.get("head") == "ball_action"
+        and evt.get("label") == "shot"
+        and int(evt.get("position_ms", 0)) == 4999
+        for evt in events
+    )
+
+
+@pytest.mark.gui
+def test_localization_inference_unknown_label_mapping_skip_keeps_dataset_unchanged(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    controller.current_head = "ball_action"
+    before_events = list(window.dataset_explorer_controller.localization_events.get(controller.current_video_path, []))
+
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.QInputDialog.getItem",
+        lambda *args, **kwargs: ("<Skip Prediction>", True),
+    )
+    controller._on_inference_success(
+        [{"head": "ball_action", "label": "unknown_pred", "position_ms": 5555, "confidence_score": 0.51}]
+    )
+    qtbot.wait(50)
+
+    after_events = list(window.dataset_explorer_controller.localization_events.get(controller.current_video_path, []))
+    assert after_events == before_events
+
+
+@pytest.mark.gui
+def test_localization_inference_unknown_label_mapping_applies_selected_label(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    controller.current_head = "ball_action"
+
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.QInputDialog.getItem",
+        lambda *args, **kwargs: ("shot", True),
+    )
+    controller._on_inference_success(
+        [{"head": "ball_action", "label": "unknown_pred", "position_ms": 5656, "confidence_score": 0.73}]
+    )
+    qtbot.wait(50)
+
+    events = list(window.dataset_explorer_controller.localization_events.get(controller.current_video_path, []))
+    matched = next(
+        evt for evt in events
+        if evt.get("head") == "ball_action"
+        and evt.get("label") == "shot"
+        and int(evt.get("position_ms", 0)) == 5656
+    )
+    assert matched.get("confidence_score") == pytest.approx(0.73)
 
 
 # @pytest.mark.gui

@@ -33,7 +33,7 @@ Implements Classification mode behavior and coordinates smart inference/train he
 ## Key Functions and Responsibilities
 - `setup_connections()`
   - Connects classification panel UI actions to controller actions.
-- `on_selected_sample_changed(sample, resolved_path="")`
+- `on_selected_sample_changed(sample)`
   - Refreshes manual/smart display for selected sample snapshot.
 - `on_schema_context_changed(schema)`
   - Rebuilds dynamic schema-driven controls from runtime schema context.
@@ -41,6 +41,8 @@ Implements Classification mode behavior and coordinates smart inference/train he
   - Normalizes annotation payload and emits tracked save intent.
 - `confirm_smart_annotation_as_manual()`
   - Delegates smart confirmation flow to `InferenceManager`.
+- `reject_smart_annotation_head(head)`
+  - Rejects inferred smart annotation for one head and restores pre-inference manual state.
 - `clear_current_manual_annotation()` / `clear_current_smart_annotation()`
   - Clears manual/smart state with proper history behavior.
 
@@ -48,6 +50,10 @@ Implements Classification mode behavior and coordinates smart inference/train he
 - Manual tab changes save immediately when effective value differs.
 - No-op saves (same normalized annotation) do nothing.
 - Schema operations enforce duplicate checks.
+- Smart inference is persisted in `labels[head]` with `confidence_score`.
+- Confirming smart annotation removes `confidence_score` only.
+- Rejecting/clearing smart annotation restores pre-inference manual state (or removes head if none existed).
+- Smart inference is triggered per head from the manual panel (no Smart tab flow).
 
 ## Conventions
 - UI stays in panel classes; controller performs behavior orchestration.

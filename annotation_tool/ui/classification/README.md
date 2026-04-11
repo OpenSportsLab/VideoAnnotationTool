@@ -20,14 +20,14 @@ Provides the Classification right-panel widgets and dynamic label-group controls
 ### Panel Signals
 - `add_head_clicked(str)`
 - `remove_head_clicked(str)`
-- `smart_infer_requested()`
+- `head_smart_infer_requested(str)`
+- `head_smart_confirm_requested(str)`
+- `head_smart_reject_requested(str)`
 - `confirm_infer_requested(dict)`
 - `batch_confirm_requested(dict)`
 - `annotation_saved(dict)`
-- `smart_confirm_requested()`
 - `batch_run_requested(int, int)`
 - `hand_clear_requested()`
-- `smart_clear_requested()`
 
 ## Key Functions and Responsibilities
 - `setup_dynamic_labels(label_definitions)`
@@ -38,15 +38,15 @@ Provides the Classification right-panel widgets and dynamic label-group controls
   - Clears all selected label values.
 - `show_inference_loading(is_loading)`
   - Toggles inference loading state in the panel.
-- `display_inference_result(...)` / `display_batch_inference_result(...)`
-  - Renders smart inference output.
+- `display_inference_result(...)`
+  - Updates per-row smart controls (confidence + accept/reject) for inferred labels.
 - `reset_smart_inference()` / `reset_train_ui()`
   - Resets smart/train related UI state.
 
 ## Business Rules
 - Dynamic controls are schema-driven at runtime.
 - UI emits intent signals only; it does not commit dataset mutations.
-- Confidence chart reflects current smart output payload.
+- Smart state is rendered at row level inside each head group.
 
 ## Conventions
 - Keep `.ui` static and reusable.

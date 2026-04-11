@@ -93,6 +93,33 @@ def test_normalize_dataset_json_rejects_invalid_root_and_non_list_data(explorer_
     assert error == "Top-level 'data' must be a list."
 
 
+def test_normalize_dataset_json_drops_legacy_smart_keys(explorer_panel_and_controller):
+    _panel, controller = explorer_panel_and_controller
+    raw = {
+        "data": [
+            {
+                "id": "clip_1",
+                "inputs": [{"path": "clips/one.mp4", "type": "video"}],
+                "labels": {"phase": {"label": "build"}},
+                "events": [{"head": "ball_action", "label": "pass", "position_ms": 1000}],
+                "smart_label": {"label": "shot"},
+                "smart_event": {"head": "ball_action", "label": "shot", "position_ms": 1200},
+                "smart_labels": {"action": {"label": "shot", "conf_dict": {"shot": 0.72}}},
+                "smart_events": [{"head": "ball_action", "label": "shot", "position_ms": 2000}],
+            }
+        ],
+    }
+
+    normalized, error = controller._normalize_dataset_json(raw)
+    assert error == ""
+    sample = normalized["data"][0]
+    assert sample["labels"]["phase"]["label"] == "build"
+    assert "smart_labels" not in sample
+    assert "smart_events" not in sample
+    assert "smart_label" not in sample
+    assert "smart_event" not in sample
+
+
 def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
     explorer_panel_and_controller,
     tmp_path,
@@ -123,9 +150,7 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
                 "id": "clip_1",
                 "inputs": [{"path": "clips/clip.mp4", "type": "video"}],
                 "labels": {},
-                "smart_labels": {},
                 "events": [],
-                "smart_events": [],
                 "captions": [],
                 "dense_captions": [],
                 "metadata": {},
@@ -143,9 +168,7 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
     assert written["custom_root"] == {"keep": True}
     assert written["data"][0]["inputs"][0]["path"] == "../project/clips/clip.mp4"
     assert "labels" not in written["data"][0]
-    assert "smart_labels" not in written["data"][0]
     assert "events" not in written["data"][0]
-    assert "smart_events" not in written["data"][0]
     assert "captions" not in written["data"][0]
     assert "dense_captions" not in written["data"][0]
     assert "metadata" not in written["data"][0]
@@ -155,10 +178,11 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
 def test_available_mode_indices_for_sample_prefers_fixed_order(explorer_panel_and_controller):
     _panel, controller = explorer_panel_and_controller
     sample = {
-        "labels": {"action": {"label": "pass"}},
-        "smart_labels": {"action": {"label": "shot"}},
-        "events": [{"head": "action", "label": "pass", "position_ms": 1000}],
-        "smart_events": [{"head": "action", "label": "shot", "position_ms": 2000}],
+        "labels": {"action": {"label": "shot", "confidence_score": 0.9}},
+        "events": [
+            {"head": "action", "label": "pass", "position_ms": 1000},
+            {"head": "action", "label": "shot", "position_ms": 2000, "confidence_score": 0.7},
+        ],
         "captions": [{"lang": "en", "text": "caption"}],
         "dense_captions": [{"position_ms": 1500, "lang": "en", "text": "dense"}],
     }

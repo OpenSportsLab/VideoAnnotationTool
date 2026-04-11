@@ -96,10 +96,11 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     saved_sample = next(item for item in saved["data"] if item["id"] == "clip_1")
     assert saved["custom_root"] == {"keep": True}
     assert saved_sample["custom_sample"] == {"keep": True, "index": 1}
-    assert saved_sample["labels"]["action"]["label"] == "pass"
-    assert saved_sample["smart_labels"]["_confirmed"] is True
+    assert saved_sample["labels"]["action"]["label"] == "shot"
+    assert saved_sample["labels"]["action"]["confidence_score"] == pytest.approx(0.8)
     assert saved_sample["events"][0]["position_ms"] == 1000
-    assert saved_sample["smart_events"][0]["position_ms"] == 2000
+    assert saved_sample["events"][1]["position_ms"] == 2000
+    assert saved_sample["events"][1]["confidence_score"] == pytest.approx(0.7)
     assert saved_sample["captions"][0]["text"] == "Mixed caption"
     assert saved_sample["dense_captions"][0]["text"] == "Mixed dense caption"
 
@@ -108,10 +109,11 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
 
     reloaded_sample = window.dataset_explorer_controller.get_sample("clip_1")
     assert reloaded_sample is not None
-    assert reloaded_sample["labels"]["action"]["label"] == "pass"
-    assert reloaded_sample["smart_labels"]["_confirmed"] is True
+    assert reloaded_sample["labels"]["action"]["label"] == "shot"
+    assert reloaded_sample["labels"]["action"]["confidence_score"] == pytest.approx(0.8)
     assert reloaded_sample["events"][0]["position_ms"] == 1000
-    assert reloaded_sample["smart_events"][0]["position_ms"] == 2000
+    assert reloaded_sample["events"][1]["position_ms"] == 2000
+    assert reloaded_sample["events"][1]["confidence_score"] == pytest.approx(0.7)
     assert reloaded_sample["captions"][0]["text"] == "Mixed caption"
     assert reloaded_sample["dense_captions"][0]["text"] == "Mixed dense caption"
     assert window.dataset_explorer_controller.dataset_json["custom_root"] == {"keep": True}
@@ -370,7 +372,7 @@ def test_active_tab_switch_reapplies_markers_without_leaking_stale_markers(
 
     window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["localization"])
     qtbot.wait(50)
-    assert [marker["start_ms"] for marker in window.center_panel.slider.markers] == [1000]
+    assert [marker["start_ms"] for marker in window.center_panel.slider.markers] == [1000, 2000]
 
     window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["dense_description"])
     qtbot.wait(50)
@@ -629,7 +631,7 @@ def test_filter_not_labelled_reselects_first_visible_row_for_each_mode(
 
 
 @pytest.mark.gui
-@pytest.mark.parametrize("mode_idx", [2, 3])
+@pytest.mark.parametrize("mode_idx", [0, 1, 2, 3])
 def test_filter_smart_labelled_uses_sample_state_across_modes(
     window,
     monkeypatch,
