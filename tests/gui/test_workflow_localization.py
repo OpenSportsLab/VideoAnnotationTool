@@ -41,6 +41,15 @@ def _double_click_table_cell(window, qtbot, row: int, col: int):
 
 
 @pytest.mark.gui
+def test_localization_hides_outer_tab_bar_when_only_hand_annotation_remains(window):
+    panel = window.localization_panel
+
+    assert panel.tabs.count() == 1
+    assert panel.tabs.tabText(0) == "Hand Annotation"
+    assert panel.tabs.tabBar().isHidden() is True
+
+
+@pytest.mark.gui
 def test_localization_inference_manager_uses_checked_in_loc_config(window):
     manager = type(window.localization_editor_controller.inference_manager)()
     config_path = Path(manager.config_path)

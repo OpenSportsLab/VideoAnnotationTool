@@ -658,7 +658,8 @@ QPushButton[class="spotting_add_btn"] {
     border-radius: 6px;
     font-weight: bold;
     font-size: 13px;
-    min-height: 45px;
+    min-height: 28px;
+    padding: 4px 10px;
 }
 QPushButton[class="spotting_add_btn"]:hover { background-color: #1084E3; border-color: #2094F3; }
 QPushButton[class="spotting_add_btn"]:pressed { background-color: #005A9E; }

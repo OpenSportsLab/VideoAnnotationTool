@@ -776,6 +776,9 @@ class LocalizationAnnotationPanel(QWidget):
                 self.tabs.removeTab(idx)
                 break
 
+        if self.tabs.count() <= 1:
+            self.tabs.tabBar().hide()
+
         self.tabs.currentChanged.connect(self.tabSwitched.emit)
         self.btn_prev_event.clicked.connect(lambda: self.eventNavigateRequested.emit(-1))
         self.btn_next_event.clicked.connect(lambda: self.eventNavigateRequested.emit(1))
