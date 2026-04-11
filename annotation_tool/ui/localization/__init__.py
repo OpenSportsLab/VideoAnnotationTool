@@ -333,7 +333,7 @@ class _TableAdapter(QObject):
         reply = QMessageBox.question(
             self.table,
             "Confirm Annotation",
-            "Do you want to confirm that annotation?",
+            "Confirm this annotation?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
