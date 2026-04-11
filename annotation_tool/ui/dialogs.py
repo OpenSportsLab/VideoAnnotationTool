@@ -2,7 +2,7 @@ import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QRadioButton, QTreeView, QDialogButtonBox,
     QAbstractItemView, QGroupBox, QFormLayout, QLineEdit, QHBoxLayout,
-    QFrame, QListWidget, QComboBox, QPushButton, QLabel,
+    QFrame, QListWidget, QComboBox, QPushButton, QLabel, QProgressBar,
     QMessageBox, QWidget, QListWidgetItem, QStyle, QButtonGroup, QScrollArea
 )
 from PyQt6.QtCore import QDir, Qt, QSize
@@ -132,3 +132,26 @@ class MediaErrorDialog(QMessageBox):
             self.setDetailedText(f"System Diagnostic Logs:\n{error_string}")
             
         self.setStandardButtons(QMessageBox.StandardButton.Ok)
+
+
+class BusyStatusDialog(QDialog):
+    def __init__(self, title: str, message: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+
+        self._label = QLabel(message, self)
+        self._label.setWordWrap(True)
+        layout.addWidget(self._label)
+
+        self._progress = QProgressBar(self)
+        self._progress.setRange(0, 0)
+        self._progress.setTextVisible(False)
+        layout.addWidget(self._progress)
+
+        self.setMinimumWidth(320)
+
+    def set_message(self, message: str) -> None:
+        self._label.setText(message)

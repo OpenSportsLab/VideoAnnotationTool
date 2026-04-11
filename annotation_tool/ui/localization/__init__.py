@@ -28,6 +28,7 @@ from colors import (
     localization_label_text_hex,
     normalize_hex_color,
 )
+from ui.dialogs import BusyStatusDialog
 from utils import resource_path
 
 
@@ -400,6 +401,7 @@ class _SpottingTabsAdapter(QObject):
                 "scroll": scroll,
                 "labels": labels,
                 "label_colors": dict(definition.get("label_colors", {})),
+                "smart_infer_btn": smart_infer_btn,
             }
             smart_infer_btn.clicked.connect(lambda _, h=head: self.smartInferenceRequested.emit(h))
             self._populate_head_buttons(head)
@@ -641,6 +643,15 @@ class _SpottingTabsAdapter(QObject):
         if ok and name.strip():
             self.headAdded.emit(name.strip())
 
+    def set_inference_loading(self, is_loading: bool):
+        self._tabs.setEnabled(not is_loading)
+        for page_info in self._head_pages.values():
+            smart_infer_btn = page_info.get("smart_infer_btn")
+            if smart_infer_btn is None:
+                continue
+            smart_infer_btn.setEnabled(not is_loading)
+            smart_infer_btn.setText("Loading..." if is_loading else "Smart Inference")
+
 
 class _AnnotationManagementAdapter(QObject):
     def __init__(self, spotting_tabs: QTabWidget, parent=None):
@@ -649,6 +660,9 @@ class _AnnotationManagementAdapter(QObject):
 
     def update_schema(self, label_definitions):
         self.tabs.update_schema(label_definitions)
+
+    def set_inference_loading(self, is_loading: bool):
+        self.tabs.set_inference_loading(is_loading)
 
 
 class _SmartWidgetAdapter(QObject):
@@ -782,6 +796,39 @@ class LocalizationAnnotationPanel(QWidget):
         self.tabs.currentChanged.connect(self.tabSwitched.emit)
         self.btn_prev_event.clicked.connect(lambda: self.eventNavigateRequested.emit(-1))
         self.btn_next_event.clicked.connect(lambda: self.eventNavigateRequested.emit(1))
+
+        self._inference_loading_dialog = BusyStatusDialog(
+            "Inference",
+            "Loading model and running inference. Please wait...",
+            self,
+        )
+        self._inference_loading_dialog.hide()
+
+    def show_inference_loading(self, is_loading: bool):
+        is_loading = bool(is_loading)
+        self.annot_mgmt.set_inference_loading(is_loading)
+        self.table.table.setEnabled(not is_loading)
+        self.btn_prev_event.setEnabled(not is_loading)
+        self.btn_next_event.setEnabled(not is_loading)
+
+        if self.table.btn_set_time is not None:
+            if is_loading:
+                self.table.btn_set_time.setEnabled(False)
+            else:
+                selection_model = self.table.table.selectionModel()
+                has_selection = bool(selection_model and selection_model.selectedRows())
+                self.table.btn_set_time.setEnabled(has_selection)
+
+        if is_loading:
+            self._inference_loading_dialog.set_message("Loading model and running inference. Please wait...")
+            self._inference_loading_dialog.show()
+            self._inference_loading_dialog.raise_()
+            self._inference_loading_dialog.activateWindow()
+            self.setCursor(Qt.CursorShape.WaitCursor)
+            return
+
+        self._inference_loading_dialog.hide()
+        self.unsetCursor()
 
 
 __all__ = ["LocalizationAnnotationPanel"]

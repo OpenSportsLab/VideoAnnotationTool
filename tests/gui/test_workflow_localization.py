@@ -114,6 +114,69 @@ def test_localization_smart_inference_passes_head_context_to_manager(
 
 
 @pytest.mark.gui
+def test_localization_inference_loading_cue_toggles_controls(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    panel = window.localization_panel
+
+    monkeypatch.setattr(controller, "_prompt_model_id", lambda: "jeetv/snpro-snbas-2024")
+    monkeypatch.setattr(controller, "_prompt_inference_range", lambda: (0, 5000))
+
+    captured = {}
+
+    def fake_start_inference(video_path, start_ms, end_ms, model_id, head_name, labels, input_fps):
+        captured.update(
+            {
+                "video_path": video_path,
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "model_id": model_id,
+                "head_name": head_name,
+                "labels": list(labels),
+                "input_fps": input_fps,
+            }
+        )
+
+    monkeypatch.setattr(controller.inference_manager, "start_inference", fake_start_inference)
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.QMessageBox.critical",
+        lambda *args, **kwargs: None,
+    )
+
+    controller._on_head_smart_inference_requested("ball_action")
+    qtbot.wait(50)
+
+    assert captured["video_path"] == controller.current_video_path
+    assert panel._inference_loading_dialog.isVisible() is True
+    assert panel.spottingTabs.isEnabled() is False
+    assert panel.table.table.isEnabled() is False
+
+    controller._on_inference_error("synthetic failure")
+    qtbot.wait(50)
+
+    assert panel._inference_loading_dialog.isVisible() is False
+    assert panel.spottingTabs.isEnabled() is True
+    assert panel.table.table.isEnabled() is True
+
+
+@pytest.mark.gui
 # Workflow: Localization annotation round-trip with timestamp edit:
 # 1) create event(label+time) + save + reopen, then 2) change time + save + reopen and verify final timestamp.
 def test_localization_annotate_save_reload_edit_time_and_persist(

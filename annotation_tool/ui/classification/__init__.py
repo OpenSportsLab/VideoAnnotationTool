@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.dialogs import BusyStatusDialog
 from utils import resource_path
 
 
@@ -303,6 +304,13 @@ class DynamicSingleLabelGroup(QWidget):
     def get_row_smart_widgets(self, label_text: str):
         return self._smart_controls_by_label.get(str(label_text or ""))
 
+    def set_inference_loading(self, is_loading: bool):
+        self.btn_smart_infer.setEnabled(not is_loading)
+        self.btn_smart_infer.setText("Loading..." if is_loading else "Smart Inference")
+        for _conf_btn, accept_btn, reject_btn in self._smart_controls_by_label.values():
+            accept_btn.setEnabled(not is_loading)
+            reject_btn.setEnabled(not is_loading)
+
 
 class DynamicMultiLabelGroup(QWidget):
     value_changed = pyqtSignal(str, list)
@@ -449,6 +457,13 @@ class DynamicMultiLabelGroup(QWidget):
     def get_row_smart_widgets(self, label_text: str):
         return self._smart_controls_by_label.get(str(label_text or ""))
 
+    def set_inference_loading(self, is_loading: bool):
+        self.btn_smart_infer.setEnabled(not is_loading)
+        self.btn_smart_infer.setText("Loading..." if is_loading else "Smart Inference")
+        for _conf_btn, accept_btn, reject_btn in self._smart_controls_by_label.values():
+            accept_btn.setEnabled(not is_loading)
+            reject_btn.setEnabled(not is_loading)
+
 
 class ClassificationAnnotationPanel(QWidget):
     add_head_clicked = pyqtSignal(str)
@@ -539,6 +554,7 @@ class ClassificationAnnotationPanel(QWidget):
         self.chart_widget.setVisible(False)
 
         self._configure_train_defaults()
+        self._configure_inference_feedback()
         self.clear_dynamic_labels()
         self.manual_box.setEnabled(False)
         self._update_confirm_button_state()
@@ -704,6 +720,26 @@ class ClassificationAnnotationPanel(QWidget):
 
         self.btn_stop_train.setEnabled(False)
 
+    def _configure_inference_feedback(self):
+        self._inference_loading_dialog = BusyStatusDialog(
+            "Inference",
+            "Loading model and running inference. Please wait...",
+            self,
+        )
+        self._inference_loading_dialog.hide()
+
+    def _set_inference_controls_loading(self, is_loading: bool):
+        self.head_tabs_widget.setEnabled(not is_loading)
+        self.clear_sel_btn.setEnabled(not is_loading)
+        self.btn_batch_infer.setEnabled(not is_loading)
+        self.btn_run_batch.setEnabled(not is_loading)
+        self.spin_start.setEnabled(not is_loading)
+        self.spin_end.setEnabled(not is_loading)
+
+        for group in self.label_groups.values():
+            if hasattr(group, "set_inference_loading"):
+                group.set_inference_loading(is_loading)
+
     def _toggle_batch_widget(self):
         self.batch_input_widget.setVisible(not self.batch_input_widget.isVisible())
 
@@ -747,6 +783,7 @@ class ClassificationAnnotationPanel(QWidget):
         self.is_batch_mode_active = False
         self.pending_batch_results = {}
         self.chart_widget.setVisible(False)
+        self.show_inference_loading(False)
 
     def reset_train_ui(self):
         self.train_progress.setValue(0)
@@ -771,7 +808,19 @@ class ClassificationAnnotationPanel(QWidget):
             self._validate_batch_range()
 
     def show_inference_loading(self, is_loading: bool):
-        _ = is_loading
+        is_loading = bool(is_loading)
+        self._set_inference_controls_loading(is_loading)
+
+        if is_loading:
+            self._inference_loading_dialog.set_message("Loading model and running inference. Please wait...")
+            self._inference_loading_dialog.show()
+            self._inference_loading_dialog.raise_()
+            self._inference_loading_dialog.activateWindow()
+            self.setCursor(Qt.CursorShape.WaitCursor)
+            return
+
+        self._inference_loading_dialog.hide()
+        self.unsetCursor()
 
     def display_inference_result(self, target_head: str, predicted_label: str, conf_dict: dict):
         score = 0.0
