@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QProgressDialog,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -303,6 +304,13 @@ class DynamicSingleLabelGroup(QWidget):
 
     def get_row_smart_widgets(self, label_text: str):
         return self._smart_controls_by_label.get(str(label_text or ""))
+
+    def set_inference_loading(self, is_loading: bool):
+        self.btn_smart_infer.setEnabled(not is_loading)
+        self.btn_smart_infer.setText("Loading..." if is_loading else "Smart Inference")
+        for _conf_btn, accept_btn, reject_btn in self._smart_controls_by_label.values():
+            accept_btn.setEnabled(not is_loading)
+            reject_btn.setEnabled(not is_loading)
 
     def set_inference_loading(self, is_loading: bool):
         self.btn_smart_infer.setEnabled(not is_loading)
