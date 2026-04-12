@@ -64,7 +64,7 @@ jobs:
           --add-data "controllers;controllers"
           --add-data "image;image"
           --add-data "config.yaml;."
-          --add-data "loc_config.yaml:."
+          --add-data "loc_config.yaml;."
           --collect-all "opensportslib"
           --collect-all "lightning_fabric"
           --collect-all "wandb"
