@@ -71,14 +71,12 @@ jobs:
           "main.py"
 
       - name: Zip Windows binary (manual runs only)
-        if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
           Move-Item -Force dist\VideoAnnotationTool.exe dist\VideoAnnotationTool-win.exe
           Compress-Archive -Path dist\VideoAnnotationTool-win.exe -DestinationPath dist\VideoAnnotationTool-win.zip -Force
 
       - name: Upload artifact (manual runs only)
-        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: VideoAnnotationTool-Windows
@@ -136,13 +134,11 @@ jobs:
           "main.py"
 
       - name: Zip macOS app (manual runs only)
-        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           ditto -c -k --sequesterRsrc --keepParent "dist/VideoAnnotationTool.app" "dist/VideoAnnotationTool-mac.zip"
 
       - name: Upload artifact (manual runs only)
-        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: VideoAnnotationTool-macOS
@@ -206,7 +202,6 @@ jobs:
           "main.py"
 
       - name: Zip Linux binary (manual runs only)
-        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           mv -f dist/VideoAnnotationTool dist/VideoAnnotationTool-linux
@@ -215,7 +210,6 @@ jobs:
           cd ..
 
       - name: Upload artifact (manual runs only)
-        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: VideoAnnotationTool-Linux
