@@ -1,11 +1,22 @@
 import copy
+import html
 import os
 
 from PyQt6.QtCore import Qt, QModelIndex, QTimer
 from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
-from PyQt6.QtWidgets import QDockWidget, QMainWindow, QStackedWidget, QTabWidget
+from PyQt6.QtWidgets import QLabel, QDockWidget, QMainWindow, QMessageBox, QStackedWidget, QTabWidget
 
 from controllers.classification import ClassificationEditorController
+from controllers.hf_transfer_controller import HfTransferController
+from controllers.hf_transfer_service import (
+    create_dataset_branch_on_hf,
+    create_dataset_repo_on_hf,
+    dataset_repo_exists_on_hf,
+    is_hf_download_url_not_found_error,
+    is_hf_repo_not_found_error,
+    is_hf_revision_not_found_error,
+    read_hf_source_metadata_from_dataset,
+)
 from controllers.localization import LocalizationEditorController
 from controllers.description import DescEditorController
 from controllers.dense_description import DenseEditorController
@@ -22,6 +33,7 @@ from ui.classification import ClassificationAnnotationPanel
 from ui.localization import LocalizationAnnotationPanel
 from ui.description import DescriptionAnnotationPanel
 from ui.dense_description import DenseAnnotationPanel
+from ui.dialogs import BusyStatusDialog, HfDownloadDialog, HfUploadDialog
 
 from utils import create_checkmark_icon, resource_path
 
@@ -31,6 +43,7 @@ class VideoAnnotationWindow(QMainWindow):
     Main application window for annotation + localization + description + dense workflows.
     Now directly implements the UI setup to avoid overcomplicated nesting.
     """
+    _MUTE_SETTING_KEY = "media/muted"
 
     def __init__(self) -> None:
         super().__init__()
@@ -135,6 +148,12 @@ class VideoAnnotationWindow(QMainWindow):
             current_filter_index_provider=self.dataset_explorer_panel.filter_combo.currentIndex,
         )
         self.welcome_controller = WelcomeController(self.welcome_widget, self.dataset_explorer_controller, self)
+        self.hf_transfer_controller = HfTransferController()
+        self._hf_busy_dialog = None
+        self._active_hf_transfer_kind: str | None = None
+        self._last_hf_download_payload: dict | None = None
+        self._last_hf_upload_payload: dict | None = None
+        self._last_restored_mute_state: bool | None = None
 
         # Coalesce repeated status-triggered filter refreshes to avoid UI stalls
         # during rapid annotation mutations.
@@ -312,6 +331,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.removeItemMutationRequested.connect(
             self.history_manager.execute_remove_item
         )
+        self.dataset_explorer_controller.settingsChanged.connect(
+            lambda _settings: self._restore_mute_state_from_settings()
+        )
 
 
         # --- Center panel (Unified Playback) ---
@@ -325,7 +347,9 @@ class VideoAnnotationWindow(QMainWindow):
         center_panel.durationChanged.connect(self.localization_editor_controller.on_media_duration_changed)
         center_panel.positionChanged.connect(self.dense_editor_controller.on_media_position_changed)
         self.media_controller.muteStateChanged.connect(center_panel.set_mute_button_state)
+        self.media_controller.muteStateChanged.connect(self._save_mute_state_to_settings)
         center_panel.set_mute_button_state(self.media_controller.is_muted())
+        self._restore_mute_state_from_settings()
         # Dense add should always pause playback first; no auto-resume behavior.
         self.dense_panel.addEventRequested.connect(self.media_controller.pause)
         # Snapshot runtime media position on dense actions.
@@ -464,6 +488,27 @@ class VideoAnnotationWindow(QMainWindow):
         self.desc_editor_controller.on_mode_changed(current_mode)
         self.dense_editor_controller.on_mode_changed(current_mode)
 
+        # --- Hugging Face transfer wiring ---
+        self.hf_transfer_controller.downloadStarted.connect(
+            lambda message: self._on_hf_transfer_started("HF Download", message, "download")
+        )
+        self.hf_transfer_controller.downloadProgress.connect(
+            lambda message: self._on_hf_transfer_progress("HF Download", message)
+        )
+        self.hf_transfer_controller.downloadCompleted.connect(self._on_hf_download_completed)
+        self.hf_transfer_controller.downloadFailed.connect(self._on_hf_download_failed)
+        self.hf_transfer_controller.downloadCancelled.connect(self._on_hf_download_cancelled)
+
+        self.hf_transfer_controller.uploadStarted.connect(
+            lambda message: self._on_hf_transfer_started("HF Upload", message, "upload")
+        )
+        self.hf_transfer_controller.uploadProgress.connect(
+            lambda message: self._on_hf_transfer_progress("HF Upload", message)
+        )
+        self.hf_transfer_controller.uploadCompleted.connect(self._on_hf_upload_completed)
+        self.hf_transfer_controller.uploadFailed.connect(self._on_hf_upload_failed)
+        self.hf_transfer_controller.uploadCancelled.connect(self._on_hf_upload_cancelled)
+
     def _setup_menu_bar(self) -> None:
         from PyQt6.QtGui import QAction
         menu_bar = self.menuBar()
@@ -501,6 +546,17 @@ class VideoAnnotationWindow(QMainWindow):
         self.action_quit.triggered.connect(self._safe_close_dataset_or_quit)
         file_menu.addAction(self.action_quit)
 
+        data_menu = menu_bar.addMenu("&Data")
+
+        self.action_hf_download = QAction("Download Dataset from HF...", self)
+        self.action_hf_download.triggered.connect(self._open_hf_download_dialog)
+        data_menu.addAction(self.action_hf_download)
+
+        self.action_hf_upload = QAction("Upload Dataset to HF...", self)
+        self.action_hf_upload.triggered.connect(self._open_hf_upload_dialog)
+        self.action_hf_upload.setEnabled(False)
+        data_menu.addAction(self.action_hf_upload)
+
         edit_menu = menu_bar.addMenu("&Edit")
         self.action_undo = QAction("Undo", self)
         self.action_undo.setShortcut(QKeySequence.StandardKey.Undo)
@@ -525,7 +581,10 @@ class VideoAnnotationWindow(QMainWindow):
             lambda: self.show_temp_msg("Settings", "Settings dialog not implemented yet.")
         )
         QShortcut(QKeySequence("Ctrl+D"), self).activated.connect(
-            lambda: self.show_temp_msg("Downloader", "Dataset downloader not implemented yet.")
+            self._open_hf_download_dialog
+        )
+        QShortcut(QKeySequence("Ctrl+U"), self).activated.connect(
+            self._open_hf_upload_dialog
         )
 
         QShortcut(QKeySequence.StandardKey.Undo, self).activated.connect(self.history_manager.perform_undo)
@@ -630,10 +689,318 @@ class VideoAnnotationWindow(QMainWindow):
                 )
                 event.ignore()
                 return
+            self._close_hf_busy_dialog()
             self.media_controller.stop()
             event.accept()
         else:
             event.ignore()
+
+    def _open_hf_download_dialog(self) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        dialog = HfDownloadDialog(settings=settings, parent=self)
+        dialog.downloadRequested.connect(self._start_hf_download)
+        result = dialog.exec()
+        # Compatibility fallback for tests that monkeypatch dialog.exec/get_payload
+        # without triggering the internal submit signal path.
+        if result == dialog.DialogCode.Accepted and not dialog.was_submitted():
+            self._start_hf_download(dialog.get_payload())
+
+    def _start_hf_download(self, payload: dict) -> bool:
+        self._last_hf_download_payload = dict(payload or {})
+        return self.hf_transfer_controller.start_download(payload)
+
+    def _open_hf_upload_dialog(self) -> None:
+        current_json_path = str(self.dataset_explorer_controller.current_json_path or "").strip()
+        if not current_json_path or not os.path.isfile(current_json_path):
+            QMessageBox.warning(
+                self,
+                "Upload Unavailable",
+                "Upload is available only when a dataset JSON is currently opened from disk.",
+            )
+            return
+
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        dataset_json = getattr(self.dataset_explorer_controller, "dataset_json", {})
+        hf_defaults = read_hf_source_metadata_from_dataset(dataset_json)
+        dialog = HfUploadDialog(
+            current_json_path,
+            hf_defaults=hf_defaults,
+            settings=settings,
+            parent=self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        upload_payload = dialog.get_payload()
+        self._last_hf_upload_payload = dict(upload_payload)
+        self.hf_transfer_controller.start_upload(upload_payload)
+
+    def _on_hf_transfer_started(self, title: str, message: str, transfer_kind: str) -> None:
+        self._close_hf_busy_dialog()
+        self._active_hf_transfer_kind = transfer_kind
+        self._hf_busy_dialog = BusyStatusDialog(title, message, self, show_cancel=True)
+        self._hf_busy_dialog.cancelRequested.connect(self._on_hf_transfer_cancel_requested)
+        self._hf_busy_dialog.show()
+        self.show_temp_msg(title, message, 3000)
+
+    def _on_hf_transfer_progress(self, title: str, message: str) -> None:
+        if self._hf_busy_dialog:
+            self._hf_busy_dialog.set_message(message)
+        self.show_temp_msg(title, message, 3000)
+
+    def _on_hf_transfer_failed(self, title: str, error: str) -> None:
+        self._close_hf_busy_dialog()
+        QMessageBox.critical(self, title, error)
+        self.show_temp_msg(title, error, 5000)
+
+    def _on_hf_transfer_cancel_requested(self) -> None:
+        if not self._hf_busy_dialog:
+            return
+        self._hf_busy_dialog.set_cancel_enabled(False)
+        if self._active_hf_transfer_kind == "download":
+            if not self.hf_transfer_controller.cancel_download():
+                self._hf_busy_dialog.set_cancel_enabled(True)
+                return
+            self.show_temp_msg("HF Download", "Cancelling download...", 3000)
+            return
+        if self._active_hf_transfer_kind == "upload":
+            if not self.hf_transfer_controller.cancel_upload():
+                self._hf_busy_dialog.set_cancel_enabled(True)
+                return
+            self.show_temp_msg("HF Upload", "Cancelling upload...", 3000)
+            return
+        self._hf_busy_dialog.set_cancel_enabled(True)
+
+    def _on_hf_upload_failed(self, error: str) -> None:
+        self._close_hf_busy_dialog()
+
+        payload = dict(self._last_hf_upload_payload or {})
+        repo_id = str(payload.get("repo_id") or "").strip()
+        revision = str(payload.get("revision") or "main").strip() or "main"
+        token = payload.get("token")
+        error_text = str(error or "")
+        error_lower = error_text.lower()
+
+        repo_missing = bool(repo_id) and is_hf_repo_not_found_error(error_text)
+        revision_missing = bool(repo_id and revision) and is_hf_revision_not_found_error(error_text)
+
+        # Ambiguous HF upload errors can look like "Repository Not Found .../preupload/<revision>"
+        # when the repo exists but the target branch is missing.
+        is_ambiguous_branch_case = (
+            not revision_missing
+            and repo_missing
+            and revision.lower() != "main"
+            and f"/preupload/{revision.lower()}" in error_lower
+        )
+        if is_ambiguous_branch_case:
+            try:
+                revision_missing = dataset_repo_exists_on_hf(repo_id=repo_id, token=token)
+                if revision_missing:
+                    repo_missing = False
+            except Exception:
+                # Keep original classification when probing repo existence fails.
+                pass
+
+        if repo_id and revision and revision_missing:
+            reply = QMessageBox.question(
+                self,
+                "HF Branch Not Found",
+                (
+                    f"The branch/revision was not found on Hugging Face:\n{repo_id}@{revision}\n\n"
+                    "Do you want to create it now and retry the upload?"
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                try:
+                    self.show_temp_msg("HF Upload", f"Creating branch {revision} on {repo_id}...", 3000)
+                    create_dataset_branch_on_hf(
+                        repo_id=repo_id,
+                        branch=revision,
+                        source_revision="main",
+                        token=token,
+                    )
+                except Exception as exc:
+                    create_error = (
+                        f"Failed to create dataset branch:\n{repo_id}@{revision}\n\n{exc}"
+                    )
+                    QMessageBox.critical(self, "HF Branch Creation Failed", create_error)
+                    self.show_temp_msg("HF Branch Creation Failed", str(exc), 5000)
+                    return
+
+                if self.hf_transfer_controller.start_upload(payload):
+                    return
+
+                QMessageBox.critical(
+                    self,
+                    "HF Upload Failed",
+                    "Could not restart upload because another Hugging Face upload is already running.",
+                )
+                self.show_temp_msg("HF Upload Failed", "Could not restart upload.", 5000)
+                return
+
+        if repo_id and repo_missing:
+            reply = QMessageBox.question(
+                self,
+                "HF Repository Not Found",
+                (
+                    f"The dataset repository was not found on Hugging Face:\n{repo_id}\n\n"
+                    "Do you want to create it now and retry the upload?"
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                try:
+                    self.show_temp_msg("HF Upload", f"Creating dataset repo {repo_id}...", 3000)
+                    create_dataset_repo_on_hf(repo_id=repo_id, token=token)
+                except Exception as exc:
+                    create_error = (
+                        f"Failed to create dataset repository:\n{repo_id}\n\n{exc}"
+                    )
+                    QMessageBox.critical(self, "HF Repo Creation Failed", create_error)
+                    self.show_temp_msg("HF Repo Creation Failed", str(exc), 5000)
+                    return
+
+                if self.hf_transfer_controller.start_upload(payload):
+                    return
+
+                QMessageBox.critical(
+                    self,
+                    "HF Upload Failed",
+                    "Could not restart upload because another Hugging Face upload is already running.",
+                )
+                self.show_temp_msg("HF Upload Failed", "Could not restart upload.", 5000)
+                return
+
+        QMessageBox.critical(self, "HF Upload Failed", error)
+        self.show_temp_msg("HF Upload Failed", error, 5000)
+
+    def _on_hf_download_failed(self, error: str) -> None:
+        failed_payload = dict(self._last_hf_download_payload or {})
+        failed_url = str(failed_payload.get("url") or "").strip()
+        if failed_url and is_hf_download_url_not_found_error(error):
+            settings = getattr(self.dataset_explorer_controller, "settings", None)
+            HfDownloadDialog.remove_successful_url_from_settings(settings, failed_url)
+
+        self._last_hf_download_payload = None
+        self._on_hf_transfer_failed("HF Download Failed", error)
+
+    def _on_hf_download_cancelled(self, message: str) -> None:
+        self._last_hf_download_payload = None
+        self._close_hf_busy_dialog()
+        QMessageBox.information(self, "HF Download Cancelled", message or "Download cancelled.")
+        self.show_temp_msg("HF Download", "Download cancelled.", 3000)
+
+    def _on_hf_download_completed(self, result: dict) -> None:
+        self._close_hf_busy_dialog()
+        output_dir = str(result.get("output_dir") or "")
+        dry_run = bool(result.get("dry_run"))
+
+        if dry_run:
+            msg = (
+                f"Dry-run completed.\n"
+                f"Matched files: {result.get('referenced_file_count', 0)}\n"
+                f"Estimated size: {result.get('estimated_total_size_human', '0.0 B')}\n"
+                f"Output directory: {output_dir}"
+            )
+            QMessageBox.information(self, "HF Dry-Run Complete", msg)
+            self.show_temp_msg("HF Dry-Run", "Dry-run completed.", 3000)
+            self._last_hf_download_payload = None
+            return
+
+        completed_payload = dict(self._last_hf_download_payload or {})
+        completed_url = str(completed_payload.get("url") or "").strip()
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        HfDownloadDialog.add_successful_url_to_settings(settings, completed_url)
+        self._last_hf_download_payload = None
+
+        downloaded_count = int(result.get("downloaded_file_count") or 0)
+        QMessageBox.information(
+            self,
+            "HF Download Complete",
+            f"Downloaded {downloaded_count} files to:\n{output_dir}",
+        )
+        self.show_temp_msg("HF Download", f"Downloaded {downloaded_count} files.", 3000)
+
+        json_path = str(result.get("json_path") or "")
+        if json_path and os.path.exists(json_path):
+            reply = QMessageBox.question(
+                self,
+                "Open Downloaded Dataset",
+                "Download completed successfully.\nDo you want to open the downloaded JSON now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.dataset_explorer_controller.open_project_from_path(json_path)
+
+    def _on_hf_upload_completed(self, result: dict) -> None:
+        self._close_hf_busy_dialog()
+        self._last_hf_upload_payload = None
+        repo_id = str(result.get("repo_id") or "")
+        revision = str(result.get("revision") or "main")
+        input_file_count = int(result.get("input_file_count") or 0)
+        uploaded_file_count = int(result.get("uploaded_file_count") or 0)
+        commit_ref = str(result.get("commit_ref") or "")
+        json_path = str(result.get("json_path") or "")
+        json_path_in_repo = str(result.get("json_path_in_repo") or "")
+        cleaned_repo_id = repo_id.strip("/")
+        cleaned_revision = revision.strip() or "main"
+        dataset_url = (
+            f"https://huggingface.co/datasets/{cleaned_repo_id}/tree/{cleaned_revision}"
+            if cleaned_repo_id
+            else ""
+        )
+
+        completion_box = QMessageBox(self)
+        completion_box.setIcon(QMessageBox.Icon.Information)
+        completion_box.setWindowTitle("HF Upload Complete")
+        completion_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        completion_box.setTextFormat(Qt.TextFormat.RichText)
+        completion_box.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+
+        completion_text = (
+            f"Uploaded <b>{uploaded_file_count}</b> files to dataset repo:<br>"
+            f"<code>{html.escape(repo_id)}</code><br>"
+            f"Branch: <code>{html.escape(cleaned_revision)}</code><br>"
+            f"Input files: <b>{input_file_count}</b><br>"
+            f"JSON in repo: <code>{html.escape(json_path_in_repo)}</code><br><br>"
+            f"Dataset JSON:<br><code>{html.escape(json_path)}</code><br><br>"
+            f"Commit:<br><code>{html.escape(commit_ref)}</code>"
+        )
+        if dataset_url:
+            escaped_dataset_url = html.escape(dataset_url, quote=True)
+            completion_text += (
+                "<br><br>Dataset URL:<br>"
+                f"<a href=\"{escaped_dataset_url}\">{escaped_dataset_url}</a>"
+            )
+        completion_box.setText(completion_text)
+        for label in completion_box.findChildren(QLabel):
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+            label.setOpenExternalLinks(True)
+        completion_box.exec()
+
+        self.show_temp_msg(
+            "HF Upload",
+            f"Uploaded {uploaded_file_count} files ({input_file_count} inputs + JSON) to {repo_id}@{revision}.",
+            3000,
+        )
+
+    def _on_hf_upload_cancelled(self, message: str) -> None:
+        self._last_hf_upload_payload = None
+        self._close_hf_busy_dialog()
+        QMessageBox.information(self, "HF Upload Cancelled", message or "Upload cancelled.")
+        self.show_temp_msg("HF Upload", "Upload cancelled.", 3000)
+
+    def _close_hf_busy_dialog(self) -> None:
+        if not self._hf_busy_dialog:
+            self._active_hf_transfer_kind = None
+            return
+        self._hf_busy_dialog.close()
+        self._hf_busy_dialog.deleteLater()
+        self._hf_busy_dialog = None
+        self._active_hf_transfer_kind = None
 
     def update_save_export_button_state(self) -> None:
         has_data = self.dataset_explorer_controller.json_loaded # Simple heuristic for now
@@ -643,16 +1010,68 @@ class VideoAnnotationWindow(QMainWindow):
             and (self.dataset_explorer_controller.current_json_path is not None)
             and self.dataset_explorer_controller.is_data_dirty
         )
+        can_hf_upload = (
+            bool(self.dataset_explorer_controller.json_loaded)
+            and bool(self.dataset_explorer_controller.current_json_path)
+            and os.path.isfile(str(self.dataset_explorer_controller.current_json_path))
+        )
         self.action_save.setEnabled(can_save)
         self.action_export.setEnabled(can_export)
         self.action_undo.setEnabled(len(self.dataset_explorer_controller.undo_stack) > 0)
         self.action_redo.setEnabled(len(self.dataset_explorer_controller.redo_stack) > 0)
+        if hasattr(self, "action_hf_upload"):
+            self.action_hf_upload.setEnabled(can_hf_upload)
         if hasattr(self, "dataset_explorer_controller"):
             self.dataset_explorer_controller._refresh_json_preview()
 
     def show_temp_msg(self, title: str, msg: str, duration: int = 1500, **kwargs) -> None:
         one_line = " ".join(str(msg).splitlines()).strip()
         self.statusBar().showMessage(f"{title} — {one_line}" if title else one_line, duration)
+
+    def _save_mute_state_to_settings(self, is_muted: bool) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if not settings:
+            return
+        target_state = bool(is_muted)
+        current_raw = settings.value(self._MUTE_SETTING_KEY, None)
+        current_state = self._coerce_setting_bool(current_raw, default=False) if current_raw is not None else None
+
+        # If settings were externally changed since last restore, do not overwrite
+        # until state has been explicitly reloaded.
+        if (
+            self._last_restored_mute_state is not None
+            and current_state is not None
+            and current_state != self._last_restored_mute_state
+            and current_state != target_state
+        ):
+            return
+
+        settings.setValue(self._MUTE_SETTING_KEY, target_state)
+        settings.sync()
+        self._last_restored_mute_state = target_state
+
+    @staticmethod
+    def _coerce_setting_bool(value, default: bool = False) -> bool:
+        if isinstance(value, str):
+            stripped = value.strip().lower()
+            if stripped in {"1", "true", "yes", "on"}:
+                return True
+            if stripped in {"0", "false", "no", "off"}:
+                return False
+            return default
+        if value is None:
+            return default
+        return bool(value)
+
+    def _restore_mute_state_from_settings(self) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if not settings:
+            return
+        muted_raw = settings.value(self._MUTE_SETTING_KEY, False)
+        should_mute = self._coerce_setting_bool(muted_raw, default=False)
+        self.media_controller.set_muted(should_mute)
+        self.center_panel.set_mute_button_state(self.media_controller.is_muted())
+        self._last_restored_mute_state = should_mute
 
     def get_current_action_path(self):
         tree_view = self.dataset_explorer_panel.tree

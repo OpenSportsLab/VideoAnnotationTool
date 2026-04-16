@@ -16,6 +16,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `history_manager.py`: mutation/undo/redo engine.
 - `media_controller.py`: media playback and mute routing.
 - `welcome_controller.py`: welcome-page routing.
+- `hf_transfer_controller.py`: threaded Hugging Face download/upload orchestration for GUI menu actions.
 - `classification/`, `localization/`, `description/`, `dense_description/`: mode controllers.
 
 ## Key Functions and Responsibilities
@@ -41,6 +42,11 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 ### `WelcomeController`
 - `_setup_connections()`: welcome signal wiring to dataset routes.
 - `_open_recent_project()`, `_remove_recent_project()`, `refresh_recent_projects()`: recent-project UX.
+
+### `HfTransferController`
+- `start_download(...)`: execute Hugging Face dataset download in a worker thread.
+- `start_upload(...)`: execute Hugging Face dataset upload from local dataset JSON inputs in a worker thread.
+- Emits start/progress/completion/failure signals for UI wiring in `main_window.py`.
 
 ## Business Rules
 - Dataset JSON mutation must preserve undo/redo correctness.

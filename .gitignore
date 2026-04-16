@@ -209,6 +209,9 @@ __marimo__/
 .DS_Store
 
 test_data/*
+!test_data/download_osl_hf.py
+!test_data/upload_osl_hf.py
+!test_data/README.md
 
 .vscode
 

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QModelIndex, Qt
+from PyQt6.QtWidgets import QDialogButtonBox, QMessageBox
 
 
 MODE_TO_TAB_INDEX = {
@@ -329,6 +330,348 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
     combo.setCurrentIndex(2)  # Show Smart Labelled
     window.dataset_explorer_controller.handle_filter_change(2)
     assert tree.isRowHidden(0, root_index.parent()) is True
+
+
+@pytest.mark.gui
+def test_menu_bar_contains_data_menu_between_file_and_edit(window):
+    menu_names = [action.text().replace("&", "") for action in window.menuBar().actions()]
+    assert menu_names[:3] == ["File", "Data", "Edit"]
+    assert hasattr(window, "action_hf_download")
+    assert hasattr(window, "action_hf_upload")
+    assert window.action_hf_upload.isEnabled() is False
+
+
+@pytest.mark.gui
+def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
+    from ui.dialogs import HfDownloadDialog, HfUploadDialog
+
+    opened_json = tmp_path / "opened_dataset.json"
+    opened_json.write_text("{}", encoding="utf-8")
+    custom_url = "https://huggingface.co/datasets/OpenSportsLab/custom/blob/main/annotations.json"
+    window.dataset_explorer_controller.settings.setValue(
+        HfDownloadDialog._KEY_SUCCESS_URLS,
+        [
+            HfDownloadDialog._AVAILABLE_DATASET_URLS[0],
+            custom_url,
+            custom_url,
+        ],
+    )
+    window.dataset_explorer_controller.settings.sync()
+
+    download_dialog = HfDownloadDialog(settings=window.dataset_explorer_controller.settings, parent=window)
+    download_box = download_dialog.findChild(QDialogButtonBox)
+    assert download_box is not None
+    assert download_box.button(QDialogButtonBox.StandardButton.Ok).text() == "Download"
+    assert download_dialog.url_combo.isEditable() is True
+    combo_items = [download_dialog.url_combo.itemText(i) for i in range(download_dialog.url_combo.count())]
+    assert combo_items.count(custom_url) == 1
+    assert combo_items.count(HfDownloadDialog._AVAILABLE_DATASET_URLS[0]) == 1
+    download_dialog.close()
+
+    upload_dialog = HfUploadDialog(
+        str(opened_json),
+        settings=window.dataset_explorer_controller.settings,
+        parent=window,
+    )
+    upload_box = upload_dialog.findChild(QDialogButtonBox)
+    assert upload_box is not None
+    assert upload_box.button(QDialogButtonBox.StandardButton.Ok).text() == "Upload"
+    assert upload_dialog.revision_edit.text() == "main"
+    upload_dialog.close()
+
+
+@pytest.mark.gui
+def test_hf_upload_dialog_prefill_prefers_json_metadata_over_settings(window, tmp_path):
+    from ui.dialogs import HfUploadDialog
+
+    opened_json = tmp_path / "opened_dataset.json"
+    opened_json.write_text("{}", encoding="utf-8")
+
+    settings = window.dataset_explorer_controller.settings
+    settings.setValue(HfUploadDialog._KEY_REPO_ID, "OpenSportsLab/from-settings")
+    settings.setValue(HfUploadDialog._KEY_REVISION, "settings-branch")
+    settings.setValue(HfUploadDialog._KEY_COMMIT_MESSAGE, "Settings commit message")
+    settings.setValue(HfUploadDialog._KEY_TOKEN, "settings-token")
+    settings.sync()
+
+    upload_dialog = HfUploadDialog(
+        str(opened_json),
+        hf_defaults={
+            "repo_id": "OpenSportsLab/from-json",
+            "branch": "json-branch",
+        },
+        settings=settings,
+        parent=window,
+    )
+
+    assert upload_dialog.repo_id_edit.text() == "OpenSportsLab/from-json"
+    assert upload_dialog.revision_edit.text() == "json-branch"
+    assert upload_dialog.commit_message_edit.text() == "Settings commit message"
+    assert upload_dialog.token_edit.text() == "settings-token"
+    upload_dialog.close()
+
+
+@pytest.mark.gui
+def test_data_menu_actions_dispatch_hf_download_and_upload(window, monkeypatch, tmp_path):
+    opened_json = tmp_path / "opened_dataset.json"
+    opened_json.write_text("{}", encoding="utf-8")
+    window.dataset_explorer_controller.json_loaded = True
+    window.dataset_explorer_controller.current_json_path = str(opened_json)
+    window.update_save_export_button_state()
+    assert window.action_hf_upload.isEnabled() is True
+
+    download_payload = {
+        "url": "https://huggingface.co/datasets/OpenSportsLab/repo/blob/main/annotations.json",
+        "output_dir": "test_data/Classification/svfouls",
+        "dry_run": False,
+        "token": None,
+    }
+    upload_payload = {
+        "repo_id": "OpenSportsLab/OSL-loc-tennis-public",
+        "json_path": str(opened_json),
+        "revision": "main",
+        "commit_message": "Upload dataset inputs from JSON",
+        "token": None,
+    }
+
+    download_calls = []
+    upload_calls = []
+    monkeypatch.setattr(window.hf_transfer_controller, "start_download", lambda cfg: download_calls.append(cfg) or True)
+    monkeypatch.setattr(window.hf_transfer_controller, "start_upload", lambda cfg: upload_calls.append(cfg) or True)
+
+    monkeypatch.setattr("main_window.HfDownloadDialog.exec", lambda self: self.DialogCode.Accepted)
+    monkeypatch.setattr("main_window.HfDownloadDialog.get_payload", lambda self: download_payload)
+    monkeypatch.setattr("main_window.HfUploadDialog.exec", lambda self: self.DialogCode.Accepted)
+    monkeypatch.setattr("main_window.HfUploadDialog.get_payload", lambda self: upload_payload)
+
+    window.action_hf_download.trigger()
+    window.action_hf_upload.trigger()
+
+    assert download_calls == [download_payload]
+    assert upload_calls == [upload_payload]
+
+
+@pytest.mark.gui
+def test_hf_cancel_dispatches_to_download_controller(window, monkeypatch):
+    calls = {"download": 0}
+    window._active_hf_transfer_kind = "download"
+    window._hf_busy_dialog = type("_FakeDialog", (), {"set_cancel_enabled": lambda self, enabled: None})()
+
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "cancel_download",
+        lambda: calls.__setitem__("download", calls["download"] + 1) or True,
+    )
+
+    window._on_hf_transfer_cancel_requested()
+    assert calls["download"] == 1
+    window._hf_busy_dialog = None
+
+
+@pytest.mark.gui
+def test_hf_cancel_dispatches_to_upload_controller(window, monkeypatch):
+    calls = {"upload": 0}
+    window._active_hf_transfer_kind = "upload"
+    window._hf_busy_dialog = type("_FakeDialog", (), {"set_cancel_enabled": lambda self, enabled: None})()
+
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "cancel_upload",
+        lambda: calls.__setitem__("upload", calls["upload"] + 1) or True,
+    )
+
+    window._on_hf_transfer_cancel_requested()
+    assert calls["upload"] == 1
+    window._hf_busy_dialog = None
+
+
+@pytest.mark.gui
+def test_download_completion_prompts_and_opens_dataset_when_accepted(window, monkeypatch, tmp_path):
+    downloaded_json = tmp_path / "annotations_test.json"
+    downloaded_json.write_text("{}", encoding="utf-8")
+
+    info_calls = {"count": 0}
+    question_calls = {"count": 0}
+    open_calls = []
+
+    monkeypatch.setattr(
+        "main_window.QMessageBox.information",
+        lambda *args, **kwargs: info_calls.__setitem__("count", info_calls["count"] + 1),
+    )
+    monkeypatch.setattr(
+        "main_window.QMessageBox.question",
+        lambda *args, **kwargs: question_calls.__setitem__("count", question_calls["count"] + 1)
+        or QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "open_project_from_path",
+        lambda path: open_calls.append(path) or True,
+    )
+
+    window._on_hf_download_completed(
+        {
+            "dry_run": False,
+            "output_dir": str(tmp_path),
+            "downloaded_file_count": 4,
+            "json_path": str(downloaded_json),
+        }
+    )
+
+    assert info_calls["count"] == 1
+    assert question_calls["count"] == 1
+    assert open_calls == [str(downloaded_json)]
+
+
+@pytest.mark.gui
+def test_download_success_appends_url_to_settings_without_duplicates(window, monkeypatch, tmp_path):
+    from ui.dialogs import HfDownloadDialog
+
+    downloaded_json = tmp_path / "annotations_test.json"
+    downloaded_json.write_text("{}", encoding="utf-8")
+    successful_url = "https://huggingface.co/datasets/OpenSportsLab/repo/blob/main/annotations.json"
+
+    settings = window.dataset_explorer_controller.settings
+    HfDownloadDialog.add_successful_url_to_settings(settings, successful_url)
+    window._last_hf_download_payload = {"url": successful_url}
+
+    monkeypatch.setattr("main_window.QMessageBox.information", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "main_window.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+
+    window._on_hf_download_completed(
+        {
+            "dry_run": False,
+            "output_dir": str(tmp_path),
+            "downloaded_file_count": 1,
+            "json_path": str(downloaded_json),
+        }
+    )
+
+    saved_urls = HfDownloadDialog.get_successful_urls_from_settings(settings)
+    assert saved_urls.count(successful_url) == 1
+
+
+@pytest.mark.gui
+def test_download_not_found_removes_url_from_settings(window, monkeypatch):
+    from ui.dialogs import HfDownloadDialog
+
+    stale_url = "https://huggingface.co/datasets/OpenSportsLab/repo/blob/main/missing.json"
+    settings = window.dataset_explorer_controller.settings
+    HfDownloadDialog.add_successful_url_to_settings(settings, stale_url)
+    window._last_hf_download_payload = {"url": stale_url}
+
+    monkeypatch.setattr("main_window.QMessageBox.critical", lambda *args, **kwargs: None)
+
+    window._on_hf_download_failed(
+        "404 Client Error. Entry Not Found for url: "
+        "https://huggingface.co/datasets/OpenSportsLab/repo/resolve/main/missing.json."
+    )
+
+    saved_urls = HfDownloadDialog.get_successful_urls_from_settings(settings)
+    assert stale_url not in saved_urls
+
+
+@pytest.mark.gui
+def test_upload_failure_repo_missing_prompts_create_and_retries(window, monkeypatch, tmp_path):
+    opened_json = tmp_path / "opened_dataset.json"
+    opened_json.write_text("{}", encoding="utf-8")
+    payload = {
+        "repo_id": "OpenSportsLab/OSL-test-auto-upload",
+        "json_path": str(opened_json),
+        "revision": "main",
+        "commit_message": "Upload dataset inputs from JSON",
+        "token": "hf_test_token",
+    }
+    window._last_hf_upload_payload = dict(payload)
+
+    question_calls = {"count": 0}
+    create_calls = []
+    retry_calls = []
+
+    monkeypatch.setattr(
+        "main_window.QMessageBox.question",
+        lambda *args, **kwargs: question_calls.__setitem__("count", question_calls["count"] + 1)
+        or QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr("main_window.QMessageBox.critical", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "main_window.create_dataset_repo_on_hf",
+        lambda repo_id, token=None: create_calls.append((repo_id, token)),
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "start_upload",
+        lambda cfg: retry_calls.append(cfg) or True,
+    )
+
+    window._on_hf_upload_failed(
+        "404 Client Error. Repository Not Found for url: "
+        "https://huggingface.co/api/datasets/OpenSportsLab/OSL-test-auto-upload/preupload/main."
+    )
+
+    assert question_calls["count"] == 1
+    assert create_calls == [("OpenSportsLab/OSL-test-auto-upload", "hf_test_token")]
+    assert retry_calls == [payload]
+
+
+@pytest.mark.gui
+def test_upload_failure_branch_missing_prompts_create_and_retries(window, monkeypatch, tmp_path):
+    opened_json = tmp_path / "opened_dataset.json"
+    opened_json.write_text("{}", encoding="utf-8")
+    payload = {
+        "repo_id": "OpenSportsLab/OSL-test-auto-upload",
+        "json_path": str(opened_json),
+        "revision": "feature-branch",
+        "commit_message": "Upload dataset inputs from JSON",
+        "token": "hf_test_token",
+    }
+    window._last_hf_upload_payload = dict(payload)
+
+    question_calls = {"count": 0}
+    create_branch_calls = []
+    create_repo_calls = []
+    retry_calls = []
+
+    monkeypatch.setattr(
+        "main_window.QMessageBox.question",
+        lambda *args, **kwargs: question_calls.__setitem__("count", question_calls["count"] + 1)
+        or QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr("main_window.QMessageBox.critical", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "main_window.dataset_repo_exists_on_hf",
+        lambda repo_id, token=None: True,
+    )
+    monkeypatch.setattr(
+        "main_window.create_dataset_repo_on_hf",
+        lambda repo_id, token=None: create_repo_calls.append((repo_id, token)),
+    )
+    monkeypatch.setattr(
+        "main_window.create_dataset_branch_on_hf",
+        lambda repo_id, branch, source_revision="main", token=None: create_branch_calls.append(
+            (repo_id, branch, source_revision, token)
+        ),
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "start_upload",
+        lambda cfg: retry_calls.append(cfg) or True,
+    )
+
+    window._on_hf_upload_failed(
+        "404 Client Error. Repository Not Found for url: "
+        "https://huggingface.co/api/datasets/OpenSportsLab/OSL-test-auto-upload/preupload/feature-branch."
+    )
+
+    assert question_calls["count"] == 1
+    assert create_repo_calls == []
+    assert create_branch_calls == [
+        ("OpenSportsLab/OSL-test-auto-upload", "feature-branch", "main", "hf_test_token")
+    ]
+    assert retry_calls == [payload]
 
 
 # @pytest.mark.gui

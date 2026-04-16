@@ -67,7 +67,9 @@ python test_data/download_osl_hf.py \
 
 * `--url`: (required) The direct Hugging Face URL of the OSL JSON file (should be in “blob/main/...” form, like you see in the web interface).
 * `--output-dir`: (optional) Path to the directory where the dataset and videos should be downloaded. Defaults to `downloaded_data` if not specified.
+* `--types`: (optional) Comma-separated input types (e.g. `video,captions,features`) or `all`. Defaults to `video`.
 * `--dry-run`: (optional) If provided, lists all files that would be downloaded and total size, but does not actually download any files.
+* `--token`: (optional) HF token override. If omitted, your local HF login is used.
 
 
 **Example:**
@@ -167,6 +169,42 @@ output_dir/
 ```bash
 zip -r DatasetAnnotationTool.zip *
 ```
+
+---
+
+### 3. Upload Inputs Referenced by a Local Dataset JSON to Hugging Face
+
+**Script:** `test_data/upload_osl_hf.py`
+
+Use this script to upload files referenced in `data[].inputs[].path` from a local dataset JSON.
+Each input is uploaded sequentially, preserving the exact path declared in the JSON.
+
+```bash
+python test_data/upload_osl_hf.py \
+  --repo-id OpenSportsLab/OSL-loc-tennis-public \
+  --json-path /Users/quirogky/Projects/TennisLocalization/annotations_train.json \
+  --commit-message "Update inputs from annotations JSON"
+```
+
+**Arguments:**
+
+* `--repo-id`: (required) Target Hugging Face dataset repo ID (`org/repo`).
+* `--json-path`: (required) Local dataset JSON path.
+* `--commit-message`: (optional) Commit message prefix. Defaults to `Upload dataset inputs from JSON`.
+* `--token`: (optional) HF token override. If omitted, your local HF login is used.
+
+---
+
+### 4. GUI Support (Data Menu)
+
+Inside the application menu bar, there is now a **Data** menu with:
+
+* **Download Dataset from HF...**
+* **Upload Dataset to HF...**
+
+Both actions open a dialog to enter the minimum required fields plus common optional parameters.
+Downloads and uploads run in background threads, and after a successful download you can choose to open the downloaded JSON directly in the app.
+For upload, the dialog now asks for a dataset JSON path and uploads all `data[].inputs[].path` entries one by one.
 
 ---
 

@@ -1,4 +1,5 @@
 PyQt6
+huggingface_hub
 pyinstaller
 torch-geometric==2.7.0
 opensportslib==0.1.1

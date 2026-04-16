@@ -238,6 +238,7 @@ class DatasetExplorerController(QObject):
     addSamplesRequested = pyqtSignal(list)
     clearWorkspaceRequested = pyqtSignal()
     removeItemMutationRequested = pyqtSignal(str, str)
+    settingsChanged = pyqtSignal(object)
 
     SETTINGS_ORG = "OpenSportsLab"
     SETTINGS_APP = "VideoAnnotationTool"
@@ -265,6 +266,7 @@ class DatasetExplorerController(QObject):
         self._done_icon = None
         self._empty_icon = None
 
+        self._settings = None
         self.settings = QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
 
         self.dataset_json = {}
@@ -295,6 +297,15 @@ class DatasetExplorerController(QObject):
         self.dense_description_events = _SampleListProxy(self, "dense_captions")
 
         self._setup_connections()
+
+    @property
+    def settings(self):
+        return self._settings
+
+    @settings.setter
+    def settings(self, value):
+        self._settings = value
+        self.settingsChanged.emit(value)
 
     # ------------------------------------------------------------------
     # Compatibility properties
