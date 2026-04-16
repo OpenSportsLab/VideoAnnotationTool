@@ -787,18 +787,28 @@ def create_dataset_branch_on_hf(
     HfApi, _, _ = _import_hf_hub()
     api = HfApi(token=token or None)
 
+    # Resolve the actual commit to branch from.
+    # Always use the oldest (initial) commit so the new branch is never empty —
+    # branching from HEAD would create an empty ref on a repo with no files yet.
+    _emit_progress(
+        progress_cb,
+        f"Resolving initial commit for {cleaned_repo_id} to use as branch base...",
+    )
+    commits = api.list_repo_commits(cleaned_repo_id, repo_type="dataset")
+    initial_commit_id = commits[-1].commit_id if commits else cleaned_source_revision
+
     _emit_progress(
         progress_cb,
         (
             f"Creating Hugging Face dataset branch '{cleaned_branch}' "
-            f"from '{cleaned_source_revision}' in {cleaned_repo_id}"
+            f"from initial commit {initial_commit_id!r} in {cleaned_repo_id}"
         ),
     )
     api.create_branch(
         repo_id=cleaned_repo_id,
         repo_type="dataset",
         branch=cleaned_branch,
-        revision=cleaned_source_revision,
+        revision=initial_commit_id,
         exist_ok=True,
     )
     _emit_progress(progress_cb, f"Branch is ready: {cleaned_repo_id}@{cleaned_branch}")
@@ -807,5 +817,5 @@ def create_dataset_branch_on_hf(
         "repo_id": cleaned_repo_id,
         "repo_type": "dataset",
         "branch": cleaned_branch,
-        "source_revision": cleaned_source_revision,
+        "source_revision": initial_commit_id,
     }
