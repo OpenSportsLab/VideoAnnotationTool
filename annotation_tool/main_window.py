@@ -919,13 +919,33 @@ class VideoAnnotationWindow(QMainWindow):
         HfDownloadDialog.add_successful_url_to_settings(settings, completed_url)
         self._last_hf_download_payload = None
 
-        downloaded_count = int(result.get("downloaded_file_count") or 0)
-        QMessageBox.information(
-            self,
-            "HF Download Complete",
-            f"Downloaded {downloaded_count} files to:\n{output_dir}",
-        )
-        self.show_temp_msg("HF Download", f"Downloaded {downloaded_count} files.", 3000)
+        download_kind = str(result.get("download_kind") or "json")
+        if download_kind == "parquet":
+            sample_count = int(result.get("num_samples") or 0)
+            media_count = int(result.get("extracted_media_count") or 0)
+            QMessageBox.information(
+                self,
+                "HF Download Complete",
+                (
+                    f"Downloaded Parquet dataset and converted it locally.\n"
+                    f"Samples: {sample_count}\n"
+                    f"Extracted media files: {media_count}\n"
+                    f"Output directory: {output_dir}"
+                ),
+            )
+            self.show_temp_msg(
+                "HF Download",
+                f"Downloaded {sample_count} samples and extracted {media_count} media files.",
+                3000,
+            )
+        else:
+            downloaded_count = int(result.get("downloaded_file_count") or 0)
+            QMessageBox.information(
+                self,
+                "HF Download Complete",
+                f"Downloaded {downloaded_count} files to:\n{output_dir}",
+            )
+            self.show_temp_msg("HF Download", f"Downloaded {downloaded_count} files.", 3000)
 
         json_path = str(result.get("json_path") or "")
         if json_path and os.path.exists(json_path):
@@ -944,11 +964,15 @@ class VideoAnnotationWindow(QMainWindow):
         self._last_hf_upload_payload = None
         repo_id = str(result.get("repo_id") or "")
         revision = str(result.get("revision") or "main")
+        upload_kind = str(result.get("upload_kind") or "json")
         input_file_count = int(result.get("input_file_count") or 0)
         uploaded_file_count = int(result.get("uploaded_file_count") or 0)
+        sample_count = int(result.get("num_samples") or 0)
+        video_file_count = int(result.get("video_file_count") or 0)
         commit_ref = str(result.get("commit_ref") or "")
         json_path = str(result.get("json_path") or "")
         json_path_in_repo = str(result.get("json_path_in_repo") or "")
+        folder_name = str(result.get("folder_name") or "")
         cleaned_repo_id = repo_id.strip("/")
         cleaned_revision = revision.strip() or "main"
         dataset_url = (
@@ -964,15 +988,29 @@ class VideoAnnotationWindow(QMainWindow):
         completion_box.setTextFormat(Qt.TextFormat.RichText)
         completion_box.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
 
-        completion_text = (
-            f"Uploaded <b>{uploaded_file_count}</b> files to dataset repo:<br>"
-            f"<code>{html.escape(repo_id)}</code><br>"
-            f"Branch: <code>{html.escape(cleaned_revision)}</code><br>"
-            f"Input files: <b>{input_file_count}</b><br>"
-            f"JSON in repo: <code>{html.escape(json_path_in_repo)}</code><br><br>"
-            f"Dataset JSON:<br><code>{html.escape(json_path)}</code><br><br>"
-            f"Commit:<br><code>{html.escape(commit_ref)}</code>"
-        )
+        if upload_kind == "parquet":
+            completion_text = (
+                f"Uploaded dataset repo content for <b>{sample_count}</b> samples:<br>"
+                f"<code>{html.escape(repo_id)}</code><br>"
+                f"Branch: <code>{html.escape(cleaned_revision)}</code><br>"
+                f"Repository folder: <code>{html.escape(folder_name)}</code><br>"
+                f"Samples converted: <b>{sample_count}</b><br>"
+                f"Video files packed: <b>{video_file_count}</b><br>"
+                f"Uploaded repo files: <b>{uploaded_file_count}</b><br><br>"
+                f"Source JSON:<br><code>{html.escape(json_path)}</code><br><br>"
+                f"Commit:<br><code>{html.escape(commit_ref)}</code>"
+            )
+        else:
+            completion_text = (
+                f"Uploaded dataset repo content for <b>{input_file_count}</b> inputs:<br>"
+                f"<code>{html.escape(repo_id)}</code><br>"
+                f"Branch: <code>{html.escape(cleaned_revision)}</code><br>"
+                f"Input files: <b>{input_file_count}</b><br>"
+                f"JSON in repo: <code>{html.escape(json_path_in_repo)}</code><br>"
+                f"Uploaded repo files: <b>{uploaded_file_count}</b><br><br>"
+                f"Dataset JSON:<br><code>{html.escape(json_path)}</code><br><br>"
+                f"Commit:<br><code>{html.escape(commit_ref)}</code>"
+            )
         if dataset_url:
             escaped_dataset_url = html.escape(dataset_url, quote=True)
             completion_text += (
@@ -985,11 +1023,18 @@ class VideoAnnotationWindow(QMainWindow):
             label.setOpenExternalLinks(True)
         completion_box.exec()
 
-        self.show_temp_msg(
-            "HF Upload",
-            f"Uploaded {uploaded_file_count} files ({input_file_count} inputs + JSON) to {repo_id}@{revision}.",
-            3000,
-        )
+        if upload_kind == "parquet":
+            self.show_temp_msg(
+                "HF Upload",
+                f"Uploaded {sample_count} samples to {repo_id}@{revision} as Parquet + WebDataset.",
+                3000,
+            )
+        else:
+            self.show_temp_msg(
+                "HF Upload",
+                f"Uploaded {input_file_count} inputs to {repo_id}@{revision} with dataset JSON.",
+                3000,
+            )
 
     def _on_hf_upload_cancelled(self, message: str) -> None:
         self._last_hf_upload_payload = None

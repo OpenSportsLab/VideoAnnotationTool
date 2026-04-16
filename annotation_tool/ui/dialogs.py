@@ -169,7 +169,7 @@ class HfDownloadDialog(QDialog):
         self.url_combo = QComboBox(self)
         self.url_combo.setEditable(True)
         self.url_combo.addItems(self._AVAILABLE_DATASET_URLS)
-        form.addRow("JSON URL*", self.url_combo)
+        form.addRow("HF URL*", self.url_combo)
 
         self.output_dir_edit = QLineEdit(self)
         self.output_dir_edit.setPlaceholderText("test_data/Classification/svfouls")
@@ -272,7 +272,7 @@ class HfDownloadDialog(QDialog):
         output_dir = self.output_dir_edit.text().strip()
 
         if not url:
-            QMessageBox.warning(self, "Missing Required Field", "JSON URL is required.")
+            QMessageBox.warning(self, "Missing Required Field", "HF URL is required.")
             return False
         if not output_dir:
             QMessageBox.warning(self, "Missing Required Field", "Output directory is required.")
@@ -368,6 +368,10 @@ class HfUploadDialog(QDialog):
         self.opened_json_edit.setReadOnly(True)
         form.addRow("Opened Dataset JSON*", self.opened_json_edit)
 
+        self.upload_as_json_checkbox = QCheckBox("Upload as JSON (unchecked: upload as Parquet + WebDataset)", self)
+        self.upload_as_json_checkbox.setChecked(True)
+        form.addRow("", self.upload_as_json_checkbox)
+
         self.revision_edit = QLineEdit("main", self)
         self.revision_edit.setPlaceholderText("main")
         form.addRow("Branch*", self.revision_edit)
@@ -432,6 +436,7 @@ class HfUploadDialog(QDialog):
             "revision": self.revision_edit.text().strip() or "main",
             "commit_message": self.commit_message_edit.text().strip() or "Upload dataset inputs from JSON",
             "token": self.token_edit.text().strip() or None,
+            "upload_as_json": self.upload_as_json_checkbox.isChecked(),
         }
 
     def _load_settings(self) -> None:

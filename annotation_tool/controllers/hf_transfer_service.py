@@ -1,7 +1,21 @@
 import json
 import os
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
+
+try:
+    from tools import (
+        convert_json_to_parquet,
+        convert_parquet_to_json,
+    )
+except ImportError:
+    from annotation_tool.tools import (
+        convert_json_to_parquet,
+        convert_parquet_to_json,
+    )
 
 
 ProgressCallback = Callable[[str], None]
@@ -46,6 +60,36 @@ def human_size(num: int) -> str:
 
 def fix_hf_url(hf_url: str) -> str:
     return str(hf_url or "").replace("/blob/", "/resolve/")
+
+
+def is_hf_folder_url(hf_url: str) -> bool:
+    """Return True when the URL points to a folder (contains ``/tree/``)."""
+    return "/tree/" in str(hf_url or "")
+
+
+def parse_hf_folder_url(hf_url: str) -> tuple[str, str, str]:
+    """
+    Parse a HuggingFace folder URL of the form::
+
+        https://huggingface.co/datasets/<owner>/<repo>/tree/<revision>[/<folder_path>]
+
+    Returns ``(repo_id, revision, folder_path)``.
+    ``folder_path`` may be an empty string for the repo root.
+    """
+    parsed = urlparse(str(hf_url or ""))
+    parts = parsed.path.strip("/").split("/")
+
+    if "datasets" in parts:
+        datasets_idx = parts.index("datasets")
+        parts = parts[datasets_idx + 1:]
+
+    if len(parts) < 3 or parts[2] != "tree":
+        raise ValueError(f"URL does not look like a valid HuggingFace dataset folder URL: {hf_url}")
+
+    repo_id = f"{parts[0]}/{parts[1]}"
+    revision = parts[3] if len(parts) > 3 else "main"
+    folder_path = "/".join(parts[4:]) if len(parts) > 4 else ""
+    return repo_id, revision, folder_path
 
 
 def parse_hf_url(hf_url: str) -> tuple[str, str, str]:
@@ -181,6 +225,78 @@ def read_hf_source_metadata_from_dataset(dataset_json: dict[str, Any] | None) ->
     }
 
 
+def _download_parquet_folder_and_convert(
+    folder_url: str,
+    output_dir: str,
+    *,
+    token: str | None = None,
+    progress_cb: ProgressCallback | None = None,
+    is_cancelled: CancelCheck | None = None,
+) -> dict[str, Any]:
+    """
+    Download a Parquet + WebDataset folder from HF and convert it to an OSL JSON file.
+
+    The folder is expected to have been created by
+    :func:`annotation_tool.tools.convert_json_to_parquet`.
+    A temporary directory is used for the raw download and removed when done.
+    """
+    _, _, snapshot_download = _import_hf_hub()
+
+    repo_id, revision, folder_path = parse_hf_folder_url(folder_url)
+    folder_name = folder_path.rstrip("/").split("/")[-1] if folder_path else repo_id.split("/")[-1]
+
+    os.makedirs(output_dir, exist_ok=True)
+    _ensure_not_cancelled(is_cancelled)
+    _emit_progress(progress_cb, f"Downloading Parquet folder '{folder_path}' from {repo_id}@{revision}...")
+
+    allow_patterns = [f"{folder_path}/*"] if folder_path else ["*"]
+
+    tmp_dir = tempfile.mkdtemp(prefix="hf_parquet_dl_", dir=output_dir)
+    try:
+        snapshot_download(
+            repo_id=repo_id,
+            repo_type="dataset",
+            revision=revision,
+            allow_patterns=allow_patterns,
+            local_dir=tmp_dir,
+            token=token or None,
+        )
+        _ensure_not_cancelled(is_cancelled)
+
+        parquet_dataset_dir = Path(tmp_dir) / folder_path if folder_path else Path(tmp_dir)
+        output_json_path = Path(output_dir) / f"{folder_name}.json"
+
+        _emit_progress(progress_cb, f"Converting Parquet dataset to JSON and extracting media into {output_dir}...")
+        conversion_result = convert_parquet_to_json(
+            dataset_dir=parquet_dataset_dir,
+            output_json_path=output_json_path,
+            extract_media=True,
+            output_media_root=output_dir,
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    _emit_progress(
+        progress_cb,
+        (
+            f"Conversion complete. JSON saved to {output_json_path}. "
+            f"Extracted {conversion_result.get('extracted_media_files', 0)} media files."
+        ),
+    )
+    return {
+        "repo_id": repo_id,
+        "revision": revision,
+        "folder_path": folder_path,
+        "output_dir": output_dir,
+        "json_path": str(output_json_path),
+        "source": "parquet_folder",
+        "download_kind": "parquet",
+        "num_samples": int(conversion_result.get("num_samples") or 0),
+        "extracted_media": True,
+        "extracted_media_count": int(conversion_result.get("extracted_media_files") or 0),
+    }
+
+
 def download_dataset_from_hf(
     osl_json_url: str,
     output_dir: str,
@@ -191,6 +307,15 @@ def download_dataset_from_hf(
     progress_cb: ProgressCallback | None = None,
     is_cancelled: CancelCheck | None = None,
 ) -> dict[str, Any]:
+    if is_hf_folder_url(osl_json_url):
+        return _download_parquet_folder_and_convert(
+            osl_json_url,
+            output_dir,
+            token=token,
+            progress_cb=progress_cb,
+            is_cancelled=is_cancelled,
+        )
+
     HfApi, hf_hub_download, _ = _import_hf_hub()
     api = HfApi(token=token or None)
     want_types = parse_types_arg(types_arg)
@@ -304,6 +429,7 @@ def download_dataset_from_hf(
         branch=revision,
     )
 
+    result["download_kind"] = "json"
     result["downloaded_file_count"] = downloaded_count
     result["hf_source_metadata"] = hf_source_metadata
     _emit_progress(progress_cb, "Download completed.")
@@ -439,6 +565,7 @@ def upload_dataset_inputs_from_json_to_hf(
     return {
         "repo_id": cleaned_repo_id,
         "repo_type": "dataset",
+        "upload_kind": "json",
         "json_path": cleaned_json_path,
         "revision": cleaned_revision,
         "json_path_in_repo": json_path_in_repo,
@@ -495,6 +622,100 @@ def is_hf_download_url_not_found_error(error_message: str) -> bool:
     if "revision not found" in text:
         return True
     return "not found for url" in text and "huggingface.co" in text
+
+
+def upload_dataset_as_parquet_to_hf(
+    repo_id: str,
+    json_path: str,
+    *,
+    revision: str | None = "main",
+    commit_message: str | None = None,
+    token: str | None = None,
+    progress_cb: ProgressCallback | None = None,
+    is_cancelled: CancelCheck | None = None,
+) -> dict[str, Any]:
+    """
+    Convert an OSL JSON dataset to Parquet + WebDataset format and upload the result
+    to a HuggingFace dataset repository under a folder named after the JSON file stem.
+
+    For example, ``annotations_test.json`` is converted and uploaded to the
+    ``annotations_test/`` folder on the repository.
+
+    A temporary directory is used for the conversion output and removed when done.
+    """
+    HfApi, _, _ = _import_hf_hub()
+
+    cleaned_repo_id = str(repo_id or "").strip()
+    cleaned_json_path = os.path.abspath(str(json_path or "").strip())
+    if not cleaned_repo_id:
+        raise ValueError("repo_id is required.")
+    if not os.path.isfile(cleaned_json_path):
+        raise ValueError(f"JSON file does not exist: {cleaned_json_path}")
+
+    cleaned_revision = str(revision or "").strip() or "main"
+    effective_commit_message = (commit_message or "").strip() or "Upload dataset as Parquet + WebDataset"
+    folder_name = Path(cleaned_json_path).stem
+    media_root = Path(cleaned_json_path).parent
+
+    _ensure_not_cancelled(is_cancelled)
+    _emit_progress(progress_cb, f"Converting {cleaned_json_path} to Parquet + WebDataset...")
+
+    conversion_result: dict[str, Any] = {}
+    tmp_dir = tempfile.mkdtemp(prefix="hf_parquet_ul_")
+    try:
+        parquet_output = Path(tmp_dir) / folder_name
+        conversion_result = convert_json_to_parquet(
+            json_path=cleaned_json_path,
+            media_root=media_root,
+            output_dir=parquet_output,
+            missing_policy="skip",
+            overwrite=True,
+        )
+
+        _ensure_not_cancelled(is_cancelled)
+
+        # Collect all files to upload, preserving sub-paths under folder_name/
+        upload_entries: list[dict[str, str]] = []
+        for local_file in sorted(parquet_output.rglob("*")):
+            if not local_file.is_file():
+                continue
+            rel = local_file.relative_to(tmp_dir).as_posix()
+            upload_entries.append({"local_path": str(local_file), "path_in_repo": rel})
+
+        api = HfApi(token=token or None)
+        total = len(upload_entries)
+        _emit_progress(progress_cb, f"Uploading {total} files to {cleaned_repo_id}@{cleaned_revision} under '{folder_name}/'...")
+
+        last_commit_ref = ""
+        for idx, entry in enumerate(upload_entries, start=1):
+            _ensure_not_cancelled(is_cancelled)
+            _emit_progress(progress_cb, f"[{idx}/{total}] Uploading {entry['path_in_repo']}")
+            last_commit_ref = str(
+                api.upload_file(
+                    path_or_fileobj=entry["local_path"],
+                    path_in_repo=entry["path_in_repo"],
+                    repo_id=cleaned_repo_id,
+                    repo_type="dataset",
+                    revision=cleaned_revision,
+                    commit_message=f"{effective_commit_message} ({idx}/{total})",
+                )
+            )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    _emit_progress(progress_cb, f"Parquet upload completed. Uploaded {total} files.")
+    return {
+        "repo_id": cleaned_repo_id,
+        "revision": cleaned_revision,
+        "upload_kind": "parquet",
+        "json_path": cleaned_json_path,
+        "folder_name": folder_name,
+        "num_samples": int(conversion_result.get("num_samples") or 0),
+        "video_file_count": int(conversion_result.get("video_files_added") or 0),
+        "uploaded_file_count": total,
+        "commit_message": effective_commit_message,
+        "commit_ref": last_commit_ref,
+    }
 
 
 def create_dataset_repo_on_hf(

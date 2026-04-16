@@ -5,6 +5,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from controllers.hf_transfer_service import (
     HfTransferCancelled,
     download_dataset_from_hf,
+    upload_dataset_as_parquet_to_hf,
     upload_dataset_inputs_from_json_to_hf,
 )
 
@@ -49,15 +50,26 @@ class _HfUploadWorker(QThread):
 
     def run(self) -> None:
         try:
-            result = upload_dataset_inputs_from_json_to_hf(
-                repo_id=self._config.get("repo_id", ""),
-                json_path=self._config.get("json_path", ""),
-                revision=self._config.get("revision", "main"),
-                commit_message=self._config.get("commit_message"),
-                token=self._config.get("token"),
-                progress_cb=self.progress.emit,
-                is_cancelled=self.isInterruptionRequested,
-            )
+            if self._config.get("upload_as_json", True):
+                result = upload_dataset_inputs_from_json_to_hf(
+                    repo_id=self._config.get("repo_id", ""),
+                    json_path=self._config.get("json_path", ""),
+                    revision=self._config.get("revision", "main"),
+                    commit_message=self._config.get("commit_message"),
+                    token=self._config.get("token"),
+                    progress_cb=self.progress.emit,
+                    is_cancelled=self.isInterruptionRequested,
+                )
+            else:
+                result = upload_dataset_as_parquet_to_hf(
+                    repo_id=self._config.get("repo_id", ""),
+                    json_path=self._config.get("json_path", ""),
+                    revision=self._config.get("revision", "main"),
+                    commit_message=self._config.get("commit_message"),
+                    token=self._config.get("token"),
+                    progress_cb=self.progress.emit,
+                    is_cancelled=self.isInterruptionRequested,
+                )
             self.completed.emit(result)
         except HfTransferCancelled as exc:
             self.cancelled.emit(str(exc))

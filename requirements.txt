@@ -10,3 +10,5 @@ tabulate==0.10.0
 wandb
 pytest
 pytest-qt
+pandas
+pyarrow

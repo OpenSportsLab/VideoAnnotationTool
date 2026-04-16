@@ -1,285 +1,23 @@
 
 """
-Convert a dataset stored as:
-  - metadata.parquet
-  - WebDataset TAR shards created by osl_json_to_parquet_webdataset.py
+CLI wrapper — convert Parquet + WebDataset TAR shards back to an OSL JSON file.
 
-back into an OpenSportsLib-style JSON file.
-
-Main entry point:
-    convert_parquet_webdataset_to_osl_json(...)
-
-Notes
------
-- Reconstruction relies on the per-sample sidecar JSON stored inside each TAR shard.
-  The sidecar is the canonical full-fidelity annotation source.
-- metadata.parquet is used only for routing (sample_index, shard_name) and lightweight
-  filtering; it no longer stores a full copy of each sample.
-- By default, reconstructed `inputs[].path` values remain the original relative paths from the JSON.
-  Optionally, you can rewrite them to extracted media paths.
+All logic lives in annotation_tool.tools.parquet_to_osl_json.
+Run with --help for full usage.
 """
 
 from __future__ import annotations
 
 import json
-import shutil
-import tarfile
+import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
-import pandas as pd
+# Allow running directly from the repo root without installing the package.
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-
-def _maybe_json_loads(value: Any, default: Any):
-    if value is None:
-        return default
-    if isinstance(value, float) and pd.isna(value):
-        return default
-    if isinstance(value, (dict, list)):
-        return value
-    if isinstance(value, str):
-        value = value.strip()
-        if not value:
-            return default
-        try:
-            return json.loads(value)
-        except Exception:
-            return default
-    return default
-
-
-def _read_sidecar_json_from_tar(tar_path: Path, sample_index: int) -> Optional[Dict[str, Any]]:
-    key = f"{sample_index:09d}.json"
-    with tarfile.open(tar_path, "r") as tar:
-        try:
-            member = tar.getmember(key)
-        except KeyError:
-            return None
-        f = tar.extractfile(member)
-        if f is None:
-            return None
-        return json.loads(f.read().decode("utf-8"))
-
-
-def _extract_sample_media_from_tar(
-    tar_path: Path,
-    sample_index: int,
-    output_media_root: Path,
-    original_paths: List[str],
-    overwrite: bool = False,
-) -> int:
-    """
-    Extract all media files belonging to a given sample index from the shard.
-    Files are written to output_media_root / original_path, preserving the
-    original relative path structure so that inputs[].path values remain valid.
-    Returns the number of files extracted.
-    """
-    key_prefix = f"{sample_index:09d}."
-    extracted = 0
-
-    with tarfile.open(tar_path, "r") as tar:
-        members = [
-            m for m in tar.getmembers()
-            if m.isfile()
-            and m.name.startswith(key_prefix)
-            and not m.name.endswith(".json")
-        ]
-
-        def _vid_idx(m: tarfile.TarInfo) -> int:
-            part = m.name[len(key_prefix):].split(".", 1)[0]
-            try:
-                return int(part)
-            except ValueError:
-                return 0
-
-        members.sort(key=_vid_idx)
-
-        for member in members:
-            vid_idx = _vid_idx(member)
-            if vid_idx >= len(original_paths):
-                continue
-            out_path = output_media_root / original_paths[vid_idx]
-            if out_path.exists() and not overwrite:
-                extracted += 1
-                continue
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            f = tar.extractfile(member)
-            if f is None:
-                continue
-            with open(out_path, "wb") as out_f:
-                shutil.copyfileobj(f, out_f)
-            extracted += 1
-
-    return extracted
-
-
-def _reconstruct_sample_from_row(
-    row: pd.Series,
-    sidecar: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """
-    Best-effort reconstruction when raw_sample_json is missing.
-    """
-    sample: Dict[str, Any] = {
-        "id": row["sample_id"],
-        "inputs": [],
-    }
-
-    video_paths = _maybe_json_loads(row.get("video_paths"), [])
-    video_names = _maybe_json_loads(row.get("video_names"), [])
-    video_fps = _maybe_json_loads(row.get("video_fps"), [])
-
-    for i, path in enumerate(video_paths):
-        inp = {"type": "video", "path": path}
-        if i < len(video_names):
-            inp["name"] = video_names[i]
-        if i < len(video_fps):
-            inp["fps"] = video_fps[i]
-        sample["inputs"].append(inp)
-
-    sample["metadata"] = _maybe_json_loads(row.get("sample_metadata"), {})
-    sample["labels"] = _maybe_json_loads(row.get("sample_labels"), {})
-    sample["events"] = _maybe_json_loads(row.get("sample_events"), [])
-    sample["captions"] = _maybe_json_loads(row.get("sample_captions"), [])
-    sample["dense_captions"] = _maybe_json_loads(row.get("sample_dense_captions"), [])
-
-    # Use sidecar to enrich/fix if available
-    if sidecar:
-        sample["inputs"] = sidecar.get("inputs", sample["inputs"])
-        if sidecar.get("metadata"):
-            sample["metadata"] = sidecar["metadata"]
-        if sidecar.get("labels"):
-            sample["labels"] = sidecar["labels"]
-        if sidecar.get("events"):
-            sample["events"] = sidecar["events"]
-        if sidecar.get("captions"):
-            sample["captions"] = sidecar["captions"]
-        if sidecar.get("dense_captions"):
-            sample["dense_captions"] = sidecar["dense_captions"]
-
-    # Drop empty optional fields for cleaner JSON
-    for field in ["metadata", "labels", "events", "captions", "dense_captions"]:
-        if field in sample and not sample[field]:
-            sample.pop(field)
-
-    return sample
-
-
-def convert_parquet_webdataset_to_osl_json(
-    dataset_dir: str | Path,
-    output_json_path: str | Path,
-    *,
-    extract_media: bool = False,
-    output_media_root: Optional[str | Path] = None,
-    overwrite_media: bool = False,
-    json_indent: int = 2,
-) -> Dict[str, Any]:
-    """
-    Convert back from:
-        dataset_dir/
-          metadata.parquet
-          shards/*.tar
-          shard_manifest.parquet (optional)
-
-    to an OSL-style JSON file.
-
-    Parameters
-    ----------
-    dataset_dir:
-        Directory produced by the forward converter.
-    output_json_path:
-        Destination JSON file.
-    extract_media:
-        If True, extract media from TAR shards and rewrite inputs[].path to extracted paths.
-    output_media_root:
-        Required when extract_media=True.
-    overwrite_media:
-        Whether to overwrite already extracted media files.
-    json_indent:
-        Indentation for output JSON.
-
-    Returns
-    -------
-    dict with summary information.
-    """
-    dataset_dir = Path(dataset_dir)
-    output_json_path = Path(output_json_path)
-    metadata_path = dataset_dir / "metadata.parquet"
-    shards_dir = dataset_dir / "shards"
-
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Missing metadata file: {metadata_path}")
-    if not shards_dir.exists():
-        raise FileNotFoundError(f"Missing shards directory: {shards_dir}")
-
-    if extract_media and output_media_root is None:
-        raise ValueError("output_media_root must be provided when extract_media=True")
-
-    output_media_root_path = Path(output_media_root) if output_media_root is not None else None
-    if output_media_root_path is not None:
-        output_media_root_path.mkdir(parents=True, exist_ok=True)
-
-    df = pd.read_parquet(metadata_path).sort_values("sample_index").reset_index(drop=True)
-    if len(df) == 0:
-        raise ValueError("metadata.parquet is empty.")
-
-    # Recover top-level document info from the first row
-    first = df.iloc[0]
-    top_doc: Dict[str, Any] = {
-        "version": first.get("json_version"),
-        "date": first.get("json_date"),
-        "task": first.get("task"),
-        "dataset_name": first.get("dataset_name"),
-        "metadata": _maybe_json_loads(first.get("top_level_metadata"), {}),
-    }
-
-    top_labels = _maybe_json_loads(first.get("top_level_labels"), {})
-    if top_labels:
-        top_doc["labels"] = top_labels
-
-    data: List[Dict[str, Any]] = []
-    extracted_media_count = 0
-
-    for _, row in df.iterrows():
-        sample_index = int(row["sample_index"])
-        sample_id = row["sample_id"]
-        shard_name = row["shard_name"]
-        tar_path = shards_dir / shard_name
-
-        sidecar = _read_sidecar_json_from_tar(tar_path, sample_index)
-        sample = _reconstruct_sample_from_row(row, sidecar=sidecar)
-
-        if extract_media:
-            original_video_paths = [
-                inp["path"]
-                for inp in sample.get("inputs", [])
-                if inp.get("type") == "video" and inp.get("path")
-            ]
-            extracted_media_count += _extract_sample_media_from_tar(
-                tar_path=tar_path,
-                sample_index=sample_index,
-                output_media_root=output_media_root_path,
-                original_paths=original_video_paths,
-                overwrite=overwrite_media,
-            )
-
-        data.append(sample)
-
-    top_doc["data"] = data
-
-    output_json_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_json_path, "w", encoding="utf-8") as f:
-        json.dump(top_doc, f, ensure_ascii=False, indent=json_indent)
-
-    return {
-        "dataset_dir": str(dataset_dir),
-        "output_json_path": str(output_json_path),
-        "num_samples": len(data),
-        "extract_media": extract_media,
-        "output_media_root": str(output_media_root_path) if output_media_root_path else None,
-        "extracted_media_files": extracted_media_count,
-    }
-
+from annotation_tool.tools.parquet_to_osl_json import (
+    convert_parquet_to_json,
+)
 
 if __name__ == "__main__":
     import argparse
@@ -321,7 +59,7 @@ if __name__ == "__main__":
     if args.extract_media and args.output_media_root is None:
         parser.error("--output-media-root is required when --extract-media is set.")
 
-    result = convert_parquet_webdataset_to_osl_json(
+    result = convert_parquet_to_json(
         dataset_dir=args.dataset_dir,
         output_json_path=args.output_json_path,
         extract_media=args.extract_media,
