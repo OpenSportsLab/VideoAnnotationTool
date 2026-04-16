@@ -492,6 +492,7 @@ class ClassificationAnnotationPanel(QWidget):
     batch_run_requested = pyqtSignal(int, int)
 
     hand_clear_requested = pyqtSignal()
+    inferenceCancelRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -733,7 +734,9 @@ class ClassificationAnnotationPanel(QWidget):
             "Inference",
             "Loading model and running inference. Please wait...",
             self,
+            show_cancel=True,
         )
+        self._inference_loading_dialog.cancelRequested.connect(self.inferenceCancelRequested.emit)
         self._inference_loading_dialog.hide()
 
     def _set_inference_controls_loading(self, is_loading: bool):
@@ -821,6 +824,7 @@ class ClassificationAnnotationPanel(QWidget):
 
         if is_loading:
             self._inference_loading_dialog.set_message("Loading model and running inference. Please wait...")
+            self._inference_loading_dialog.set_cancel_enabled(True)
             self._inference_loading_dialog.show()
             self._inference_loading_dialog.raise_()
             self._inference_loading_dialog.activateWindow()

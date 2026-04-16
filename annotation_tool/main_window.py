@@ -334,6 +334,10 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.settingsChanged.connect(
             lambda _settings: self._restore_mute_state_from_settings()
         )
+        self.dataset_explorer_controller.settingsChanged.connect(
+            self.localization_editor_controller.set_settings
+        )
+        self.localization_editor_controller.set_settings(self.dataset_explorer_controller.settings)
 
 
         # --- Center panel (Unified Playback) ---

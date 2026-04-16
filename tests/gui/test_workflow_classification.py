@@ -408,6 +408,41 @@ def test_classification_inference_loading_cue_toggles_controls(
 
 
 @pytest.mark.gui
+def test_classification_inference_cancel_dispatches_to_manager(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.classification_editor_controller
+    panel = window.classification_panel
+
+    calls = {"count": 0}
+    monkeypatch.setattr(
+        controller.inference_manager,
+        "cancel_active_inference",
+        lambda: calls.__setitem__("count", calls["count"] + 1) or True,
+    )
+
+    panel.inferenceCancelRequested.emit()
+    qtbot.wait(20)
+    assert calls["count"] == 1
+
+
+@pytest.mark.gui
 def test_classification_clear_smart_restores_manual_or_removes_label_when_no_manual(
     window,
     monkeypatch,

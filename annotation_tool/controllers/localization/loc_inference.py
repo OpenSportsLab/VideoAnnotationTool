@@ -292,6 +292,20 @@ class LocalizationInferenceManager(QObject):
         worker.deleteLater()
         return True
 
+    def cancel_inference(self, wait_ms: int = 700) -> bool:
+        worker = self.worker
+        if worker is None or not worker.isRunning():
+            return False
+
+        worker.requestInterruption()
+        if wait_ms > 0 and worker.wait(wait_ms):
+            return True
+
+        # Last-resort stop for backends that do not cooperatively honor interruption.
+        worker.terminate()
+        worker.wait(2000)
+        return True
+
     def start_inference(
         self,
         video_path: str,

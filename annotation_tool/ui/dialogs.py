@@ -476,7 +476,6 @@ class BusyStatusDialog(QDialog):
         parent=None,
         *,
         show_cancel: bool = False,
-        cancel_text: str = "Cancel",
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -497,7 +496,7 @@ class BusyStatusDialog(QDialog):
         if show_cancel:
             button_row = QHBoxLayout()
             button_row.addStretch(1)
-            self._cancel_button = QPushButton(cancel_text, self)
+            self._cancel_button = QPushButton("Cancel", self)
             self._cancel_button.clicked.connect(self._on_cancel_clicked)
             button_row.addWidget(self._cancel_button)
             layout.addLayout(button_row)
@@ -509,6 +508,8 @@ class BusyStatusDialog(QDialog):
 
     def set_cancel_enabled(self, enabled: bool) -> None:
         if self._cancel_button is not None:
+            if enabled:
+                self._cancel_button.setText("Cancel")
             self._cancel_button.setEnabled(bool(enabled))
 
     def _on_cancel_clicked(self) -> None:

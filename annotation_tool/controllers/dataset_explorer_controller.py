@@ -1710,6 +1710,9 @@ class DatasetExplorerController(QObject):
             sample.pop("smart_events", None)
 
         written.setdefault("labels", {})
+        for definition in written.get("labels", {}).values():
+            if isinstance(definition, dict):
+                definition.pop("label_colors", None)
         written.setdefault("metadata", {})
         written.setdefault("modalities", ["video"])
         if not written.get("description"):

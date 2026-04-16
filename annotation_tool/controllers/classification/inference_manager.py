@@ -386,6 +386,27 @@ class InferenceManager(QObject):
         ok_batch = self._shutdown_thread("batch_worker", wait_ms=wait_ms)
         return bool(ok_single and ok_batch)
 
+    def _cancel_thread(self, attr_name: str, wait_ms: int = 700) -> bool:
+        worker = getattr(self, attr_name, None)
+        if worker is None or not worker.isRunning():
+            return False
+        worker.requestInterruption()
+        if wait_ms > 0 and worker.wait(wait_ms):
+            return True
+
+        # Last-resort stop for backend calls that do not check interruptions.
+        worker.terminate()
+        worker.wait(2000)
+        return True
+
+    def cancel_active_inference(self) -> bool:
+        cancelled = False
+        cancelled = self._cancel_thread("worker") or cancelled
+        cancelled = self._cancel_thread("batch_worker") or cancelled
+        if cancelled:
+            self.panel.show_inference_loading(False)
+        return cancelled
+
     def set_dataset_model(self, model_obj):
         self.model = model_obj
 
