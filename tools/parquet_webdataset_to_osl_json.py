@@ -33,7 +33,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--extract-media",
         action="store_true",
-        help="Extract media files from TAR shards and rewrite inputs[].path to the extracted locations.",
+        help="Extract media files from TAR shards into --output-media-root, preserving their original relative paths.",
     )
     parser.add_argument(
         "--output-media-root",
