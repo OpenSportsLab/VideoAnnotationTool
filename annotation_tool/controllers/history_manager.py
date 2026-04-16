@@ -3,6 +3,13 @@ import copy
 from PyQt6.QtCore import QModelIndex, QObject, pyqtSignal
 
 from controllers.command_types import CmdType
+from controllers.localization.label_color_settings import (
+    move_saved_head_colors,
+    remove_saved_head_colors,
+    remove_saved_label_color,
+    rename_saved_label_color,
+    set_saved_label_color,
+)
 
 
 class HistoryManager(QObject):
@@ -269,7 +276,14 @@ class HistoryManager(QObject):
             return
 
         self.model.push_undo(CmdType.SCHEMA_REN_CAT, old_name=old_name, new_name=new_name)
+        old_definition = copy.deepcopy(self.model.label_definitions.get(old_name, {}))
         self.model.label_definitions[new_name] = self.model.label_definitions.pop(old_name)
+        move_saved_head_colors(
+            self._settings(),
+            old_name,
+            new_name,
+            list(old_definition.get("labels", [])) if isinstance(old_definition, dict) else [],
+        )
         for _, events in self.model.localization_events.items():
             for evt in events:
                 if evt.get("head") == old_name:
@@ -301,6 +315,11 @@ class HistoryManager(QObject):
 
         if head_name in self.model.label_definitions:
             del self.model.label_definitions[head_name]
+        remove_saved_head_colors(
+            self._settings(),
+            head_name,
+            list(definition.get("labels", [])) if isinstance(definition, dict) else [],
+        )
         for vid_path in list(self.model.localization_events.keys()):
             self.model.localization_events[vid_path] = [
                 e for e in self.model.localization_events[vid_path] if e.get("head") != head_name
@@ -360,6 +379,7 @@ class HistoryManager(QObject):
         self.model.push_undo(CmdType.SCHEMA_REN_LBL, head=head, old_lbl=old_label, new_lbl=new_label)
         index = labels_list.index(old_label)
         labels_list[index] = new_label
+        rename_saved_label_color(self._settings(), head, old_label, head, new_label)
         label_colors = self.model.label_definitions.get(head, {}).get("label_colors", {})
         if old_label in label_colors:
             label_colors[new_label] = label_colors.pop(old_label)
@@ -394,6 +414,7 @@ class HistoryManager(QObject):
 
         if label in labels_list:
             labels_list.remove(label)
+        remove_saved_label_color(self._settings(), head, label)
         label_colors = self.model.label_definitions.get(head, {}).get("label_colors", {})
         if label in label_colors:
             del label_colors[label]
@@ -428,6 +449,7 @@ class HistoryManager(QObject):
 
         label_colors = definition.setdefault("label_colors", {})
         label_colors[label] = color_hex
+        set_saved_label_color(self._settings(), head, label, color_hex)
         self._emit_post_mutation(refresh_schema=True)
 
     def execute_localization_event_add(self, sample_id: str, new_event: dict):
@@ -805,6 +827,22 @@ class HistoryManager(QObject):
             return None
         return self.model.get_path_by_id(sample_id)
 
+    def _settings(self):
+        return getattr(self.model, "settings", None)
+
+    def _sync_head_colors_to_settings(self, head: str, definition: dict):
+        settings = self._settings()
+        if not settings or not isinstance(definition, dict):
+            return
+        labels = [str(lbl) for lbl in list(definition.get("labels", [])) if str(lbl).strip()]
+        label_colors = definition.get("label_colors", {})
+        label_colors = dict(label_colors) if isinstance(label_colors, dict) else {}
+        remove_saved_head_colors(settings, head, labels)
+        for label in labels:
+            color_hex = label_colors.get(label)
+            if color_hex:
+                set_saved_label_color(settings, head, label, color_hex)
+
     def _set_sample_field(self, sample_id: str, field_name: str, value):
         sample = self.model.get_sample(sample_id)
         if not isinstance(sample, dict):
@@ -1140,16 +1178,24 @@ class HistoryManager(QObject):
         elif ctype == CmdType.SCHEMA_ADD_CAT:
             head = cmd["head"]
             if is_undo:
+                definition = copy.deepcopy(self.model.label_definitions.get(head, {}))
                 if head in self.model.label_definitions:
                     del self.model.label_definitions[head]
+                remove_saved_head_colors(
+                    self._settings(),
+                    head,
+                    list(definition.get("labels", [])) if isinstance(definition, dict) else [],
+                )
             else:
                 self.model.label_definitions[head] = cmd["definition"]
+                self._sync_head_colors_to_settings(head, cmd.get("definition", {}))
             self._refresh_active_view()
 
         elif ctype == CmdType.SCHEMA_DEL_CAT:
             head = cmd["head"]
             if is_undo:
                 self.model.label_definitions[head] = cmd["definition"]
+                self._sync_head_colors_to_settings(head, cmd.get("definition", {}))
 
                 if "affected_data" in cmd:
                     for key, value in cmd["affected_data"].items():
@@ -1166,6 +1212,13 @@ class HistoryManager(QObject):
             else:
                 if head in self.model.label_definitions:
                     del self.model.label_definitions[head]
+                remove_saved_head_colors(
+                    self._settings(),
+                    head,
+                    list((cmd.get("definition") or {}).get("labels", []))
+                    if isinstance(cmd.get("definition"), dict)
+                    else [],
+                )
 
                 if "affected_data" in cmd:
                     for key in cmd["affected_data"]:
@@ -1188,7 +1241,14 @@ class HistoryManager(QObject):
             dst = old_n if is_undo else new_n
 
             if src in self.model.label_definitions:
+                src_definition = copy.deepcopy(self.model.label_definitions.get(src, {}))
                 self.model.label_definitions[dst] = self.model.label_definitions.pop(src)
+                move_saved_head_colors(
+                    self._settings(),
+                    src,
+                    dst,
+                    list(src_definition.get("labels", [])) if isinstance(src_definition, dict) else [],
+                )
 
             for anno in self.model.manual_annotations.values():
                 if src in anno:
@@ -1252,6 +1312,9 @@ class HistoryManager(QObject):
                     if label_color is not None:
                         label_colors = self.model.label_definitions[head].setdefault("label_colors", {})
                         label_colors[lbl] = label_color
+                        set_saved_label_color(self._settings(), head, lbl, label_color)
+                    else:
+                        remove_saved_label_color(self._settings(), head, lbl)
 
                 else:
                     if isinstance(label_index, int) and 0 <= label_index < len(labels) and labels[label_index] == lbl:
@@ -1264,6 +1327,7 @@ class HistoryManager(QObject):
                         del label_colors[lbl]
                         if not label_colors:
                             self.model.label_definitions[head].pop("label_colors", None)
+                    remove_saved_label_color(self._settings(), head, lbl)
 
                     if "affected_data" in cmd:
                         for key in cmd["affected_data"]:
@@ -1301,6 +1365,7 @@ class HistoryManager(QObject):
                 label_colors = self.model.label_definitions[head].get("label_colors", {})
                 if src in label_colors:
                     label_colors[dst] = label_colors.pop(src)
+                rename_saved_label_color(self._settings(), head, src, head, dst)
 
             for anno in self.model.manual_annotations.values():
                 val = anno.get(head)
@@ -1331,5 +1396,9 @@ class HistoryManager(QObject):
                 else:
                     label_colors = self.model.label_definitions[head].setdefault("label_colors", {})
                     label_colors[lbl] = target_color
+                if target_color is None:
+                    remove_saved_label_color(self._settings(), head, lbl)
+                else:
+                    set_saved_label_color(self._settings(), head, lbl, target_color)
 
             self._refresh_active_view()

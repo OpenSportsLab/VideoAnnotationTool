@@ -5,6 +5,14 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from colors import localization_label_color_hex, normalize_hex_color
+from .label_color_settings import (
+    get_saved_label_color,
+    move_saved_head_colors,
+    remove_saved_head_colors,
+    remove_saved_label_color,
+    rename_saved_label_color,
+    set_saved_label_color,
+)
 from .loc_inference import LocalizationInferenceManager
 
 
@@ -68,6 +76,9 @@ class LocalizationEditorController(QObject):
 
         self.settings = QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
 
+    def set_settings(self, settings_obj) -> None:
+        self.settings = settings_obj if settings_obj is not None else QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
+
     # -------------------------------------------------------------------------
     # Lifecycle / Wiring
     # -------------------------------------------------------------------------
@@ -84,6 +95,7 @@ class LocalizationEditorController(QObject):
 
     def setup_connections(self):
         self.localization_panel.eventNavigateRequested.connect(self._navigate_annotation)
+        self.localization_panel.inferenceCancelRequested.connect(self._cancel_running_inference)
 
         tabs = self.localization_panel.annot_mgmt.tabs
         table = self.localization_panel.table
@@ -211,6 +223,12 @@ class LocalizationEditorController(QObject):
             self._schema_definitions[new_name] = self._schema_definitions.pop(old_name)
         elif new_name not in self._schema_definitions:
             self._schema_definitions[new_name] = old_definition
+        move_saved_head_colors(
+            self.settings,
+            old_name,
+            new_name,
+            list(self._schema_definitions.get(new_name, {}).get("labels", [])),
+        )
 
         events = self._snapshot_events()
         for evt in events:
@@ -233,6 +251,11 @@ class LocalizationEditorController(QObject):
             return
 
         self.locHeadDeleteRequested.emit(head_name)
+        remove_saved_head_colors(
+            self.settings,
+            head_name,
+            list(self._schema_definitions.get(head_name, {}).get("labels", [])),
+        )
 
         self._schema_definitions.pop(head_name, None)
         events = [e for e in self._snapshot_events() if e.get("head") != head_name]
@@ -317,6 +340,7 @@ class LocalizationEditorController(QObject):
             return
 
         self.locLabelRenameRequested.emit(head, old_label, new_label)
+        rename_saved_label_color(self.settings, head, old_label, head, new_label)
 
         updated_labels = [new_label if lbl == old_label else lbl for lbl in labels_list]
         self._schema_definitions[head]["labels"] = sorted(updated_labels)
@@ -349,6 +373,7 @@ class LocalizationEditorController(QObject):
             return
 
         self.locLabelDeleteRequested.emit(head, label)
+        remove_saved_label_color(self.settings, head, label)
 
         labels = list(self._schema_definitions.get(head, {}).get("labels", []))
         self._schema_definitions.setdefault(head, {"type": "single_label", "labels": []})
@@ -386,11 +411,20 @@ class LocalizationEditorController(QObject):
             return
 
         self.locLabelColorSetRequested.emit(head, label, normalized)
+        set_saved_label_color(self.settings, head, label, normalized)
         current_colors[label] = normalized
         self._schema_definitions[head]["label_colors"] = current_colors
         self._refresh_schema_ui()
         self.localization_panel.annot_mgmt.tabs.set_current_head(head)
         self._refresh_current_clip_events()
+
+    def _cancel_running_inference(self):
+        if not self.inference_manager.cancel_inference():
+            self.statusMessageRequested.emit("Inference", "No localization inference is running.", 1200)
+            return
+        self.localization_panel.show_inference_loading(False)
+        self._pending_inference_head = None
+        self.statusMessageRequested.emit("Inference", "Localization inference cancelled.", 1200)
 
     # --- Spotting (Data Creation) ---
     def _on_spotting_triggered(self, head, label):
@@ -927,11 +961,40 @@ class LocalizationEditorController(QObject):
         normalized.sort(key=self._event_position_ms)
         self._current_sample_snapshot["events"] = normalized
 
-    @staticmethod
-    def _normalize_schema(schema: dict) -> dict:
+    def _normalize_schema(self, schema: dict) -> dict:
         if not isinstance(schema, dict):
             return {}
-        return copy.deepcopy(schema)
+        normalized: dict = {}
+        for head, definition in schema.items():
+            head_name = str(head or "").strip()
+            if not head_name:
+                continue
+            if not isinstance(definition, dict):
+                continue
+
+            clean_definition = copy.deepcopy(definition)
+            labels = [str(lbl) for lbl in list(clean_definition.get("labels", [])) if str(lbl).strip()]
+            clean_definition["labels"] = labels
+
+            incoming_colors = clean_definition.get("label_colors", {})
+            incoming_colors = dict(incoming_colors) if isinstance(incoming_colors, dict) else {}
+            merged_colors = {}
+            for label in labels:
+                saved = get_saved_label_color(self.settings, head_name, label)
+                incoming = normalize_hex_color(incoming_colors.get(label))
+                chosen = saved or incoming
+                if chosen:
+                    merged_colors[label] = chosen
+                    if saved is None and incoming:
+                        set_saved_label_color(self.settings, head_name, label, incoming)
+
+            if merged_colors:
+                clean_definition["label_colors"] = merged_colors
+            else:
+                clean_definition.pop("label_colors", None)
+
+            normalized[head_name] = clean_definition
+        return normalized
 
     @staticmethod
     def _extract_primary_path(sample: dict):

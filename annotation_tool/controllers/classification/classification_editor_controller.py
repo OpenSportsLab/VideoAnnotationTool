@@ -58,6 +58,7 @@ class ClassificationEditorController(QObject):
         self.classification_panel.head_smart_confirm_requested.connect(self.confirm_smart_annotation_head)
         self.classification_panel.head_smart_reject_requested.connect(self.reject_smart_annotation_head)
         self.classification_panel.confirm_infer_requested.connect(self.save_manual_annotation)
+        self.classification_panel.inferenceCancelRequested.connect(self._on_inference_cancel_requested)
 
     def on_mode_changed(self, index: int):
         self._active_mode_index = index
@@ -205,6 +206,12 @@ class ClassificationEditorController(QObject):
 
     def clear_current_smart_annotation(self):
         self.inference_manager.clear_current_smart_annotation()
+
+    def _on_inference_cancel_requested(self):
+        if not self.inference_manager.cancel_active_inference():
+            self._emit_status("Inference", "No classification inference is running.", 1200)
+            return
+        self._emit_status("Inference", "Classification inference cancelled.", 1200)
 
     def display_manual_annotation(self):
         data = self._manual_payload_to_panel(self._current_sample_snapshot.get("labels"))

@@ -177,6 +177,90 @@ def test_localization_inference_loading_cue_toggles_controls(
 
 
 @pytest.mark.gui
+def test_localization_inference_cancel_dispatches_to_manager(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    panel = window.localization_panel
+
+    calls = {"count": 0}
+    monkeypatch.setattr(
+        controller.inference_manager,
+        "cancel_inference",
+        lambda: calls.__setitem__("count", calls["count"] + 1) or True,
+    )
+
+    panel.inferenceCancelRequested.emit()
+    qtbot.wait(20)
+    assert calls["count"] == 1
+
+
+@pytest.mark.gui
+def test_localization_label_colors_persist_in_qsettings_not_json(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    from controllers.localization.label_color_settings import get_saved_label_color
+
+    project_json_path = synthetic_project_json("localization")
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    settings = window.dataset_explorer_controller.settings
+    controller._on_label_color_req("ball_action", "pass", "#ff8844")
+    qtbot.wait(20)
+
+    assert get_saved_label_color(settings, "ball_action", "pass") == "#ff8844"
+
+    assert window.dataset_explorer_controller.save_project() is True
+    saved = json.loads(project_json_path.read_text(encoding="utf-8"))
+    assert "label_colors" not in saved.get("labels", {}).get("ball_action", {})
+
+    window.dataset_explorer_controller.close_project()
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+    qtbot.wait(50)
+
+    restored_colors = (
+        window.localization_editor_controller._schema_definitions
+        .get("ball_action", {})
+        .get("label_colors", {})
+    )
+    assert restored_colors.get("pass") == "#ff8844"
+
+
+@pytest.mark.gui
 # Workflow: Localization annotation round-trip with timestamp edit:
 # 1) create event(label+time) + save + reopen, then 2) change time + save + reopen and verify final timestamp.
 def test_localization_annotate_save_reload_edit_time_and_persist(
