@@ -85,9 +85,9 @@ python tools/parquet_webdataset_to_osl_json.py <dataset_dir> <output_json_path> 
 
 | Flag | Default | Description |
 |---|---|---|
-| `--extract-media` | off | Extract media files from TAR shards and rewrite `inputs[].path` to the extracted locations. |
-| `--output-media-root DIR` | — | Directory to extract media files into. **Required** when `--extract-media` is set. |
-| `--overwrite-media` | off | Overwrite already-extracted media files. |
+| `--extract-media` | off | Extract media files from TAR shards into `output_media_root/<original_path>` while preserving `inputs[].path` unchanged, so the reconstructed paths remain valid relative paths. |
+| `--output-media-root DIR` | — | Root directory to extract media files into, preserving each original `inputs[].path` underneath it. **Required** when `--extract-media` is set. |
+| `--overwrite-media` | off | Overwrite already-extracted media files under `output_media_root/<original_path>`. |
 | `--indent N` | `2` | JSON indentation level for the output file. |
 
 ### Examples
