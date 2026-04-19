@@ -338,6 +338,7 @@ class HfUploadDialog(QDialog):
     _KEY_REVISION = f"{_SETTINGS_PREFIX}/revision"
     _KEY_COMMIT_MESSAGE = f"{_SETTINGS_PREFIX}/commit_message"
     _KEY_TOKEN = f"{_SETTINGS_PREFIX}/token"
+    _KEY_UPLOAD_AS_JSON = f"{_SETTINGS_PREFIX}/upload_as_json"
 
     def __init__(
         self,
@@ -453,6 +454,13 @@ class HfUploadDialog(QDialog):
                 )
             )
             self.token_edit.setText(str(self._settings.value(self._KEY_TOKEN, "") or ""))
+            upload_as_json_raw = self._settings.value(self._KEY_UPLOAD_AS_JSON, True)
+            if isinstance(upload_as_json_raw, str):
+                self.upload_as_json_checkbox.setChecked(
+                    upload_as_json_raw.strip().lower() in {"1", "true", "yes", "on"}
+                )
+            else:
+                self.upload_as_json_checkbox.setChecked(bool(upload_as_json_raw))
 
         default_repo_id = str(self._hf_defaults.get("repo_id") or "").strip()
         default_branch = str(self._hf_defaults.get("branch") or "").strip()
@@ -468,6 +476,7 @@ class HfUploadDialog(QDialog):
         self._settings.setValue(self._KEY_REVISION, self.revision_edit.text().strip() or "main")
         self._settings.setValue(self._KEY_COMMIT_MESSAGE, self.commit_message_edit.text().strip())
         self._settings.setValue(self._KEY_TOKEN, self.token_edit.text().strip())
+        self._settings.setValue(self._KEY_UPLOAD_AS_JSON, self.upload_as_json_checkbox.isChecked())
         self._settings.sync()
 
 

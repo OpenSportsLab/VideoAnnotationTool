@@ -1,6 +1,6 @@
 # GUI Overview
 
-The OSL Annotation Tool supports two distinct annotation modes: **Classification** and **Localization (Action Spotting)**. The interface adapts based on the project type selected at startup.
+The OSL Annotation Tool supports five annotation modes: **Classification**, **Localization (Action Spotting)**, **Description**, **Dense Description**, and **Question/Answer**. The interface adapts based on the selected sample content.
 
 ---
 # 1. Welcome Page (Startup Interface)
@@ -14,7 +14,7 @@ The Welcome Page is the entry point of the OSL Annotation Tool. It allows users 
 * **Create New Project**
 
   * Start a new annotation project.
-  * You will be prompted to select the annotation mode (Classification, Localization, Description, or Dense Description).
+  * The workspace opens with all annotation modes available as tabs (Classification, Localization, Description, Dense Description, and Q/A).
   * Initializes an empty workspace.
 
 * **Import Project JSON**
@@ -257,5 +257,27 @@ Displays all annotated events in chronological order.
 * **Double-click** – Jump to event timestamp.
 * **Editing** – Modify description text and confirm to update.
 * **Delete** – Remove event from table and timeline.
+
+---
+
+# 6. Question/Answer Mode (Sample-Level Answers + Shared Question Bank)
+
+Designed for datasets where a shared set of questions is answered per sample.
+
+### Right Panel: Q/A Editor
+
+* **Shared Questions (dataset-level):**
+  * Add, rename, and delete questions.
+  * Questions are common across all samples.
+* **Answer Editor (sample-level):**
+  * Multi-line text editor for the currently selected question.
+  * Autosaves effective changes.
+  * Stores sparse answers only (empty answers are omitted).
+
+### Data Mapping
+
+* Top-level JSON: `questions` list with stable IDs.
+* Per-sample JSON: `answers` list using `question_id` references.
+* Deleting a shared question removes linked answers from all samples.
 
 ---

@@ -16,6 +16,7 @@ MODE_TO_TAB_INDEX = {
     "localization": 1,
     "description": 2,
     "dense_description": 3,
+    "question_answer": 4,
 }
 
 
@@ -377,6 +378,7 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
     assert upload_box is not None
     assert upload_box.button(QDialogButtonBox.StandardButton.Ok).text() == "Upload"
     assert upload_dialog.revision_edit.text() == "main"
+    assert upload_dialog.upload_as_json_checkbox.isChecked() is True
     upload_dialog.close()
 
 
@@ -392,6 +394,7 @@ def test_hf_upload_dialog_prefill_prefers_json_metadata_over_settings(window, tm
     settings.setValue(HfUploadDialog._KEY_REVISION, "settings-branch")
     settings.setValue(HfUploadDialog._KEY_COMMIT_MESSAGE, "Settings commit message")
     settings.setValue(HfUploadDialog._KEY_TOKEN, "settings-token")
+    settings.setValue(HfUploadDialog._KEY_UPLOAD_AS_JSON, False)
     settings.sync()
 
     upload_dialog = HfUploadDialog(
@@ -408,7 +411,37 @@ def test_hf_upload_dialog_prefill_prefers_json_metadata_over_settings(window, tm
     assert upload_dialog.revision_edit.text() == "json-branch"
     assert upload_dialog.commit_message_edit.text() == "Settings commit message"
     assert upload_dialog.token_edit.text() == "settings-token"
+    assert upload_dialog.upload_as_json_checkbox.isChecked() is False
     upload_dialog.close()
+
+
+@pytest.mark.gui
+def test_hf_upload_dialog_persists_upload_as_json_checkbox(window, tmp_path):
+    from ui.dialogs import HfUploadDialog
+
+    opened_json = tmp_path / "opened_dataset.json"
+    opened_json.write_text("{}", encoding="utf-8")
+    settings = window.dataset_explorer_controller.settings
+    settings.remove(HfUploadDialog._KEY_UPLOAD_AS_JSON)
+    settings.sync()
+
+    upload_dialog = HfUploadDialog(
+        str(opened_json),
+        settings=settings,
+        parent=window,
+    )
+    upload_dialog.upload_as_json_checkbox.setChecked(False)
+    upload_dialog.repo_id_edit.setText("OpenSportsLab/test-repo")
+    upload_dialog._validate_and_accept()
+    upload_dialog.close()
+
+    reloaded_dialog = HfUploadDialog(
+        str(opened_json),
+        settings=settings,
+        parent=window,
+    )
+    assert reloaded_dialog.upload_as_json_checkbox.isChecked() is False
+    reloaded_dialog.close()
 
 
 @pytest.mark.gui

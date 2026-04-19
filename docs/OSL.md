@@ -20,6 +20,7 @@ The root of the OSL JSON document contains metadata about the dataset, the share
 | `metadata` | Object | Global, file-level metadata (e.g., `source`, `license`, `created_by`, `notes`). | No |
 | `tasks` | Array[String] | An advisory list of task families included in this file (e.g., `["action_classification", "action_spotting", ...]`). | No |
 | `labels` | Object | The shared global taxonomy defining the available classes and their properties. | Yes* |
+| `questions` | Array[Object] | Shared Q/A question bank entries (`id`, `question`). | No |
 | `data` | Array[Object] | The list of data items (video clips) and their associated annotations. | Yes |
 
 *\* Required if the dataset involves classification or spotting tasks.*
@@ -62,6 +63,7 @@ The `data` array contains individual objects, each representing a specific data 
 | `id` | String | A unique identifier for this data item. All task targets below apply to this ID. | Yes |
 | `metadata` | Object | Item-level metadata (e.g., `competition`, `stage`, `home_team`). | No |
 | `inputs` | Array[Object] | A list of typed inputs associated with this item (e.g., raw video, extracted features, poses). | Yes |
+| `answers` | Array[Object] | Sparse sample-level Q/A answers (`question_id`, `answer`). | No |
 
 ### 3.1 Inputs
 
@@ -123,6 +125,29 @@ Provides text descriptions for the entire video clip. Multiple languages are sup
 
 ```
 
+#### Question/Answer (`questions` + `answers`)
+
+Defines a shared dataset-level question bank plus sparse per-sample answers.
+
+* Top-level `questions`: `[{ "id": "q1", "question": "How are you?" }]`
+* Per-sample `answers`: `[{ "question_id": "q1", "answer": "I am fine." }]`
+* Empty answers should be omitted (sparse storage).
+
+```json
+"questions": [
+  { "id": "q1", "question": "How are you?" },
+  { "id": "q2", "question": "What happened?" }
+]
+
+```
+
+```json
+"answers": [
+  { "question_id": "q1", "answer": "I am fine." }
+]
+
+```
+
 #### Dense Video Captioning (`dense_captions`)
 
 Provides text descriptions for specific temporal segments within the video clip.
@@ -158,7 +183,7 @@ Below is a complete example of an OSL JSON file demonstrating a single data item
     "notes": "Single item demonstrates multi-task targets on the same ID."
   },
   
-  "tasks": ["action_classification", "action_spotting", "video_captioning", "dense_video_captioning"],
+  "tasks": ["action_classification", "action_spotting", "video_captioning", "dense_video_captioning", "video_question_answering"],
   
   "labels": {
     "action": {
@@ -170,6 +195,11 @@ Below is a complete example of an OSL JSON file demonstrating a single data item
       "labels": ["Aerial", "SetPiece"]
     }
   },
+
+  "questions": [
+    { "id": "q1", "question": "How are you?" },
+    { "id": "q2", "question": "What happened?" }
+  ],
   
   "data": [
     {
@@ -207,6 +237,10 @@ Below is a complete example of an OSL JSON file demonstrating a single data item
       "dense_captions": [
         { "start_ms": 1200, "end_ms": 2500, "lang": "en", "text": "The winger accelerates down the flank and delivers a looping cross." },
         { "start_ms": 2600, "end_ms": 4200, "lang": "en", "text": "The striker rises above the defense and heads the ball toward goal." }
+      ],
+
+      "answers": [
+        { "question_id": "q1", "answer": "I am fine." }
       ]
     }
   ]

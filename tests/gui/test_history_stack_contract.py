@@ -17,6 +17,7 @@ MODE_TO_TAB_INDEX = {
     "localization": 1,
     "description": 2,
     "dense_description": 3,
+    "question_answer": 4,
 }
 
 
@@ -411,6 +412,44 @@ def test_history_contract_dense_mutations(window, monkeypatch, qtbot, synthetic_
 
 
 @pytest.mark.gui
+def test_history_contract_question_answer_mutations(window, monkeypatch, qtbot, synthetic_project_json):
+    project_json_path = synthetic_project_json("question_answer")
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["question_answer"])
+    qtbot.wait(50)
+
+    controller = window.qa_editor_controller
+    panel = window.qa_panel
+
+    _assert_mutating_action_creates_single_history_entry(
+        window,
+        qtbot,
+        lambda: window.history_manager.execute_qa_question_add("Who committed the foul?"),
+    )
+
+    _assert_mutating_action_creates_single_history_entry(
+        window,
+        qtbot,
+        lambda: window.history_manager.execute_qa_question_rename("q1", "How are you doing?"),
+    )
+
+    _assert_mutating_action_creates_single_history_entry(
+        window,
+        qtbot,
+        lambda: window.history_manager.execute_qa_question_delete("q2"),
+    )
+
+    def _edit_answer():
+        panel.set_questions(window.dataset_explorer_controller.question_definitions, selected_question_id="q1")
+        panel.answer_editor.setPlainText("History contract Q/A edit.")
+        controller.save_current_answers()
+        qtbot.wait(300)
+
+    _assert_mutating_action_creates_single_history_entry(window, qtbot, _edit_answer)
+
+
+@pytest.mark.gui
 def test_history_contract_dataset_explorer_mutations(window, monkeypatch, qtbot, synthetic_project_json, tmp_path):
     project_json_path = synthetic_project_json("mixed", item_count=2)
     _open_project(window, monkeypatch, project_json_path)
@@ -438,8 +477,9 @@ def test_history_contract_dataset_explorer_mutations(window, monkeypatch, qtbot,
     added_video = tmp_path / "history_added.mp4"
     added_video.write_bytes(source_video.read_bytes())
     monkeypatch.setattr(
-        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileNames",
-        lambda *args, **kwargs: ([str(added_video)], "Media Files (*.mp4)"),
+        controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(added_video)],
     )
     _assert_mutating_action_creates_single_history_entry(window, qtbot, controller.handle_add_sample)
 
@@ -641,6 +681,20 @@ def test_history_contract_noop_description_event_and_dense_edits_do_not_touch_st
         lambda *args, **kwargs: ("   ", True),
     )
     _assert_non_mutating_action_keeps_history_unchanged(window, qtbot, dense_controller._on_add_event_requested)
+
+    # Q/A no-op answer save
+    window.dataset_explorer_controller.close_project()
+    qa_json = synthetic_project_json("question_answer")
+    _open_project(window, monkeypatch, qa_json)
+    _select_top_row(window, qtbot, 0)
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["question_answer"])
+    qtbot.wait(50)
+
+    _assert_non_mutating_action_keeps_history_unchanged(
+        window,
+        qtbot,
+        window.qa_editor_controller.save_current_answers,
+    )
 
 
 @pytest.mark.gui

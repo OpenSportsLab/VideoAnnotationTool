@@ -13,7 +13,7 @@ Provides all QWidget classes, `.ui` bindings, and adapter surfaces for controlle
 - `welcome_widget/`: landing page widget.
 - `dataset_explorer_panel/`: tree/filter/header inspector panel.
 - `media_player/`: center media timeline/player panel.
-- `classification/`, `localization/`, `description/`, `dense_description/`: right editor panels.
+- `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`: right editor panels.
 
 ## Key Functions and Responsibilities
 - `__init__.py` files in each UI package:

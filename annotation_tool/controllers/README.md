@@ -17,7 +17,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `media_controller.py`: media playback and mute routing.
 - `welcome_controller.py`: welcome-page routing.
 - `hf_transfer_controller.py`: threaded Hugging Face download/upload orchestration for GUI menu actions.
-- `classification/`, `localization/`, `description/`, `dense_description/`: mode controllers.
+- `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`: mode controllers.
 
 ## Key Functions and Responsibilities
 ### `DatasetExplorerController`
@@ -26,7 +26,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `save_project()`, `export_project()`: write dataset JSON to disk.
 - `populate_tree()`, `handle_filter_change()`: tree render + visibility filtering.
 - `_on_selection_changed()`, `_route_media_for_selection()`: selection context and media route emission.
-- `handle_add_sample()`, `handle_remove_item()`, `handle_clear_workspace()`: explorer mutation intent emission.
+- `handle_add_sample()`, `handle_remove_item()`, `handle_clear_workspace()`: explorer mutation intent emission (`handle_add_sample()` accepts files/folders in one picker; files map to single-input samples, folders expand recursively to multi-input samples).
 - `restore_dataset_json_from_history()`: apply history snapshot restore.
 
 ### `HistoryManager`
