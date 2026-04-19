@@ -693,6 +693,7 @@ def upload_dataset_as_parquet_to_hf(
     A temporary directory is used for the conversion output and removed when done.
     """
     HfApi, _, _ = _import_hf_hub()
+    CommitOperationAdd = _import_hf_commit_operation_add()
 
     cleaned_repo_id = str(repo_id or "").strip()
     cleaned_json_path = os.path.abspath(str(json_path or "").strip())
@@ -710,6 +711,8 @@ def upload_dataset_as_parquet_to_hf(
     _emit_progress(progress_cb, f"Converting {cleaned_json_path} to Parquet + WebDataset...")
 
     conversion_result: dict[str, Any] = {}
+    total = 0
+    commit_ref = ""
     tmp_dir = tempfile.mkdtemp(prefix="hf_parquet_ul_")
     try:
         parquet_output = Path(tmp_dir) / folder_name
@@ -733,22 +736,37 @@ def upload_dataset_as_parquet_to_hf(
 
         api = HfApi(token=token or None)
         total = len(upload_entries)
-        _emit_progress(progress_cb, f"Uploading {total} files to {cleaned_repo_id}@{cleaned_revision} under '{folder_name}/'...")
+        _emit_progress(
+            progress_cb,
+            f"Preparing batched parquet upload of {total} files to {cleaned_repo_id}@{cleaned_revision} under '{folder_name}/'..."
+        )
 
-        last_commit_ref = ""
+        operations = []
         for idx, entry in enumerate(upload_entries, start=1):
             _ensure_not_cancelled(is_cancelled)
-            _emit_progress(progress_cb, f"[{idx}/{total}] Uploading {entry['path_in_repo']}")
-            last_commit_ref = str(
-                api.upload_file(
-                    path_or_fileobj=entry["local_path"],
+            _emit_progress(progress_cb, f"[{idx}/{total}] Queueing {entry['path_in_repo']}")
+            operations.append(
+                CommitOperationAdd(
                     path_in_repo=entry["path_in_repo"],
-                    repo_id=cleaned_repo_id,
-                    repo_type="dataset",
-                    revision=cleaned_revision,
-                    commit_message=f"{effective_commit_message} ({idx}/{total})",
+                    path_or_fileobj=entry["local_path"],
                 )
             )
+
+        _ensure_not_cancelled(is_cancelled)
+        _emit_progress(progress_cb, f"Submitting one Hugging Face commit with {len(operations)} parquet files...")
+        commit_info = api.create_commit(
+            repo_id=cleaned_repo_id,
+            repo_type="dataset",
+            revision=cleaned_revision,
+            operations=operations,
+            commit_message=effective_commit_message,
+        )
+        commit_ref = (
+            str(getattr(commit_info, "oid", "") or "").strip()
+            or str(getattr(commit_info, "commit_id", "") or "").strip()
+            or str(getattr(commit_info, "commit_url", "") or "").strip()
+            or str(commit_info)
+        )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -763,7 +781,7 @@ def upload_dataset_as_parquet_to_hf(
         "video_file_count": int(conversion_result.get("video_files_added") or 0),
         "uploaded_file_count": total,
         "commit_message": effective_commit_message,
-        "commit_ref": last_commit_ref,
+        "commit_ref": commit_ref,
     }
 
 
