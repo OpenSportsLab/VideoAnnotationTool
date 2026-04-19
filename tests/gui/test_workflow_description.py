@@ -16,6 +16,7 @@ MODE_TO_TAB_INDEX = {
     "localization": 1,
     "description": 2,
     "dense_description": 3,
+    "question_answer": 4,
 }
 
 

@@ -105,7 +105,7 @@ def synthetic_project_json(tmp_path):
 
     Returns:
       Callable[[str], Path]
-      Supported modes: classification, localization, description, dense_description.
+      Supported modes: classification, localization, description, dense_description, question_answer.
 
     Design goals:
     - Keep schema minimal but valid for each mode validator.
@@ -139,6 +139,7 @@ def synthetic_project_json(tmp_path):
         localization_data = []
         description_data = []
         dense_data = []
+        qa_data = []
         for idx, rel_clip_path in enumerate(rel_clip_paths, start=1):
             clip_id = f"clip_{idx}"
             classification_data.append(
@@ -207,6 +208,24 @@ def synthetic_project_json(tmp_path):
                     ],
                 }
             )
+            qa_data.append(
+                {
+                    "id": clip_id,
+                    "inputs": [
+                        {
+                            "path": rel_clip_path,
+                            "type": "video",
+                            "fps": 25.0,
+                        }
+                    ],
+                    "answers": [
+                        {
+                            "question_id": "q1",
+                            "answer": "I am fine." if idx == 1 else f"Answer {idx}",
+                        }
+                    ],
+                }
+            )
 
         mixed_data = []
         for idx, rel_clip_path in enumerate(rel_clip_paths, start=1):
@@ -239,6 +258,9 @@ def synthetic_project_json(tmp_path):
                         ],
                         "dense_captions": [
                             {"position_ms": 1500, "lang": "en", "text": "Mixed dense caption"},
+                        ],
+                        "answers": [
+                            {"question_id": "q1", "answer": "Mixed answer"},
                         ],
                     }
                 )
@@ -293,6 +315,21 @@ def synthetic_project_json(tmp_path):
                 },
                 "data": dense_data,
             },
+            "question_answer": {
+                "version": "2.0",
+                "date": "2026-04-06",
+                "task": "video_question_answering",
+                "dataset_name": "synthetic_question_answer",
+                "modalities": ["video"],
+                "metadata": {
+                    "source": "pytest-qt",
+                },
+                "questions": [
+                    {"id": "q1", "question": "How are you?"},
+                    {"id": "q2", "question": "What happened?"},
+                ],
+                "data": qa_data,
+            },
             "mixed": {
                 "version": "2.0",
                 "date": "2026-04-06",
@@ -315,6 +352,10 @@ def synthetic_project_json(tmp_path):
                         "labels": ["pass", "shot"],
                     },
                 },
+                "questions": [
+                    {"id": "q1", "question": "How are you?"},
+                    {"id": "q2", "question": "What happened?"},
+                ],
                 "data": mixed_data,
             },
             "multiview": {

@@ -20,6 +20,7 @@ from controllers.hf_transfer_service import (
 from controllers.localization import LocalizationEditorController
 from controllers.description import DescEditorController
 from controllers.dense_description import DenseEditorController
+from controllers.question_answer import QAEditorController
 from controllers.history_manager import HistoryManager
 from controllers.media_controller import MediaController
 from controllers.dataset_explorer_controller import DatasetExplorerController
@@ -33,6 +34,7 @@ from ui.classification import ClassificationAnnotationPanel
 from ui.localization import LocalizationAnnotationPanel
 from ui.description import DescriptionAnnotationPanel
 from ui.dense_description import DenseAnnotationPanel
+from ui.question_answer import QuestionAnswerAnnotationPanel
 from ui.dialogs import BusyStatusDialog, HfDownloadDialog, HfUploadDialog
 
 from utils import create_checkmark_icon, resource_path
@@ -40,7 +42,7 @@ from utils import create_checkmark_icon, resource_path
 
 class VideoAnnotationWindow(QMainWindow):
     """
-    Main application window for annotation + localization + description + dense workflows.
+    Main application window for annotation + localization + description + dense + Q/A workflows.
     Now directly implements the UI setup to avoid overcomplicated nesting.
     """
     _MUTE_SETTING_KEY = "media/muted"
@@ -84,11 +86,13 @@ class VideoAnnotationWindow(QMainWindow):
         self.localization_panel = LocalizationAnnotationPanel()
         self.description_panel = DescriptionAnnotationPanel()
         self.dense_panel = DenseAnnotationPanel()
+        self.qa_panel = QuestionAnswerAnnotationPanel()
         
         self.right_tabs.addTab(self.classification_panel, "CLS")
         self.right_tabs.addTab(self.localization_panel, "LOC")
         self.right_tabs.addTab(self.description_panel, "DESC")
         self.right_tabs.addTab(self.dense_panel, "DENSE")
+        self.right_tabs.addTab(self.qa_panel, "Q/A")
         
         self.editor_dock = QDockWidget("Annotation Editor", self)
         self.editor_dock.setObjectName("AnnotationEditorDock")
@@ -137,6 +141,9 @@ class VideoAnnotationWindow(QMainWindow):
         # Dense Description Controller
         self.dense_editor_controller = DenseEditorController(
             dense_panel=self.dense_panel,
+        )
+        self.qa_editor_controller = QAEditorController(
+            question_answer_panel=self.qa_panel,
         )
 
         self.history_manager = HistoryManager(
@@ -206,6 +213,10 @@ class VideoAnnotationWindow(QMainWindow):
         self.show_workspace()
         self.right_tabs.setCurrentIndex(3)
 
+    def show_question_answer_view(self):
+        self.show_workspace()
+        self.right_tabs.setCurrentIndex(4)
+
     def reset_all_managers(self):
         """ Clears all mode-specific UIs and returns to Welcome screen. """
         self.reset_editor_panels()
@@ -224,11 +235,13 @@ class VideoAnnotationWindow(QMainWindow):
         self.localization_editor_controller.reset_ui()
         self.desc_editor_controller.reset_ui()
         self.dense_editor_controller.reset_ui()
+        self.qa_editor_controller.reset_ui()
 
     def set_project_ui_enabled(self, enabled: bool):
         """Enables/Disables all project-related docks and editors."""
         self.data_dock.setEnabled(enabled)
         self.editor_dock.setEnabled(enabled)
+        self.qa_editor_controller.set_question_bank_enabled(enabled)
         
         # Also explicitly disable the sub-editors to be safe
         self._set_annotation_panels_enabled_for_selection(enabled)
@@ -238,6 +251,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.localization_panel.setEnabled(enabled)
         self.description_panel.setEnabled(enabled)
         self.dense_panel.setEnabled(enabled)
+        self.qa_editor_controller.set_sample_selection_enabled(enabled)
 
     def _set_side_docks_visible(self, visible: bool):
         """Show or hide side dock widgets (dataset explorer + annotation editor)."""
@@ -284,11 +298,17 @@ class VideoAnnotationWindow(QMainWindow):
                 ) if isinstance(sample, dict) else "",
             )
         )
+        self.dataset_explorer_controller.sampleSelectionChanged.connect(
+            self.qa_editor_controller.on_selected_sample_changed
+        )
         self.dataset_explorer_controller.schemaContextChanged.connect(
             self.classification_editor_controller.on_schema_context_changed
         )
         self.dataset_explorer_controller.schemaContextChanged.connect(
             self.localization_editor_controller.on_schema_context_changed
+        )
+        self.dataset_explorer_controller.questionBankChanged.connect(
+            self.qa_editor_controller.on_question_bank_changed
         )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
             lambda path, ensure_playback: self.media_controller.route_media_selection(path, ensure_playback)
@@ -311,6 +331,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.resetEditorsRequested.connect(self.reset_editor_panels)
         self.dataset_explorer_controller.editorTabRequested.connect(self.right_tabs.setCurrentIndex)
         self.dataset_explorer_controller.descSaveRequested.connect(self.desc_editor_controller.save_current_annotation)
+        self.dataset_explorer_controller.qaSaveRequested.connect(self.qa_editor_controller.save_current_answers)
         self.dataset_explorer_controller.clearMarkersRequested.connect(lambda: self.center_panel.set_markers([]))
         self.dataset_explorer_controller.annotationPanelsEnabledRequested.connect(
             self._set_annotation_panels_enabled_for_selection
@@ -452,6 +473,20 @@ class VideoAnnotationWindow(QMainWindow):
         self.dense_editor_controller.mediaSeekRequested.connect(self.center_panel.set_position)
         self.dense_editor_controller.markersUpdateRequested.connect(self.center_panel.set_markers)
 
+        self.qa_editor_controller.statusMessageRequested.connect(self.show_temp_msg)
+        self.qa_editor_controller.qaQuestionAddRequested.connect(
+            self.history_manager.execute_qa_question_add
+        )
+        self.qa_editor_controller.qaQuestionRenameRequested.connect(
+            self.history_manager.execute_qa_question_rename
+        )
+        self.qa_editor_controller.qaQuestionDeleteRequested.connect(
+            self.history_manager.execute_qa_question_delete
+        )
+        self.qa_editor_controller.qaAnswersUpdateRequested.connect(
+            self.history_manager.execute_qa_answers_update
+        )
+
         # --- History manager request signals ---
         self.history_manager.allItemStatusRefreshRequested.connect(self.dataset_explorer_controller.refresh_all_item_statuses)
         self.history_manager.saveStateRefreshRequested.connect(self.update_save_export_button_state)
@@ -467,6 +502,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.history_manager.localizationClipEventsRefreshRequested.connect(
             self.localization_editor_controller._refresh_current_clip_events
         )
+        self.history_manager.questionBankRefreshRequested.connect(
+            self.dataset_explorer_controller._emit_question_bank_context
+        )
         self.history_manager.denseDisplayRequested.connect(self.dense_editor_controller.display_events_for_item)
         self.history_manager.itemStatusRefreshRequested.connect(self.update_action_item_status)
         self.history_manager.datasetRestoreRequested.connect(self.dataset_explorer_controller.restore_dataset_json_from_history)
@@ -478,12 +516,14 @@ class VideoAnnotationWindow(QMainWindow):
         self.right_tabs.currentChanged.connect(self.localization_editor_controller.on_mode_changed)
         self.right_tabs.currentChanged.connect(self.desc_editor_controller.on_mode_changed)
         self.right_tabs.currentChanged.connect(self.dense_editor_controller.on_mode_changed)
+        self.right_tabs.currentChanged.connect(self.qa_editor_controller.on_mode_changed)
 
         # --- Controllers' internal panel wiring ---
         self.classification_editor_controller.setup_connections()
         self.localization_editor_controller.setup_connections()
         self.desc_editor_controller.setup_connections()
         self.dense_editor_controller.setup_connections()
+        self.qa_editor_controller.setup_connections()
 
         current_mode = self.right_tabs.currentIndex()
         self.dataset_explorer_controller.set_active_mode(current_mode)
@@ -491,6 +531,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.localization_editor_controller.on_mode_changed(current_mode)
         self.desc_editor_controller.on_mode_changed(current_mode)
         self.dense_editor_controller.on_mode_changed(current_mode)
+        self.qa_editor_controller.on_mode_changed(current_mode)
 
         # --- Hugging Face transfer wiring ---
         self.hf_transfer_controller.downloadStarted.connect(

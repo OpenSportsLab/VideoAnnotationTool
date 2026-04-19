@@ -16,6 +16,7 @@ from controllers.description.desc_editor_controller import DescEditorController
 from controllers.history_manager import HistoryManager
 from controllers.localization.loc_inference import LocalizationInferenceManager
 from controllers.localization.localization_editor_controller import LocalizationEditorController
+from controllers.question_answer.qa_editor_controller import QAEditorController
 
 
 MODE_TO_TAB_INDEX = {
@@ -23,6 +24,7 @@ MODE_TO_TAB_INDEX = {
     "localization": 1,
     "description": 2,
     "dense_description": 3,
+    "question_answer": 4,
 }
 
 
@@ -51,6 +53,7 @@ def test_controller_constructors_do_not_accept_main_window():
         LocalizationEditorController,
         DescEditorController,
         DenseEditorController,
+        QAEditorController,
         HistoryManager,
         InferenceManager,
         TrainManager,
@@ -75,6 +78,7 @@ def test_scoped_controller_constructors_do_not_accept_controller_dependencies():
         ClassificationEditorController: {"media_controller"},
         LocalizationEditorController: {"media_controller"},
         DenseEditorController: {"media_controller"},
+        QAEditorController: {"media_controller"},
         HistoryManager: {"dataset_explorer_controller"},
     }
     for cls, forbidden_params in forbidden.items():
@@ -105,6 +109,13 @@ def test_localization_constructor_is_panel_only():
 
 
 @pytest.mark.gui
+def test_question_answer_constructor_is_panel_only():
+    signature = inspect.signature(QAEditorController.__init__)
+    params = [name for name in signature.parameters if name != "self"]
+    assert params == ["question_answer_panel"]
+
+
+@pytest.mark.gui
 def test_decoupled_controllers_do_not_use_self_main_access():
     repo_root = Path(__file__).resolve().parents[2]
     targets = [
@@ -116,6 +127,7 @@ def test_decoupled_controllers_do_not_use_self_main_access():
         repo_root / "annotation_tool" / "controllers" / "localization" / "loc_inference.py",
         repo_root / "annotation_tool" / "controllers" / "description" / "desc_editor_controller.py",
         repo_root / "annotation_tool" / "controllers" / "dense_description" / "dense_editor_controller.py",
+        repo_root / "annotation_tool" / "controllers" / "question_answer" / "qa_editor_controller.py",
         repo_root / "annotation_tool" / "controllers" / "history_manager.py",
     ]
     for path in targets:
@@ -132,6 +144,7 @@ def test_explorer_and_editor_controllers_do_not_import_qmediaplayer():
         repo_root / "annotation_tool" / "controllers" / "localization" / "localization_editor_controller.py",
         repo_root / "annotation_tool" / "controllers" / "description" / "desc_editor_controller.py",
         repo_root / "annotation_tool" / "controllers" / "dense_description" / "dense_editor_controller.py",
+        repo_root / "annotation_tool" / "controllers" / "question_answer" / "qa_editor_controller.py",
     ]
     for path in targets:
         source = path.read_text(encoding="utf-8")
@@ -170,7 +183,10 @@ def test_mainwindow_connect_signals_uses_direct_controller_wiring_contract():
         "self.right_tabs.currentChanged.connect(self.localization_editor_controller.on_mode_changed)",
         "self.right_tabs.currentChanged.connect(self.desc_editor_controller.on_mode_changed)",
         "self.right_tabs.currentChanged.connect(self.dense_editor_controller.on_mode_changed)",
+        "self.right_tabs.currentChanged.connect(self.qa_editor_controller.on_mode_changed)",
         "self.dataset_explorer_controller.statusMessageRequested.connect(self.show_temp_msg)",
+        "self.dataset_explorer_controller.questionBankChanged.connect(",
+        "self.dataset_explorer_controller.qaSaveRequested.connect(self.qa_editor_controller.save_current_answers)",
         "self.history_manager.refreshUiAfterUndoRedoRequested.connect(self.refresh_ui_after_undo_redo)",
         "self.classification_editor_controller.manualAnnotationSaveRequested.connect(",
         "self.history_manager.execute_classification_manual_annotation",
@@ -180,6 +196,11 @@ def test_mainwindow_connect_signals_uses_direct_controller_wiring_contract():
         "self.history_manager.execute_sample_captions_update",
         "self.dense_editor_controller.denseEventAddRequested.connect(",
         "self.history_manager.execute_dense_event_add",
+        "self.qa_editor_controller.qaQuestionAddRequested.connect(",
+        "self.history_manager.execute_qa_question_add",
+        "self.qa_editor_controller.qaAnswersUpdateRequested.connect(",
+        "self.history_manager.execute_qa_answers_update",
+        "self.history_manager.questionBankRefreshRequested.connect(",
         "self.dataset_explorer_controller.headerDraftMutationRequested.connect(",
         "self.history_manager.execute_header_draft_update",
         "self.history_manager.datasetRestoreRequested.connect(",
@@ -213,6 +234,7 @@ def test_tab_change_updates_all_controller_mode_states_and_reemits_selection(
     assert window.localization_editor_controller._active_mode_index == target_mode
     assert window.desc_editor_controller._active_mode_index == target_mode
     assert window.dense_editor_controller._active_mode_index == target_mode
+    assert window.qa_editor_controller._active_mode_index == target_mode
     assert emitted_data_ids
     assert emitted_data_ids[-1] == selected_id
 

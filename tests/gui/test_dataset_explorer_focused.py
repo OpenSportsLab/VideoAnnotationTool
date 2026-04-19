@@ -74,6 +74,7 @@ def test_normalize_dataset_json_inserts_defaults_preserves_unknowns_and_fixes_id
     assert "task" not in normalized
     assert normalized["metadata"] == {}
     assert normalized["modalities"] == ["video"]
+    assert normalized["questions"] == []
     assert normalized["custom_root"] == {"keep": True}
     assert [sample["id"] for sample in normalized["data"]] == ["clip_dup", "clip_dup__2", "sample_3"]
     assert normalized["data"][0]["events"][0]["position_ms"] == 1001
@@ -96,12 +97,22 @@ def test_normalize_dataset_json_rejects_invalid_root_and_non_list_data(explorer_
 def test_normalize_dataset_json_drops_legacy_smart_keys(explorer_panel_and_controller):
     _panel, controller = explorer_panel_and_controller
     raw = {
+        "questions": [
+            {"id": "q1", "question": "How are you?"},
+            {"id": "q1", "question": "duplicate"},
+            {"id": "", "question": "invalid"},
+        ],
         "data": [
             {
                 "id": "clip_1",
                 "inputs": [{"path": "clips/one.mp4", "type": "video"}],
                 "labels": {"phase": {"label": "build"}},
                 "events": [{"head": "ball_action", "label": "pass", "position_ms": 1000}],
+                "answers": [
+                    {"question_id": "q1", "answer": "ok"},
+                    {"question_id": "q2", "answer": "unknown-id"},
+                    {"question_id": "q1", "answer": "duplicate-id"},
+                ],
                 "smart_label": {"label": "shot"},
                 "smart_event": {"head": "ball_action", "label": "shot", "position_ms": 1200},
                 "smart_labels": {"action": {"label": "shot", "conf_dict": {"shot": 0.72}}},
@@ -113,6 +124,8 @@ def test_normalize_dataset_json_drops_legacy_smart_keys(explorer_panel_and_contr
     normalized, error = controller._normalize_dataset_json(raw)
     assert error == ""
     sample = normalized["data"][0]
+    assert normalized["questions"] == [{"id": "q1", "question": "How are you?"}]
+    assert sample["answers"] == [{"question_id": "q1", "answer": "ok"}]
     assert sample["labels"]["phase"]["label"] == "build"
     assert "smart_labels" not in sample
     assert "smart_events" not in sample
@@ -144,6 +157,10 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
         "modalities": ["video"],
         "metadata": {},
         "labels": {},
+        "questions": [
+            {"id": "q1", "question": "How are you?"},
+            {"id": "q2", "question": "What happened?"},
+        ],
         "custom_root": {"keep": True},
         "data": [
             {
@@ -153,6 +170,10 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
                 "events": [],
                 "captions": [],
                 "dense_captions": [],
+                "answers": [
+                    {"question_id": "q1", "answer": "I am fine."},
+                    {"question_id": "qmissing", "answer": "drop"},
+                ],
                 "metadata": {},
                 "custom_sample": {"keep": 1},
             }
@@ -166,11 +187,16 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
     assert written["modalities"] == ["video"]
     assert written["task"] == "video_annotation"
     assert written["custom_root"] == {"keep": True}
+    assert written["questions"] == [
+        {"id": "q1", "question": "How are you?"},
+        {"id": "q2", "question": "What happened?"},
+    ]
     assert written["data"][0]["inputs"][0]["path"] == "../project/clips/clip.mp4"
     assert "labels" not in written["data"][0]
     assert "events" not in written["data"][0]
     assert "captions" not in written["data"][0]
     assert "dense_captions" not in written["data"][0]
+    assert written["data"][0]["answers"] == [{"question_id": "q1", "answer": "I am fine."}]
     assert "metadata" not in written["data"][0]
     assert written["data"][0]["custom_sample"] == {"keep": 1}
 
@@ -185,10 +211,13 @@ def test_available_mode_indices_for_sample_prefers_fixed_order(explorer_panel_an
         ],
         "captions": [{"lang": "en", "text": "caption"}],
         "dense_captions": [{"position_ms": 1500, "lang": "en", "text": "dense"}],
+        "answers": [{"question_id": "q1", "answer": "answer"}],
     }
-    assert controller._available_mode_indices_for_sample(sample) == [0, 1, 2, 3]
+    controller.dataset_json["questions"] = [{"id": "q1", "question": "How are you?"}]
+    assert controller._available_mode_indices_for_sample(sample) == [0, 1, 2, 3, 4]
     assert controller._available_mode_indices_for_sample({"events": [{"position_ms": 1}]}) == [1]
     assert controller._available_mode_indices_for_sample({"captions": [{"text": ""}]}) == []
+    assert controller._available_mode_indices_for_sample({"answers": [{"question_id": "q1", "answer": "x"}]}) == [4]
 
 
 def test_group_selected_files_and_sample_id_rules(

@@ -19,6 +19,7 @@ MODE_TO_TAB_INDEX = {
     "localization": 1,
     "description": 2,
     "dense_description": 3,
+    "question_answer": 4,
 }
 
 
@@ -83,6 +84,7 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
         MODE_TO_TAB_INDEX["localization"],
         MODE_TO_TAB_INDEX["description"],
         MODE_TO_TAB_INDEX["dense_description"],
+        MODE_TO_TAB_INDEX["question_answer"],
     ):
         window.right_tabs.setCurrentIndex(mode_idx)
         qtbot.wait(50)
@@ -103,6 +105,8 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     assert saved_sample["events"][1]["confidence_score"] == pytest.approx(0.7)
     assert saved_sample["captions"][0]["text"] == "Mixed caption"
     assert saved_sample["dense_captions"][0]["text"] == "Mixed dense caption"
+    assert saved["questions"][0]["id"] == "q1"
+    assert saved_sample["answers"][0]["answer"] == "Mixed answer"
 
     window.dataset_explorer_controller.close_project()
     _open_project(window, monkeypatch, project_json_path)
@@ -116,6 +120,7 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     assert reloaded_sample["events"][1]["confidence_score"] == pytest.approx(0.7)
     assert reloaded_sample["captions"][0]["text"] == "Mixed caption"
     assert reloaded_sample["dense_captions"][0]["text"] == "Mixed dense caption"
+    assert reloaded_sample["answers"][0]["answer"] == "Mixed answer"
     assert window.dataset_explorer_controller.dataset_json["custom_root"] == {"keep": True}
 
 
@@ -416,6 +421,7 @@ def test_tab_switch_with_selection_does_not_repopulate_tree_or_restart_media(
         MODE_TO_TAB_INDEX["localization"],
         MODE_TO_TAB_INDEX["description"],
         MODE_TO_TAB_INDEX["dense_description"],
+        MODE_TO_TAB_INDEX["question_answer"],
         MODE_TO_TAB_INDEX["classification"],
     ):
         window.right_tabs.setCurrentIndex(mode_idx)

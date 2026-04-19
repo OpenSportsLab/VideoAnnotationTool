@@ -17,7 +17,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `media_controller.py`: media playback and mute routing.
 - `welcome_controller.py`: welcome-page routing.
 - `hf_transfer_controller.py`: threaded Hugging Face download/upload orchestration for GUI menu actions.
-- `classification/`, `localization/`, `description/`, `dense_description/`: mode controllers.
+- `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`: mode controllers.
 
 ## Key Functions and Responsibilities
 ### `DatasetExplorerController`
