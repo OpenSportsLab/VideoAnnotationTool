@@ -30,6 +30,8 @@ def main(
     print(f"Repo: {result['repo_id']}")
     print(f"Branch: {result['revision']}")
     print(f"Dataset JSON: {result['json_path']}")
+    if "unique_input_file_count" in result:
+        print(f"Unique input files: {result['unique_input_file_count']}")
     print(f"Uploaded files: {result['uploaded_file_count']}")
     print(f"Commit message: {result['commit_message']}")
     print(f"Commit ref: {result['commit_ref']}")

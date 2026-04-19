@@ -199,6 +199,11 @@ def test_create_dataset_branch_on_hf_calls_hf_api_create_branch(monkeypatch):
         def __init__(self, token=None):
             calls["token"] = token
 
+        def list_repo_commits(self, repo_id, repo_type=None):
+            calls["list_repo_commits"] = {"repo_id": repo_id, "repo_type": repo_type}
+            commit = type("_Commit", (), {"commit_id": "initsha"})()
+            return [commit]
+
         def create_branch(self, **kwargs):
             calls["kwargs"] = kwargs
 
@@ -218,7 +223,7 @@ def test_create_dataset_branch_on_hf_calls_hf_api_create_branch(monkeypatch):
     assert calls["kwargs"]["repo_id"] == "OpenSportsLab/new-repo"
     assert calls["kwargs"]["repo_type"] == "dataset"
     assert calls["kwargs"]["branch"] == "feature-x"
-    assert calls["kwargs"]["revision"] == "main"
+    assert calls["kwargs"]["revision"] == "initsha"
     assert calls["kwargs"]["exist_ok"] is True
     assert result["repo_id"] == "OpenSportsLab/new-repo"
     assert result["branch"] == "feature-x"
@@ -272,19 +277,28 @@ def test_upload_dataset_inputs_from_json_to_hf_uploads_inputs_and_json(monkeypat
     json_path = tmp_path / "annotations.json"
     json_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    upload_calls = []
+    commit_calls = []
+
+    class _FakeCommitOperationAdd:
+        def __init__(self, *, path_in_repo, path_or_fileobj):
+            self.path_in_repo = path_in_repo
+            self.path_or_fileobj = path_or_fileobj
 
     class _FakeApi:
         def __init__(self, token=None):
             pass
 
-        def upload_file(self, **kwargs):
-            upload_calls.append(kwargs)
-            return "refs/pr/1"
+        def create_commit(self, **kwargs):
+            commit_calls.append(kwargs)
+            return type("_CommitInfo", (), {"oid": "abc123"})()
 
     monkeypatch.setattr(
         "controllers.hf_transfer_service._import_hf_hub",
         lambda: (_FakeApi, object(), object()),
+    )
+    monkeypatch.setattr(
+        "controllers.hf_transfer_service._import_hf_commit_operation_add",
+        lambda: _FakeCommitOperationAdd,
     )
 
     result = upload_dataset_inputs_from_json_to_hf(
@@ -295,16 +309,23 @@ def test_upload_dataset_inputs_from_json_to_hf_uploads_inputs_and_json(monkeypat
         token="hf_token",
     )
 
-    assert len(upload_calls) == 2
-    assert upload_calls[0]["path_in_repo"] == "annotations.json"
-    assert upload_calls[0]["revision"] == "dev-branch"
-    assert upload_calls[1]["path_in_repo"] == "train/clip_0.mp4"
-    assert upload_calls[1]["revision"] == "dev-branch"
-    assert upload_calls[0]["path_or_fileobj"] == str(json_path)
+    assert len(commit_calls) == 1
+    commit_kwargs = commit_calls[0]
+    assert commit_kwargs["repo_id"] == "OpenSportsLab/test-repo"
+    assert commit_kwargs["repo_type"] == "dataset"
+    assert commit_kwargs["revision"] == "dev-branch"
+    assert commit_kwargs["commit_message"] == "Upload test"
+    operations = commit_kwargs["operations"]
+    assert len(operations) == 2
+    assert operations[0].path_in_repo == "annotations.json"
+    assert operations[0].path_or_fileobj == str(json_path)
+    assert operations[1].path_in_repo == "train/clip_0.mp4"
     assert result["input_file_count"] == 1
+    assert result["unique_input_file_count"] == 1
     assert result["uploaded_file_count"] == 2
     assert result["json_path_in_repo"] == "annotations.json"
     assert result["revision"] == "dev-branch"
+    assert result["commit_ref"] == "abc123"
 
 
 def test_download_dataset_from_hf_can_be_cancelled_before_network(monkeypatch, tmp_path):
@@ -465,19 +486,28 @@ def test_upload_dataset_inputs_from_json_to_hf_can_be_cancelled_before_upload(mo
         encoding="utf-8",
     )
 
-    calls = {"upload_file": 0}
+    calls = {"create_commit": 0}
+
+    class _FakeCommitOperationAdd:
+        def __init__(self, *, path_in_repo, path_or_fileobj):
+            self.path_in_repo = path_in_repo
+            self.path_or_fileobj = path_or_fileobj
 
     class _FakeApi:
         def __init__(self, token=None):
             pass
 
-        def upload_file(self, **kwargs):
-            calls["upload_file"] += 1
-            return "refs/pr/1"
+        def create_commit(self, **kwargs):
+            calls["create_commit"] += 1
+            return type("_CommitInfo", (), {"oid": "abc123"})()
 
     monkeypatch.setattr(
         "controllers.hf_transfer_service._import_hf_hub",
         lambda: (_FakeApi, object(), object()),
+    )
+    monkeypatch.setattr(
+        "controllers.hf_transfer_service._import_hf_commit_operation_add",
+        lambda: _FakeCommitOperationAdd,
     )
 
     with pytest.raises(HfTransferCancelled):
@@ -488,4 +518,4 @@ def test_upload_dataset_inputs_from_json_to_hf_can_be_cancelled_before_upload(mo
             is_cancelled=lambda: True,
         )
 
-    assert calls["upload_file"] == 0
+    assert calls["create_commit"] == 0

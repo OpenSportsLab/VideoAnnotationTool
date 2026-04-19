@@ -50,6 +50,16 @@ def _import_hf_hub():
     return HfApi, hf_hub_download, snapshot_download
 
 
+def _import_hf_commit_operation_add():
+    try:
+        from huggingface_hub import CommitOperationAdd
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing dependency 'huggingface_hub'. Install it with: pip install huggingface_hub"
+        ) from exc
+    return CommitOperationAdd
+
+
 def human_size(num: int) -> str:
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if num < 1024.0:
@@ -504,6 +514,7 @@ def upload_dataset_inputs_from_json_to_hf(
     is_cancelled: CancelCheck | None = None,
 ) -> dict[str, Any]:
     HfApi, _, _ = _import_hf_hub()
+    CommitOperationAdd = _import_hf_commit_operation_add()
 
     cleaned_repo_id = str(repo_id or "").strip()
     cleaned_json_path = os.path.abspath(str(json_path or "").strip())
@@ -517,11 +528,38 @@ def upload_dataset_inputs_from_json_to_hf(
 
     effective_commit_message = (commit_message or "").strip() or "Upload dataset inputs from JSON"
     input_upload_entries = extract_local_input_upload_entries_from_json(cleaned_json_path)
+    unique_input_entries: list[dict[str, str]] = []
+    input_entry_by_repo_path: dict[str, dict[str, str]] = {}
+    duplicate_input_refs = 0
+    for entry in input_upload_entries:
+        path_in_repo = entry["path_in_repo"]
+        existing = input_entry_by_repo_path.get(path_in_repo)
+        if existing is None:
+            input_entry_by_repo_path[path_in_repo] = entry
+            unique_input_entries.append(entry)
+            continue
+
+        duplicate_input_refs += 1
+        if os.path.abspath(existing["local_path"]) != os.path.abspath(entry["local_path"]):
+            raise ValueError(
+                "Conflicting local files mapped to the same repo path "
+                f"'{path_in_repo}': '{existing['local_path']}' vs '{entry['local_path']}'."
+            )
+
+    if duplicate_input_refs:
+        _emit_progress(
+            progress_cb,
+            (
+                f"Deduplicated {duplicate_input_refs} repeated input references "
+                f"into {len(unique_input_entries)} unique repo paths."
+            ),
+        )
+
     json_path_in_repo = _normalize_repo_path(os.path.basename(cleaned_json_path))
     if not json_path_in_repo:
         json_path_in_repo = "dataset.json"
 
-    existing_repo_paths = {entry["path_in_repo"] for entry in input_upload_entries}
+    existing_repo_paths = {entry["path_in_repo"] for entry in unique_input_entries}
     json_already_listed_in_inputs = json_path_in_repo in existing_repo_paths
     upload_entries = [
         {
@@ -529,9 +567,9 @@ def upload_dataset_inputs_from_json_to_hf(
             "path_in_repo": json_path_in_repo,
         }
     ]
-    # Always upload the dataset JSON first so metadata/state lands quickly even if user cancels later.
+    # Always place dataset JSON first in the commit operations list.
     upload_entries.extend(
-        entry for entry in input_upload_entries if entry["path_in_repo"] != json_path_in_repo
+        entry for entry in unique_input_entries if entry["path_in_repo"] != json_path_in_repo
     )
 
     _ensure_not_cancelled(is_cancelled)
@@ -539,29 +577,39 @@ def upload_dataset_inputs_from_json_to_hf(
     _emit_progress(
         progress_cb,
         (
-            f"Uploading {len(upload_entries)} files to {cleaned_repo_id}@{cleaned_revision} "
-            f"(dataset JSON first, then {len(input_upload_entries)} inputs) using {cleaned_json_path}"
+            f"Preparing batched upload of {len(upload_entries)} files to {cleaned_repo_id}@{cleaned_revision} "
+            f"(dataset JSON + {len(unique_input_entries)} unique inputs) from {cleaned_json_path}"
         ),
     )
 
-    last_commit_ref = ""
+    operations = []
     for idx, entry in enumerate(upload_entries, start=1):
         _ensure_not_cancelled(is_cancelled)
-        local_path = entry["local_path"]
-        path_in_repo = entry["path_in_repo"]
-        _emit_progress(progress_cb, f"[{idx}/{len(upload_entries)}] Uploading {path_in_repo}")
-        last_commit_ref = str(
-            api.upload_file(
-                path_or_fileobj=local_path,
-                path_in_repo=path_in_repo,
-                repo_id=cleaned_repo_id,
-                repo_type="dataset",
-                revision=cleaned_revision,
-                commit_message=f"{effective_commit_message} ({idx}/{len(upload_entries)})",
+        _emit_progress(progress_cb, f"[{idx}/{len(upload_entries)}] Queueing {entry['path_in_repo']}")
+        operations.append(
+            CommitOperationAdd(
+                path_in_repo=entry["path_in_repo"],
+                path_or_fileobj=entry["local_path"],
             )
         )
 
-    _emit_progress(progress_cb, f"Upload completed. Uploaded {len(upload_entries)} files.")
+    _ensure_not_cancelled(is_cancelled)
+    _emit_progress(progress_cb, f"Submitting one Hugging Face commit with {len(operations)} files...")
+    commit_info = api.create_commit(
+        repo_id=cleaned_repo_id,
+        repo_type="dataset",
+        revision=cleaned_revision,
+        operations=operations,
+        commit_message=effective_commit_message,
+    )
+    commit_ref = (
+        str(getattr(commit_info, "oid", "") or "").strip()
+        or str(getattr(commit_info, "commit_id", "") or "").strip()
+        or str(getattr(commit_info, "commit_url", "") or "").strip()
+        or str(commit_info)
+    )
+
+    _emit_progress(progress_cb, f"Upload completed in one commit. Uploaded {len(upload_entries)} files.")
     return {
         "repo_id": cleaned_repo_id,
         "repo_type": "dataset",
@@ -570,10 +618,11 @@ def upload_dataset_inputs_from_json_to_hf(
         "revision": cleaned_revision,
         "json_path_in_repo": json_path_in_repo,
         "input_file_count": len(input_upload_entries),
+        "unique_input_file_count": len(unique_input_entries),
         "uploaded_file_count": len(upload_entries),
         "uploaded_json_separately": not json_already_listed_in_inputs,
         "commit_message": effective_commit_message,
-        "commit_ref": last_commit_ref,
+        "commit_ref": commit_ref,
     }
 
 

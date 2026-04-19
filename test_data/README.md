@@ -172,12 +172,69 @@ zip -r DatasetAnnotationTool.zip *
 
 ---
 
-### 3. Upload Inputs Referenced by a Local Dataset JSON to Hugging Face
+### 3. Convert SoccerNet-XFoul Row QA to OSL Q/A (+ optional media download)
+
+**Script:** `test_data/convert_xfoul_to_qa.py`
+
+Converts row-wise XFoul annotations (`path`, `video1..videoN`, `question`, `answer`) into one OSL Q/A dataset JSON:
+- `path` tail becomes sample id (e.g., `Test/action_0` -> `action_0`)
+- `video1..videoN` become multiview `inputs[]`
+- if `video*` differs across duplicated rows of the same sample, the row with the most videos is used
+- repeated question annotations per source sample split into duplicated sample entries (`action_0`, `action_0__2`, ...)
+- output question ids are `q1`, `q2`, ...
+
+**Usage (JSON only, no download):**
+
+```bash
+# test split
+python test_data/convert_xfoul_to_qa.py \
+  --input-json test_data/SoccerNet-XFoul/annotations_test.json \
+  --output-json test_data/VQA/XFoul-test/test.json \
+  --media-dir test \
+  --skip-download
+
+# train split
+python test_data/convert_xfoul_to_qa.py \
+  --input-json test_data/SoccerNet-XFoul/annotations_train.json \
+  --output-json test_data/VQA/XFoul-train/train.json \
+  --media-dir train \
+  --skip-download
+
+# valid split
+python test_data/convert_xfoul_to_qa.py \
+  --input-json test_data/SoccerNet-XFoul/annotations_valid.json \
+  --output-json test_data/VQA/XFoul-valid/valid.json \
+  --media-dir valid \
+  --skip-download
+```
+
+**Usage (JSON + download media):**
+
+```bash
+python test_data/convert_xfoul_to_qa.py \
+  --input-json test_data/SoccerNet-XFoul/annotations_test.json \
+  --output-json test_data/VQA/XFoul/test.json \
+  --media-dir media
+```
+
+**Arguments:**
+- `--input-json` (required): source row-wise JSON file.
+- `--output-json` (required): converted OSL Q/A JSON path.
+- `--media-dir` (optional): relative directory used in `inputs[].path` (default: `media`).
+- `--skip-download` (optional): build output JSON only.
+- `--overwrite` (optional): overwrite existing local media files when downloading.
+
+If some media URLs fail during download (e.g., HTTP 403), conversion continues for remaining files and writes a
+`<output_json_stem>_download_failures.txt` report next to the output JSON.
+
+---
+
+### 4. Upload Inputs Referenced by a Local Dataset JSON to Hugging Face
 
 **Script:** `test_data/upload_osl_hf.py`
 
 Use this script to upload files referenced in `data[].inputs[].path` from a local dataset JSON.
-Each input is uploaded sequentially, preserving the exact path declared in the JSON.
+Inputs are batched and uploaded in a single Hugging Face commit request, preserving the exact paths declared in the JSON.
 
 ```bash
 python test_data/upload_osl_hf.py \
@@ -195,7 +252,7 @@ python test_data/upload_osl_hf.py \
 
 ---
 
-### 4. GUI Support (Data Menu)
+### 5. GUI Support (Data Menu)
 
 Inside the application menu bar, there is now a **Data** menu with:
 
@@ -204,7 +261,7 @@ Inside the application menu bar, there is now a **Data** menu with:
 
 Both actions open a dialog to enter the minimum required fields plus common optional parameters.
 Downloads and uploads run in background threads, and after a successful download you can choose to open the downloaded JSON directly in the app.
-For upload, the dialog now asks for a dataset JSON path and uploads all `data[].inputs[].path` entries one by one.
+For upload, the dialog asks for a dataset JSON path and pushes all `data[].inputs[].path` entries in one batched commit.
 
 ---
 
