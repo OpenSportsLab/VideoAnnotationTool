@@ -4,8 +4,16 @@ import json
 import os
 from collections.abc import MutableMapping
 
-from PyQt6.QtCore import QModelIndex, QObject, QSettings, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtCore import QDir, QModelIndex, QObject, QSettings, QTimer, pyqtSignal
+from PyQt6.QtGui import QFileSystemModel
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QDialogButtonBox,
+    QFileDialog,
+    QListView,
+    QMessageBox,
+    QTreeView,
+)
 
 from controllers.command_types import CmdType
 from ui.dialogs import UnsavedChangesDialog
@@ -1578,12 +1586,177 @@ class DatasetExplorerController(QObject):
     def _sample_file_filter(self) -> str:
         return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp);;All Files (*)"
 
+    def _supported_media_extensions(self):
+        return (".mp4", ".avi", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp")
+
+    def _is_supported_media_file(self, path: str) -> bool:
+        _, extension = os.path.splitext(str(path))
+        return extension.lower() in self._supported_media_extensions()
+
+    def _collect_media_files_from_folders(self, folders):
+        collected = []
+        seen = set()
+
+        for folder in folders or []:
+            folder_path = str(folder)
+            if not os.path.isdir(folder_path):
+                continue
+
+            for root, dirnames, filenames in os.walk(folder_path):
+                dirnames.sort(key=natural_sort_key)
+                for filename in sorted(filenames, key=natural_sort_key):
+                    candidate = os.path.join(root, filename)
+                    if not self._is_supported_media_file(candidate):
+                        continue
+                    path_key = self._fs_path_key(candidate)
+                    if path_key in seen:
+                        continue
+                    seen.add(path_key)
+                    collected.append(candidate)
+        return collected
+
+    def _pick_files_or_folders_for_add_data(self, start_dir: str):
+        dialog = QFileDialog(self.panel, "Select Samples to Add", start_dir)
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
+        dialog.setFilter(QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot)
+        name_filters = self._sample_file_filter().split(";;")
+        dialog.setNameFilters(name_filters)
+        if name_filters:
+            dialog.selectNameFilter(name_filters[0])
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+
+        for list_view in dialog.findChildren(QListView):
+            list_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        for tree_view in dialog.findChildren(QTreeView):
+            tree_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+
+        def _collect_selected_paths(include_current: bool = False):
+            selected_paths = []
+            seen = set()
+            for view in dialog.findChildren((QListView, QTreeView)):
+                selection_model = view.selectionModel()
+                model = view.model()
+                if selection_model is None or model is None:
+                    continue
+
+                indexes = list(selection_model.selectedRows())
+                if not indexes:
+                    indexes = [idx.siblingAtColumn(0) for idx in selection_model.selectedIndexes()]
+                if include_current:
+                    current = selection_model.currentIndex()
+                    if current.isValid():
+                        indexes.append(current.siblingAtColumn(0))
+
+                for index in indexes:
+                    if not index.isValid():
+                        continue
+                    source_model = model
+                    source_index = index
+                    while hasattr(source_model, "mapToSource") and hasattr(source_model, "sourceModel"):
+                        source_index = source_model.mapToSource(source_index)
+                        source_model = source_model.sourceModel()
+                    if not isinstance(source_model, QFileSystemModel):
+                        continue
+
+                    path = source_model.filePath(source_index)
+                    if not path or (not os.path.isfile(path) and not os.path.isdir(path)):
+                        continue
+                    key = self._fs_path_key(path)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    selected_paths.append(str(path))
+            return selected_paths
+
+        def _accept_selected():
+            selected = _collect_selected_paths(include_current=True)
+            if not selected:
+                selected = [str(path) for path in dialog.selectedFiles() if path]
+            if not selected:
+                return
+            dialog._selected_paths_override = selected
+            # Close via reject to bypass QFileDialog's accept() directory-navigation behavior.
+            dialog.reject()
+
+        button_box = dialog.findChild(QDialogButtonBox)
+        if button_box is not None:
+            add_btn = button_box.addButton("Add Selected", QDialogButtonBox.ButtonRole.ActionRole)
+            add_btn.setDefault(True)
+            add_btn.clicked.connect(_accept_selected)
+
+        result = dialog.exec()
+        selected_paths = getattr(dialog, "_selected_paths_override", None)
+        if selected_paths:
+            return list(selected_paths)
+        if result != QFileDialog.DialogCode.Accepted:
+            return []
+        selected_paths = _collect_selected_paths(include_current=True)
+        if selected_paths:
+            return selected_paths
+        return [str(path) for path in dialog.selectedFiles() if path]
+
+    def _source_groups_from_selected_paths(self, selected_paths):
+        source_groups = []
+        seen_paths = set()
+
+        for path in selected_paths or []:
+            selected_path = str(path)
+            if os.path.isdir(selected_path):
+                group = []
+                for media_path in self._collect_media_files_from_folders([selected_path]):
+                    media_key = self._fs_path_key(media_path)
+                    if media_key in seen_paths:
+                        continue
+                    seen_paths.add(media_key)
+                    group.append(media_path)
+                if group:
+                    source_groups.append(group)
+                continue
+
+            if not os.path.isfile(selected_path) or not self._is_supported_media_file(selected_path):
+                continue
+
+            selected_key = self._fs_path_key(selected_path)
+            if selected_key in seen_paths:
+                continue
+            seen_paths.add(selected_key)
+            source_groups.append([selected_path])
+
+        return source_groups
+
     def _group_selected_files(self, files):
-        return [[path] for path in files]
+        grouped = {}
+        ordered_parent_keys = []
+
+        for path in files or []:
+            raw_path = str(path)
+            parent_dir = os.path.dirname(raw_path) or raw_path
+            parent_key = self._fs_path_key(parent_dir)
+            if parent_key not in grouped:
+                grouped[parent_key] = []
+                ordered_parent_keys.append(parent_key)
+            grouped[parent_key].append(raw_path)
+
+        grouped_files = []
+        for parent_key in ordered_parent_keys:
+            sorted_group = sorted(
+                grouped[parent_key],
+                key=lambda value: natural_sort_key(os.path.basename(str(value)) or str(value)),
+            )
+            grouped_files.append(sorted_group)
+        return grouped_files
 
     def _sample_id_from_group(self, source_group):
-        primary = source_group[0]
-        return os.path.splitext(os.path.basename(primary))[0] or os.path.basename(primary)
+        if not source_group:
+            return "sample"
+
+        primary = str(source_group[0])
+        if len(source_group) == 1:
+            return os.path.splitext(os.path.basename(primary))[0] or os.path.basename(primary) or "sample"
+        parent_name = os.path.basename(os.path.dirname(primary))
+        if parent_name:
+            return parent_name
+        return os.path.splitext(os.path.basename(primary))[0] or os.path.basename(primary) or "sample"
 
     def _raw_path_for_new_input(self, path: str):
         if self.project_root:
@@ -1619,18 +1792,26 @@ class DatasetExplorerController(QObject):
             return
 
         start_dir = self.current_working_directory or self.project_root or ""
-        files, _ = QFileDialog.getOpenFileNames(
-            self.panel,
-            "Select Samples to Add",
-            start_dir,
-            self._sample_file_filter(),
-        )
-        if not files:
+        selected_paths = self._pick_files_or_folders_for_add_data(start_dir)
+        if not selected_paths:
+            return
+
+        source_groups = self._source_groups_from_selected_paths(selected_paths)
+        if not source_groups:
+            QMessageBox.information(
+                self.panel,
+                "No Media Found",
+                "No supported media files were found in the selected files/folders.",
+            )
             return
 
         if not self.current_working_directory:
-            self.current_working_directory = os.path.dirname(files[0])
-        self.addSamplesRequested.emit(list(files))
+            first_path = str(selected_paths[0])
+            if os.path.isdir(first_path):
+                self.current_working_directory = first_path
+            else:
+                self.current_working_directory = os.path.dirname(first_path)
+        self.addSamplesRequested.emit(source_groups)
 
     def handle_clear_workspace(self):
         if not self.json_loaded:

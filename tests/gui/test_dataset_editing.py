@@ -29,21 +29,27 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
     window.dataset_explorer_controller.import_annotations()
     assert window.tree_model.rowCount() == 1
 
-    # Add five more clips through the Dataset Explorer Add Data button.
+    # Add five more clips through the Dataset Explorer Add Data button, each in
+    # a different folder so each file still maps to one sample.
     repo_root = Path(__file__).resolve().parents[2]
     source_video = repo_root / "tests" / "data" / "test_video_2.mp4"
     assert source_video.exists(), f"Missing test asset: {source_video}"
 
     source_bytes = source_video.read_bytes()
     added_video_paths = []
+    added_group_names = []
     for i in range(5):
-        added_video = tmp_path / f"added_video_{i + 1}.mp4"
+        group_dir = tmp_path / f"group_{i + 1}"
+        group_dir.mkdir()
+        added_group_names.append(group_dir.name)
+        added_video = group_dir / f"added_video_{i + 1}.mp4"
         added_video.write_bytes(source_bytes)
         added_video_paths.append(added_video)
 
     monkeypatch.setattr(
-        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileNames",
-        lambda *args, **kwargs: ([str(path) for path in added_video_paths], "Media Files (*.mp4)"),
+        window.dataset_explorer_controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(path) for path in added_video_paths],
     )
     qtbot.mouseClick(window.dataset_explorer_panel.btn_add_data, Qt.MouseButton.LeftButton)
     qtbot.wait(50)
@@ -76,12 +82,12 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
 
     assert window.tree_model.rowCount() == 6
     reloaded_names = {entry.get("name") for entry in window.dataset_explorer_controller.action_item_data}
-    for added_video in added_video_paths:
-        assert added_video.stem in reloaded_names
+    for group_name in added_group_names:
+        assert group_name in reloaded_names
 
     # Remove one of the added items and verify immediate state update.
     target_removed_name = added_video_paths[0].name
-    target_removed_id = added_video_paths[0].stem
+    target_removed_id = added_group_names[0]
     remove_index = None
     for row in range(window.tree_model.rowCount()):
         idx = window.tree_model.index(row, 0)
@@ -99,8 +105,8 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
     assert window.tree_model.rowCount() == 5
     names_after_remove = {entry.get("name") for entry in window.dataset_explorer_controller.action_item_data}
     assert target_removed_id not in names_after_remove
-    for remaining_video in added_video_paths[1:]:
-        assert remaining_video.stem in names_after_remove
+    for remaining_group_name in added_group_names[1:]:
+        assert remaining_group_name in names_after_remove
 
     # Save after removal and verify JSON no longer contains removed item.
     window.dataset_explorer_controller.save_project()
@@ -127,8 +133,8 @@ def test_add_five_items_remove_one_save_and_reopen_persists_changes(
     assert window.tree_model.rowCount() == 5
     final_names = {entry.get("name") for entry in window.dataset_explorer_controller.action_item_data}
     assert target_removed_id not in final_names
-    for remaining_video in added_video_paths[1:]:
-        assert remaining_video.stem in final_names
+    for remaining_group_name in added_group_names[1:]:
+        assert remaining_group_name in final_names
 
 
 # @pytest.mark.gui

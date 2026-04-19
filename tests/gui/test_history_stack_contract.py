@@ -438,8 +438,9 @@ def test_history_contract_dataset_explorer_mutations(window, monkeypatch, qtbot,
     added_video = tmp_path / "history_added.mp4"
     added_video.write_bytes(source_video.read_bytes())
     monkeypatch.setattr(
-        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileNames",
-        lambda *args, **kwargs: ([str(added_video)], "Media Files (*.mp4)"),
+        controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(added_video)],
     )
     _assert_mutating_action_creates_single_history_entry(window, qtbot, controller.handle_add_sample)
 

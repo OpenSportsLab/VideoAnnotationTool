@@ -205,12 +205,39 @@ def test_group_selected_files_and_sample_id_rules(
     file_a2 = str(group_a / "view_2.mp4")
     file_b1 = str(group_b / "view_1.mp4")
 
-    assert controller._group_selected_files([file_a1, file_a2]) == [[file_a1], [file_a2]]
+    assert controller._group_selected_files([file_a1, file_a2]) == [[file_a1, file_a2]]
     grouped = controller._group_selected_files([file_a2, file_b1, file_a1])
-    assert grouped == [[file_a2], [file_b1], [file_a1]]
+    assert grouped == [[file_a1, file_a2], [file_b1]]
     assert controller._sample_id_from_group([file_a1]) == "view_1"
-    assert controller._sample_id_from_group([file_a1, file_a2]) == "view_1"
+    assert controller._sample_id_from_group([file_a1, file_a2]) == "group_a"
     assert controller._sample_id_from_group([file_b1]) == "view_1"
+
+
+def test_source_groups_from_selected_paths_maps_files_to_single_and_folders_to_multi(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    _panel, controller = explorer_panel_and_controller
+    single_file = tmp_path / "single.mp4"
+    single_file.write_bytes(b"media")
+
+    group_dir = tmp_path / "group_dir"
+    group_dir.mkdir()
+    group_view_2 = group_dir / "view_2.mp4"
+    group_view_1 = group_dir / "view_1.mp4"
+    ignored = group_dir / "notes.txt"
+    group_view_2.write_bytes(b"media")
+    group_view_1.write_bytes(b"media")
+    ignored.write_text("ignore", encoding="utf-8")
+
+    source_groups = controller._source_groups_from_selected_paths(
+        [str(single_file), str(group_dir)]
+    )
+
+    assert source_groups == [
+        [str(single_file)],
+        [str(group_view_1), str(group_view_2)],
+    ]
 
 
 def test_panel_header_editor_flags_and_raw_json_widget_are_configured(explorer_panel_and_controller):

@@ -707,19 +707,44 @@ class HistoryManager(QObject):
             self.statusMessageRequested.emit("Warning", "Please create or load a dataset first.", 1500)
             return
 
-        file_list = [str(path) for path in (files or []) if path]
-        if not file_list:
+        raw_payload = list(files or [])
+        if not raw_payload:
+            return
+
+        is_grouped_payload = any(isinstance(item, (list, tuple)) for item in raw_payload)
+        if is_grouped_payload:
+            source_groups = []
+            total_file_count = 0
+            for item in raw_payload:
+                if isinstance(item, (list, tuple)):
+                    group = [str(path) for path in item if path]
+                elif item:
+                    group = [str(item)]
+                else:
+                    group = []
+                if not group:
+                    continue
+                source_groups.append(group)
+                total_file_count += len(group)
+        else:
+            file_list = [str(path) for path in raw_payload if path]
+            if not file_list:
+                return
+            source_groups = self.model._group_selected_files(file_list)
+            total_file_count = len(file_list)
+
+        if not source_groups:
             return
 
         if not self.model.current_working_directory:
             import os
-            self.model.current_working_directory = os.path.dirname(file_list[0])
+            self.model.current_working_directory = os.path.dirname(str(source_groups[0][0]))
 
         before_json = self.model.snapshot_dataset_json()
         added_count = 0
         first_sample_id = None
 
-        for source_group in self.model._group_selected_files(file_list):
+        for source_group in source_groups:
             sample = self.model._build_new_sample(source_group)
             self.model.get_samples().append(sample)
             added_count += 1
@@ -733,7 +758,11 @@ class HistoryManager(QObject):
             return
         self.model.populate_tree()
         self.saveStateRefreshRequested.emit()
-        self.statusMessageRequested.emit("Added", f"Added {added_count} samples.", 1500)
+        self.statusMessageRequested.emit(
+            "Added",
+            f"Added {added_count} samples from {total_file_count} files.",
+            1500,
+        )
 
         if first_sample_id:
             entry = self.model.sample_id_to_entry.get(first_sample_id)

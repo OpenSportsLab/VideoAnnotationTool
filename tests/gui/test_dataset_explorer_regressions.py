@@ -655,6 +655,60 @@ def test_filter_smart_labelled_uses_sample_state_across_modes(
 
 
 # @pytest.mark.gui
+# def test_add_data_groups_folder_structure_into_multiview_samples(
+#     window,
+#     monkeypatch,
+#     qtbot,
+#     tmp_path,
+# ):
+#     source_video = Path(__file__).resolve().parents[1] / "data" / "test_video_1.mp4"
+#     source_bytes = source_video.read_bytes()
+
+#     window.dataset_explorer_controller.create_new_project()
+
+#     group_a = tmp_path / "group_a"
+#     group_b = tmp_path / "group_b"
+#     group_a.mkdir()
+#     group_b.mkdir()
+
+#     a_view_1 = group_a / "view_1.mp4"
+#     a_view_2 = group_a / "view_2.mp4"
+#     b_view_1 = group_b / "view_1.mp4"
+#     b_view_2 = group_b / "view_2.mp4"
+#     for path in (a_view_1, a_view_2, b_view_1, b_view_2):
+#         path.write_bytes(source_bytes)
+
+#     selected_files = [str(a_view_2), str(b_view_1), str(a_view_1), str(b_view_2)]
+#     monkeypatch.setattr(
+#         "controllers.dataset_explorer_controller.QFileDialog.getOpenFileNames",
+#         lambda *args, **kwargs: (selected_files, "Media Files (*.mp4)"),
+#     )
+#     qtbot.mouseClick(window.dataset_explorer_panel.btn_add_data, Qt.MouseButton.LeftButton)
+#     qtbot.wait(50)
+
+#     assert window.tree_model.rowCount() == 2
+#     assert [entry["name"] for entry in window.dataset_explorer_controller.action_item_data] == ["group_a", "group_b"]
+#     assert [Path(inp["path"]).name for inp in window.dataset_explorer_controller.get_sample("group_a")["inputs"]] == [
+#         "view_1.mp4",
+#         "view_2.mp4",
+#     ]
+
+#     parent_index = _select_top_row(window, qtbot, 0)
+#     assert window.tree_model.rowCount(parent_index) == 2
+#     parent_path = window.get_current_action_path()
+#     parent_sample_id = window.dataset_explorer_controller.current_selected_sample_id
+
+#     child_index = window.tree_model.index(1, 0, parent_index)
+#     child_path = child_index.data(window.tree_model.FilePathRole)
+#     window.dataset_explorer_panel.tree.setCurrentIndex(child_index)
+#     qtbot.wait(50)
+
+#     assert window.dataset_explorer_controller.current_selected_sample_id == parent_sample_id == "group_a"
+#     assert window.dataset_explorer_controller.current_selected_input_path == child_path
+#     assert window.get_current_action_path() == parent_path
+
+
+# @pytest.mark.gui
 # def test_add_sample_without_dataset_warns_and_dialog_cancel_is_noop(window, monkeypatch):
 #     warning_calls = {"count": 0}
 #     monkeypatch.setattr(
