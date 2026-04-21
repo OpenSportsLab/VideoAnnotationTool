@@ -1,6 +1,7 @@
+import mimetypes
 import os
 
-from PyQt6.QtCore import QUrl, QTimer, QObject, pyqtSignal
+from PyQt6.QtCore import QMimeDatabase, QObject, QTimer, QUrl, pyqtSignal
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtWidgets import QWidget
 
@@ -12,6 +13,24 @@ class MediaController(QObject):
     """
     playbackStateChanged = pyqtSignal(bool)
     muteStateChanged = pyqtSignal(bool)
+    _VIDEO_EXTENSIONS = {
+        ".mp4",
+        ".avi",
+        ".mov",
+        ".mkv",
+        ".webm",
+        ".m4v",
+        ".wmv",
+        ".mpeg",
+        ".mpg",
+        ".m2ts",
+        ".mts",
+        ".ts",
+        ".flv",
+        ".3gp",
+        ".ogv",
+        ".mxf",
+    }
 
     def __init__(self, player: QMediaPlayer, video_widget: QWidget = None):
         super().__init__()
@@ -77,11 +96,19 @@ class MediaController(QObject):
         """
         Catches silent failures from MediaStatus.
         """
+        source_path = self.current_source_path()
+
         if status == QMediaPlayer.MediaStatus.InvalidMedia:
+            if source_path and not self._is_video_media_path(source_path):
+                self.stop()
+                return
             self._trigger_error_dialog("Status Error: Invalid Media or completely unsupported file format.")
             
         elif status == QMediaPlayer.MediaStatus.LoadedMedia:
             if not self.player.hasVideo():
+                if source_path and not self._is_video_media_path(source_path):
+                    self.stop()
+                    return
                 self._trigger_error_dialog("Status Error: The file has no decodable video stream (e.g., missing AV1 hardware decoder).")
 
     def _handle_media_error(self, error: QMediaPlayer.Error, error_string: str):
@@ -96,6 +123,8 @@ class MediaController(QObject):
         self.stop() 
 
         if not file_path:
+            return
+        if not self._is_video_media_path(file_path):
             return
 
         self.player.setSource(QUrl.fromLocalFile(file_path))
@@ -117,6 +146,9 @@ class MediaController(QObject):
 
     def route_media_selection(self, target_path: str, ensure_playback: bool = False):
         if not target_path:
+            return
+        if not self._is_video_media_path(target_path):
+            self.stop()
             return
 
         current_source_path = self.current_source_path()
@@ -207,3 +239,34 @@ class MediaController(QObject):
         if not path:
             return ""
         return os.path.normcase(os.path.normpath(path))
+
+    def _is_video_media_path(self, file_path: str) -> bool:
+        if not file_path:
+            return False
+
+        normalized_path = os.path.normpath(str(file_path))
+        mime_name = ""
+
+        if os.path.isfile(normalized_path):
+            try:
+                mime = QMimeDatabase().mimeTypeForFile(
+                    normalized_path,
+                    QMimeDatabase.MatchMode.MatchContent,
+                )
+                mime_name = str(mime.name() or "")
+                if mime_name.startswith("video/"):
+                    return True
+                if mime_name and mime_name not in {"application/octet-stream", "application/x-empty"}:
+                    return False
+            except Exception:
+                pass
+
+        guessed_mime, _ = mimetypes.guess_type(normalized_path)
+        if isinstance(guessed_mime, str):
+            if guessed_mime.startswith("video/"):
+                return True
+            if guessed_mime.startswith(("audio/", "image/", "text/")):
+                return False
+
+        _, extension = os.path.splitext(normalized_path)
+        return extension.lower() in self._VIDEO_EXTENSIONS
