@@ -1,8 +1,14 @@
 # Contributing
 
-We welcome contributions! Please:
-- Fork the repository
-- Create a feature branch
-- Submit a pull request
+Contributions are welcome.
 
-See [CONTRIBUTING.md](https://github.com/OpenSportsLab/VideoAnnotationTool/blob/main/CONTRIBUTING.md) for more details.
+Start with the repository contribution guide:
+
+- https://github.com/OpenSportsLab/VideoAnnotationTool/blob/main/CONTRIBUTING.md
+
+Typical flow:
+
+1. Fork the repository.
+2. Create a feature branch.
+3. Add tests/docs for your change.
+4. Open a pull request.

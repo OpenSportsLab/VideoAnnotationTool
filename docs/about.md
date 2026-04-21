@@ -1,11 +1,8 @@
 # About
 
-The Video Annotation Tool is developed by OpenSportsLab to help researchers and practitioners efficiently annotate sports video datasets.
+The Video Annotation Tool is developed by OpenSportsLab for sports-video dataset curation and annotation.
 
-- **Project Lead:** Silvio Giancola  
-- **Front End Developer:** Jintao Ma  
-- **GitHub:** [OpenSportsLab/VideoAnnotationTool](https://github.com/OpenSportsLab/VideoAnnotationTool)  
-- **License:** Dual-licensed (GPL-3.0 / Commercial)
-
-We welcome feedback and contributions from the community.
-
+- Project Lead: Silvio Giancola
+- Front-End Developer: Jintao Ma / Silvio Giancola
+- Repository: https://github.com/OpenSportsLab/VideoAnnotationTool
+- License: Dual-licensed (AGPL-3.0 / Commercial)

@@ -1,13 +1,32 @@
-# Saving & Loading
-
-## Saving
-- Use the Save or Save As options in the menu or toolbar.
-- The tool saves your annotations in JSON format.
+# Saving And Loading
 
 ## Loading
-- Use the Load option to open an existing annotation file.
 
-The tool uses the [OSL JSON format](https://github.com/OpenSportsLab/OSL-ActionSpotting#osl-json-format) for compatibility.
+Use **File > Load Dataset** (`Ctrl+O`) to open an OSL JSON file.
 
-**Tip:**  
-Save frequently to avoid data loss!
+The app normalizes loaded content (for example, missing IDs) while preserving unknown root/sample fields when possible.
+
+## Saving
+
+- **Save Dataset** (`Ctrl+S`): writes to current path.
+- **Save Dataset As** (`Ctrl+Shift+S`): writes to a new path.
+
+On write, paths in `data[].inputs[].path` are rewritten relative to the chosen save location.
+
+## Close With Unsaved Changes
+
+If the dataset is dirty and you close/quit, the app prompts:
+
+- **Save**
+- **Save As**
+- **Close Without Saving**
+- **Cancel**
+
+## What Is Persisted
+
+- Core OSL fields (`labels`, `events`, `captions`, `dense_captions`, `questions`, `answers`)
+- Unknown/custom root/sample fields
+
+### Not persisted in dataset JSON
+
+- Localization `label_colors` (stored in app settings)
