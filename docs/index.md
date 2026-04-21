@@ -2,7 +2,7 @@
 
 The Video Annotation Tool is a PyQt6 desktop application for loading, editing, and exporting OSL-style sports-video datasets.
 
-![Main GUI Screenshot](assets/localization-UI.png)
+![Main GUI Screenshot](assets/dense-description-UI.png)
 
 ## What You Can Do
 

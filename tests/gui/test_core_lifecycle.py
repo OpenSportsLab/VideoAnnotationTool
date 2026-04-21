@@ -10,6 +10,8 @@ import pytest
 from PyQt6.QtCore import QModelIndex, Qt
 from PyQt6.QtWidgets import QDialogButtonBox, QMessageBox
 
+from app_info import APP_DISPLAY_NAME, APP_VERSION
+
 
 MODE_TO_TAB_INDEX = {
     "classification": 0,
@@ -334,12 +336,44 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 
 
 @pytest.mark.gui
-def test_menu_bar_contains_data_menu_between_file_and_edit(window):
+def test_menu_bar_contains_file_data_edit_help_menus(window):
     menu_names = [action.text().replace("&", "") for action in window.menuBar().actions()]
-    assert menu_names[:3] == ["File", "Data", "Edit"]
+    assert menu_names[:4] == ["File", "Data", "Edit", "Help"]
     assert hasattr(window, "action_hf_download")
     assert hasattr(window, "action_hf_upload")
     assert window.action_hf_upload.isEnabled() is False
+
+
+@pytest.mark.gui
+def test_help_menu_actions_open_shortcuts_and_info_popups(window, monkeypatch):
+    popup_calls = []
+
+    def _fake_information(parent, title, text, *args, **kwargs):
+        popup_calls.append((title, text))
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr("main_window.QMessageBox.information", _fake_information)
+
+    assert hasattr(window, "action_shortcuts")
+    assert hasattr(window, "action_info")
+    assert window.action_shortcuts.isEnabled() is True
+    assert window.action_info.isEnabled() is True
+
+    window.action_shortcuts.trigger()
+    window.action_info.trigger()
+
+    assert len(popup_calls) == 2
+
+    shortcuts_title, shortcuts_text = popup_calls[0]
+    info_title, info_text = popup_calls[1]
+
+    assert shortcuts_title == "Shortcuts"
+    assert "Ctrl+S" in shortcuts_text
+    assert "Space" in shortcuts_text
+
+    assert info_title == "Info"
+    assert APP_DISPLAY_NAME in info_text
+    assert f"Version: {APP_VERSION}" in info_text
 
 
 @pytest.mark.gui

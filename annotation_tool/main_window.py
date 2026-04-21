@@ -6,6 +6,7 @@ from PyQt6.QtCore import Qt, QModelIndex, QTimer
 from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QLabel, QDockWidget, QMainWindow, QMessageBox, QStackedWidget, QTabWidget
 
+from app_info import APP_DISPLAY_NAME, APP_VERSION, SHORTCUTS_HELP_TEXT
 from controllers.classification import ClassificationEditorController
 from controllers.hf_transfer_controller import HfTransferController
 from controllers.hf_transfer_service import (
@@ -50,7 +51,7 @@ class VideoAnnotationWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        self.setWindowTitle("Video Annotation Tool")
+        self.setWindowTitle(APP_DISPLAY_NAME)
         self.resize(1200, 800)
 
         # --- 1. Center Area: Stacked Widget (Welcome vs Media Player) ---
@@ -613,6 +614,16 @@ class VideoAnnotationWindow(QMainWindow):
         self.action_redo.triggered.connect(self.history_manager.perform_redo)
         edit_menu.addAction(self.action_redo)
 
+        help_menu = menu_bar.addMenu("&Help")
+
+        self.action_shortcuts = QAction("Shortcuts", self)
+        self.action_shortcuts.triggered.connect(self._show_shortcuts_popup)
+        help_menu.addAction(self.action_shortcuts)
+
+        self.action_info = QAction("Info", self)
+        self.action_info.triggered.connect(self._show_info_popup)
+        help_menu.addAction(self.action_info)
+
     def _setup_shortcuts(self) -> None:
         """Register common keyboard shortcuts."""
         QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self._safe_import_annotations)
@@ -622,9 +633,6 @@ class VideoAnnotationWindow(QMainWindow):
             self.dataset_explorer_controller.export_project
         )
 
-        QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(
-            lambda: self.show_temp_msg("Settings", "Settings dialog not implemented yet.")
-        )
         QShortcut(QKeySequence("Ctrl+D"), self).activated.connect(
             self._open_hf_download_dialog
         )
@@ -657,9 +665,11 @@ class VideoAnnotationWindow(QMainWindow):
             lambda: self.media_controller.seek_relative(5000)
         )
 
-        QShortcut(QKeySequence("S"), self).activated.connect(
-            lambda: self.show_temp_msg("Info", "Select an event and edit time via right-click.")
-        )
+    def _show_shortcuts_popup(self) -> None:
+        QMessageBox.information(self, "Shortcuts", SHORTCUTS_HELP_TEXT)
+
+    def _show_info_popup(self) -> None:
+        QMessageBox.information(self, "Info", f"{APP_DISPLAY_NAME}\nVersion: {APP_VERSION}")
 
     # # ---------------------------------------------------------------------
     # # Mode-aware dispatchers (Deprecated?)

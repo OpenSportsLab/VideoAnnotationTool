@@ -7,7 +7,6 @@
 - `Ctrl+Shift+S`: Save dataset as
 - `Ctrl+D`: Open HF download dialog
 - `Ctrl+U`: Open HF upload dialog
-- `Ctrl+E`: Reserved (settings placeholder)
 - `Ctrl/Cmd+Q`: Quit
 
 ## Undo/Redo
@@ -24,7 +23,3 @@
 - `Ctrl+Right`: Seek forward 1 second
 - `Ctrl+Shift+Left`: Seek backward 5 seconds
 - `Ctrl+Shift+Right`: Seek forward 5 seconds
-
-## Notes
-
-- `S` currently shows an info hint in localization workflows; it does not directly set event time.
