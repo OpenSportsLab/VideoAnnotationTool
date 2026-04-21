@@ -31,6 +31,38 @@ class MediaController(QObject):
         ".ogv",
         ".mxf",
     }
+    _NON_VIDEO_EXTENSIONS = {
+        ".txt",
+        ".md",
+        ".json",
+        ".jsonl",
+        ".csv",
+        ".tsv",
+        ".xml",
+        ".yaml",
+        ".yml",
+        ".pdf",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".bmp",
+        ".gif",
+        ".webp",
+        ".tif",
+        ".tiff",
+        ".mp3",
+        ".wav",
+        ".flac",
+        ".aac",
+        ".ogg",
+        ".m4a",
+    }
+    _NON_VIDEO_MIME_PREFIXES = ("image/", "text/", "audio/")
+    _NON_VIDEO_MIME_TYPES = {
+        "application/json",
+        "application/xml",
+        "application/pdf",
+    }
 
     def __init__(self, player: QMediaPlayer, video_widget: QWidget = None):
         super().__init__()
@@ -245,18 +277,20 @@ class MediaController(QObject):
             return False
 
         normalized_path = os.path.normpath(str(file_path))
-        mime_name = ""
 
         if os.path.isfile(normalized_path):
             try:
                 mime = QMimeDatabase().mimeTypeForFile(
                     normalized_path,
-                    QMimeDatabase.MatchMode.MatchContent,
+                    QMimeDatabase.MatchMode.MatchDefault,
                 )
                 mime_name = str(mime.name() or "")
                 if mime_name.startswith("video/"):
                     return True
-                if mime_name and mime_name not in {"application/octet-stream", "application/x-empty"}:
+                if (
+                    mime_name.startswith(self._NON_VIDEO_MIME_PREFIXES)
+                    or mime_name in self._NON_VIDEO_MIME_TYPES
+                ):
                     return False
             except Exception:
                 pass
@@ -265,8 +299,18 @@ class MediaController(QObject):
         if isinstance(guessed_mime, str):
             if guessed_mime.startswith("video/"):
                 return True
-            if guessed_mime.startswith(("audio/", "image/", "text/")):
+            if (
+                guessed_mime.startswith(self._NON_VIDEO_MIME_PREFIXES)
+                or guessed_mime in self._NON_VIDEO_MIME_TYPES
+            ):
                 return False
 
         _, extension = os.path.splitext(normalized_path)
-        return extension.lower() in self._VIDEO_EXTENSIONS
+        extension = extension.lower()
+        if extension in self._VIDEO_EXTENSIONS:
+            return True
+        if extension in self._NON_VIDEO_EXTENSIONS:
+            return False
+
+        # Fail open for unknown types so uncommon/long valid videos are not blocked.
+        return True
