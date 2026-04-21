@@ -27,7 +27,7 @@ if __name__ == "__main__":
         description="Convert an OSL-style JSON annotation file to Parquet + WebDataset TAR shards."
     )
     parser.add_argument("json_path", help="Path to the OSL JSON annotation file.")
-    parser.add_argument("media_root", help="Root directory containing the video files referenced in the JSON.")
+    parser.add_argument("media_root", help="Root directory containing the input files referenced in the JSON.")
     parser.add_argument("output_dir", help="Destination directory for the converted dataset.")
     parser.add_argument(
         "--samples-per-shard",
@@ -51,7 +51,7 @@ if __name__ == "__main__":
         "--missing-policy",
         default="raise",
         choices=["raise", "skip"],
-        help="What to do when a referenced video file is missing (default: raise).",
+        help="What to do when a referenced input file is missing (default: raise).",
     )
     parser.add_argument(
         "--absolute-paths",
@@ -80,8 +80,9 @@ if __name__ == "__main__":
     )
 
     print(json.dumps(result, indent=2))
-    if result["missing_video_files"] > 0:
+    missing_input_files = int(result.get("missing_input_files") or 0)
+    if missing_input_files > 0:
         print(
-            f"\nWARNING: {result['missing_video_files']} video file(s) were missing.",
+            f"\nWARNING: {missing_input_files} input file(s) were missing.",
             file=sys.stderr,
         )

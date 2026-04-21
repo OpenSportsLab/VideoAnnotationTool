@@ -10,8 +10,8 @@ Parquet + WebDataset representation suited for large-scale ML training pipelines
 Converts an OSL-style JSON annotation file into:
 
 - `metadata.parquet` — flattened per-sample metadata table.
-- `shards/*.tar` — WebDataset TAR shards containing video files + per-sample sidecar JSON.
-- `shard_manifest.parquet` — per-video-file manifest tracking shard membership and status.
+- `shards/*.tar` — WebDataset TAR shards containing input files + per-sample sidecar JSON.
+- `shard_manifest.parquet` — per-input-file manifest tracking shard membership and status.
 
 ### Usage
 
@@ -24,7 +24,7 @@ python tools/osl_json_to_parquet_webdataset.py <json_path> <media_root> <output_
 | Argument | Description |
 |---|---|
 | `json_path` | Path to the OSL JSON annotation file. |
-| `media_root` | Root directory containing the video files referenced in `inputs[].path`. |
+| `media_root` | Root directory containing the files referenced in `inputs[].path`. |
 | `output_dir` | Destination directory for the converted dataset. |
 
 ### Optional arguments
@@ -34,7 +34,7 @@ python tools/osl_json_to_parquet_webdataset.py <json_path> <media_root> <output_
 | `--samples-per-shard N` | `100` | Number of samples packed into each TAR shard. |
 | `--compression {zstd,snappy,gzip,brotli,none}` | `zstd` | Parquet compression codec. |
 | `--shard-prefix PREFIX` | `shard` | File name prefix for TAR shard files. |
-| `--missing-policy {raise,skip}` | `raise` | Action when a referenced video file is missing. `raise` aborts; `skip` omits the file from the shard but keeps the sample in Parquet. |
+| `--missing-policy {raise,skip}` | `raise` | Action when a referenced input file is missing. `raise` aborts; `skip` omits the file from the shard but keeps the sample in Parquet. |
 | `--absolute-paths` | off | Store resolved absolute paths in Parquet instead of the original relative paths. |
 | `--overwrite` | off | Remove and recreate `output_dir` if it already exists. |
 
@@ -164,6 +164,24 @@ python tools/parquet_webdataset_to_osl_json.py \
     --output-media-root test_data/svfouls_parquet_webdataset_back_to_json \
     --indent 2
     
+
+# SN-GAR-tracking
+python tools/osl_json_to_parquet_webdataset.py \
+    test_data/sngar-tracking/annotations_test.json \
+    test_data/sngar-tracking \
+    test_data/sngar-tracking_parquet_webdataset \
+    --samples-per-shard 50 \
+    --missing-policy skip \
+    --overwrite
+
+python tools/parquet_webdataset_to_osl_json.py \
+    test_data/sngar-tracking_parquet_webdataset \
+    test_data/sngar-tracking_parquet_webdataset_back_to_json/reconstructed_annotations.json \
+    --extract-media \
+    --output-media-root test_data/sngar-tracking_parquet_webdataset_back_to_json \
+    --indent 2
+
+
 ```
 
 ## Dependencies

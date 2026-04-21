@@ -1009,7 +1009,6 @@ class VideoAnnotationWindow(QMainWindow):
         input_file_count = int(result.get("input_file_count") or 0)
         uploaded_file_count = int(result.get("uploaded_file_count") or 0)
         sample_count = int(result.get("num_samples") or 0)
-        video_file_count = int(result.get("video_file_count") or 0)
         commit_ref = str(result.get("commit_ref") or "")
         json_path = str(result.get("json_path") or "")
         json_path_in_repo = str(result.get("json_path_in_repo") or "")
@@ -1036,7 +1035,7 @@ class VideoAnnotationWindow(QMainWindow):
                 f"Branch: <code>{html.escape(cleaned_revision)}</code><br>"
                 f"Repository folder: <code>{html.escape(folder_name)}</code><br>"
                 f"Samples converted: <b>{sample_count}</b><br>"
-                f"Video files packed: <b>{video_file_count}</b><br>"
+                f"Input files packed: <b>{input_file_count}</b><br>"
                 f"Uploaded repo files: <b>{uploaded_file_count}</b><br><br>"
                 f"Source JSON:<br><code>{html.escape(json_path)}</code><br><br>"
                 f"Commit:<br><code>{html.escape(commit_ref)}</code>"

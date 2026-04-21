@@ -265,6 +265,57 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
 
 
 @pytest.mark.gui
+def test_selecting_non_video_input_keeps_selection_without_requesting_playback(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    text_input = tmp_path / "notes.txt"
+    text_input.write_text("not a video stream", encoding="utf-8")
+    rel_input = os.path.relpath(text_input, start=tmp_path).replace("\\", "/")
+
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-08",
+        "task": "action_classification",
+        "dataset_name": "non_video_inputs",
+        "modalities": ["video"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass", "shot"]}},
+        "data": [
+            {
+                "id": "text_only",
+                "inputs": [{"path": rel_input, "type": "text"}],
+            }
+        ],
+    }
+    project_json_path = tmp_path / "non_video_input.json"
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    _open_project(window, monkeypatch, project_json_path)
+
+    play_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda file_path, auto_play=True: play_calls.append(file_path),
+    )
+
+    parent_index = _select_top_row(window, qtbot, 0)
+    child_index = window.tree_model.index(0, 0, parent_index)
+    assert child_index.isValid()
+    selected_path = child_index.data(window.tree_model.FilePathRole)
+    assert selected_path
+
+    window.dataset_explorer_panel.tree.setCurrentIndex(child_index)
+    qtbot.wait(50)
+
+    assert window.dataset_explorer_controller.current_selected_sample_id == "text_only"
+    assert window.dataset_explorer_controller.current_selected_input_path == selected_path
+    assert play_calls == []
+
+
+@pytest.mark.gui
 def test_selecting_parent_while_stopped_restarts_playback_for_same_source(
     window,
     monkeypatch,

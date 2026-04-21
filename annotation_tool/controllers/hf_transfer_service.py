@@ -679,6 +679,7 @@ def upload_dataset_as_parquet_to_hf(
     *,
     revision: str | None = "main",
     commit_message: str | None = None,
+    samples_per_shard: int = 100,
     token: str | None = None,
     progress_cb: ProgressCallback | None = None,
     is_cancelled: CancelCheck | None = None,
@@ -693,6 +694,7 @@ def upload_dataset_as_parquet_to_hf(
     A temporary directory is used for the conversion output and removed when done.
     """
     HfApi, _, _ = _import_hf_hub()
+    CommitOperationAdd = _import_hf_commit_operation_add()
 
     cleaned_repo_id = str(repo_id or "").strip()
     cleaned_json_path = os.path.abspath(str(json_path or "").strip())
@@ -703,13 +705,21 @@ def upload_dataset_as_parquet_to_hf(
 
     cleaned_revision = str(revision or "").strip() or "main"
     effective_commit_message = (commit_message or "").strip() or "Upload dataset as Parquet + WebDataset"
+    cleaned_samples_per_shard = int(samples_per_shard or 100)
+    if cleaned_samples_per_shard < 1:
+        raise ValueError("samples_per_shard must be >= 1.")
     folder_name = Path(cleaned_json_path).stem
     media_root = Path(cleaned_json_path).parent
 
     _ensure_not_cancelled(is_cancelled)
-    _emit_progress(progress_cb, f"Converting {cleaned_json_path} to Parquet + WebDataset...")
+    _emit_progress(
+        progress_cb,
+        f"Converting {cleaned_json_path} to Parquet + WebDataset (samples_per_shard={cleaned_samples_per_shard})...",
+    )
 
     conversion_result: dict[str, Any] = {}
+    total = 0
+    commit_ref = ""
     tmp_dir = tempfile.mkdtemp(prefix="hf_parquet_ul_")
     try:
         parquet_output = Path(tmp_dir) / folder_name
@@ -717,6 +727,7 @@ def upload_dataset_as_parquet_to_hf(
             json_path=cleaned_json_path,
             media_root=media_root,
             output_dir=parquet_output,
+            samples_per_shard=cleaned_samples_per_shard,
             missing_policy="skip",
             overwrite=True,
         )
@@ -733,37 +744,54 @@ def upload_dataset_as_parquet_to_hf(
 
         api = HfApi(token=token or None)
         total = len(upload_entries)
-        _emit_progress(progress_cb, f"Uploading {total} files to {cleaned_repo_id}@{cleaned_revision} under '{folder_name}/'...")
+        _emit_progress(
+            progress_cb,
+            f"Preparing batched parquet upload of {total} files to {cleaned_repo_id}@{cleaned_revision} under '{folder_name}/'..."
+        )
 
-        last_commit_ref = ""
+        operations = []
         for idx, entry in enumerate(upload_entries, start=1):
             _ensure_not_cancelled(is_cancelled)
-            _emit_progress(progress_cb, f"[{idx}/{total}] Uploading {entry['path_in_repo']}")
-            last_commit_ref = str(
-                api.upload_file(
-                    path_or_fileobj=entry["local_path"],
+            _emit_progress(progress_cb, f"[{idx}/{total}] Queueing {entry['path_in_repo']}")
+            operations.append(
+                CommitOperationAdd(
                     path_in_repo=entry["path_in_repo"],
-                    repo_id=cleaned_repo_id,
-                    repo_type="dataset",
-                    revision=cleaned_revision,
-                    commit_message=f"{effective_commit_message} ({idx}/{total})",
+                    path_or_fileobj=entry["local_path"],
                 )
             )
+
+        _ensure_not_cancelled(is_cancelled)
+        _emit_progress(progress_cb, f"Submitting one Hugging Face commit with {len(operations)} parquet files...")
+        commit_info = api.create_commit(
+            repo_id=cleaned_repo_id,
+            repo_type="dataset",
+            revision=cleaned_revision,
+            operations=operations,
+            commit_message=effective_commit_message,
+        )
+        commit_ref = (
+            str(getattr(commit_info, "oid", "") or "").strip()
+            or str(getattr(commit_info, "commit_id", "") or "").strip()
+            or str(getattr(commit_info, "commit_url", "") or "").strip()
+            or str(commit_info)
+        )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     _emit_progress(progress_cb, f"Parquet upload completed. Uploaded {total} files.")
+    input_file_count = int(conversion_result.get("input_files_added") or 0)
     return {
         "repo_id": cleaned_repo_id,
         "revision": cleaned_revision,
         "upload_kind": "parquet",
         "json_path": cleaned_json_path,
         "folder_name": folder_name,
+        "samples_per_shard": cleaned_samples_per_shard,
         "num_samples": int(conversion_result.get("num_samples") or 0),
-        "video_file_count": int(conversion_result.get("video_files_added") or 0),
+        "input_file_count": input_file_count,
         "uploaded_file_count": total,
         "commit_message": effective_commit_message,
-        "commit_ref": last_commit_ref,
+        "commit_ref": commit_ref,
     }
 
 

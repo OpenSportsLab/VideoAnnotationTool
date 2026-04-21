@@ -12,7 +12,7 @@ Notes
 - metadata.parquet is used only for routing (sample_index, shard_name) and lightweight
   filtering; it does not store a full copy of each sample.
 - By default, reconstructed ``inputs[].path`` values remain the original relative paths.
-  Pass ``extract_media=True`` to also extract the video files from the shards.
+  Pass ``extract_media=True`` to also extract the input files from the shards.
 
 Public entry point:
     convert_parquet_to_json(...)
@@ -68,7 +68,7 @@ def _extract_sample_media_from_tar(
     overwrite: bool = False,
 ) -> int:
     """
-    Extract all media files for *sample_index* from the shard.
+    Extract all input files for *sample_index* from the shard.
 
     Files are written to ``output_media_root / original_path``, preserving the
     original relative path structure so that ``inputs[].path`` values stay valid.
@@ -86,20 +86,20 @@ def _extract_sample_media_from_tar(
             and not m.name.endswith(".json")
         ]
 
-        def _vid_idx(m: tarfile.TarInfo) -> int:
+        def _input_idx(m: tarfile.TarInfo) -> int:
             part = m.name[len(key_prefix):].split(".", 1)[0]
             try:
                 return int(part)
             except ValueError:
                 return 0
 
-        members.sort(key=_vid_idx)
+        members.sort(key=_input_idx)
 
         for member in members:
-            vid_idx = _vid_idx(member)
-            if vid_idx >= len(original_paths):
+            input_idx = _input_idx(member)
+            if input_idx >= len(original_paths):
                 continue
-            out_path = output_media_root / original_paths[vid_idx]
+            out_path = output_media_root / original_paths[input_idx]
             if out_path.exists() and not overwrite:
                 extracted += 1
                 continue
@@ -124,33 +124,70 @@ def _reconstruct_sample_from_row(
     This is the primary reconstruction path — the sidecar carries the full
     annotation payload, so the Parquet columns serve only as a fallback.
     """
-    sample: Dict[str, Any] = {"id": row["sample_id"], "inputs": []}
+    fallback_sample: Dict[str, Any] = {"id": row["sample_id"], "inputs": []}
+    built_from_payload = False
 
-    video_paths = _maybe_json_loads(row.get("video_paths"), [])
-    video_names = _maybe_json_loads(row.get("video_names"), [])
-    video_fps = _maybe_json_loads(row.get("video_fps"), [])
+    # Preferred generic column: full sample payload.
+    sample_payload = _maybe_json_loads(row.get("sample_payload"), None)
+    if isinstance(sample_payload, dict):
+        fallback_sample = dict(sample_payload)
+        fallback_sample.setdefault("id", row["sample_id"])
+        built_from_payload = True
+    # Legacy fallback for older exports.
+    else:
+        # Older generic column: full list of input dictionaries only.
+        sample_inputs = _maybe_json_loads(row.get("sample_inputs"), None)
+        if isinstance(sample_inputs, list):
+            for inp in sample_inputs:
+                if isinstance(inp, dict):
+                    fallback_sample["inputs"].append(dict(inp))
+            fallback_sample["metadata"] = _maybe_json_loads(row.get("sample_metadata"), {})
+            fallback_sample["labels"] = _maybe_json_loads(row.get("sample_labels"), {})
+            fallback_sample["events"] = _maybe_json_loads(row.get("sample_events"), [])
+            fallback_sample["captions"] = _maybe_json_loads(row.get("sample_captions"), [])
+            fallback_sample["dense_captions"] = _maybe_json_loads(row.get("sample_dense_captions"), [])
+        else:
+            # Oldest legacy fallback: split input/video columns.
+            input_paths = _maybe_json_loads(row.get("input_paths"), None)
+            if isinstance(input_paths, list):
+                input_types = _maybe_json_loads(row.get("input_types"), [])
+                input_names = _maybe_json_loads(row.get("input_names"), [])
+                input_fps = _maybe_json_loads(row.get("input_fps"), [])
+            else:
+                input_paths = _maybe_json_loads(row.get("video_paths"), [])
+                input_types = ["video"] * len(input_paths)
+                input_names = _maybe_json_loads(row.get("video_names"), [])
+                input_fps = _maybe_json_loads(row.get("video_fps"), [])
 
-    for i, path in enumerate(video_paths):
-        inp: Dict[str, Any] = {"type": "video", "path": path}
-        if i < len(video_names):
-            inp["name"] = video_names[i]
-        if i < len(video_fps):
-            inp["fps"] = video_fps[i]
-        sample["inputs"].append(inp)
+            for i, path in enumerate(input_paths):
+                raw_type = input_types[i] if i < len(input_types) else None
+                input_type = str(raw_type).strip() if raw_type is not None else ""
+                if not input_type:
+                    input_type = "video"
+                inp: Dict[str, Any] = {"type": input_type, "path": path}
+                if i < len(input_names):
+                    inp["name"] = input_names[i]
+                if i < len(input_fps):
+                    inp["fps"] = input_fps[i]
+                fallback_sample["inputs"].append(inp)
 
-    sample["metadata"] = _maybe_json_loads(row.get("sample_metadata"), {})
-    sample["labels"] = _maybe_json_loads(row.get("sample_labels"), {})
-    sample["events"] = _maybe_json_loads(row.get("sample_events"), [])
-    sample["captions"] = _maybe_json_loads(row.get("sample_captions"), [])
-    sample["dense_captions"] = _maybe_json_loads(row.get("sample_dense_captions"), [])
+            fallback_sample["metadata"] = _maybe_json_loads(row.get("sample_metadata"), {})
+            fallback_sample["labels"] = _maybe_json_loads(row.get("sample_labels"), {})
+            fallback_sample["events"] = _maybe_json_loads(row.get("sample_events"), [])
+            fallback_sample["captions"] = _maybe_json_loads(row.get("sample_captions"), [])
+            fallback_sample["dense_captions"] = _maybe_json_loads(row.get("sample_dense_captions"), [])
 
-    if sidecar:
-        sample["inputs"] = sidecar.get("inputs", sample["inputs"])
-        for field in ("metadata", "labels", "events", "captions", "dense_captions"):
-            if sidecar.get(field):
-                sample[field] = sidecar[field]
+    if isinstance(sidecar, dict):
+        sample = dict(sidecar)
+        sample.setdefault("id", row["sample_id"])
+        sample.setdefault("inputs", fallback_sample["inputs"])
+        return sample
+
+    if built_from_payload:
+        return fallback_sample
 
     # Drop empty optional fields for a cleaner output JSON
+    sample = fallback_sample
     for field in ("metadata", "labels", "events", "captions", "dense_captions"):
         if field in sample and not sample[field]:
             sample.pop(field)
@@ -216,16 +253,21 @@ def convert_parquet_to_json(
         raise ValueError("metadata.parquet is empty.")
 
     first = df.iloc[0]
-    top_doc: Dict[str, Any] = {
-        "version": first.get("json_version"),
-        "date": first.get("json_date"),
-        "task": first.get("task"),
-        "dataset_name": first.get("dataset_name"),
-        "metadata": _maybe_json_loads(first.get("top_level_metadata"), {}),
-    }
-    top_labels = _maybe_json_loads(first.get("top_level_labels"), {})
-    if top_labels:
-        top_doc["labels"] = top_labels
+    top_doc = _maybe_json_loads(first.get("header"), None)
+    if not isinstance(top_doc, dict):
+        top_doc = _maybe_json_loads(first.get("top_level_document"), None)
+    if not isinstance(top_doc, dict):
+        top_doc = {
+            "version": first.get("json_version"),
+            "date": first.get("json_date"),
+            "task": first.get("task"),
+            "dataset_name": first.get("dataset_name"),
+            "metadata": _maybe_json_loads(first.get("top_level_metadata"), {}),
+        }
+        top_labels = _maybe_json_loads(first.get("top_level_labels"), {})
+        if top_labels:
+            top_doc["labels"] = top_labels
+    top_doc.pop("data", None)
 
     data: List[Dict[str, Any]] = []
     extracted_media_count = 0
@@ -239,16 +281,27 @@ def convert_parquet_to_json(
         sample = _reconstruct_sample_from_row(row, sidecar=sidecar)
 
         if extract_media:
-            original_video_paths = [
-                inp["path"]
-                for inp in sample.get("inputs", [])
-                if inp.get("type") == "video" and inp.get("path")
-            ]
+            inputs = sample.get("inputs", []) if isinstance(sample, dict) else []
+            if "sample_payload" in row.index or "sample_inputs" in row.index or "input_paths" in row.index:
+                original_input_paths = [
+                    str(inp["path"])
+                    for inp in inputs
+                    if isinstance(inp, dict) and inp.get("path")
+                ]
+            else:
+                # Legacy exports stored only video files with video-only indexing.
+                original_input_paths = [
+                    str(inp["path"])
+                    for inp in inputs
+                    if isinstance(inp, dict)
+                    and inp.get("type") == "video"
+                    and inp.get("path")
+                ]
             extracted_media_count += _extract_sample_media_from_tar(
                 tar_path=tar_path,
                 sample_index=sample_index,
                 output_media_root=output_media_root_path,
-                original_paths=original_video_paths,
+                original_paths=original_input_paths,
                 overwrite=overwrite_media,
             )
 
@@ -266,5 +319,6 @@ def convert_parquet_to_json(
         "num_samples": len(data),
         "extract_media": extract_media,
         "output_media_root": str(output_media_root_path) if output_media_root_path else None,
+        "extracted_input_files": extracted_media_count,
         "extracted_media_files": extracted_media_count,
     }
