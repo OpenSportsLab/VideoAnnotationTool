@@ -334,6 +334,7 @@ def test_upload_dataset_as_parquet_to_hf_uploads_all_generated_files_in_one_comm
     json_path.write_text(json.dumps({"data": []}), encoding="utf-8")
 
     commit_calls = []
+    convert_calls = []
 
     class _FakeCommitOperationAdd:
         def __init__(self, *, path_in_repo, path_or_fileobj):
@@ -349,6 +350,7 @@ def test_upload_dataset_as_parquet_to_hf_uploads_all_generated_files_in_one_comm
             return type("_CommitInfo", (), {"oid": "parquetsha"})()
 
     def _fake_convert_json_to_parquet(**kwargs):
+        convert_calls.append(kwargs)
         output_dir = kwargs["output_dir"]
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "dataset.parquet").write_bytes(b"parquet")
@@ -356,7 +358,7 @@ def test_upload_dataset_as_parquet_to_hf_uploads_all_generated_files_in_one_comm
         shard_dir.mkdir(parents=True, exist_ok=True)
         (shard_dir / "shard-00000.tar").write_bytes(b"tar0")
         (shard_dir / "shard-00001.tar").write_bytes(b"tar1")
-        return {"num_samples": 2, "video_files_added": 2}
+        return {"num_samples": 2, "input_files_added": 2}
 
     monkeypatch.setattr(
         "controllers.hf_transfer_service._import_hf_hub",
@@ -395,8 +397,61 @@ def test_upload_dataset_as_parquet_to_hf_uploads_all_generated_files_in_one_comm
     assert result["upload_kind"] == "parquet"
     assert result["uploaded_file_count"] == 3
     assert result["num_samples"] == 2
-    assert result["video_file_count"] == 2
+    assert result["samples_per_shard"] == 100
+    assert result["input_file_count"] == 2
+    assert "video_file_count" not in result
     assert result["commit_ref"] == "parquetsha"
+    assert len(convert_calls) == 1
+    assert convert_calls[0]["samples_per_shard"] == 100
+
+
+def test_upload_dataset_as_parquet_to_hf_forwards_custom_samples_per_shard(monkeypatch, tmp_path):
+    json_path = tmp_path / "annotations.json"
+    json_path.write_text(json.dumps({"data": []}), encoding="utf-8")
+
+    convert_calls = []
+
+    class _FakeCommitOperationAdd:
+        def __init__(self, *, path_in_repo, path_or_fileobj):
+            self.path_in_repo = path_in_repo
+            self.path_or_fileobj = path_or_fileobj
+
+    class _FakeApi:
+        def __init__(self, token=None):
+            pass
+
+        def create_commit(self, **kwargs):
+            return type("_CommitInfo", (), {"oid": "parquetsha"})()
+
+    def _fake_convert_json_to_parquet(**kwargs):
+        convert_calls.append(kwargs)
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "dataset.parquet").write_bytes(b"parquet")
+        return {"num_samples": 0, "input_files_added": 0}
+
+    monkeypatch.setattr(
+        "controllers.hf_transfer_service._import_hf_hub",
+        lambda: (_FakeApi, object(), object()),
+    )
+    monkeypatch.setattr(
+        "controllers.hf_transfer_service._import_hf_commit_operation_add",
+        lambda: _FakeCommitOperationAdd,
+    )
+    monkeypatch.setattr(
+        "controllers.hf_transfer_service.convert_json_to_parquet",
+        _fake_convert_json_to_parquet,
+    )
+
+    result = upload_dataset_as_parquet_to_hf(
+        repo_id="OpenSportsLab/test-repo",
+        json_path=str(json_path),
+        samples_per_shard=7,
+    )
+
+    assert len(convert_calls) == 1
+    assert convert_calls[0]["samples_per_shard"] == 7
+    assert result["samples_per_shard"] == 7
 
 
 def test_download_dataset_from_hf_can_be_cancelled_before_network(monkeypatch, tmp_path):

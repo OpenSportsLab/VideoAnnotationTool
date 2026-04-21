@@ -379,6 +379,8 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
     assert upload_box.button(QDialogButtonBox.StandardButton.Ok).text() == "Upload"
     assert upload_dialog.revision_edit.text() == "main"
     assert upload_dialog.upload_as_json_checkbox.isChecked() is True
+    assert upload_dialog.samples_per_shard_spin.value() == 100
+    assert upload_dialog.samples_per_shard_spin.isEnabled() is False
     upload_dialog.close()
 
 
@@ -395,6 +397,7 @@ def test_hf_upload_dialog_prefill_prefers_json_metadata_over_settings(window, tm
     settings.setValue(HfUploadDialog._KEY_COMMIT_MESSAGE, "Settings commit message")
     settings.setValue(HfUploadDialog._KEY_TOKEN, "settings-token")
     settings.setValue(HfUploadDialog._KEY_UPLOAD_AS_JSON, False)
+    settings.setValue(HfUploadDialog._KEY_SAMPLES_PER_SHARD, 64)
     settings.sync()
 
     upload_dialog = HfUploadDialog(
@@ -412,6 +415,8 @@ def test_hf_upload_dialog_prefill_prefers_json_metadata_over_settings(window, tm
     assert upload_dialog.commit_message_edit.text() == "Settings commit message"
     assert upload_dialog.token_edit.text() == "settings-token"
     assert upload_dialog.upload_as_json_checkbox.isChecked() is False
+    assert upload_dialog.samples_per_shard_spin.value() == 64
+    assert upload_dialog.samples_per_shard_spin.isEnabled() is True
     upload_dialog.close()
 
 
@@ -423,6 +428,7 @@ def test_hf_upload_dialog_persists_upload_as_json_checkbox(window, tmp_path):
     opened_json.write_text("{}", encoding="utf-8")
     settings = window.dataset_explorer_controller.settings
     settings.remove(HfUploadDialog._KEY_UPLOAD_AS_JSON)
+    settings.remove(HfUploadDialog._KEY_SAMPLES_PER_SHARD)
     settings.sync()
 
     upload_dialog = HfUploadDialog(
@@ -431,6 +437,7 @@ def test_hf_upload_dialog_persists_upload_as_json_checkbox(window, tmp_path):
         parent=window,
     )
     upload_dialog.upload_as_json_checkbox.setChecked(False)
+    upload_dialog.samples_per_shard_spin.setValue(123)
     upload_dialog.repo_id_edit.setText("OpenSportsLab/test-repo")
     upload_dialog._validate_and_accept()
     upload_dialog.close()
@@ -441,7 +448,28 @@ def test_hf_upload_dialog_persists_upload_as_json_checkbox(window, tmp_path):
         parent=window,
     )
     assert reloaded_dialog.upload_as_json_checkbox.isChecked() is False
+    assert reloaded_dialog.samples_per_shard_spin.value() == 123
+    assert reloaded_dialog.samples_per_shard_spin.isEnabled() is True
     reloaded_dialog.close()
+
+
+@pytest.mark.gui
+def test_hf_upload_dialog_greys_out_samples_per_shard_when_json_selected(window, tmp_path):
+    from ui.dialogs import HfUploadDialog
+
+    opened_json = tmp_path / "opened_dataset.json"
+    opened_json.write_text("{}", encoding="utf-8")
+
+    dialog = HfUploadDialog(
+        str(opened_json),
+        settings=window.dataset_explorer_controller.settings,
+        parent=window,
+    )
+    dialog.upload_as_json_checkbox.setChecked(False)
+    assert dialog.samples_per_shard_spin.isEnabled() is True
+    dialog.upload_as_json_checkbox.setChecked(True)
+    assert dialog.samples_per_shard_spin.isEnabled() is False
+    dialog.close()
 
 
 @pytest.mark.gui

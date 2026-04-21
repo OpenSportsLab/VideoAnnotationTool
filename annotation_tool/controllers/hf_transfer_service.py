@@ -679,6 +679,7 @@ def upload_dataset_as_parquet_to_hf(
     *,
     revision: str | None = "main",
     commit_message: str | None = None,
+    samples_per_shard: int = 100,
     token: str | None = None,
     progress_cb: ProgressCallback | None = None,
     is_cancelled: CancelCheck | None = None,
@@ -704,11 +705,17 @@ def upload_dataset_as_parquet_to_hf(
 
     cleaned_revision = str(revision or "").strip() or "main"
     effective_commit_message = (commit_message or "").strip() or "Upload dataset as Parquet + WebDataset"
+    cleaned_samples_per_shard = int(samples_per_shard or 100)
+    if cleaned_samples_per_shard < 1:
+        raise ValueError("samples_per_shard must be >= 1.")
     folder_name = Path(cleaned_json_path).stem
     media_root = Path(cleaned_json_path).parent
 
     _ensure_not_cancelled(is_cancelled)
-    _emit_progress(progress_cb, f"Converting {cleaned_json_path} to Parquet + WebDataset...")
+    _emit_progress(
+        progress_cb,
+        f"Converting {cleaned_json_path} to Parquet + WebDataset (samples_per_shard={cleaned_samples_per_shard})...",
+    )
 
     conversion_result: dict[str, Any] = {}
     total = 0
@@ -720,6 +727,7 @@ def upload_dataset_as_parquet_to_hf(
             json_path=cleaned_json_path,
             media_root=media_root,
             output_dir=parquet_output,
+            samples_per_shard=cleaned_samples_per_shard,
             missing_policy="skip",
             overwrite=True,
         )
@@ -771,14 +779,16 @@ def upload_dataset_as_parquet_to_hf(
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     _emit_progress(progress_cb, f"Parquet upload completed. Uploaded {total} files.")
+    input_file_count = int(conversion_result.get("input_files_added") or 0)
     return {
         "repo_id": cleaned_repo_id,
         "revision": cleaned_revision,
         "upload_kind": "parquet",
         "json_path": cleaned_json_path,
         "folder_name": folder_name,
+        "samples_per_shard": cleaned_samples_per_shard,
         "num_samples": int(conversion_result.get("num_samples") or 0),
-        "video_file_count": int(conversion_result.get("video_files_added") or 0),
+        "input_file_count": input_file_count,
         "uploaded_file_count": total,
         "commit_message": effective_commit_message,
         "commit_ref": commit_ref,

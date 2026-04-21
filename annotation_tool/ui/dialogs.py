@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QGroupBox, QFormLayout, QLineEdit, QHBoxLayout,
     QFrame, QListWidget, QComboBox, QPushButton, QLabel, QProgressBar,
     QMessageBox, QWidget, QListWidgetItem, QStyle, QButtonGroup, QScrollArea,
-    QFileDialog, QCheckBox, QSizePolicy
+    QFileDialog, QCheckBox, QSizePolicy, QSpinBox
 )
 from PyQt6.QtCore import QDir, Qt, QSize, QSettings, pyqtSignal
 from PyQt6.QtGui import QFileSystemModel, QIcon
@@ -339,6 +339,7 @@ class HfUploadDialog(QDialog):
     _KEY_COMMIT_MESSAGE = f"{_SETTINGS_PREFIX}/commit_message"
     _KEY_TOKEN = f"{_SETTINGS_PREFIX}/token"
     _KEY_UPLOAD_AS_JSON = f"{_SETTINGS_PREFIX}/upload_as_json"
+    _KEY_SAMPLES_PER_SHARD = f"{_SETTINGS_PREFIX}/samples_per_shard"
 
     def __init__(
         self,
@@ -373,6 +374,12 @@ class HfUploadDialog(QDialog):
         self.upload_as_json_checkbox.setChecked(True)
         form.addRow("", self.upload_as_json_checkbox)
 
+        self.samples_per_shard_spin = QSpinBox(self)
+        self.samples_per_shard_spin.setRange(1, 1_000_000)
+        self.samples_per_shard_spin.setValue(100)
+        self.samples_per_shard_spin.setToolTip("Only used for Parquet + WebDataset upload mode.")
+        form.addRow("Samples per Shard", self.samples_per_shard_spin)
+
         self.revision_edit = QLineEdit("main", self)
         self.revision_edit.setPlaceholderText("main")
         form.addRow("Branch*", self.revision_edit)
@@ -394,6 +401,8 @@ class HfUploadDialog(QDialog):
         ):
             edit.setMinimumHeight(34)
             edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.samples_per_shard_spin.setMinimumHeight(34)
+        self.samples_per_shard_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -406,7 +415,9 @@ class HfUploadDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        self.upload_as_json_checkbox.toggled.connect(self._update_parquet_controls_state)
         self._load_settings()
+        self._update_parquet_controls_state(self.upload_as_json_checkbox.isChecked())
 
     def _validate_and_accept(self) -> None:
         repo_id = self.repo_id_edit.text().strip()
@@ -438,6 +449,7 @@ class HfUploadDialog(QDialog):
             "commit_message": self.commit_message_edit.text().strip() or "Upload dataset inputs from JSON",
             "token": self.token_edit.text().strip() or None,
             "upload_as_json": self.upload_as_json_checkbox.isChecked(),
+            "samples_per_shard": int(self.samples_per_shard_spin.value()),
         }
 
     def _load_settings(self) -> None:
@@ -461,6 +473,12 @@ class HfUploadDialog(QDialog):
                 )
             else:
                 self.upload_as_json_checkbox.setChecked(bool(upload_as_json_raw))
+            saved_samples_per_shard = self._settings.value(self._KEY_SAMPLES_PER_SHARD, 100)
+            try:
+                parsed_samples_per_shard = int(saved_samples_per_shard)
+            except (TypeError, ValueError):
+                parsed_samples_per_shard = 100
+            self.samples_per_shard_spin.setValue(max(1, parsed_samples_per_shard))
 
         default_repo_id = str(self._hf_defaults.get("repo_id") or "").strip()
         default_branch = str(self._hf_defaults.get("branch") or "").strip()
@@ -477,7 +495,12 @@ class HfUploadDialog(QDialog):
         self._settings.setValue(self._KEY_COMMIT_MESSAGE, self.commit_message_edit.text().strip())
         self._settings.setValue(self._KEY_TOKEN, self.token_edit.text().strip())
         self._settings.setValue(self._KEY_UPLOAD_AS_JSON, self.upload_as_json_checkbox.isChecked())
+        self._settings.setValue(self._KEY_SAMPLES_PER_SHARD, int(self.samples_per_shard_spin.value()))
         self._settings.sync()
+
+    def _update_parquet_controls_state(self, upload_as_json: bool) -> None:
+        # Parquet-only option: disable it when JSON upload mode is selected.
+        self.samples_per_shard_spin.setEnabled(not bool(upload_as_json))
 
 
 class BusyStatusDialog(QDialog):

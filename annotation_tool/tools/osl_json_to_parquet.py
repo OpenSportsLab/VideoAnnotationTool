@@ -1,11 +1,11 @@
 """
 Convert an OpenSportsLib-style JSON annotation file into:
   1) a Parquet table with flattened metadata
-  2) WebDataset TAR shards containing the referenced video files + sample metadata
+  2) WebDataset TAR shards containing the referenced input files + sample metadata
 
 Each sample typically contains:
   - id
-  - inputs: [{"type": "video", "path": "...", ...}, ...]
+  - inputs: [{"type": "...", "path": "...", ...}, ...]
   - optional task-specific fields: events / captions / dense_captions / labels / metadata
 
 Public entry point:
@@ -29,13 +29,34 @@ def _json_dumps(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
+def _maybe_json_loads(value: Any, default: Any) -> Any:
+    if value is None:
+        return default
+    if isinstance(value, float) and pd.isna(value):
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return default
+        try:
+            return json.loads(value)
+        except Exception:
+            return default
+    return default
+
+
 def _load_json(json_path: str | Path) -> Dict[str, Any]:
     with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def _extract_video_inputs(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
-    return [inp for inp in sample.get("inputs", []) if inp.get("type") == "video" and inp.get("path")]
+def _extract_inputs_with_path(sample: Dict[str, Any]) -> List[Dict[str, Any]]:
+    inputs = sample.get("inputs", [])
+    if not isinstance(inputs, list):
+        return []
+    return [inp for inp in inputs if isinstance(inp, dict) and inp.get("path")]
 
 
 def _flatten_sample_for_parquet(
@@ -44,47 +65,21 @@ def _flatten_sample_for_parquet(
     shard_pattern: str = "shard-%06d.tar",
 ) -> Dict[str, Any]:
     sample_id = sample.get("id", f"sample_{sample_index:06d}")
-    video_inputs = _extract_video_inputs(sample)
+    num_inputs = len(_extract_inputs_with_path(sample))
 
     row: Dict[str, Any] = {
         "sample_id": sample_id,
-        "num_video_inputs": len(video_inputs),
-        "video_paths": _json_dumps([v.get("path") for v in video_inputs]),
-        "video_names": _json_dumps([v.get("name") for v in video_inputs]),
-        "video_fps": _json_dumps([v.get("fps") for v in video_inputs]),
-        "sample_metadata": _json_dumps(sample.get("metadata", {})),
-        "sample_labels": _json_dumps(sample.get("labels", {})),
-        "sample_events": _json_dumps(sample.get("events", [])),
-        "sample_captions": _json_dumps(sample.get("captions", [])),
-        "sample_dense_captions": _json_dumps(sample.get("dense_captions", [])),
+        "num_inputs": num_inputs,
+        "sample_payload": _json_dumps(sample),
         "suggested_shard_pattern": shard_pattern,
     }
-
-    # Promote scalar metadata fields for easy filtering
-    for k, v in sample.get("metadata", {}).items():
-        if isinstance(v, (str, int, float, bool)) or v is None:
-            row[f"meta__{k}"] = v
-
-    # Promote single-label annotations for easy filtering
-    for head, value in sample.get("labels", {}).items():
-        if isinstance(value, dict) and "label" in value and isinstance(value["label"], (str, int, float, bool)):
-            row[f"label__{head}"] = value["label"]
 
     return row
 
 
 def _build_sidecar_metadata(sample: Dict[str, Any]) -> bytes:
     """Canonical per-sample annotation payload stored as JSON inside each TAR shard."""
-    payload = {
-        "id": sample.get("id"),
-        "metadata": sample.get("metadata", {}),
-        "labels": sample.get("labels", {}),
-        "events": sample.get("events", []),
-        "captions": sample.get("captions", []),
-        "dense_captions": sample.get("dense_captions", []),
-        "inputs": sample.get("inputs", []),
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    return json.dumps(sample, ensure_ascii=False, indent=2).encode("utf-8")
 
 
 def _resolve_media_path(
@@ -125,7 +120,7 @@ def convert_json_to_parquet(
     """
     Convert an OSL-style JSON file to:
       - metadata.parquet  (flattened, queryable per-sample table)
-      - shards/*.tar      (WebDataset TAR shards with video files + sidecar JSON)
+      - shards/*.tar      (WebDataset TAR shards with input files + sidecar JSON)
       - shard_manifest.parquet
 
     Parameters
@@ -133,7 +128,7 @@ def convert_json_to_parquet(
     json_path:
         Path to the JSON annotation file.
     media_root:
-        Root directory where the video files referenced in ``inputs[].path`` live.
+        Root directory where files referenced in ``inputs[].path`` live.
     output_dir:
         Destination directory.
     samples_per_shard:
@@ -143,7 +138,7 @@ def convert_json_to_parquet(
     shard_prefix:
         Prefix for TAR shard file names.
     missing_policy:
-        ``"raise"`` — abort if a referenced video is missing.
+        ``"raise"`` — abort if a referenced input file is missing.
         ``"skip"``  — keep sample in Parquet but omit missing file from shard.
     keep_relative_paths_in_parquet:
         If ``True`` (default), Parquet stores original relative paths from JSON.
@@ -154,7 +149,7 @@ def convert_json_to_parquet(
     Returns
     -------
     dict
-        Summary with counts of samples, shards, and video files processed.
+        Summary with counts of samples, shards, and input files processed.
     """
     json_path = Path(json_path)
     media_root = Path(media_root)
@@ -176,8 +171,9 @@ def convert_json_to_parquet(
 
     parquet_rows: List[Dict[str, Any]] = []
     shard_manifest: List[Dict[str, Any]] = []
-    total_video_files_added = 0
-    total_missing_video_files = 0
+    total_input_files_added = 0
+    total_missing_input_files = 0
+    header = {k: v for k, v in doc.items() if k != "data"}
 
     num_shards = max(1, math.ceil(len(samples) / max(1, samples_per_shard)))
 
@@ -198,26 +194,22 @@ def convert_json_to_parquet(
                 row = _flatten_sample_for_parquet(sample, global_idx, shard_pattern=f"{shard_prefix}-%06d.tar")
                 row["shard_name"] = shard_name
                 row["sample_index"] = global_idx
-                row["task"] = doc.get("task")
-                row["dataset_name"] = doc.get("dataset_name")
-                row["json_version"] = doc.get("version")
-                row["json_date"] = doc.get("date")
-                row["top_level_metadata"] = _json_dumps(doc.get("metadata", {}))
-                row["top_level_labels"] = _json_dumps(doc.get("labels", {}))
+                row["header"] = _json_dumps(header)
                 parquet_rows.append(row)
 
                 _add_bytes_to_tar(tar, f"{key}.json", _build_sidecar_metadata(sample))
 
-                for vid_idx, video_inp in enumerate(_extract_video_inputs(sample)):
-                    rel_path = video_inp["path"]
+                for input_idx, input_item in enumerate(_extract_inputs_with_path(sample)):
+                    rel_path = str(input_item["path"])
                     resolved = _resolve_media_path(media_root, rel_path, missing_policy=missing_policy)
 
                     if resolved is None:
-                        total_missing_video_files += 1
+                        total_missing_input_files += 1
                         shard_manifest.append({
                             "sample_id": sample_id,
                             "shard_name": shard_name,
-                            "video_index": vid_idx,
+                            "input_index": input_idx,
+                            "input_type": str(input_item.get("type", "")).strip(),
                             "relative_path": rel_path,
                             "resolved_path": None,
                             "status": "missing",
@@ -225,28 +217,64 @@ def convert_json_to_parquet(
                         continue
 
                     ext = resolved.suffix.lstrip(".").lower() or "bin"
-                    arcname = f"{key}.{vid_idx}.{ext}"
+                    arcname = f"{key}.{input_idx}.{ext}"
                     _add_file_to_tar(tar, resolved, arcname)
                     shard_manifest.append({
                         "sample_id": sample_id,
                         "shard_name": shard_name,
-                        "video_index": vid_idx,
+                        "input_index": input_idx,
+                        "input_type": str(input_item.get("type", "")).strip(),
                         "relative_path": rel_path,
                         "resolved_path": str(resolved if not keep_relative_paths_in_parquet else rel_path),
                         "status": "ok",
                         "wds_member": arcname,
                     })
-                    total_video_files_added += 1
+                    total_input_files_added += 1
 
     df = pd.DataFrame(parquet_rows)
 
     if not keep_relative_paths_in_parquet:
         manifest_df = pd.DataFrame(shard_manifest)
-        ok_manifest = manifest_df[manifest_df["status"] == "ok"][["sample_id", "relative_path", "resolved_path"]]
-        by_sample: Dict[str, List[str]] = {}
-        for _, rec in ok_manifest.iterrows():
-            by_sample.setdefault(rec["sample_id"], []).append(rec["resolved_path"])
-        df["video_paths"] = df["sample_id"].map(lambda sid: _json_dumps(by_sample.get(sid, [])))
+        if not manifest_df.empty:
+            ok_manifest = manifest_df[manifest_df["status"] == "ok"].copy()
+            if not ok_manifest.empty:
+                ok_manifest["input_index"] = ok_manifest["input_index"].astype(int)
+                by_sample_input_paths: Dict[str, Dict[int, str]] = {}
+                for sample_id, sample_manifest in ok_manifest.groupby("sample_id", sort=False):
+                    sample_manifest = sample_manifest.sort_values("input_index")
+                    by_sample_input_paths[str(sample_id)] = {
+                        int(rec["input_index"]): str(rec["resolved_path"])
+                        for _, rec in sample_manifest.iterrows()
+                    }
+
+                def _resolved_payload_for_row(row: pd.Series) -> str:
+                    payload = _maybe_json_loads(row.get("sample_payload"), {})
+                    if not isinstance(payload, dict):
+                        return _json_dumps(payload)
+
+                    payload_copy = dict(payload)
+                    inputs_value = payload_copy.get("inputs", [])
+                    if not isinstance(inputs_value, list):
+                        return _json_dumps(payload_copy)
+
+                    resolved_by_index = by_sample_input_paths.get(str(row.get("sample_id")), {})
+                    with_path_idx = 0
+                    rewritten: List[Any] = []
+                    for inp in inputs_value:
+                        if not isinstance(inp, dict):
+                            rewritten.append(inp)
+                            continue
+                        inp_copy = dict(inp)
+                        if inp_copy.get("path"):
+                            resolved = resolved_by_index.get(with_path_idx)
+                            if resolved is not None:
+                                inp_copy["path"] = resolved
+                            with_path_idx += 1
+                        rewritten.append(inp_copy)
+                    payload_copy["inputs"] = rewritten
+                    return _json_dumps(payload_copy)
+
+                df["sample_payload"] = df.apply(_resolved_payload_for_row, axis=1)
 
     df.to_parquet(parquet_path, index=False, compression=compression)
 
@@ -262,6 +290,6 @@ def convert_json_to_parquet(
         "shards_dir": str(shards_dir),
         "num_samples": len(samples),
         "num_shards": num_shards,
-        "video_files_added": total_video_files_added,
-        "missing_video_files": total_missing_video_files,
+        "input_files_added": total_input_files_added,
+        "missing_input_files": total_missing_input_files,
     }

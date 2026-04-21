@@ -66,6 +66,7 @@ class _HfUploadWorker(QThread):
                     json_path=self._config.get("json_path", ""),
                     revision=self._config.get("revision", "main"),
                     commit_message=self._config.get("commit_message"),
+                    samples_per_shard=int(self._config.get("samples_per_shard", 100) or 100),
                     token=self._config.get("token"),
                     progress_cb=self.progress.emit,
                     is_cancelled=self.isInterruptionRequested,
