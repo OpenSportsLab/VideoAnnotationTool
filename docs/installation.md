@@ -1,58 +1,50 @@
 # Installation
 
-**Quick option:**
+## Option 1: Use Pre-Built Binaries
 
-Pre-built binaries for Windows, macOS, and Linux are available on the [GitHub Releases page](https://github.com/OpenSportsLab/VideoAnnotationTool/releases). Download the latest release for your platform and run the executable—no installation required.
+Pre-built binaries for macOS, Windows, and Linux are available on GitHub Releases:
 
----
+- https://github.com/OpenSportsLab/VideoAnnotationTool/releases
+
+Download the asset for your platform and run it directly.
+
+## Option 2: Install From Source
 
 ## Requirements
 
-- Python **3.12** or later
-- PyQt6
-- Other dependencies (see `requirements.txt`)
+- Python 3.12 recommended
+- A working Qt multimedia backend (installed with PyQt6)
 
----
+```bash
+git clone https://github.com/OpenSportsLab/VideoAnnotationTool.git
+cd VideoAnnotationTool
+```
 
-## Steps (from source)
+Create and activate an environment:
 
-> **Note:** The PyQt GUI project lives in the `annotation_tool/` subdirectory of this repository. All commands below assume you are running them from the repository root unless stated otherwise.
+```bash
+conda create -n VideoAnnotationTool python=3.12 -y
+conda activate VideoAnnotationTool
+```
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/OpenSportsLab/VideoAnnotationTool.git
-   cd VideoAnnotationTool
-   ```
+Install dependencies:
 
-2. **(Recommended) Create and activate a Conda environment**
-   ```bash
-   conda create -n VideoAnnotationTool python=3.9 -y
-   conda activate VideoAnnotationTool
-   ```
+```bash
+pip install -r requirements.txt
+```
 
-4. **Install dependencies:**
-    The main dependencies are:
-    - pyqt6
-    - opencv-python (optional, for video rendering/computer vision)
-    - See `requirements.txt` for the full list
-    
-    Install with pip:
-   
-    ```bash
-    pip install pyqt6
-    
-    # Optional, for video rendering/computer vision:
-    pip install opencv-python
-    
-    # Or install all dependencies:
-    pip install -r requirements.txt
-    ```
+Run the app:
 
-6. **Run the tool:**
-    ```bash
-    python annotation_tool/main.py
-    ```
+```bash
+python annotation_tool/main.py
+```
 
-## Troubleshooting
+## Optional Setup
 
-- If you have issues with Qt or video playback, check [Troubleshooting](troubleshooting.md).
+- Hugging Face access for gated datasets:
+
+```bash
+huggingface-cli login
+```
+
+- If some videos fail to decode, install FFmpeg and transcode unsupported files to H.264 MP4 (see [Troubleshooting](troubleshooting.md)).

@@ -1,20 +1,61 @@
 # Batch Tools
 
-## Dataset Downloader
+The app supports Hugging Face dataset transfer from the **Data** menu and script/API workflows for batch conversion.
 
-The Dataset Downloader tool lets you easily fetch sports video datasets from online sources (such as Hugging Face) directly to your computer for annotation.
+## In-App Data Menu
 
-### How to Use
+### Download Dataset from HF...
 
-1. Open the Dataset Downloader from the menu or use the shortcut **Ctrl+D**.
-2. Enter the URL of the dataset you want to download. For example:
-  - `https://huggingface.co/datasets/OpenSportsLab/SoccerNet-ActionSpotting-Videos/blob/main/224p/test/annotations.json` for the test split of the SoccerNetv2 dataset.
-- Choose the output directory where the dataset should be saved. For example:
-  - `/Users/<username>/Documents/SoccerNet/`
-4. Click the download button to start.
-5. **Dry Run:** By default, the tool performs a dry run, listing the files that would be downloaded and the total storage required. Uncheck the dry run option to actually download the files.
-6. If you cancel the download, the current file will finish downloading before the process stops.
+- Opens a dialog for:
+  - HF URL
+  - output directory
+  - optional token
+  - dry-run mode
+- Supports:
+  - JSON file URLs (`.../blob/.../annotations.json`)
+  - Parquet folder URLs (`.../tree/.../<folder>`)
+- On successful non-dry-run JSON download, source metadata is written into the JSON root:
+  - `hf_source_url`
+  - `hf_repo_id`
+  - `hf_branch`
 
-**Note:** To download from Hugging Face, you need an API key. Create one at [https://huggingface.co/settings/tokens/new?tokenType=read](https://huggingface.co/settings/tokens/new?tokenType=read). The key should look like `hf_xxxxx`.
+### Upload Dataset to HF...
 
-This tool helps you quickly set up new annotation projects by fetching datasets in the correct format, so you can start annotating right away.
+Requires an opened dataset JSON from disk.
+
+Upload modes:
+
+- **Upload as JSON**: uploads current dataset JSON plus files referenced by `data[].inputs[].path` in one commit.
+- **Parquet + WebDataset**: converts locally, then uploads generated Parquet/shards (samples-per-shard configurable).
+
+If repository/branch is missing, the app can prompt to create it and retry.
+
+## CLI Scripts
+
+### Download referenced files
+
+```bash
+python test_data/download_osl_hf.py \
+  --url <HF_JSON_OR_FOLDER_URL> \
+  --output-dir <LOCAL_DIR> \
+  --types video \
+  --dry-run
+```
+
+### Upload referenced files
+
+```bash
+python test_data/upload_osl_hf.py \
+  --repo-id <org/repo> \
+  --json-path <local_dataset.json> \
+  --revision main
+```
+
+## Python Conversion API
+
+```python
+from annotation_tool.tools import convert_json_to_parquet, convert_parquet_to_json
+
+convert_json_to_parquet(json_path="annotations.json", media_root=".", output_dir="out_parquet")
+convert_parquet_to_json(dataset_dir="out_parquet", output_json_path="reconstructed.json")
+```

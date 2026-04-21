@@ -16,27 +16,20 @@ theme:
     - content.code.copy
     - content.action.edit
 
-# Optional: logo and favicon if you have them
-# logo: assets/logo.png
-# favicon: assets/favicon.ico
-
 nav:
   - Home: index.md
   - Installation: installation.md
   - Getting Started: getting_started.md
   - User Guide:
-      - Overview: gui_overview.md
-      - Using the Tool:
-          - Interface Tour: gui_overview.md
-          - Creating a Project: creating_project.md
-          - Import & Export: import_export.md
-          - Labels & Categories: labels_categories.md
-          - Editing Annotations: editing.md
-          - Saving & Loading: saving_loading.md
-          - Keyboard Shortcuts: shortcuts.md
-      - Batch Tools: batch_tools.md
-  - Troubleshooting: troubleshooting.md
+      - GUI Overview: gui_overview.md
+      - Annotating: annotating.md
+      - Editing: editing.md
+      - Saving and Loading: saving_loading.md
+      - Keyboard Shortcuts: shortcuts.md
+  - Data Transfer and Batch Tools: batch_tools.md
+  - OSL JSON Format: OSL.md
   - FAQ: faq.md
+  - Troubleshooting: troubleshooting.md
   - About: about.md
   - Contributing: contributing.md
   - Changelog: changelog.md
@@ -47,27 +40,17 @@ markdown_extensions:
       permalink: true
   - footnotes
   - tables
-
-  # Better layout control
   - attr_list
   - md_in_html
-
-  # Pymdown extensions (Material-recommended)
   - pymdownx.details
   - pymdownx.snippets
   - pymdownx.inlinehilite
   - pymdownx.superfences
   - pymdownx.extra
-
-  # Code highlighting (more robust with Material)
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
       pygments_lang_class: true
 
-
 plugins:
   - search
-
-
-
