@@ -16,9 +16,7 @@ from typing import Optional
 # Allow running directly from the repo root without installing the package.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from annotation_tool.tools.osl_json_to_parquet import (
-    convert_json_to_parquet,
-)
+from opensportslib.tools import convert_json_to_parquet
 
 if __name__ == "__main__":
     import argparse

@@ -2,7 +2,7 @@ from typing import Any
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
-from controllers.hf_transfer_service import (
+from opensportslib.tools.hf_transfer import (
     HfTransferCancelled,
     download_dataset_from_hf,
     upload_dataset_as_parquet_to_hf,

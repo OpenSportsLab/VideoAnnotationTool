@@ -4,7 +4,7 @@ Shared pytest fixtures for GUI smoke tests.
 Key responsibilities:
 - Force headless Qt (`QT_QPA_PLATFORM=offscreen`) for local/CI runs.
 - Ensure app imports work from repo root by injecting `annotation_tool/` into `sys.path`.
-- Stub `opensportslib` so lifecycle tests do not depend on ML runtime packages.
+- Stub only `opensportslib.model` so lifecycle tests do not depend on ML runtime packages.
 - Isolate `QSettings` storage to a per-test temp directory.
 - Provide:
   - `window`: a ready `VideoAnnotationWindow` attached to `qtbot`
@@ -32,9 +32,14 @@ if str(APP_ROOT) not in sys.path:
 
 def _install_opensportslib_stub() -> None:
     """
-    Provide a tiny opensportslib shim so main_window imports do not fail in tests.
+    Replace only ``opensportslib.model`` with a tiny shim for GUI tests.
+
+    This keeps the real ``opensportslib`` package available so non-GUI tests can
+    still import ``opensportslib.tools`` and other submodules.
     """
-    if "opensportslib" in sys.modules:
+    try:
+        import opensportslib
+    except Exception:
         return
 
     class _DummyModelRunner:
@@ -47,12 +52,10 @@ def _install_opensportslib_stub() -> None:
     def _factory(*args, **kwargs):
         return _DummyModelRunner()
 
-    stub_module = types.ModuleType("opensportslib")
-    stub_module.model = types.SimpleNamespace(
+    opensportslib.model = types.SimpleNamespace(
         classification=_factory,
         localization=_factory,
     )
-    sys.modules["opensportslib"] = stub_module
 
 
 _install_opensportslib_stub()

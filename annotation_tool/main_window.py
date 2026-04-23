@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QLabel, QDockWidget, QMainWindow, QMessageBox, QStac
 from app_info import APP_DISPLAY_NAME, APP_VERSION, SHORTCUTS_HELP_TEXT
 from controllers.classification import ClassificationEditorController
 from controllers.hf_transfer_controller import HfTransferController
-from controllers.hf_transfer_service import (
+from opensportslib.tools.hf_transfer import (
     create_dataset_branch_on_hf,
     create_dataset_repo_on_hf,
     dataset_repo_exists_on_hf,

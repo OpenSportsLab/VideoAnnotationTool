@@ -186,8 +186,9 @@ python tools/parquet_webdataset_to_osl_json.py \
 
 ## Dependencies
 
-Both scripts require `pandas` and `pyarrow`. Install all project dependencies with:
+Both scripts require `opensportslib` latest version
 
 ```bash
-pip install -r requirements.txt
+pip install opensportslib==0.1.3
+pip install -e ~/git/opensportslib/
 ```

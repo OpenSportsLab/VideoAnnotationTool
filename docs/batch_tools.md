@@ -54,7 +54,7 @@ python test_data/upload_osl_hf.py \
 ## Python Conversion API
 
 ```python
-from annotation_tool.tools import convert_json_to_parquet, convert_parquet_to_json
+from opensportslib.tools import convert_json_to_parquet, convert_parquet_to_json
 
 convert_json_to_parquet(json_path="annotations.json", media_root=".", output_dir="out_parquet")
 convert_parquet_to_json(dataset_dir="out_parquet", output_json_path="reconstructed.json")

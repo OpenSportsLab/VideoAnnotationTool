@@ -7,7 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from annotation_tool.controllers.hf_transfer_service import upload_dataset_inputs_from_json_to_hf
+from opensportslib.tools.hf_transfer import upload_dataset_inputs_from_json_to_hf
 
 
 def main(
