@@ -53,6 +53,8 @@ def _install_opensportslib_stub() -> None:
         return _DummyModelRunner()
 
     opensportslib.model = types.SimpleNamespace(
+        ClassificationModel=_factory,
+        LocalizationModel=_factory,
         classification=_factory,
         localization=_factory,
     )

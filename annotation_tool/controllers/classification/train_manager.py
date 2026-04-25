@@ -3,7 +3,6 @@ import sys
 import json
 import uuid
 import yaml
-import copy
 import re
 import io
 import contextlib
@@ -68,6 +67,7 @@ class TrainWorker(QThread):
             if 'SYSTEM' not in config:
                 config['SYSTEM'] = {}
             config['SYSTEM']['log_dir'] = str(log_dir).replace('\\', '/')
+            config['SYSTEM']['save_dir'] = str(checkpoint_dir).replace('\\', '/')
 
             # 2. Structure adjustment
             # Inject annotation paths into a custom annotations block
@@ -183,7 +183,7 @@ class TrainWorker(QThread):
 
             # 5. Start training
             # Build the classification model using the temporary runtime config
-            myModel = model.classification(config=temp_config_path)
+            myModel = model.ClassificationModel(config=temp_config_path)
             
             # Redirect stdout and stderr from the training process into the custom UI stream
             log_stream = UILogStream(self, checkpoint_dir)
@@ -191,7 +191,11 @@ class TrainWorker(QThread):
                 stack.enter_context(contextlib.redirect_stdout(log_stream))
                 stack.enter_context(contextlib.redirect_stderr(log_stream))
                 # Launch training
-                myModel.train()
+                myModel.train(
+                    train_set=str(self.params['train_json']),
+                    valid_set=str(self.params['valid_json']),
+                    use_wandb=False,
+                )
 
             # Notify UI that training completed successfully
             self.finished_signal.emit(True, f"Training Completed Successfully.\nCheckpoints: {checkpoint_dir}")
