@@ -5,13 +5,14 @@ Provides the central video/timeline panel used across all annotation modes.
 
 ## Architecture Context
 - `MediaCenterPanel` loads static controls from `media_center_panel.ui`.
-- It hosts `QMediaPlayer`, `QAudioOutput`, and `QVideoWidget` for rendering.
+- It hosts `QMediaPlayer`, `QAudioOutput`, `QVideoWidget`, and a frame-preview surface for rendering.
 - Playback business policy (routing/restart guards/watchdog decisions) remains in `MediaController`.
 
 ## Public Surface
 ### Main Classes
 - `MediaCenterPanel`
 - `AnnotationSlider`
+- `FramePreviewLabel`
 
 ### Control Signals
 - `seekRelativeRequested(int)`
@@ -32,6 +33,7 @@ Provides the central video/timeline panel used across all annotation modes.
 - `set_position(ms)`, `set_playback_rate(rate)`
 - `set_mute_button_state(is_muted)`
 - `set_duration(ms)`, `set_markers(markers)`
+- `show_video_surface()`, `show_frame_surface()`, `clear_preview()`, `set_frame_image(image)`
 
 ## Key Functions and Responsibilities
 - `_setup_media_player()`: initializes player/audio/video widget wiring.
@@ -60,6 +62,7 @@ Provides the central video/timeline panel used across all annotation modes.
 
 ## Developer Knowledge
 - `MediaCenterPanel` owns widget/player primitives, but route/restart logic belongs in `MediaController`.
+- The preview surface is backend-agnostic: Qt video output for `video`, raster frame rendering for `frames_npy`.
 - Marker payload contract:
   list of dicts with at least `start_ms`, optional `color`.
 - Marker color is supplied by the owning mode controller; the media player should render it without imposing mode-specific defaults.

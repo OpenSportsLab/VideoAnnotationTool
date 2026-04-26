@@ -4,6 +4,8 @@ Dense Description mode persistence/editing workflows.
 
 import copy
 import json
+import os
+from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import Qt
@@ -17,6 +19,15 @@ MODE_TO_TAB_INDEX = {
     "dense_description": 3,
     "question_answer": 4,
 }
+
+FRAME_STACK_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "test_data"
+    / "sn-gar"
+    / "sngar-frames"
+    / "train"
+    / "clip_000000.npy"
+)
 
 
 @pytest.mark.gui
@@ -231,7 +242,7 @@ def test_dense_add_description_modal_flow_creates_event_at_player_position(
     assert first_index.isValid()
     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
     qtbot.wait(50)
-    monkeypatch.setattr(window.center_panel.player, "position", lambda: 7777)
+    monkeypatch.setattr(window.media_controller, "current_position_ms", lambda: 7777)
     monkeypatch.setattr(
         "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
         lambda *args, **kwargs: ("  Added from popup  ", True),
@@ -252,6 +263,58 @@ def test_dense_add_description_modal_flow_creates_event_at_player_position(
     selected = window.dense_editor_controller._selected_event_in_table()
     assert selected is not None
     assert selected.get("text") == "Added from popup"
+
+
+@pytest.mark.gui
+def test_dense_add_description_uses_frames_npy_current_position(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    rel_frame_path = os.path.relpath(FRAME_STACK_PATH, start=tmp_path).replace("\\", "/")
+    project_json_path = tmp_path / "frames_dense.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-26",
+        "task": "dense_description",
+        "dataset_name": "frames_dense",
+        "modalities": ["frames_npy"],
+        "labels": {},
+        "data": [
+            {
+                "id": "frames_dense",
+                "inputs": [{"path": rel_frame_path, "type": "frames_npy"}],
+                "dense_captions": [],
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    monkeypatch.setattr(window.media_controller, "current_position_ms", lambda: 3500)
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
+        lambda *args, **kwargs: ("Dense frame event", True),
+    )
+
+    qtbot.mouseClick(window.dense_panel.denseConfirmBtn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    path = window.dense_editor_controller.current_video_path
+    events = list(window.dataset_explorer_controller.dense_description_events.get(path, []))
+    assert any(event.get("position_ms") == 3500 and event.get("text") == "Dense frame event" for event in events)
 
 
 @pytest.mark.gui
@@ -434,7 +497,7 @@ def test_dense_events_remain_chronological_after_add_modify_delete(
 #     assert table_widget.btn_set_time.isEnabled() is True
 
 #     target_ms = original_time + 2222
-#     monkeypatch.setattr(window.center_panel.player, "position", lambda: target_ms)
+#     monkeypatch.setattr(window.media_controller, "current_position_ms", lambda: target_ms)
 
 #     table_widget.btn_set_time.click()
 #     qtbot.wait(50)
@@ -482,7 +545,7 @@ def test_dense_events_remain_chronological_after_add_modify_delete(
 #     assert current_path is not None
 #     initial_count = len(window.dataset_explorer_controller.dense_description_events.get(current_path, []))
 
-#     monkeypatch.setattr(window.center_panel.player, "position", lambda: 5500)
+#     monkeypatch.setattr(window.media_controller, "current_position_ms", lambda: 5500)
 #     window.dense_panel.input_widget.text_editor.setPlainText("Dense undo/redo test event.")
 #     qtbot.mouseClick(window.dense_panel.denseConfirmBtn, Qt.MouseButton.LeftButton)
 #     qtbot.wait(50)

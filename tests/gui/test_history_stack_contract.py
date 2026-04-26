@@ -381,7 +381,7 @@ def test_history_contract_dense_mutations(window, monkeypatch, qtbot, synthetic_
     qtbot.wait(50)
 
     controller = window.dense_editor_controller
-    monkeypatch.setattr(window.center_panel.player, "position", lambda: 5500)
+    monkeypatch.setattr(window.media_controller, "current_position_ms", lambda: 5500)
     monkeypatch.setattr(
         "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
         lambda *args, **kwargs: ("Dense history event", True),

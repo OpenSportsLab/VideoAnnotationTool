@@ -43,7 +43,10 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
 - Sample object (`dataset_json["data"][i]`) typically includes:
   - `id`, `inputs`, `labels`, `events`, `captions`, `dense_captions`
   - Classification smart prediction marker: `labels[head].confidence_score` (optional float)
-- Input item: `{ "type": "video", "path": "..." }`
+- Input item:
+  - `{ "type": "video", "path": "..." }`
+  - `{ "type": "frames_npy", "path": "...", "fps": 2.0 }`
+  - Read-time alias: `{ "type": "frame_npy", ... }` is normalized to `frames_npy`
 - Localization event: `{ "head": str, "label": str, "position_ms": int }`
 - Dense event: `{ "position_ms": int, "lang": str, "text": str }`
 - Caption list (Description): `[ { "lang": str, "text": str, ...optional } ]`

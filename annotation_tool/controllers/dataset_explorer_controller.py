@@ -229,7 +229,7 @@ class DatasetExplorerController(QObject):
     schemaContextChanged = pyqtSignal(dict)
     questionBankChanged = pyqtSignal(list)
     classificationActionListChanged = pyqtSignal(list)
-    mediaRouteRequested = pyqtSignal(str, bool)
+    mediaRouteRequested = pyqtSignal(object, bool)
     mediaStopRequested = pyqtSignal()
     statusMessageRequested = pyqtSignal(str, str, int)
     saveStateRefreshRequested = pyqtSignal()
@@ -542,6 +542,23 @@ class DatasetExplorerController(QObject):
             return []
         return list(entry.get("source_files", []))
 
+    def get_media_source_by_id(self, data_id: str, preferred_path: str = ""):
+        entry = self.action_id_to_item.get(data_id)
+        if not entry:
+            return None
+
+        media_sources = list(entry.get("media_sources", []))
+        if not media_sources:
+            return None
+
+        preferred_key = self._fs_path_key(preferred_path)
+        if preferred_key:
+            for media_source in media_sources:
+                if self._fs_path_key(media_source.get("path")) == preferred_key:
+                    return copy.deepcopy(media_source)
+
+        return copy.deepcopy(media_sources[0])
+
     def get_data_id_by_path(self, path: str):
         sample = self.get_sample_by_path(path)
         if isinstance(sample, dict):
@@ -595,11 +612,12 @@ class DatasetExplorerController(QObject):
         inputs = extra_fields.pop("inputs", None)
         if not isinstance(inputs, list):
             paths = list(source_files or [path])
-            inputs = [{"type": "video", "path": src} for src in paths]
+            inputs = [self._new_input_payload_for_source(src) for src in paths]
 
         sample = {"id": sample_id, "inputs": inputs}
         sample.update(extra_fields)
         self.get_samples().append(sample)
+        self.ensure_modalities_for_inputs(inputs)
         self._rebuild_runtime_index()
         return self.sample_id_to_entry.get(sample_id)
 
@@ -1028,6 +1046,67 @@ class DatasetExplorerController(QObject):
         }
 
     @staticmethod
+    def _canonical_input_type(input_type, path: str = "") -> str:
+        clean = str(input_type or "").strip().lower()
+        if clean == "frame_npy":
+            return "frames_npy"
+        if clean:
+            return clean
+        _, extension = os.path.splitext(str(path or ""))
+        if extension.lower() == ".npy":
+            return "frames_npy"
+        return "video"
+
+    @staticmethod
+    def _coerce_frames_fps(value, default: float = 2.0) -> float:
+        try:
+            fps = float(value)
+        except Exception:
+            fps = default
+        if fps <= 0:
+            return default
+        return fps
+
+    def _normalized_modalities(self, raw_modalities, samples=None) -> list[str]:
+        normalized = []
+        seen = set()
+
+        def _add(modality):
+            clean = str(modality or "").strip()
+            if not clean:
+                return
+            canonical = self._canonical_input_type(clean)
+            if canonical not in seen:
+                seen.add(canonical)
+                normalized.append(canonical)
+
+        if isinstance(raw_modalities, list):
+            for item in raw_modalities:
+                _add(item)
+
+        for sample in list(samples or []):
+            if not isinstance(sample, dict):
+                continue
+            for input_item in list(sample.get("inputs", [])):
+                if not isinstance(input_item, dict):
+                    continue
+                path = str(input_item.get("path") or "")
+                canonical = self._canonical_input_type(input_item.get("type"), path)
+                _add(canonical)
+
+        if not normalized:
+            normalized.append("video")
+        return normalized
+
+    def ensure_modalities_for_inputs(self, inputs) -> None:
+        if not isinstance(inputs, list):
+            return
+        self.modalities = self._normalized_modalities(
+            self.modalities,
+            [{"inputs": copy.deepcopy(inputs)}],
+        )
+
+    @staticmethod
     def _normalize_question_id(question_id: str) -> str:
         return str(question_id or "").strip()
 
@@ -1099,8 +1178,6 @@ class DatasetExplorerController(QObject):
         valid_question_ids = {question["id"] for question in normalized["questions"]}
         if not isinstance(normalized.get("metadata"), dict):
             normalized["metadata"] = {}
-        if not isinstance(normalized.get("modalities"), list):
-            normalized["modalities"] = ["video"]
         if not isinstance(normalized.get("data"), list):
             return None, "Top-level 'data' must be a list."
 
@@ -1119,6 +1196,13 @@ class DatasetExplorerController(QObject):
             if not isinstance(inputs, list):
                 inputs = []
                 sample["inputs"] = inputs
+            for input_item in inputs:
+                if not isinstance(input_item, dict):
+                    continue
+                input_item["type"] = self._canonical_input_type(
+                    input_item.get("type"),
+                    input_item.get("path"),
+                )
             sample["metadata"] = sample.get("metadata", {}) if isinstance(sample.get("metadata"), dict) else {}
 
             # Drop legacy smart keys. Smart state is represented via confidence_score
@@ -1154,6 +1238,10 @@ class DatasetExplorerController(QObject):
             cleaned_data.append(sample)
 
         normalized["data"] = cleaned_data
+        normalized["modalities"] = self._normalized_modalities(
+            normalized.get("modalities"),
+            cleaned_data,
+        )
         return normalized, ""
 
     def _ensure_sample_ids(self):
@@ -1182,6 +1270,45 @@ class DatasetExplorerController(QObject):
     def _display_name_for_sample(self, sample: dict) -> str:
         return str(sample.get("id") or "sample")
 
+    def _resolved_media_source_from_input(self, input_item: dict):
+        if not isinstance(input_item, dict):
+            return None
+
+        raw_path = input_item.get("path")
+        if not raw_path:
+            return None
+
+        resolved_path = self._resolve_media_path(raw_path)
+        if not resolved_path:
+            return None
+
+        source_type = self._canonical_input_type(
+            input_item.get("type"),
+            raw_path,
+        )
+        media_source = {
+            "path": resolved_path,
+            "type": source_type,
+        }
+        if source_type == "frames_npy":
+            media_source["fps"] = self._coerce_frames_fps(input_item.get("fps"), 2.0)
+        else:
+            try:
+                fps = float(input_item.get("fps"))
+            except Exception:
+                fps = None
+            if fps and fps > 0:
+                media_source["fps"] = fps
+        return media_source
+
+    def _resolved_media_sources_for_sample(self, sample: dict):
+        sources = []
+        for input_item in sample.get("inputs", []):
+            media_source = self._resolved_media_source_from_input(input_item)
+            if media_source:
+                sources.append(media_source)
+        return sources
+
     def _raw_source_paths_for_sample(self, sample: dict):
         raw_paths = []
         for input_item in sample.get("inputs", []):
@@ -1207,12 +1334,16 @@ class DatasetExplorerController(QObject):
         return os.path.normcase(os.path.normpath(str(path)))
 
     def _resolved_source_paths_for_sample(self, sample: dict):
-        return [self._resolve_media_path(path) for path in self._raw_source_paths_for_sample(sample)]
+        return [
+            source["path"]
+            for source in self._resolved_media_sources_for_sample(sample)
+            if source.get("path")
+        ]
 
     def _primary_runtime_path_for_sample(self, sample: dict):
-        sources = self._resolved_source_paths_for_sample(sample)
+        sources = self._resolved_media_sources_for_sample(sample)
         if sources:
-            return sources[0]
+            return sources[0]["path"]
         return f"sample://{sample.get('id', 'unknown')}"
 
     def _rebuild_runtime_index(self):
@@ -1227,12 +1358,14 @@ class DatasetExplorerController(QObject):
 
         for sample in self.get_samples():
             sample_id = str(sample.get("id"))
-            source_files = self._resolved_source_paths_for_sample(sample)
-            path = self._primary_runtime_path_for_sample(sample)
+            media_sources = self._resolved_media_sources_for_sample(sample)
+            source_files = [source["path"] for source in media_sources if source.get("path")]
+            path = media_sources[0]["path"] if media_sources else self._primary_runtime_path_for_sample(sample)
             entry = {
                 "name": self._display_name_for_sample(sample),
                 "path": path,
                 "source_files": source_files,
+                "media_sources": media_sources,
                 "data_id": sample_id,
                 "id": sample_id,
                 "inputs": sample.get("inputs", []),
@@ -1554,19 +1687,21 @@ class DatasetExplorerController(QObject):
         sample_id: str,
         ensure_playback: bool = False,
     ):
-        media_paths = [path for path in self.get_sources_by_id(sample_id) if path]
-        if not media_paths:
+        preferred_path = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
+        media_source = self.get_media_source_by_id(sample_id, preferred_path)
+        if not media_source:
             return
 
-        preferred = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-        primary_path = preferred or media_paths[0]
+        primary_path = str(media_source.get("path") or "")
+        if not primary_path:
+            return
         self.current_selected_input_path = primary_path
         if (
             not ensure_playback
             and self._fs_path_key(self._last_routed_media_path) == self._fs_path_key(primary_path)
         ):
             return
-        self.mediaRouteRequested.emit(primary_path, ensure_playback)
+        self.mediaRouteRequested.emit(media_source, ensure_playback)
         self._last_routed_media_path = primary_path
 
     def handle_active_mode_changed(self, mode_idx: int = None):
@@ -1694,10 +1829,10 @@ class DatasetExplorerController(QObject):
     # Sample add/remove/clear
     # ------------------------------------------------------------------
     def _sample_file_filter(self) -> str:
-        return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp);;All Files (*)"
+        return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp *.npy);;All Files (*)"
 
     def _supported_media_extensions(self):
-        return (".mp4", ".avi", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp")
+        return (".mp4", ".avi", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp", ".npy")
 
     def _is_supported_media_file(self, path: str) -> bool:
         _, extension = os.path.splitext(str(path))
@@ -1876,16 +2011,18 @@ class DatasetExplorerController(QObject):
                 return path
         return path
 
+    def _new_input_payload_for_source(self, source_path: str) -> dict:
+        input_payload = {
+            "type": self._canonical_input_type(None, source_path),
+            "path": self._raw_path_for_new_input(source_path),
+        }
+        if input_payload["type"] == "frames_npy":
+            input_payload["fps"] = 2.0
+        return input_payload
+
     def _build_new_sample(self, source_group):
         sample_id = self._make_unique_sample_id(self._sample_id_from_group(source_group))
-        inputs = []
-        for source_path in source_group:
-            inputs.append(
-                {
-                    "type": "video",
-                    "path": self._raw_path_for_new_input(source_path),
-                }
-            )
+        inputs = [self._new_input_payload_for_source(source_path) for source_path in source_group]
         return {
             "id": sample_id,
             "metadata": {},
@@ -1981,6 +2118,10 @@ class DatasetExplorerController(QObject):
                 raw_path = input_item.get("path")
                 abs_path = self._resolve_media_path(raw_path)
                 new_input = copy.deepcopy(input_item)
+                new_input["type"] = self._canonical_input_type(
+                    new_input.get("type"),
+                    raw_path,
+                )
                 if abs_path:
                     try:
                         new_input["path"] = os.path.relpath(abs_path, base_dir).replace("\\", "/")
@@ -2016,7 +2157,10 @@ class DatasetExplorerController(QObject):
             if isinstance(definition, dict):
                 definition.pop("label_colors", None)
         written.setdefault("metadata", {})
-        written.setdefault("modalities", ["video"])
+        written["modalities"] = self._normalized_modalities(
+            written.get("modalities"),
+            written.get("data", []),
+        )
         written.setdefault("questions", [])
         if not written.get("description"):
             written["description"] = ""

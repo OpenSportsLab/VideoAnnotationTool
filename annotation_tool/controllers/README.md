@@ -25,7 +25,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `import_annotations()`, `open_project_from_path()`, `load_project()`: open/normalize/load dataset.
 - `save_project()`, `export_project()`: write dataset JSON to disk.
 - `populate_tree()`, `handle_filter_change()`: tree render + visibility filtering.
-- `_on_selection_changed()`, `_route_media_for_selection()`: selection context and media route emission.
+- `_on_selection_changed()`, `_route_media_for_selection()`: selection context and media route emission (resolved media source object, not just path).
 - `handle_add_sample()`, `handle_remove_item()`, `handle_clear_workspace()`: explorer mutation intent emission (`handle_add_sample()` accepts files/folders in one picker; files map to single-input samples, folders expand recursively to multi-input samples).
 - `restore_dataset_json_from_history()`: apply history snapshot restore.
 
@@ -35,8 +35,8 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `_apply_state_change()`: command-type-specific replay for undo/redo.
 
 ### `MediaController`
-- `route_media_selection()`: selection-aware route (reload/replay guard logic).
-- `load_and_play()`, `toggle_play_pause()`, `stop()`, `seek_relative()`: playback control.
+- `route_media_selection()`: selection-aware route (reload/replay guard logic) for `video` and `frames_npy` sources.
+- `load_and_play()`, `toggle_play_pause()`, `stop()`, `seek_relative()`, `set_position()`, `set_playback_rate()`: playback control.
 - `is_muted()`, `set_muted()`, `toggle_mute()`: mute control and signaling.
 
 ### `WelcomeController`

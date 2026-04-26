@@ -105,33 +105,29 @@ class FolderPickerDialog(QDialog):
     
 class MediaErrorDialog(QMessageBox):
     """
-    [NEW] A standardized error dialog for media playback failures.
-    Provides a concise explanation and an FFmpeg command to fix the codec issue.
-    Technical logs are hidden in the details section to keep the UI clean.
+    Standardized dialog for media playback failures.
     """
-    def __init__(self, error_string: str, parent=None) -> None:
+
+    def __init__(
+        self,
+        error_string: str,
+        parent=None,
+        *,
+        title: str = "Video Decoding Error",
+        text: str = "<b>Unsupported Video Codec Detected</b>",
+        informative_text: str = "",
+    ) -> None:
         super().__init__(parent)
-        
+
         self.setIcon(QMessageBox.Icon.Critical)
-        
-        # Main short title
-        self.setWindowTitle("Video Decoding Error")
-        self.setText("<b>Unsupported Video Codec Detected</b>")
-        
-        # Concise explanation with the FFmpeg terminal command
-        info_text = (
-            "Your system cannot decode this video's format (e.g., AV1, DivX, or Xvid). "
-            "The audio might play, but the video hardware decoder has failed.\n\n"
-            "To fix this, please transcode your file to a standard H.264 MP4 format. "
-            "Run the following command in your terminal:\n\n"
-            "ffmpeg -i input.mp4 -vcodec libx264 -acodec aac output.mp4"
-        )
-        self.setInformativeText(info_text)
-        
-        # Hide the long, ugly technical error logs inside a collapsible "Show Details..." button
+        self.setWindowTitle(title)
+        self.setText(text)
+        if informative_text:
+            self.setInformativeText(informative_text)
+
         if error_string:
             self.setDetailedText(f"System Diagnostic Logs:\n{error_string}")
-            
+
         self.setStandardButtons(QMessageBox.StandardButton.Ok)
 
 

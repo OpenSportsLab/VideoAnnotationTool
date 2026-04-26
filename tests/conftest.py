@@ -24,6 +24,19 @@ from PyQt6.QtCore import QSettings
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+try:
+    import PyQt6
+
+    _pyqt_root = Path(PyQt6.__file__).resolve().parent
+    _qt_plugin_root = _pyqt_root / "Qt6" / "plugins"
+    _qt_platform_root = _qt_plugin_root / "platforms"
+    if _qt_plugin_root.is_dir():
+        os.environ.setdefault("QT_PLUGIN_PATH", str(_qt_plugin_root))
+    if _qt_platform_root.is_dir():
+        os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", str(_qt_platform_root))
+except Exception:
+    pass
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "annotation_tool"
 if str(APP_ROOT) not in sys.path:
@@ -40,7 +53,8 @@ def _install_opensportslib_stub() -> None:
     try:
         import opensportslib
     except Exception:
-        return
+        opensportslib = types.ModuleType("opensportslib")
+        sys.modules["opensportslib"] = opensportslib
 
     class _DummyModelRunner:
         def infer(self, *args, **kwargs):
@@ -58,6 +72,47 @@ def _install_opensportslib_stub() -> None:
         classification=_factory,
         localization=_factory,
     )
+
+    hf_transfer_module = types.ModuleType("opensportslib.tools.hf_transfer")
+    class _HfTransferCancelled(Exception):
+        pass
+
+    hf_transfer_module.HfTransferCancelled = _HfTransferCancelled
+    hf_transfer_module.create_dataset_branch_on_hf = lambda *args, **kwargs: {}
+    hf_transfer_module.create_dataset_repo_on_hf = lambda *args, **kwargs: {}
+    hf_transfer_module.dataset_repo_exists_on_hf = lambda *args, **kwargs: False
+    hf_transfer_module.download_dataset_from_hf = lambda *args, **kwargs: {}
+
+    def _error_text(value) -> str:
+        return str(value or "").strip().lower()
+
+    hf_transfer_module.is_hf_download_url_not_found_error = (
+        lambda error=None, *args, **kwargs: (
+            "404" in _error_text(error)
+            and ("entry not found" in _error_text(error) or "not found for url" in _error_text(error))
+        )
+    )
+    hf_transfer_module.is_hf_repo_not_found_error = (
+        lambda error=None, *args, **kwargs: "repository not found" in _error_text(error)
+    )
+    hf_transfer_module.is_hf_revision_not_found_error = (
+        lambda error=None, *args, **kwargs: (
+            "revision not found" in _error_text(error)
+            or "branch not found" in _error_text(error)
+        )
+    )
+    hf_transfer_module.read_hf_source_metadata_from_dataset = lambda *args, **kwargs: {}
+    hf_transfer_module.upload_dataset_as_parquet_to_hf = lambda *args, **kwargs: {}
+    hf_transfer_module.upload_dataset_inputs_from_json_to_hf = lambda *args, **kwargs: {}
+
+    tools_module = getattr(opensportslib, "tools", None)
+    if tools_module is None:
+        tools_module = types.ModuleType("opensportslib.tools")
+        opensportslib.tools = tools_module
+
+    tools_module.hf_transfer = hf_transfer_module
+    sys.modules["opensportslib.tools"] = tools_module
+    sys.modules["opensportslib.tools.hf_transfer"] = hf_transfer_module
 
 
 _install_opensportslib_stub()
@@ -83,6 +138,27 @@ def window(qtbot, monkeypatch, tmp_path):
     from main_window import VideoAnnotationWindow
 
     main_window = VideoAnnotationWindow()
+
+    def _test_close_event(self, event):
+        try:
+            self.classification_editor_controller.shutdown_background_tasks(wait_ms=100)
+        except Exception:
+            pass
+        try:
+            self.localization_editor_controller.shutdown_background_tasks(wait_ms=100)
+        except Exception:
+            pass
+        try:
+            self._close_hf_busy_dialog()
+        except Exception:
+            pass
+        try:
+            self.media_controller.stop()
+        except Exception:
+            pass
+        event.accept()
+
+    main_window.closeEvent = types.MethodType(_test_close_event, main_window)
     qtbot.addWidget(main_window)
     main_window.show()
     qtbot.wait(50)
@@ -100,7 +176,10 @@ def window(qtbot, monkeypatch, tmp_path):
     # Prevent close confirmation dialogs during teardown.
     main_window.dataset_explorer_controller.is_data_dirty = False
     main_window.dataset_explorer_controller.json_loaded = False
-    main_window.close()
+    main_window.media_controller.stop()
+    main_window.hide()
+    main_window.deleteLater()
+    qtbot.wait(50)
 
 
 @pytest.fixture

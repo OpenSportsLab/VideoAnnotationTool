@@ -900,6 +900,7 @@ class HistoryManager(QObject):
         for source_group in source_groups:
             sample = self.model._build_new_sample(source_group)
             self.model.get_samples().append(sample)
+            self.model.ensure_modalities_for_inputs(sample.get("inputs", []))
             added_count += 1
             if first_sample_id is None:
                 first_sample_id = sample["id"]

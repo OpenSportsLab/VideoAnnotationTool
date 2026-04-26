@@ -112,7 +112,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AnimatedDocks)
 
         # Central playback controller.
-        self.media_controller = MediaController(self.center_panel.player, self.center_panel.video_widget)
+        self.media_controller = MediaController(self.center_panel.player, self.center_panel)
 
         # --- Local UI state (icons, etc.) ---
         bright_blue = QColor("#00BFFF")
@@ -312,7 +312,7 @@ class VideoAnnotationWindow(QMainWindow):
             self.qa_editor_controller.on_question_bank_changed
         )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
-            lambda path, ensure_playback: self.media_controller.route_media_selection(path, ensure_playback)
+            lambda media_source, ensure_playback: self.media_controller.route_media_selection(media_source, ensure_playback)
         )
         self.dataset_explorer_controller.mediaStopRequested.connect(lambda: self.media_controller.stop())
         self.dataset_explorer_controller.statusMessageRequested.connect(self.show_temp_msg)
@@ -365,9 +365,12 @@ class VideoAnnotationWindow(QMainWindow):
         # --- Center panel (Unified Playback) ---
         center_panel.playPauseRequested.connect(self.media_controller.toggle_play_pause)
         center_panel.muteToggleRequested.connect(self.media_controller.toggle_mute)
+        center_panel.seekRequested.connect(lambda ms: self.media_controller.set_position(ms))
         center_panel.seekRelativeRequested.connect(self.media_controller.seek_relative)
         center_panel.stopRequested.connect(lambda: self.media_controller.stop())
-        center_panel.playbackRateRequested.connect(center_panel.set_playback_rate)
+        center_panel.playbackRateRequested.connect(lambda rate: self.media_controller.set_playback_rate(rate))
+        self.media_controller.positionChanged.connect(center_panel.on_media_position_changed)
+        self.media_controller.durationChanged.connect(center_panel.on_media_duration_changed)
         self.media_controller.playbackStateChanged.connect(self.localization_editor_controller.on_playback_state_changed)
         center_panel.positionChanged.connect(self.localization_editor_controller.on_media_position_changed)
         center_panel.durationChanged.connect(self.localization_editor_controller.on_media_duration_changed)
@@ -380,13 +383,13 @@ class VideoAnnotationWindow(QMainWindow):
         self.dense_panel.addEventRequested.connect(self.media_controller.pause)
         # Snapshot runtime media position on dense actions.
         self.dense_panel.addEventRequested.connect(
-            lambda: self.dense_editor_controller.on_media_position_changed(self.center_panel.player.position())
+            lambda: self.dense_editor_controller.on_media_position_changed(self.media_controller.current_position_ms())
         )
         self.dense_panel.updateTimeForSelectedRequested.connect(
-            lambda _event: self.dense_editor_controller.on_media_position_changed(self.center_panel.player.position())
+            lambda _event: self.dense_editor_controller.on_media_position_changed(self.media_controller.current_position_ms())
         )
         self.dense_panel.eventNavigateRequested.connect(
-            lambda _step: self.dense_editor_controller.on_media_position_changed(self.center_panel.player.position())
+            lambda _step: self.dense_editor_controller.on_media_position_changed(self.media_controller.current_position_ms())
         )
 
         # --- Controller shell update signals ---
@@ -415,7 +418,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.localization_editor_controller.statusMessageRequested.connect(self.show_temp_msg)
         self.localization_editor_controller.saveStateRefreshRequested.connect(self.update_save_export_button_state)
         self.localization_editor_controller.itemStatusRefreshRequested.connect(self.update_action_item_status)
-        self.localization_editor_controller.mediaSeekRequested.connect(self.center_panel.set_position)
+        self.localization_editor_controller.mediaSeekRequested.connect(
+            lambda ms: self.media_controller.set_position(ms)
+        )
         self.localization_editor_controller.markersUpdateRequested.connect(self.center_panel.set_markers)
         self.localization_editor_controller.mediaTogglePlaybackRequested.connect(
             lambda: self.center_panel.playPauseRequested.emit()
@@ -471,7 +476,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.dense_editor_controller.denseEventDelRequested.connect(
             self.history_manager.execute_dense_event_del
         )
-        self.dense_editor_controller.mediaSeekRequested.connect(self.center_panel.set_position)
+        self.dense_editor_controller.mediaSeekRequested.connect(
+            lambda ms: self.media_controller.set_position(ms)
+        )
         self.dense_editor_controller.markersUpdateRequested.connect(self.center_panel.set_markers)
 
         self.qa_editor_controller.statusMessageRequested.connect(self.show_temp_msg)
