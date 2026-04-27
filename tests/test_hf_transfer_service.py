@@ -111,7 +111,7 @@ def test_upload_worker_routes_parquet_mode_to_library_api(monkeypatch, tmp_path)
             "json_path": str(json_path),
             "revision": "dev",
             "commit_message": "msg",
-            "samples_per_shard": 17,
+            "shard_size": 250_000_000,
             "token": "hf_test",
         }
     )
@@ -123,7 +123,8 @@ def test_upload_worker_routes_parquet_mode_to_library_api(monkeypatch, tmp_path)
     assert calls["repo_id"] == "OpenSportsLab/repo"
     assert calls["json_path"] == str(json_path)
     assert calls["revision"] == "dev"
-    assert calls["samples_per_shard"] == 17
+    assert calls["shard_mode"] == "size"
+    assert calls["shard_size"] == 250_000_000
     assert calls["token"] == "hf_test"
     assert callable(calls["progress_cb"])
     assert callable(calls["is_cancelled"])

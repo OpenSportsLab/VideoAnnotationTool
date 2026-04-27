@@ -26,7 +26,7 @@ Requires an opened dataset JSON from disk.
 Upload modes:
 
 - **Upload as JSON**: uploads current dataset JSON plus files referenced by `data[].inputs[].path` in one commit.
-- **Parquet + WebDataset**: converts locally, then uploads generated Parquet/shards (samples-per-shard configurable).
+- **Parquet + WebDataset**: converts locally, then uploads generated Parquet/shards (shard size configurable).
 
 If repository/branch is missing, the app can prompt to create it and retry.
 

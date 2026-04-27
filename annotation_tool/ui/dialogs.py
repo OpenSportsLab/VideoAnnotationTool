@@ -330,11 +330,14 @@ class HfDownloadDialog(QDialog):
 
 class HfUploadDialog(QDialog):
     _SETTINGS_PREFIX = "hf_transfer/upload"
+    _DEFAULT_SHARD_SIZE_BYTES = 1_000_000_000
+    _SHARD_SIZE_UNIT_BYTES = 1_000_000
     _KEY_REPO_ID = f"{_SETTINGS_PREFIX}/repo_id"
     _KEY_REVISION = f"{_SETTINGS_PREFIX}/revision"
     _KEY_COMMIT_MESSAGE = f"{_SETTINGS_PREFIX}/commit_message"
     _KEY_TOKEN = f"{_SETTINGS_PREFIX}/token"
     _KEY_UPLOAD_AS_JSON = f"{_SETTINGS_PREFIX}/upload_as_json"
+    _KEY_SHARD_SIZE = f"{_SETTINGS_PREFIX}/shard_size"
     _KEY_SAMPLES_PER_SHARD = f"{_SETTINGS_PREFIX}/samples_per_shard"
 
     def __init__(
@@ -370,11 +373,12 @@ class HfUploadDialog(QDialog):
         self.upload_as_json_checkbox.setChecked(True)
         form.addRow("", self.upload_as_json_checkbox)
 
-        self.samples_per_shard_spin = QSpinBox(self)
-        self.samples_per_shard_spin.setRange(1, 1_000_000)
-        self.samples_per_shard_spin.setValue(100)
-        self.samples_per_shard_spin.setToolTip("Only used for Parquet + WebDataset upload mode.")
-        form.addRow("Samples per Shard", self.samples_per_shard_spin)
+        self.shard_size_spin = QSpinBox(self)
+        self.shard_size_spin.setRange(1, 1_000_000)
+        self.shard_size_spin.setValue(self._DEFAULT_SHARD_SIZE_BYTES // self._SHARD_SIZE_UNIT_BYTES)
+        self.shard_size_spin.setSuffix(" MB")
+        self.shard_size_spin.setToolTip("Target TAR shard size for Parquet + WebDataset upload mode.")
+        form.addRow("Shard Size", self.shard_size_spin)
 
         self.revision_edit = QLineEdit("main", self)
         self.revision_edit.setPlaceholderText("main")
@@ -397,8 +401,8 @@ class HfUploadDialog(QDialog):
         ):
             edit.setMinimumHeight(34)
             edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.samples_per_shard_spin.setMinimumHeight(34)
-        self.samples_per_shard_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.shard_size_spin.setMinimumHeight(34)
+        self.shard_size_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -445,7 +449,8 @@ class HfUploadDialog(QDialog):
             "commit_message": self.commit_message_edit.text().strip() or "Upload dataset inputs from JSON",
             "token": self.token_edit.text().strip() or None,
             "upload_as_json": self.upload_as_json_checkbox.isChecked(),
-            "samples_per_shard": int(self.samples_per_shard_spin.value()),
+            "shard_mode": "size",
+            "shard_size": int(self.shard_size_spin.value()) * self._SHARD_SIZE_UNIT_BYTES,
         }
 
     def _load_settings(self) -> None:
@@ -469,12 +474,25 @@ class HfUploadDialog(QDialog):
                 )
             else:
                 self.upload_as_json_checkbox.setChecked(bool(upload_as_json_raw))
-            saved_samples_per_shard = self._settings.value(self._KEY_SAMPLES_PER_SHARD, 100)
+            has_saved_shard_size = self._settings.contains(self._KEY_SHARD_SIZE)
+            saved_shard_size = self._settings.value(self._KEY_SHARD_SIZE, self._DEFAULT_SHARD_SIZE_BYTES)
             try:
-                parsed_samples_per_shard = int(saved_samples_per_shard)
+                parsed_shard_size = int(saved_shard_size)
             except (TypeError, ValueError):
-                parsed_samples_per_shard = 100
-            self.samples_per_shard_spin.setValue(max(1, parsed_samples_per_shard))
+                parsed_shard_size = self._DEFAULT_SHARD_SIZE_BYTES
+            if not has_saved_shard_size and self._settings.contains(self._KEY_SAMPLES_PER_SHARD):
+                legacy_value = self._settings.value(self._KEY_SAMPLES_PER_SHARD, self._DEFAULT_SHARD_SIZE_BYTES)
+                try:
+                    parsed_legacy_value = int(legacy_value)
+                except (TypeError, ValueError):
+                    parsed_legacy_value = self._DEFAULT_SHARD_SIZE_BYTES
+                parsed_shard_size = (
+                    parsed_legacy_value
+                    if parsed_legacy_value >= self._SHARD_SIZE_UNIT_BYTES
+                    else self._DEFAULT_SHARD_SIZE_BYTES
+                )
+            shard_size_mb = max(1, (parsed_shard_size + self._SHARD_SIZE_UNIT_BYTES - 1) // self._SHARD_SIZE_UNIT_BYTES)
+            self.shard_size_spin.setValue(int(shard_size_mb))
 
         default_repo_id = str(self._hf_defaults.get("repo_id") or "").strip()
         default_branch = str(self._hf_defaults.get("branch") or "").strip()
@@ -491,12 +509,15 @@ class HfUploadDialog(QDialog):
         self._settings.setValue(self._KEY_COMMIT_MESSAGE, self.commit_message_edit.text().strip())
         self._settings.setValue(self._KEY_TOKEN, self.token_edit.text().strip())
         self._settings.setValue(self._KEY_UPLOAD_AS_JSON, self.upload_as_json_checkbox.isChecked())
-        self._settings.setValue(self._KEY_SAMPLES_PER_SHARD, int(self.samples_per_shard_spin.value()))
+        self._settings.setValue(
+            self._KEY_SHARD_SIZE,
+            int(self.shard_size_spin.value()) * self._SHARD_SIZE_UNIT_BYTES,
+        )
         self._settings.sync()
 
     def _update_parquet_controls_state(self, upload_as_json: bool) -> None:
         # Parquet-only option: disable it when JSON upload mode is selected.
-        self.samples_per_shard_spin.setEnabled(not bool(upload_as_json))
+        self.shard_size_spin.setEnabled(not bool(upload_as_json))
 
 
 class BusyStatusDialog(QDialog):

@@ -31,7 +31,9 @@ python tools/osl_json_to_parquet_webdataset.py <json_path> <media_root> <output_
 
 | Flag | Default | Description |
 |---|---|---|
-| `--samples-per-shard N` | `100` | Number of samples packed into each TAR shard. |
+| `--shard-mode {size,samples}` | `size` | Group samples by target TAR size or by sample count. |
+| `--shard-size SIZE` | `1GB` | Target TAR shard size in size mode. Supports values like `500MB`, `1GB`, `1024MiB`, or plain bytes. |
+| `--samples-per-shard N` | `100` | Number of samples packed into each TAR shard when `--shard-mode samples` is used. |
 | `--compression {zstd,snappy,gzip,brotli,none}` | `zstd` | Parquet compression codec. |
 | `--shard-prefix PREFIX` | `shard` | File name prefix for TAR shard files. |
 | `--missing-policy {raise,skip}` | `raise` | Action when a referenced input file is missing. `raise` aborts; `skip` omits the file from the shard but keeps the sample in Parquet. |
@@ -47,12 +49,12 @@ python tools/osl_json_to_parquet_webdataset.py \
     /data/videos \
     /output/converted_dataset
 
-# 50 samples per shard, skip missing files, overwrite existing output
+# 500 MB shards, skip missing files, overwrite existing output
 python tools/osl_json_to_parquet_webdataset.py \
     annotations.json \
     /data/videos \
     /output/converted_dataset \
-    --samples-per-shard 50 \
+    --shard-size 500MB \
     --missing-policy skip \
     --overwrite
 ```
@@ -136,7 +138,7 @@ python tools/osl_json_to_parquet_webdataset.py \
     test_data/Description/xfoul/annotations_test.json \
     test_data/Description/xfoul \
     test_data/xfoul_parquet_webdataset \
-    --samples-per-shard 50 \
+    --shard-size 500MB \
     --missing-policy skip \
     --overwrite
 
@@ -153,7 +155,7 @@ python tools/osl_json_to_parquet_webdataset.py \
     test_data/Classification/svfouls/annotations_test.json \
     test_data/Classification/svfouls \
     test_data/svfouls_parquet_webdataset \
-    --samples-per-shard 50 \
+    --shard-size 500MB \
     --missing-policy skip \
     --overwrite
 
@@ -170,7 +172,7 @@ python tools/osl_json_to_parquet_webdataset.py \
     test_data/sngar-tracking/annotations_test.json \
     test_data/sngar-tracking \
     test_data/sngar-tracking_parquet_webdataset \
-    --samples-per-shard 50 \
+    --shard-size 500MB \
     --missing-policy skip \
     --overwrite
 
