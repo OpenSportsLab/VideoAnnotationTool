@@ -4,6 +4,64 @@ Standalone command-line scripts for OSL JSON annotation conversion and dataset p
 
 ---
 
+## `convert_dataset_videos_to_224p.py`
+
+Converts every video input referenced by an OSL-style JSON annotation file to 224p copies,
+preserving aspect ratio and writing a new JSON file that points at the converted videos.
+
+The output videos keep the same relative folder structure under `output_media_root`.
+Non-video inputs and all annotation fields are preserved unchanged.
+If FFmpeg fails for a specific video, the tool skips that file, continues with the
+remaining videos, removes any partial output for that failed file, and prints the
+failed source/output paths at the end.
+
+### Usage
+
+```bash
+python tools/convert_dataset_videos_to_224p.py <json_path> <media_root> <output_json_path> <output_media_root> [options]
+```
+
+### Positional arguments
+
+| Argument | Description |
+|---|---|
+| `json_path` | Path to the source OSL JSON annotation file. |
+| `media_root` | Root directory containing the files referenced in `inputs[].path`. |
+| `output_json_path` | Destination path for the converted dataset JSON. |
+| `output_media_root` | Destination root for the converted video files. |
+
+### Optional arguments
+
+| Flag | Default | Description |
+|---|---|---|
+| `--height N` | `224` | Target output video height. Width is chosen by FFmpeg to preserve aspect ratio with an encoder-compatible even value. |
+| `--fps FPS` | `25` | Forced output video frame rate. |
+| `--overwrite` | off | Replace existing output JSON and video files. |
+| `--missing-policy {raise,skip}` | `raise` | Action when a referenced source video is missing. |
+| `--dry-run` | off | Print planned conversions without writing JSON or media. |
+
+### Examples
+
+```bash
+# Convert a dataset to a parallel 224p media root
+python tools/convert_dataset_videos_to_224p.py \
+    test_data/VQA/XFoul-train/train.json \
+    test_data/VQA/XFoul-train \
+    test_data/VQA/XFoul-train-224p/train.json \
+    test_data/VQA/XFoul-train-224p \
+    --overwrite
+
+# Preview conversions without writing files
+python tools/convert_dataset_videos_to_224p.py \
+    test_data/VQA/XFoul-test/test.json \
+    test_data/VQA/XFoul-test \
+    test_data/VQA/XFoul-test-224p/test.json \
+    test_data/VQA/XFoul-test-224p \
+    --dry-run
+```
+
+---
+
 ## `osl_json_to_parquet_webdataset.py`
 
 Converts an OSL-style JSON annotation file into:
