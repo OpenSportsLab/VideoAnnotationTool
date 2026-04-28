@@ -301,6 +301,8 @@ class DatasetExplorerController(QObject):
         self.current_selected_input_path = None
         self._last_routed_media_path = None
         self._suspend_tree_item_changed = False
+        self._sort_by_confidence = False
+        self._is_populating_tree = False
 
         self.manual_annotations = _ManualAnnotationsProxy(self)
         self.localization_events = _SampleListProxy(self, "events")
@@ -418,6 +420,8 @@ class DatasetExplorerController(QObject):
         self.panel.clear_btn.clicked.connect(self.handle_clear_workspace)
         self.panel.removeItemRequested.connect(self.handle_remove_item)
         self.panel.filter_combo.currentIndexChanged.connect(self.handle_filter_change)
+        if hasattr(self.panel, "confidenceSortToggled"):
+            self.panel.confidenceSortToggled.connect(self._on_confidence_sort_toggled)
         self.panel.sampleNavigateRequested.connect(self.navigate_samples)
         self.panel.headerDraftChanged.connect(self._on_header_draft_changed)
         if hasattr(self.panel, "header_tabs"):
@@ -447,6 +451,13 @@ class DatasetExplorerController(QObject):
         self.current_selected_input_path = None
         self._last_routed_media_path = None
         self._suspend_tree_item_changed = False
+        self._sort_by_confidence = False
+        self._is_populating_tree = False
+
+        if hasattr(self.panel, "sort_conf_checkbox"):
+            was_blocked = self.panel.sort_conf_checkbox.blockSignals(True)
+            self.panel.sort_conf_checkbox.setChecked(False)
+            self.panel.sort_conf_checkbox.blockSignals(was_blocked)
 
         if hasattr(self.tree_model, "clear"):
             self.tree_model.clear()
@@ -1457,16 +1468,16 @@ class DatasetExplorerController(QObject):
     # Tree population and selection
     # ------------------------------------------------------------------
     def populate_tree(self):
+        self._is_populating_tree = True
         self._rebuild_runtime_index()
+        preferred_sample_id = self.current_selected_sample_id
+        preferred_input_path = self.current_selected_input_path
         self.tree_model.clear()
         if hasattr(self.tree_model, "configure_columns"):
             self.tree_model.configure_columns()
         self.action_item_map.clear()
 
-        sorted_items = sorted(
-            self.action_item_data,
-            key=lambda item: natural_sort_key(item.get("name", "")),
-        )
+        sorted_items = self._sorted_action_items()
 
         self._suspend_tree_item_changed = True
         try:
@@ -1486,16 +1497,41 @@ class DatasetExplorerController(QObject):
         self.handle_filter_change(self.panel.filter_combo.currentIndex())
 
         if self.tree_model.rowCount() > 0:
-            first_index = self.tree_model.index(0, 0)
-            if first_index.isValid():
-                self.panel.tree.setCurrentIndex(first_index)
-                self._expand_current_parent()
+            restored = self._restore_tree_selection(preferred_sample_id, preferred_input_path)
+            if not restored:
+                first_index = self.tree_model.index(0, 0)
+                if first_index.isValid():
+                    self.panel.tree.setCurrentIndex(first_index)
+                    self._expand_current_parent()
         else:
             self._clear_selection_for_empty_filtered_view()
 
         self._refresh_json_preview()
         self.batchDropdownSyncRequested.emit()
         self._emit_classification_action_list()
+        self._is_populating_tree = False
+
+    def _sorted_action_items(self):
+        if not self._sort_by_confidence:
+            return sorted(
+                self.action_item_data,
+                key=lambda item: natural_sort_key(item.get("name", "")),
+            )
+
+        def confidence_sort_key(item):
+            score = self._average_smart_confidence_for_sample(item.get("sample_ref"))
+            if score is None:
+                return (1, 0.0, natural_sort_key(item.get("name", "")))
+            return (0, -float(score), natural_sort_key(item.get("name", "")))
+
+        return sorted(self.action_item_data, key=confidence_sort_key)
+
+    def _on_confidence_sort_toggled(self, checked: bool):
+        checked = bool(checked)
+        if self._sort_by_confidence == checked:
+            return
+        self._sort_by_confidence = checked
+        self.populate_tree()
 
     def update_item_status(self, action_path: str):
         item = self.action_item_map.get(action_path)
@@ -1513,6 +1549,10 @@ class DatasetExplorerController(QObject):
                 item.setText(self._tree_display_name_for_sample(sample))
             finally:
                 self._suspend_tree_item_changed = False
+
+        if self._sort_by_confidence and not self._is_populating_tree:
+            self.populate_tree()
+            return
 
         done_icon, empty_icon = self._done_icon, self._empty_icon
         if done_icon is not None and empty_icon is not None:

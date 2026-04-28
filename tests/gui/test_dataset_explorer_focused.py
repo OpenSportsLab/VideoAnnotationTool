@@ -292,6 +292,99 @@ def test_dataset_tree_sample_label_keeps_natural_sample_sort(
     ]
 
 
+def test_dataset_tree_confidence_sort_checkbox_defaults_unchecked(explorer_panel_and_controller):
+    panel, _controller = explorer_panel_and_controller
+
+    assert panel.sort_conf_checkbox.text() == "Sort by conf"
+    assert panel.sort_conf_checkbox.isChecked() is False
+
+
+def test_dataset_tree_confidence_sort_checkbox_toggles_order(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    controller.project_root = str(tmp_path)
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "data": [
+            {
+                "id": "clip_10",
+                "inputs": [{"path": "clips/ten.mp4", "type": "video"}],
+                "labels": {"action": {"label": "pass", "confidence_score": 0.2}},
+            },
+            {
+                "id": "clip_1",
+                "inputs": [{"path": "clips/one.mp4", "type": "video"}],
+            },
+            {
+                "id": "clip_2",
+                "inputs": [{"path": "clips/two.mp4", "type": "video"}],
+                "labels": {"action": {"label": "shot", "confidence_score": 0.85}},
+            },
+        ]
+    }
+
+    controller.populate_tree()
+    assert [panel.tree_model.index(row, 0).data() for row in range(3)] == [
+        "clip_1",
+        "clip_2 (conf:0.85)",
+        "clip_10 (conf:0.20)",
+    ]
+
+    panel.sort_conf_checkbox.setChecked(True)
+    assert [panel.tree_model.index(row, 0).data() for row in range(3)] == [
+        "clip_2 (conf:0.85)",
+        "clip_10 (conf:0.20)",
+        "clip_1",
+    ]
+
+    panel.sort_conf_checkbox.setChecked(False)
+    assert [panel.tree_model.index(row, 0).data() for row in range(3)] == [
+        "clip_1",
+        "clip_2 (conf:0.85)",
+        "clip_10 (conf:0.20)",
+    ]
+
+
+def test_dataset_tree_confidence_sort_reorders_after_confidence_refresh(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    controller.project_root = str(tmp_path)
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "data": [
+            {
+                "id": "clip_1",
+                "inputs": [{"path": "clips/one.mp4", "type": "video"}],
+            },
+            {
+                "id": "clip_2",
+                "inputs": [{"path": "clips/two.mp4", "type": "video"}],
+                "labels": {"action": {"label": "shot", "confidence_score": 0.5}},
+            },
+        ]
+    }
+
+    controller.populate_tree()
+    panel.sort_conf_checkbox.setChecked(True)
+    assert [panel.tree_model.index(row, 0).data() for row in range(2)] == [
+        "clip_2 (conf:0.50)",
+        "clip_1",
+    ]
+
+    sample = controller.get_sample("clip_1")
+    sample["labels"] = {"action": {"label": "pass", "confidence_score": 0.9}}
+    controller.update_item_status(controller.get_path_by_id("clip_1"))
+
+    assert [panel.tree_model.index(row, 0).data() for row in range(2)] == [
+        "clip_1 (conf:0.90)",
+        "clip_2 (conf:0.50)",
+    ]
+
+
 def test_dataset_tree_child_inputs_keep_roles_and_no_conf_suffix(
     explorer_panel_and_controller,
     tmp_path,

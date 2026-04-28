@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt, QModelIndex, pyqtSignal
 from PyQt6.QtGui import QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QHeaderView,
@@ -93,6 +94,7 @@ class DatasetExplorerPanel(QWidget):
     addDataRequested = pyqtSignal()
     sampleNavigateRequested = pyqtSignal(int)
     headerDraftChanged = pyqtSignal(dict)
+    confidenceSortToggled = pyqtSignal(bool)
 
     _HEADER_VALUE_ROLE = Qt.ItemDataRole.UserRole + 200
     _HEADER_HAS_VALUE_ROLE = Qt.ItemDataRole.UserRole + 201
@@ -148,6 +150,10 @@ class DatasetExplorerPanel(QWidget):
         self.filter_combo.clear()
         if filter_items:
             self.filter_combo.addItems(filter_items)
+        self.sort_conf_checkbox = QCheckBox("Sort by conf", self)
+        self.sort_conf_checkbox.setObjectName("sort_conf_checkbox")
+        self.bottomLayout.insertWidget(2, self.sort_conf_checkbox)
+        self.sort_conf_checkbox.toggled.connect(self.confidenceSortToggled.emit)
         self.bottomLayout.setStretch(1, 1)
 
         self.tree.setHeaderHidden(True)
