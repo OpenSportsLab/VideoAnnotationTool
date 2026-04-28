@@ -110,3 +110,129 @@ def test_missing_json_path_raises(tmp_path):
             repo_id="OpenSportsLab/example",
             json_path=tmp_path / "missing.json",
         )
+
+
+def test_missing_repo_is_created_and_upload_retried(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_upload_dataset_inputs_from_json_to_hf(**kwargs):
+        calls.append(("upload", kwargs["repo_id"], kwargs["revision"]))
+        if len([call for call in calls if call[0] == "upload"]) == 1:
+            raise RuntimeError("Repository Not Found for url")
+        return {"kind": "json", "attempts": 2}
+
+    def fake_create_dataset_repo_on_hf(**kwargs):
+        calls.append(("create_repo", kwargs["repo_id"], kwargs["token"]))
+
+    monkeypatch.setattr(
+        hf_transfer,
+        "upload_dataset_inputs_from_json_to_hf",
+        fake_upload_dataset_inputs_from_json_to_hf,
+    )
+    monkeypatch.setattr(hf_transfer, "create_dataset_repo_on_hf", fake_create_dataset_repo_on_hf)
+    json_path = tmp_path / "annotations.json"
+    json_path.write_text('{"data": []}', encoding="utf-8")
+    progress_messages = []
+
+    result = tool_module.upload_dataset_to_hf(
+        repo_id="OpenSportsLab/missing",
+        json_path=json_path,
+        revision="main",
+        token="hf_test",
+        progress_cb=progress_messages.append,
+    )
+
+    assert result == {"kind": "json", "attempts": 2}
+    assert calls == [
+        ("upload", "OpenSportsLab/missing", "main"),
+        ("create_repo", "OpenSportsLab/missing", "hf_test"),
+        ("upload", "OpenSportsLab/missing", "main"),
+    ]
+    assert any("Creating it" in message for message in progress_messages)
+
+
+def test_missing_revision_is_created_and_upload_retried(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_upload_dataset_inputs_from_json_to_hf(**kwargs):
+        calls.append(("upload", kwargs["repo_id"], kwargs["revision"]))
+        if len([call for call in calls if call[0] == "upload"]) == 1:
+            raise RuntimeError("Revision Not Found")
+        return {"kind": "json", "attempts": 2}
+
+    def fake_create_dataset_branch_on_hf(**kwargs):
+        calls.append(
+            (
+                "create_branch",
+                kwargs["repo_id"],
+                kwargs["branch"],
+                kwargs["source_revision"],
+                kwargs["token"],
+            )
+        )
+
+    monkeypatch.setattr(
+        hf_transfer,
+        "upload_dataset_inputs_from_json_to_hf",
+        fake_upload_dataset_inputs_from_json_to_hf,
+    )
+    monkeypatch.setattr(hf_transfer, "create_dataset_branch_on_hf", fake_create_dataset_branch_on_hf)
+    json_path = tmp_path / "annotations.json"
+    json_path.write_text('{"data": []}', encoding="utf-8")
+
+    result = tool_module.upload_dataset_to_hf(
+        repo_id="OpenSportsLab/example",
+        json_path=json_path,
+        revision="dev",
+        token="hf_test",
+        progress_cb=None,
+    )
+
+    assert result == {"kind": "json", "attempts": 2}
+    assert calls == [
+        ("upload", "OpenSportsLab/example", "dev"),
+        ("create_branch", "OpenSportsLab/example", "dev", "main", "hf_test"),
+        ("upload", "OpenSportsLab/example", "dev"),
+    ]
+
+
+def test_ambiguous_missing_branch_error_creates_branch_when_repo_exists(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_upload_dataset_inputs_from_json_to_hf(**kwargs):
+        calls.append(("upload", kwargs["repo_id"], kwargs["revision"]))
+        if len([call for call in calls if call[0] == "upload"]) == 1:
+            raise RuntimeError("Repository Not Found for url /preupload/dev")
+        return {"kind": "json", "attempts": 2}
+
+    monkeypatch.setattr(
+        hf_transfer,
+        "upload_dataset_inputs_from_json_to_hf",
+        fake_upload_dataset_inputs_from_json_to_hf,
+    )
+    monkeypatch.setattr(
+        hf_transfer,
+        "dataset_repo_exists_on_hf",
+        lambda **kwargs: calls.append(("repo_exists", kwargs["repo_id"])) or True,
+    )
+    monkeypatch.setattr(
+        hf_transfer,
+        "create_dataset_branch_on_hf",
+        lambda **kwargs: calls.append(("create_branch", kwargs["repo_id"], kwargs["branch"])),
+    )
+    json_path = tmp_path / "annotations.json"
+    json_path.write_text('{"data": []}', encoding="utf-8")
+
+    result = tool_module.upload_dataset_to_hf(
+        repo_id="OpenSportsLab/example",
+        json_path=json_path,
+        revision="dev",
+    )
+
+    assert result == {"kind": "json", "attempts": 2}
+    assert calls == [
+        ("upload", "OpenSportsLab/example", "dev"),
+        ("repo_exists", "OpenSportsLab/example"),
+        ("create_branch", "OpenSportsLab/example", "dev"),
+        ("upload", "OpenSportsLab/example", "dev"),
+    ]

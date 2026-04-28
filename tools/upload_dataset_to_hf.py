@@ -47,6 +47,11 @@ def _progress(message: str) -> None:
     print(f"[HF] {message}", flush=True)
 
 
+def _call_progress(progress_cb, message: str) -> None:
+    if progress_cb:
+        progress_cb(message)
+
+
 def upload_dataset_to_hf(
     *,
     repo_id: str,
@@ -70,32 +75,79 @@ def upload_dataset_to_hf(
 
     try:
         from opensportslib.tools.hf_transfer import (
+            create_dataset_branch_on_hf,
+            create_dataset_repo_on_hf,
+            dataset_repo_exists_on_hf,
+            is_hf_repo_not_found_error,
+            is_hf_revision_not_found_error,
             upload_dataset_as_parquet_to_hf,
             upload_dataset_inputs_from_json_to_hf,
         )
     except ModuleNotFoundError as exc:
         raise RuntimeError("opensportslib is required. Install the project requirements first.") from exc
 
-    if upload_format == "json":
-        return upload_dataset_inputs_from_json_to_hf(
+    def _upload() -> dict[str, Any]:
+        if upload_format == "json":
+            return upload_dataset_inputs_from_json_to_hf(
+                repo_id=repo_id,
+                json_path=str(json_path),
+                revision=revision,
+                commit_message=commit_message,
+                token=token,
+                progress_cb=progress_cb,
+            )
+
+        return upload_dataset_as_parquet_to_hf(
             repo_id=repo_id,
             json_path=str(json_path),
             revision=revision,
             commit_message=commit_message,
+            shard_mode=shard_mode,
+            shard_size=shard_size,
             token=token,
             progress_cb=progress_cb,
         )
 
-    return upload_dataset_as_parquet_to_hf(
-        repo_id=repo_id,
-        json_path=str(json_path),
-        revision=revision,
-        commit_message=commit_message,
-        shard_mode=shard_mode,
-        shard_size=shard_size,
-        token=token,
-        progress_cb=progress_cb,
-    )
+    try:
+        return _upload()
+    except Exception as exc:
+        error_text = str(exc)
+        error_lower = error_text.lower()
+        repo_missing = is_hf_repo_not_found_error(error_text)
+        revision_missing = is_hf_revision_not_found_error(error_text)
+
+        is_ambiguous_branch_case = (
+            not revision_missing
+            and repo_missing
+            and revision.lower() != "main"
+            and f"/preupload/{revision.lower()}" in error_lower
+        )
+        if is_ambiguous_branch_case:
+            try:
+                revision_missing = dataset_repo_exists_on_hf(repo_id=repo_id, token=token)
+                if revision_missing:
+                    repo_missing = False
+            except Exception:
+                pass
+
+        if revision_missing:
+            _call_progress(progress_cb, f"Branch/revision {repo_id}@{revision} was not found. Creating it...")
+            create_dataset_branch_on_hf(
+                repo_id=repo_id,
+                branch=revision,
+                source_revision="main",
+                token=token,
+            )
+            _call_progress(progress_cb, f"Created branch {repo_id}@{revision}. Retrying upload...")
+            return _upload()
+
+        if repo_missing:
+            _call_progress(progress_cb, f"Dataset repo {repo_id} was not found. Creating it...")
+            create_dataset_repo_on_hf(repo_id=repo_id, token=token)
+            _call_progress(progress_cb, f"Created dataset repo {repo_id}. Retrying upload...")
+            return _upload()
+
+        raise
 
 
 def parse_args() -> argparse.Namespace:

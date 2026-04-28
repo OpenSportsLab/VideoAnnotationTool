@@ -69,6 +69,8 @@ Uploads an OSL dataset to Hugging Face using `opensportslib.tools.hf_transfer`.
 The default mode uploads the dataset JSON plus every file referenced in `data[].inputs[].path`,
 preserving the paths declared in the JSON. The Parquet mode uploads the dataset as
 Parquet + WebDataset shards through the OpenSportsLib upload API.
+If the target dataset repo or branch/revision does not exist, the tool creates it and retries
+the upload once.
 
 ### Usage
 
