@@ -62,6 +62,69 @@ python tools/convert_dataset_videos_to_224p.py \
 
 ---
 
+## `upload_dataset_to_hf.py`
+
+Uploads an OSL dataset to Hugging Face using `opensportslib.tools.hf_transfer`.
+
+The default mode uploads the dataset JSON plus every file referenced in `data[].inputs[].path`,
+preserving the paths declared in the JSON. The Parquet mode uploads the dataset as
+Parquet + WebDataset shards through the OpenSportsLib upload API.
+
+### Usage
+
+```bash
+python tools/upload_dataset_to_hf.py --repo-id <org/repo> --json-path <json_path> [options]
+```
+
+### Required arguments
+
+| Flag | Description |
+|---|---|
+| `--repo-id REPO` | Target Hugging Face dataset repo ID, such as `OpenSportsLab/my-dataset`. |
+| `--json-path PATH` | Local OSL dataset JSON path. |
+
+### Optional arguments
+
+| Flag | Default | Description |
+|---|---|---|
+| `--revision REV` | `main` | Target branch/revision in the dataset repo. |
+| `--commit-message MSG` | `Upload dataset inputs from JSON` | Commit message for the upload. |
+| `--token TOKEN` | — | Optional Hugging Face token. If omitted, local HF login is used. |
+| `--format {json,parquet}` | `json` | Upload JSON + referenced inputs, or Parquet + WebDataset shards. |
+| `--shard-mode {size,samples}` | `size` | Shard grouping mode for `--format parquet`. |
+| `--shard-size SIZE` | `1GB` | Target TAR shard size for `--format parquet`. Supports values like `500MB`, `1GB`, `1024MiB`, or plain bytes. |
+
+### Examples
+
+```bash
+# Upload the JSON dataset and referenced input files
+python tools/upload_dataset_to_hf.py \
+    --repo-id OpenSportsLab/OSL-loc-tennis-public \
+    --json-path test_data/VQA/XFoul-test/test.json \
+    --commit-message "Upload XFoul test dataset"
+
+# Upload as Parquet + WebDataset shards
+for split in test valid train; do
+python tools/upload_dataset_to_hf.py \
+    --repo-id OpenSportsLab/OSL-XFoul \
+    --revision 224p \
+    --json-path test_data/VQA/XFoul-$split-224p/$split.json \
+    --format parquet \
+    --shard-size 1GB \
+    --commit-message "Upload XFoul $split 224p dataset"
+
+python tools/upload_dataset_to_hf.py \
+    --repo-id OpenSportsLab/OSL-XFoul \
+    --revision 720p \
+    --json-path test_data/VQA/XFoul-$split/$split.json \
+    --format parquet \
+    --shard-size 1GB \
+    --commit-message "Upload XFoul $split 720p dataset"
+done
+```
+
+---
+
 ## `osl_json_to_parquet_webdataset.py`
 
 Converts an OSL-style JSON annotation file into:
