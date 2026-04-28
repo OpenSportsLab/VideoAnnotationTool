@@ -1055,6 +1055,8 @@ class DatasetExplorerController(QObject):
         _, extension = os.path.splitext(str(path or ""))
         if extension.lower() == ".npy":
             return "frames_npy"
+        if extension.lower() == ".parquet":
+            return "tracking_parquet"
         return "video"
 
     @staticmethod
@@ -1290,7 +1292,7 @@ class DatasetExplorerController(QObject):
             "path": resolved_path,
             "type": source_type,
         }
-        if source_type == "frames_npy":
+        if source_type in {"frames_npy", "tracking_parquet"}:
             media_source["fps"] = self._coerce_frames_fps(input_item.get("fps"), 2.0)
         else:
             try:
@@ -1829,10 +1831,10 @@ class DatasetExplorerController(QObject):
     # Sample add/remove/clear
     # ------------------------------------------------------------------
     def _sample_file_filter(self) -> str:
-        return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp *.npy);;All Files (*)"
+        return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp *.npy *.parquet);;All Files (*)"
 
     def _supported_media_extensions(self):
-        return (".mp4", ".avi", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp", ".npy")
+        return (".mp4", ".avi", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp", ".npy", ".parquet")
 
     def _is_supported_media_file(self, path: str) -> bool:
         _, extension = os.path.splitext(str(path))
@@ -2016,7 +2018,7 @@ class DatasetExplorerController(QObject):
             "type": self._canonical_input_type(None, source_path),
             "path": self._raw_path_for_new_input(source_path),
         }
-        if input_payload["type"] == "frames_npy":
+        if input_payload["type"] in {"frames_npy", "tracking_parquet"}:
             input_payload["fps"] = 2.0
         return input_payload
 

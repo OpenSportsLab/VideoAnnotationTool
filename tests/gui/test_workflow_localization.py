@@ -38,6 +38,13 @@ FRAME_STACK_PATH = (
     / "train"
     / "clip_000000.npy"
 )
+TRACKING_PARQUET_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "test_data"
+    / "sngar-tracking"
+    / "test"
+    / "clip_000000.parquet"
+)
 
 
 def _double_click_table_cell(window, qtbot, row: int, col: int):
@@ -699,6 +706,60 @@ def test_localization_event_navigation_seeks_frames_npy_sample(
             {
                 "id": "frames_loc",
                 "inputs": [{"path": rel_frame_path, "type": "frames_npy"}],
+                "events": [
+                    {"head": "action", "label": "pass", "position_ms": 1000},
+                    {"head": "action", "label": "shot", "position_ms": 2000},
+                ],
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    seek_calls = []
+    monkeypatch.setattr(window.media_controller, "set_position", lambda ms: seek_calls.append(ms))
+
+    window.localization_editor_controller.on_media_position_changed(0)
+    window.localization_editor_controller._navigate_annotation(1)
+    qtbot.wait(20)
+    window.localization_editor_controller._navigate_annotation(1)
+    qtbot.wait(20)
+
+    assert seek_calls == [1000, 2000]
+
+
+@pytest.mark.gui
+def test_localization_event_navigation_seeks_tracking_parquet_sample(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    rel_tracking_path = os.path.relpath(TRACKING_PARQUET_PATH, start=tmp_path).replace("\\", "/")
+    project_json_path = tmp_path / "tracking_localization.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-28",
+        "task": "action_localization",
+        "dataset_name": "tracking_localization",
+        "modalities": ["tracking_parquet"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass", "shot"]}},
+        "data": [
+            {
+                "id": "tracking_loc",
+                "inputs": [{"path": rel_tracking_path, "type": "tracking_parquet"}],
                 "events": [
                     {"head": "action", "label": "pass", "position_ms": 1000},
                     {"head": "action", "label": "shot", "position_ms": 2000},

@@ -29,6 +29,13 @@ FRAME_STACK_PATH = (
     / "train"
     / "clip_000000.npy"
 )
+TRACKING_PARQUET_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "test_data"
+    / "sngar-tracking"
+    / "test"
+    / "clip_000000.parquet"
+)
 
 
 @pytest.mark.gui
@@ -169,6 +176,28 @@ def test_add_data_accepts_npy_and_creates_frames_npy_sample(window, monkeypatch,
 
 
 @pytest.mark.gui
+def test_add_data_accepts_parquet_and_creates_tracking_sample(window, monkeypatch, qtbot):
+    window.dataset_explorer_controller.create_new_project("classification")
+    assert window.dataset_explorer_controller.json_loaded is True
+
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(TRACKING_PARQUET_PATH)],
+    )
+
+    window.dataset_explorer_controller.handle_add_sample()
+    qtbot.wait(50)
+
+    assert window.tree_model.rowCount() == 1
+    sample = window.dataset_explorer_controller.get_sample("clip_000000")
+    assert sample is not None
+    assert sample["inputs"][0]["type"] == "tracking_parquet"
+    assert sample["inputs"][0]["fps"] == pytest.approx(2.0)
+    assert "tracking_parquet" in window.dataset_explorer_controller.modalities
+
+
+@pytest.mark.gui
 # Workflow: Selecting a sample emits Data ID (not path) and routes media load from Dataset Explorer.
 def test_dataset_selection_emits_data_id_and_routes_media(
     window,
@@ -257,6 +286,122 @@ def test_frames_npy_dataset_selection_routes_canonical_media_source(
     assert routed_source["fps"] == pytest.approx(2.0)
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["frames_npy"]
     assert window.dataset_explorer_controller.current_selected_input_path == str(FRAME_STACK_PATH)
+
+
+@pytest.mark.gui
+def test_tracking_parquet_dataset_selection_routes_canonical_media_source(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    rel_tracking_path = os.path.relpath(TRACKING_PARQUET_PATH, start=tmp_path).replace("\\", "/")
+    project_json_path = tmp_path / "tracking_selection.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-28",
+        "task": "action_classification",
+        "dataset_name": "tracking_selection",
+        "modalities": ["tracking_parquet"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "data": [
+            {
+                "id": "tracking_clip",
+                "inputs": [{"path": rel_tracking_path, "type": "tracking_parquet"}],
+                "labels": {},
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    media_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda source, auto_play=True: media_calls.append(source),
+    )
+
+    window.dataset_explorer_controller.import_annotations()
+    first_index = window.tree_model.index(0, 0)
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    assert media_calls
+    routed_source = media_calls[-1]
+    assert isinstance(routed_source, dict)
+    assert routed_source["type"] == "tracking_parquet"
+    assert routed_source["path"] == str(TRACKING_PARQUET_PATH)
+    assert routed_source["fps"] == pytest.approx(2.0)
+    assert window.dataset_explorer_controller.dataset_json["modalities"] == ["tracking_parquet"]
+    assert window.dataset_explorer_controller.current_selected_input_path == str(TRACKING_PARQUET_PATH)
+
+
+@pytest.mark.gui
+def test_mixed_video_and_tracking_selection_routes_selected_input(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    source_video = Path(__file__).resolve().parents[1] / "data" / "test_video_1.mp4"
+    assert source_video.exists()
+    rel_video_path = os.path.relpath(source_video, start=tmp_path).replace("\\", "/")
+    rel_tracking_path = os.path.relpath(TRACKING_PARQUET_PATH, start=tmp_path).replace("\\", "/")
+
+    project_json_path = tmp_path / "mixed_video_tracking.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-28",
+        "task": "action_classification",
+        "dataset_name": "mixed_video_tracking",
+        "modalities": ["video", "tracking_parquet"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "data": [
+            {
+                "id": "mixed_clip",
+                "inputs": [
+                    {"path": rel_video_path, "type": "video"},
+                    {"path": rel_tracking_path, "type": "tracking_parquet"},
+                ],
+                "labels": {},
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    media_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda source, auto_play=True: media_calls.append(source),
+    )
+
+    window.dataset_explorer_controller.import_annotations()
+    parent_index = window.tree_model.index(0, 0)
+    tracking_child_index = window.tree_model.index(1, 0, parent_index)
+    assert parent_index.isValid()
+    assert tracking_child_index.isValid()
+
+    window.dataset_explorer_panel.tree.setCurrentIndex(parent_index)
+    qtbot.wait(50)
+    window.dataset_explorer_panel.tree.setCurrentIndex(tracking_child_index)
+    qtbot.wait(50)
+
+    assert len(media_calls) >= 2
+    assert media_calls[0] == str(source_video)
+    assert isinstance(media_calls[-1], dict)
+    assert media_calls[-1]["type"] == "tracking_parquet"
+    assert media_calls[-1]["path"] == str(TRACKING_PARQUET_PATH)
 
 
 @pytest.mark.gui

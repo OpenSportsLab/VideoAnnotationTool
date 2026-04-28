@@ -62,7 +62,7 @@ Provides the central video/timeline panel used across all annotation modes.
 
 ## Developer Knowledge
 - `MediaCenterPanel` owns widget/player primitives, but route/restart logic belongs in `MediaController`.
-- The preview surface is backend-agnostic: Qt video output for `video`, raster frame rendering for `frames_npy`.
+- The preview surface is backend-agnostic: Qt video output for `video`, raster frame rendering for `frames_npy`, and pitch rendering for `tracking_parquet`.
 - Marker payload contract:
   list of dicts with at least `start_ms`, optional `color`.
 - Marker color is supplied by the owning mode controller; the media player should render it without imposing mode-specific defaults.

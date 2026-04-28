@@ -35,7 +35,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `_apply_state_change()`: command-type-specific replay for undo/redo.
 
 ### `MediaController`
-- `route_media_selection()`: selection-aware route (reload/replay guard logic) for `video` and `frames_npy` sources.
+- `route_media_selection()`: selection-aware route (reload/replay guard logic) for `video`, `frames_npy`, and `tracking_parquet` sources.
 - `load_and_play()`, `toggle_play_pause()`, `stop()`, `seek_relative()`, `set_position()`, `set_playback_rate()`: playback control.
 - `is_muted()`, `set_muted()`, `toggle_mute()`: mute control and signaling.
 

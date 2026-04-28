@@ -1,5 +1,7 @@
 PyQt6
 numpy
+pandas
+pyarrow
 huggingface_hub
 pyinstaller
 torch-geometric==2.7.0

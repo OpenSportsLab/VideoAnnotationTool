@@ -47,6 +47,9 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
   - `{ "type": "video", "path": "..." }`
   - `{ "type": "frames_npy", "path": "...", "fps": 2.0 }`
   - Read-time alias: `{ "type": "frame_npy", ... }` is normalized to `frames_npy`
+  - `{ "type": "tracking_parquet", "path": "...", "fps": 2.0 }`
+    `fps` is optional fallback timing used only when parquet timestamps are unusable.
+    V1 supports the PFF/PFF-compatible tracking schema and renders a pitch-only preview.
 - Localization event: `{ "head": str, "label": str, "position_ms": int }`
 - Dense event: `{ "position_ms": int, "lang": str, "text": str }`
 - Caption list (Description): `[ { "lang": str, "text": str, ...optional } ]`

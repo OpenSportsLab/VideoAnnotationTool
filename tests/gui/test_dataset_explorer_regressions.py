@@ -30,6 +30,13 @@ FRAME_STACK_PATH = (
     / "train"
     / "clip_000000.npy"
 )
+TRACKING_PARQUET_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "test_data"
+    / "sngar-tracking"
+    / "test"
+    / "clip_000000.parquet"
+)
 
 
 def _open_project(window, monkeypatch, project_json_path: Path):
@@ -554,6 +561,70 @@ def test_frames_npy_tab_switch_same_selection_does_not_restart_media(
     assert populate_calls["count"] == 0
     assert play_calls == []
     assert window.dataset_explorer_controller.current_selected_sample_id == "frames_clip"
+    assert window.dataset_explorer_panel.tree.currentIndex().isValid()
+
+
+@pytest.mark.gui
+def test_tracking_parquet_tab_switch_same_selection_does_not_restart_media(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    rel_tracking_path = os.path.relpath(TRACKING_PARQUET_PATH, start=tmp_path).replace("\\", "/")
+    project_json_path = tmp_path / "tracking_tab_switch.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-28",
+        "task": "action_classification",
+        "dataset_name": "tracking_tab_switch",
+        "modalities": ["tracking_parquet"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "questions": [{"id": "q1", "question": "What happened?"}],
+        "data": [
+            {
+                "id": "tracking_clip",
+                "inputs": [{"path": rel_tracking_path, "type": "tracking_parquet"}],
+                "labels": {"action": {"label": "pass"}},
+                "events": [{"head": "action", "label": "pass", "position_ms": 1000}],
+                "captions": [{"lang": "en", "text": "caption"}],
+                "dense_captions": [{"position_ms": 1500, "lang": "en", "text": "dense"}],
+                "answers": [{"question_id": "q1", "answer": "answer"}],
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+
+    populate_calls = {"count": 0}
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "populate_tree",
+        lambda: populate_calls.__setitem__("count", populate_calls["count"] + 1),
+    )
+
+    play_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda source, auto_play=True: play_calls.append(source),
+    )
+
+    for mode_idx in (
+        MODE_TO_TAB_INDEX["localization"],
+        MODE_TO_TAB_INDEX["description"],
+        MODE_TO_TAB_INDEX["dense_description"],
+        MODE_TO_TAB_INDEX["question_answer"],
+        MODE_TO_TAB_INDEX["classification"],
+    ):
+        window.right_tabs.setCurrentIndex(mode_idx)
+        qtbot.wait(50)
+
+    assert populate_calls["count"] == 0
+    assert play_calls == []
+    assert window.dataset_explorer_controller.current_selected_sample_id == "tracking_clip"
     assert window.dataset_explorer_panel.tree.currentIndex().isValid()
 
 

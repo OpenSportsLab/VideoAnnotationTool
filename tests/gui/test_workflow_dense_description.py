@@ -28,6 +28,13 @@ FRAME_STACK_PATH = (
     / "train"
     / "clip_000000.npy"
 )
+TRACKING_PARQUET_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "test_data"
+    / "sngar-tracking"
+    / "test"
+    / "clip_000000.parquet"
+)
 
 
 @pytest.mark.gui
@@ -315,6 +322,58 @@ def test_dense_add_description_uses_frames_npy_current_position(
     path = window.dense_editor_controller.current_video_path
     events = list(window.dataset_explorer_controller.dense_description_events.get(path, []))
     assert any(event.get("position_ms") == 3500 and event.get("text") == "Dense frame event" for event in events)
+
+
+@pytest.mark.gui
+def test_dense_add_description_uses_tracking_parquet_current_position(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    rel_tracking_path = os.path.relpath(TRACKING_PARQUET_PATH, start=tmp_path).replace("\\", "/")
+    project_json_path = tmp_path / "tracking_dense.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-28",
+        "task": "dense_description",
+        "dataset_name": "tracking_dense",
+        "labels": {},
+        "modalities": ["tracking_parquet"],
+        "data": [
+            {
+                "id": "tracking_dense",
+                "inputs": [{"path": rel_tracking_path, "type": "tracking_parquet"}],
+                "dense_captions": [],
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+    window.dataset_explorer_controller.import_annotations()
+
+    first_index = window.tree_model.index(0, 0)
+    assert first_index.isValid()
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    monkeypatch.setattr(window.media_controller, "current_position_ms", lambda: 3500)
+    monkeypatch.setattr(
+        "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
+        lambda *args, **kwargs: ("Dense tracking event", True),
+    )
+
+    qtbot.mouseClick(window.dense_panel.denseConfirmBtn, Qt.MouseButton.LeftButton)
+    qtbot.wait(50)
+
+    path = window.dense_editor_controller.current_video_path
+    events = list(window.dataset_explorer_controller.dense_description_events.get(path, []))
+    assert any(event.get("position_ms") == 3500 and event.get("text") == "Dense tracking event" for event in events)
 
 
 @pytest.mark.gui
