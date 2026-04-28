@@ -44,14 +44,7 @@
      <item>
       <widget class="QPushButton" name="addQuestionButton">
        <property name="text">
-        <string>Add</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="deleteQuestionButton">
-       <property name="text">
-        <string>Delete</string>
+        <string>Add Question</string>
        </property>
       </widget>
      </item>
@@ -61,16 +54,6 @@
     <widget class="QListWidget" name="questionList">
      <property name="minimumHeight">
       <number>120</number>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QPlainTextEdit" name="questionEditor">
-     <property name="minimumHeight">
-      <number>90</number>
-     </property>
-     <property name="placeholderText">
-      <string>Write the question for this sample.</string>
      </property>
     </widget>
    </item>
@@ -92,14 +75,7 @@
      <item>
       <widget class="QPushButton" name="addAnswerButton">
        <property name="text">
-        <string>Add</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="deleteAnswerButton">
-       <property name="text">
-        <string>Delete</string>
+        <string>Answer</string>
        </property>
       </widget>
      </item>
@@ -108,20 +84,7 @@
    <item>
     <widget class="QListWidget" name="answerList">
      <property name="minimumHeight">
-      <number>100</number>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QPlainTextEdit" name="answerEditor">
-     <property name="sizePolicy">
-      <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-       <horstretch>0</horstretch>
-       <verstretch>1</verstretch>
-      </sizepolicy>
-     </property>
-     <property name="placeholderText">
-      <string>Write the selected answer.</string>
+      <number>220</number>
      </property>
     </widget>
    </item>

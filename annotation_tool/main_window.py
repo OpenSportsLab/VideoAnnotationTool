@@ -302,6 +302,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.sampleSelectionChanged.connect(
             self.qa_editor_controller.on_selected_sample_changed
         )
+        self.dataset_explorer_controller.qaQuestionCatalogChanged.connect(
+            self.qa_editor_controller.on_question_catalog_changed
+        )
         self.dataset_explorer_controller.schemaContextChanged.connect(
             self.classification_editor_controller.on_schema_context_changed
         )

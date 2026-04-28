@@ -226,6 +226,7 @@ class DatasetExplorerController(QObject):
 
     dataSelected = pyqtSignal(str)
     sampleSelectionChanged = pyqtSignal(object)
+    qaQuestionCatalogChanged = pyqtSignal(list)
     schemaContextChanged = pyqtSignal(dict)
     classificationActionListChanged = pyqtSignal(list)
     mediaRouteRequested = pyqtSignal(object, bool)
@@ -582,6 +583,21 @@ class DatasetExplorerController(QObject):
 
     def _emit_schema_context(self):
         self.schemaContextChanged.emit(copy.deepcopy(self.label_definitions))
+
+    def _emit_qa_question_catalog_context(self):
+        questions = []
+        seen = set()
+        for sample in self.get_samples():
+            if not isinstance(sample, dict):
+                continue
+            for group in list(sample.get("answers") or []):
+                if not isinstance(group, dict):
+                    continue
+                question = str(group.get("question") or "").strip()
+                if question and question not in seen:
+                    seen.add(question)
+                    questions.append(question)
+        self.qaQuestionCatalogChanged.emit(questions)
 
     def _emit_classification_action_list(self):
         self.classificationActionListChanged.emit(copy.deepcopy(self.action_item_data))
@@ -2257,3 +2273,4 @@ class DatasetExplorerController(QObject):
     def _refresh_schema_panels(self):
         self.schemaRefreshRequested.emit()
         self._emit_schema_context()
+        self._emit_qa_question_catalog_context()

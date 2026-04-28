@@ -423,16 +423,22 @@ def test_history_contract_question_answer_mutations(window, monkeypatch, qtbot, 
     panel = window.qa_panel
 
     def _edit_answer():
-        panel.answer_editor.setPlainText("History contract Q/A edit.")
+        monkeypatch.setattr(
+            "controllers.question_answer.qa_editor_controller.QInputDialog.getMultiLineText",
+            lambda *args, **kwargs: ("History contract Q/A edit.", True),
+        )
+        panel._on_answer_item_double_clicked(panel.answer_list.item(0))
         controller.save_current_answers()
         qtbot.wait(300)
 
     _assert_mutating_action_creates_single_history_entry(window, qtbot, _edit_answer)
 
     def _add_second_answer():
+        monkeypatch.setattr(
+            "controllers.question_answer.qa_editor_controller.QInputDialog.getMultiLineText",
+            lambda *args, **kwargs: ("Second grouped answer.", True),
+        )
         panel.add_answer_button.click()
-        qtbot.wait(50)
-        panel.answer_editor.setPlainText("Second grouped answer.")
         controller.save_current_answers()
         qtbot.wait(300)
 

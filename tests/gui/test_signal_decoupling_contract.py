@@ -185,6 +185,7 @@ def test_mainwindow_connect_signals_uses_direct_controller_wiring_contract():
         "self.right_tabs.currentChanged.connect(self.dense_editor_controller.on_mode_changed)",
         "self.right_tabs.currentChanged.connect(self.qa_editor_controller.on_mode_changed)",
         "self.dataset_explorer_controller.statusMessageRequested.connect(self.show_temp_msg)",
+        "self.dataset_explorer_controller.qaQuestionCatalogChanged.connect(",
         "self.dataset_explorer_controller.qaSaveRequested.connect(self.qa_editor_controller.save_current_answers)",
         "self.history_manager.refreshUiAfterUndoRedoRequested.connect(self.refresh_ui_after_undo_redo)",
         "self.classification_editor_controller.manualAnnotationSaveRequested.connect(",

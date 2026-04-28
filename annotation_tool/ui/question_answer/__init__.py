@@ -2,7 +2,7 @@ import os
 
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton, QWidget
+from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QMenu, QPushButton, QWidget
 
 from utils import resource_path
 
@@ -13,13 +13,13 @@ class QuestionAnswerAnnotationPanel(QWidget):
     """
 
     questionGroupAddRequested = pyqtSignal()
-    questionGroupDeleteRequested = pyqtSignal()
+    questionGroupEditRequested = pyqtSignal(int)
+    questionGroupDeleteRequested = pyqtSignal(int)
     questionGroupSelectionChanged = pyqtSignal(int)
-    questionTextChanged = pyqtSignal()
     answerAddRequested = pyqtSignal()
-    answerDeleteRequested = pyqtSignal()
+    answerEditRequested = pyqtSignal(int)
+    answerDeleteRequested = pyqtSignal(int)
     answerSelectionChanged = pyqtSignal(int)
-    answerTextChanged = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -36,24 +36,24 @@ class QuestionAnswerAnnotationPanel(QWidget):
 
         self.question_list: QListWidget = self.questionList
         self.add_question_button: QPushButton = self.addQuestionButton
-        self.delete_question_button: QPushButton = self.deleteQuestionButton
-        self.question_editor: QPlainTextEdit = self.questionEditor
         self.answer_list: QListWidget = self.answerList
         self.add_answer_button: QPushButton = self.addAnswerButton
-        self.delete_answer_button: QPushButton = self.deleteAnswerButton
-        self.answer_editor: QPlainTextEdit = self.answerEditor
 
         self._suspend_changes = False
 
         self.add_question_button.clicked.connect(self.questionGroupAddRequested.emit)
-        self.delete_question_button.clicked.connect(self.questionGroupDeleteRequested.emit)
         self.question_list.currentRowChanged.connect(self.questionGroupSelectionChanged.emit)
-        self.question_editor.textChanged.connect(self.questionTextChanged.emit)
+        self.question_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.question_list.customContextMenuRequested.connect(
+            self._on_question_context_menu_requested
+        )
+        self.question_list.itemDoubleClicked.connect(self._on_question_item_double_clicked)
 
         self.add_answer_button.clicked.connect(self.answerAddRequested.emit)
-        self.delete_answer_button.clicked.connect(self.answerDeleteRequested.emit)
         self.answer_list.currentRowChanged.connect(self.answerSelectionChanged.emit)
-        self.answer_editor.textChanged.connect(self.answerTextChanged.emit)
+        self.answer_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.answer_list.customContextMenuRequested.connect(self._on_answer_context_menu_requested)
+        self.answer_list.itemDoubleClicked.connect(self._on_answer_item_double_clicked)
 
     def set_question_groups(self, groups, selected_group_index: int = 0, selected_answer_index: int = 0):
         valid_groups = []
@@ -76,14 +76,12 @@ class QuestionAnswerAnnotationPanel(QWidget):
             if valid_groups:
                 selected_group_index = self._bounded_index(selected_group_index, len(valid_groups))
                 self.question_list.setCurrentRow(selected_group_index)
-                self.set_question_text(valid_groups[selected_group_index].get("question", ""))
                 self.set_answer_rows(
                     valid_groups[selected_group_index].get("answers", []),
                     selected_answer_index=selected_answer_index,
                 )
             else:
                 self.question_list.setCurrentRow(-1)
-                self.set_question_text("")
                 self.set_answer_rows([], selected_answer_index=-1)
         finally:
             self._block_editor_signals(False)
@@ -104,10 +102,8 @@ class QuestionAnswerAnnotationPanel(QWidget):
             if answer_texts:
                 selected_answer_index = self._bounded_index(selected_answer_index, len(answer_texts))
                 self.answer_list.setCurrentRow(selected_answer_index)
-                self.set_answer_text(answer_texts[selected_answer_index])
             else:
                 self.answer_list.setCurrentRow(-1)
-                self.set_answer_text("")
         finally:
             self._block_answer_signals(False)
             self._suspend_changes = False
@@ -117,18 +113,6 @@ class QuestionAnswerAnnotationPanel(QWidget):
 
     def get_selected_answer_index(self) -> int:
         return int(self.answer_list.currentRow())
-
-    def set_question_text(self, text: str):
-        self.question_editor.setPlainText(str(text or ""))
-
-    def get_question_text(self) -> str:
-        return self.question_editor.toPlainText()
-
-    def set_answer_text(self, text: str):
-        self.answer_editor.setPlainText(str(text or ""))
-
-    def get_answer_text(self) -> str:
-        return self.answer_editor.toPlainText()
 
     def set_controls_enabled(
         self,
@@ -143,13 +127,9 @@ class QuestionAnswerAnnotationPanel(QWidget):
 
         self.question_list.setEnabled(editor_enabled)
         self.add_question_button.setEnabled(editor_enabled)
-        self.delete_question_button.setEnabled(editor_enabled and has_group)
-        self.question_editor.setEnabled(editor_enabled and has_group)
 
         self.answer_list.setEnabled(editor_enabled and has_group)
         self.add_answer_button.setEnabled(editor_enabled and has_group)
-        self.delete_answer_button.setEnabled(editor_enabled and has_answer)
-        self.answer_editor.setEnabled(editor_enabled and has_answer)
 
     def refresh_question_label(self, group: dict, index: int):
         item = self.question_list.item(index)
@@ -163,12 +143,60 @@ class QuestionAnswerAnnotationPanel(QWidget):
 
     def _block_editor_signals(self, blocked: bool):
         self.question_list.blockSignals(blocked)
-        self.question_editor.blockSignals(blocked)
         self._block_answer_signals(blocked)
+
+    def _on_question_context_menu_requested(self, pos):
+        item = self.question_list.itemAt(pos)
+        if item is None:
+            return
+        row = self.question_list.row(item)
+        if row < 0:
+            return
+        self.question_list.setCurrentRow(row)
+
+        menu = QMenu(self)
+        edit_action = menu.addAction("Edit Question")
+        remove_action = menu.addAction("Remove Question")
+        selected_action = menu.exec(self.question_list.viewport().mapToGlobal(pos))
+        if selected_action == edit_action:
+            self.questionGroupEditRequested.emit(row)
+        elif selected_action == remove_action:
+            self.questionGroupDeleteRequested.emit(row)
+
+    def _on_question_item_double_clicked(self, item):
+        if item is None:
+            return
+        row = self.question_list.row(item)
+        if row >= 0:
+            self.questionGroupEditRequested.emit(row)
+
+    def _on_answer_context_menu_requested(self, pos):
+        item = self.answer_list.itemAt(pos)
+        if item is None:
+            return
+        row = self.answer_list.row(item)
+        if row < 0:
+            return
+        self.answer_list.setCurrentRow(row)
+
+        menu = QMenu(self)
+        edit_action = menu.addAction("Edit Answer")
+        remove_action = menu.addAction("Remove Answer")
+        selected_action = menu.exec(self.answer_list.viewport().mapToGlobal(pos))
+        if selected_action == edit_action:
+            self.answerEditRequested.emit(row)
+        elif selected_action == remove_action:
+            self.answerDeleteRequested.emit(row)
+
+    def _on_answer_item_double_clicked(self, item):
+        if item is None:
+            return
+        row = self.answer_list.row(item)
+        if row >= 0:
+            self.answerEditRequested.emit(row)
 
     def _block_answer_signals(self, blocked: bool):
         self.answer_list.blockSignals(blocked)
-        self.answer_editor.blockSignals(blocked)
 
     @staticmethod
     def _bounded_index(index: int, size: int) -> int:

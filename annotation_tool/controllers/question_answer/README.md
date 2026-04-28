@@ -3,6 +3,8 @@
 ## Role
 Owns Question/Answer mode behavior:
 - per-sample grouped question/answer editing with autosave
+- dataset-derived question suggestions for add/edit dialogs
+- multiline answer add/edit dialogs
 - emits typed mutation intents to `HistoryManager`
 
 ## Contracts

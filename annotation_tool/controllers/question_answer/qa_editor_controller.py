@@ -1,6 +1,7 @@
 import copy
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtWidgets import QInputDialog
 
 
 class QAEditorController(QObject):
@@ -24,6 +25,7 @@ class QAEditorController(QObject):
         self.current_sample_id = ""
         self._current_sample_snapshot = {}
         self._answer_groups = []
+        self._question_catalog = []
         self._selected_group_index = -1
         self._selected_answer_index = -1
 
@@ -36,17 +38,19 @@ class QAEditorController(QObject):
         self.question_answer_panel.questionGroupAddRequested.connect(
             self._on_add_question_group_requested
         )
+        self.question_answer_panel.questionGroupEditRequested.connect(
+            self._on_edit_question_group_requested
+        )
         self.question_answer_panel.questionGroupDeleteRequested.connect(
             self._on_delete_question_group_requested
         )
         self.question_answer_panel.questionGroupSelectionChanged.connect(
             self._on_question_group_selection_changed
         )
-        self.question_answer_panel.questionTextChanged.connect(self._on_question_text_changed)
         self.question_answer_panel.answerAddRequested.connect(self._on_add_answer_requested)
+        self.question_answer_panel.answerEditRequested.connect(self._on_edit_answer_requested)
         self.question_answer_panel.answerDeleteRequested.connect(self._on_delete_answer_requested)
         self.question_answer_panel.answerSelectionChanged.connect(self._on_answer_selection_changed)
-        self.question_answer_panel.answerTextChanged.connect(self._on_answer_text_changed)
 
     def on_mode_changed(self, index: int):
         self._active_mode_index = index
@@ -66,11 +70,18 @@ class QAEditorController(QObject):
         self.current_sample_id = ""
         self._current_sample_snapshot = {}
         self._answer_groups = []
+        self._question_catalog = []
         self._selected_group_index = -1
         self._selected_answer_index = -1
 
         self._set_question_groups([])
         self._update_editor_enabled()
+
+    def on_question_catalog_changed(self, questions):
+        self._question_catalog = self._normalize_question_catalog(questions)
+        for group in self._answer_groups:
+            if isinstance(group, dict):
+                self._add_question_to_catalog(group.get("question"))
 
     def on_selected_sample_changed(self, sample):
         if self._autosave_timer.isActive():
@@ -89,6 +100,8 @@ class QAEditorController(QObject):
                 self.current_sample_id = sample_id
                 self._current_sample_snapshot = copy.deepcopy(sample)
                 self._answer_groups = self._normalize_answers_payload(sample.get("answers"))
+                for group in self._answer_groups:
+                    self._add_question_to_catalog(group.get("question"))
 
         if self._answer_groups:
             self._selected_group_index = 0
@@ -100,14 +113,51 @@ class QAEditorController(QObject):
     def _on_add_question_group_requested(self):
         if not self.current_sample_id:
             return
-        self._answer_groups.append({"question": "", "answers": [""]})
+
+        question_text = self._request_question_text("Add Question", "")
+        if not question_text:
+            return
+
+        existing_index = self._group_index_for_question(question_text)
+        if existing_index >= 0:
+            self._selected_group_index = existing_index
+            answers = self._answer_groups[existing_index].setdefault("answers", [])
+            self._selected_answer_index = 0 if answers else -1
+            self._set_question_groups(self._answer_groups)
+            self._update_editor_enabled()
+            self.statusMessageRequested.emit("Duplicate", "Question already exists for this sample.", 1500)
+            return
+
+        self._add_question_to_catalog(question_text)
+        self._answer_groups.append({"question": question_text, "answers": []})
         self._selected_group_index = len(self._answer_groups) - 1
-        self._selected_answer_index = 0
+        self._selected_answer_index = -1
         self._set_question_groups(self._answer_groups)
         self._update_editor_enabled()
 
-    def _on_delete_question_group_requested(self):
-        group_index = self._selected_group_index
+    def _on_edit_question_group_requested(self, index: int):
+        if not self._valid_group_index(index):
+            return
+
+        self._selected_group_index = int(index)
+        current_question = self._answer_groups[self._selected_group_index].get("question", "")
+        question_text = self._request_question_text("Edit Question", current_question)
+        if not question_text or question_text == str(current_question or "").strip():
+            return
+
+        duplicate_index = self._group_index_for_question(question_text)
+        if duplicate_index >= 0 and duplicate_index != self._selected_group_index:
+            self.statusMessageRequested.emit("Duplicate", "Question already exists for this sample.", 1500)
+            return
+
+        self._add_question_to_catalog(question_text)
+        self._answer_groups[self._selected_group_index]["question"] = question_text
+        self._set_question_groups(self._answer_groups)
+        self._start_autosave()
+        self._update_editor_enabled()
+
+    def _on_delete_question_group_requested(self, index: int = -1):
+        group_index = int(index) if self._valid_group_index(index) else self._selected_group_index
         if not self._valid_group_index(group_index):
             return
 
@@ -140,37 +190,41 @@ class QAEditorController(QObject):
             self._sync_editors_from_selection()
         self._update_editor_enabled()
 
-    def _on_question_text_changed(self):
-        if self._suspend_autosave or not self.current_sample_id:
-            return
-        if not self._valid_group_index(self._selected_group_index):
-            return
-
-        self._answer_groups[self._selected_group_index]["question"] = (
-            self.question_answer_panel.get_question_text()
-        )
-        self.question_answer_panel.refresh_question_label(
-            self._answer_groups[self._selected_group_index],
-            self._selected_group_index,
-        )
-        self._start_autosave()
-
     def _on_add_answer_requested(self):
         if not self._valid_group_index(self._selected_group_index):
             return
-        answers = self._answer_groups[self._selected_group_index].setdefault("answers", [])
-        answers.append("")
-        self._selected_answer_index = len(answers) - 1
-        self._set_answer_rows(answers)
-        self._update_editor_enabled()
-
-    def _on_delete_answer_requested(self):
-        if not self._valid_answer_index(self._selected_group_index, self._selected_answer_index):
+        answer_text = self._request_answer_text("Add Answer", "")
+        if not answer_text:
             return
         answers = self._answer_groups[self._selected_group_index].setdefault("answers", [])
-        answers.pop(self._selected_answer_index)
+        answers.append(answer_text)
+        self._selected_answer_index = len(answers) - 1
+        self._set_answer_rows(answers)
+        self._start_autosave()
+        self._update_editor_enabled()
+
+    def _on_edit_answer_requested(self, index: int):
+        if not self._valid_answer_index(self._selected_group_index, index):
+            return
+        self._selected_answer_index = int(index)
+        answers = self._answer_groups[self._selected_group_index].setdefault("answers", [])
+        current_answer = str(answers[self._selected_answer_index] or "")
+        answer_text = self._request_answer_text("Edit Answer", current_answer)
+        if not answer_text or answer_text == current_answer.strip():
+            return
+        answers[self._selected_answer_index] = answer_text
+        self._set_answer_rows(answers)
+        self._start_autosave()
+        self._update_editor_enabled()
+
+    def _on_delete_answer_requested(self, index: int = -1):
+        answer_index = int(index) if self._valid_answer_index(self._selected_group_index, index) else self._selected_answer_index
+        if not self._valid_answer_index(self._selected_group_index, answer_index):
+            return
+        answers = self._answer_groups[self._selected_group_index].setdefault("answers", [])
+        answers.pop(answer_index)
         if answers:
-            self._selected_answer_index = min(self._selected_answer_index, len(answers) - 1)
+            self._selected_answer_index = min(answer_index, len(answers) - 1)
         else:
             self._selected_answer_index = -1
         self._set_answer_rows(answers)
@@ -185,22 +239,7 @@ class QAEditorController(QObject):
             self.save_current_answers()
 
         self._selected_answer_index = int(index)
-        self._sync_answer_editor_from_selection()
         self._update_editor_enabled()
-
-    def _on_answer_text_changed(self):
-        if self._suspend_autosave or not self.current_sample_id:
-            return
-        if not self._valid_answer_index(self._selected_group_index, self._selected_answer_index):
-            return
-
-        answers = self._answer_groups[self._selected_group_index].setdefault("answers", [])
-        answers[self._selected_answer_index] = self.question_answer_panel.get_answer_text()
-        self.question_answer_panel.refresh_answer_label(
-            answers[self._selected_answer_index],
-            self._selected_answer_index,
-        )
-        self._start_autosave()
 
     def save_current_answers(self):
         if not self.current_sample_id:
@@ -212,6 +251,8 @@ class QAEditorController(QObject):
             return False
 
         self.qaAnswersUpdateRequested.emit(self.current_sample_id, copy.deepcopy(new_answers))
+        for group in new_answers:
+            self._add_question_to_catalog(group.get("question"))
         if new_answers:
             self._current_sample_snapshot["answers"] = copy.deepcopy(new_answers)
         else:
@@ -248,27 +289,12 @@ class QAEditorController(QObject):
         try:
             if self._valid_group_index(self._selected_group_index):
                 group = self._answer_groups[self._selected_group_index]
-                self.question_answer_panel.set_question_text(group.get("question", ""))
                 self.question_answer_panel.set_answer_rows(
                     group.get("answers", []),
                     selected_answer_index=self._selected_answer_index,
                 )
             else:
-                self.question_answer_panel.set_question_text("")
                 self.question_answer_panel.set_answer_rows([], selected_answer_index=-1)
-        finally:
-            self._suspend_autosave = False
-
-    def _sync_answer_editor_from_selection(self):
-        self._suspend_autosave = True
-        try:
-            if self._valid_answer_index(self._selected_group_index, self._selected_answer_index):
-                answer_text = self._answer_groups[self._selected_group_index]["answers"][
-                    self._selected_answer_index
-                ]
-                self.question_answer_panel.set_answer_text(answer_text)
-            else:
-                self.question_answer_panel.set_answer_text("")
         finally:
             self._suspend_autosave = False
 
@@ -301,6 +327,67 @@ class QAEditorController(QObject):
             return False
         answers = self._answer_groups[group_index].get("answers")
         return isinstance(answers, list) and 0 <= answer_index < len(answers)
+
+    def _request_question_text(self, title: str, current_text: str) -> str:
+        current_text = str(current_text or "").strip()
+        if self._question_catalog:
+            current_index = 0
+            if current_text in self._question_catalog:
+                current_index = self._question_catalog.index(current_text)
+            text, accepted = QInputDialog.getItem(
+                self.question_answer_panel,
+                title,
+                "Question:",
+                self._question_catalog,
+                current_index,
+                True,
+            )
+        else:
+            text, accepted = QInputDialog.getText(
+                self.question_answer_panel,
+                title,
+                "Question:",
+                text=current_text,
+            )
+        if not accepted:
+            return ""
+        return str(text or "").strip()
+
+    def _request_answer_text(self, title: str, current_text: str) -> str:
+        text, accepted = QInputDialog.getMultiLineText(
+            self.question_answer_panel,
+            title,
+            "Answer:",
+            text=str(current_text or ""),
+        )
+        if not accepted:
+            return ""
+        return str(text or "").strip()
+
+    def _group_index_for_question(self, question_text: str) -> int:
+        target = str(question_text or "").strip().lower()
+        if not target:
+            return -1
+        for index, group in enumerate(self._answer_groups):
+            if str(group.get("question") or "").strip().lower() == target:
+                return index
+        return -1
+
+    def _add_question_to_catalog(self, question_text):
+        question = str(question_text or "").strip()
+        if question and question not in self._question_catalog:
+            self._question_catalog.append(question)
+
+    @staticmethod
+    def _normalize_question_catalog(questions) -> list:
+        normalized = []
+        seen = set()
+        for raw_question in list(questions or []):
+            question = str(raw_question or "").strip()
+            if question and question not in seen:
+                seen.add(question)
+                normalized.append(question)
+        return normalized
 
     @classmethod
     def _normalize_answers_payload(cls, answers) -> list:
