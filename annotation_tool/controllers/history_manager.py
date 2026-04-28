@@ -26,7 +26,6 @@ class HistoryManager(QObject):
     statusMessageRequested = pyqtSignal(str, str, int)
     classificationSetupRequested = pyqtSignal()
     localizationSchemaRefreshRequested = pyqtSignal()
-    questionBankRefreshRequested = pyqtSignal()
     localizationClipEventsRefreshRequested = pyqtSignal()
     denseDisplayRequested = pyqtSignal(str)
     itemStatusRefreshRequested = pyqtSignal(str)
@@ -576,125 +575,6 @@ class HistoryManager(QObject):
     def execute_sample_captions_update(self, sample_id: str, captions):
         self.execute_sample_field_update(sample_id, "captions", captions)
 
-    def execute_qa_question_add(self, question_text: str):
-        text = str(question_text or "").strip()
-        if not text:
-            return
-
-        existing = self.model.question_definitions
-        if any(
-            isinstance(entry, dict) and str(entry.get("question") or "").strip().lower() == text.lower()
-            for entry in existing
-        ):
-            return
-
-        before_json = self.model.snapshot_dataset_json()
-        question_id = self.model.next_question_id()
-        self.model.question_definitions.append({"id": question_id, "question": text})
-        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
-            return
-
-        self._emit_post_mutation(
-            refresh_questions=True,
-            status_title="Added",
-            status_msg="Question added.",
-        )
-
-    def execute_qa_question_rename(self, question_id: str, new_question_text: str):
-        target_id = str(question_id or "").strip()
-        new_text = str(new_question_text or "").strip()
-        if not target_id or not new_text:
-            return
-
-        questions = self.model.question_definitions
-        target_entry = None
-        for entry in questions:
-            if not isinstance(entry, dict):
-                continue
-            if str(entry.get("id") or "").strip() == target_id:
-                target_entry = entry
-                break
-        if target_entry is None:
-            return
-
-        old_text = str(target_entry.get("question") or "").strip()
-        if old_text == new_text:
-            return
-
-        if any(
-            isinstance(entry, dict)
-            and str(entry.get("id") or "").strip() != target_id
-            and str(entry.get("question") or "").strip().lower() == new_text.lower()
-            for entry in questions
-        ):
-            return
-
-        before_json = self.model.snapshot_dataset_json()
-        target_entry["question"] = new_text
-        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
-            return
-
-        self._emit_post_mutation(
-            refresh_questions=True,
-            status_title="Renamed",
-            status_msg="Question updated.",
-        )
-
-    def execute_qa_question_delete(self, question_id: str):
-        target_id = str(question_id or "").strip()
-        if not target_id:
-            return
-
-        questions = self.model.question_definitions
-        target_index = -1
-        for idx, entry in enumerate(questions):
-            if isinstance(entry, dict) and str(entry.get("id") or "").strip() == target_id:
-                target_index = idx
-                break
-        if target_index < 0:
-            return
-
-        before_json = self.model.snapshot_dataset_json()
-        questions.pop(target_index)
-
-        touched_paths = []
-        for sample in self.model.get_samples():
-            if not isinstance(sample, dict):
-                continue
-            sample_id = str(sample.get("id") or "")
-            answers = list(sample.get("answers") or [])
-            filtered_answers = []
-            removed = False
-            for answer_entry in answers:
-                if not isinstance(answer_entry, dict):
-                    continue
-                if str(answer_entry.get("question_id") or "").strip() == target_id:
-                    removed = True
-                    continue
-                filtered_answers.append(copy.deepcopy(answer_entry))
-            if not removed:
-                continue
-
-            if filtered_answers:
-                sample["answers"] = filtered_answers
-            else:
-                sample.pop("answers", None)
-
-            path = self._path_for_sample(sample_id)
-            if path:
-                touched_paths.append(path)
-
-        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
-            return
-
-        self._emit_post_mutation(
-            touched_paths=touched_paths or None,
-            refresh_filter=True,
-            refresh_questions=True,
-            status_title="Deleted",
-            status_msg="Question removed.",
-        )
-
     def execute_qa_answers_update(self, sample_id: str, answers):
         if not sample_id:
             return
@@ -1050,13 +930,7 @@ class HistoryManager(QObject):
         sample[field_name] = copy.deepcopy(value)
 
     def _normalize_answers_payload(self, answers):
-        valid_question_ids = {
-            str(entry.get("id") or "").strip()
-            for entry in self.model.question_definitions
-            if isinstance(entry, dict)
-        }
-        valid_question_ids = {entry for entry in valid_question_ids if entry}
-        return self.model._normalize_sample_answers_payload(answers, valid_question_ids)
+        return self.model._normalize_sample_answers_payload(answers)
 
     def _set_classification_head_payload(self, path: str, head: str, payload):
         sample = self.model.get_sample_by_path(path)
@@ -1085,15 +959,12 @@ class HistoryManager(QObject):
         touched_paths=None,
         refresh_filter: bool = False,
         refresh_schema: bool = False,
-        refresh_questions: bool = False,
         status_title: str = "",
         status_msg: str = "",
         status_duration: int = 1500,
     ):
         if refresh_schema:
             self._emit_schema_refresh()
-        if refresh_questions:
-            self.questionBankRefreshRequested.emit()
 
         if touched_paths:
             for path in touched_paths:

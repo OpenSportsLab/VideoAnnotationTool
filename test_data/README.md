@@ -208,8 +208,8 @@ Converts row-wise XFoul annotations (`path`, `video1..videoN`, `question`, `answ
 - `path` tail becomes sample id (e.g., `Test/action_0` -> `action_0`)
 - `video1..videoN` become multiview `inputs[]`
 - if `video*` differs across duplicated rows of the same sample, the row with the most videos is used
-- repeated question annotations per source sample split into duplicated sample entries (`action_0`, `action_0__2`, ...)
-- output question ids are `q1`, `q2`, ...
+- repeated answers for the same source sample/question are grouped under `answers[].answers`
+- question text is stored in each sample next to its answers; no top-level `questions` bank is written
 
 **Usage (JSON only, no download):**
 
@@ -254,6 +254,14 @@ python test_data/convert_xfoul_to_qa.py \
 
 If some media URLs fail during download (e.g., HTTP 403), conversion continues for remaining files and writes a
 `<output_json_stem>_download_failures.txt` report next to the output JSON.
+
+To migrate older VQA JSON files that use root `questions` plus `question_id` answers, run:
+
+```bash
+python tools/convert_legacy_vqa_to_grouped.py \
+  --input-json test_data/VQA/XFoul-test/test_old.json \
+  --output-json test_data/VQA/XFoul-test/test.json
+```
 
 ---
 

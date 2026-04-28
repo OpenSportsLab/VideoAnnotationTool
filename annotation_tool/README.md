@@ -53,6 +53,7 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
 - Localization event: `{ "head": str, "label": str, "position_ms": int }`
 - Dense event: `{ "position_ms": int, "lang": str, "text": str }`
 - Caption list (Description): `[ { "lang": str, "text": str, ...optional } ]`
+- Q/A list: `[ { "question": str, "answers": [str, ...] } ]`
 
 ## Conventions
 - Signal-first cross-module communication; `main_window.py` wires interactions.

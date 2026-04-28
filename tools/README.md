@@ -111,6 +111,7 @@ for split in test valid train; do
 python tools/upload_dataset_to_hf.py \
     --repo-id OpenSportsLab/OSL-XFoul \
     --revision 224p \
+    --split $split \
     --json-path test_data/VQA/XFoul-$split-224p/$split.json \
     --format parquet \
     --shard-size 1GB \
@@ -119,6 +120,7 @@ python tools/upload_dataset_to_hf.py \
 python tools/upload_dataset_to_hf.py \
     --repo-id OpenSportsLab/OSL-XFoul \
     --revision 720p \
+    --split $split \
     --json-path test_data/VQA/XFoul-$split/$split.json \
     --format parquet \
     --shard-size 1GB \

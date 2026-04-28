@@ -242,7 +242,7 @@ class VideoAnnotationWindow(QMainWindow):
         """Enables/Disables all project-related docks and editors."""
         self.data_dock.setEnabled(enabled)
         self.editor_dock.setEnabled(enabled)
-        self.qa_editor_controller.set_question_bank_enabled(enabled)
+        self.qa_editor_controller.set_project_enabled(enabled)
         
         # Also explicitly disable the sub-editors to be safe
         self._set_annotation_panels_enabled_for_selection(enabled)
@@ -307,9 +307,6 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.dataset_explorer_controller.schemaContextChanged.connect(
             self.localization_editor_controller.on_schema_context_changed
-        )
-        self.dataset_explorer_controller.questionBankChanged.connect(
-            self.qa_editor_controller.on_question_bank_changed
         )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
             lambda media_source, ensure_playback: self.media_controller.route_media_selection(media_source, ensure_playback)
@@ -482,15 +479,6 @@ class VideoAnnotationWindow(QMainWindow):
         self.dense_editor_controller.markersUpdateRequested.connect(self.center_panel.set_markers)
 
         self.qa_editor_controller.statusMessageRequested.connect(self.show_temp_msg)
-        self.qa_editor_controller.qaQuestionAddRequested.connect(
-            self.history_manager.execute_qa_question_add
-        )
-        self.qa_editor_controller.qaQuestionRenameRequested.connect(
-            self.history_manager.execute_qa_question_rename
-        )
-        self.qa_editor_controller.qaQuestionDeleteRequested.connect(
-            self.history_manager.execute_qa_question_delete
-        )
         self.qa_editor_controller.qaAnswersUpdateRequested.connect(
             self.history_manager.execute_qa_answers_update
         )
@@ -509,9 +497,6 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.history_manager.localizationClipEventsRefreshRequested.connect(
             self.localization_editor_controller._refresh_current_clip_events
-        )
-        self.history_manager.questionBankRefreshRequested.connect(
-            self.dataset_explorer_controller._emit_question_bank_context
         )
         self.history_manager.denseDisplayRequested.connect(self.dense_editor_controller.display_events_for_item)
         self.history_manager.itemStatusRefreshRequested.connect(self.update_action_item_status)

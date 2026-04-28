@@ -422,31 +422,21 @@ def test_history_contract_question_answer_mutations(window, monkeypatch, qtbot, 
     controller = window.qa_editor_controller
     panel = window.qa_panel
 
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: window.history_manager.execute_qa_question_add("Who committed the foul?"),
-    )
-
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: window.history_manager.execute_qa_question_rename("q1", "How are you doing?"),
-    )
-
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: window.history_manager.execute_qa_question_delete("q2"),
-    )
-
     def _edit_answer():
-        panel.set_questions(window.dataset_explorer_controller.question_definitions, selected_question_id="q1")
         panel.answer_editor.setPlainText("History contract Q/A edit.")
         controller.save_current_answers()
         qtbot.wait(300)
 
     _assert_mutating_action_creates_single_history_entry(window, qtbot, _edit_answer)
+
+    def _add_second_answer():
+        panel.add_answer_button.click()
+        qtbot.wait(50)
+        panel.answer_editor.setPlainText("Second grouped answer.")
+        controller.save_current_answers()
+        qtbot.wait(300)
+
+    _assert_mutating_action_creates_single_history_entry(window, qtbot, _add_second_answer)
 
 
 @pytest.mark.gui

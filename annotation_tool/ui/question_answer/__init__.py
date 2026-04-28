@@ -2,28 +2,24 @@ import os
 
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QLabel, QMenu, QTabWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton, QWidget
 
 from utils import resource_path
 
 
 class QuestionAnswerAnnotationPanel(QWidget):
     """
-    Question/Answer annotation panel.
-    - Shared question tabs are dataset-level.
-    - Question tabs show read-only question text.
-    - A trailing '+' tab triggers question creation.
-    - Tab context menu provides rename/delete actions.
-    - Answer editor is sample-level and controlled by selection state.
+    Presents sample-local grouped VQA annotations.
     """
 
-    questionAddRequested = pyqtSignal()
-    questionRenameRequested = pyqtSignal(str)
-    questionDeleteRequested = pyqtSignal(str)
-    questionSelectionChanged = pyqtSignal(str)
+    questionGroupAddRequested = pyqtSignal()
+    questionGroupDeleteRequested = pyqtSignal()
+    questionGroupSelectionChanged = pyqtSignal(int)
+    questionTextChanged = pyqtSignal()
+    answerAddRequested = pyqtSignal()
+    answerDeleteRequested = pyqtSignal()
+    answerSelectionChanged = pyqtSignal(int)
     answerTextChanged = pyqtSignal()
-
-    _PLUS_TAB_LABEL = "+"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -38,82 +34,95 @@ class QuestionAnswerAnnotationPanel(QWidget):
                 f"Failed to load QuestionAnswerAnnotationPanel UI: {ui_path}. Reason: {exc}"
             ) from exc
 
-        # Stable controller-facing aliases.
-        self.question_tabs: QTabWidget = self.questionTabs
-        self.answer_editor = self.answerEditor
+        self.question_list: QListWidget = self.questionList
+        self.add_question_button: QPushButton = self.addQuestionButton
+        self.delete_question_button: QPushButton = self.deleteQuestionButton
+        self.question_editor: QPlainTextEdit = self.questionEditor
+        self.answer_list: QListWidget = self.answerList
+        self.add_answer_button: QPushButton = self.addAnswerButton
+        self.delete_answer_button: QPushButton = self.deleteAnswerButton
+        self.answer_editor: QPlainTextEdit = self.answerEditor
 
-        # Remove placeholder tab from .ui and build tabs dynamically from dataset context.
-        self.question_tabs.clear()
+        self._suspend_changes = False
 
-        self._suspend_tab_change = False
-        self._last_selected_question_tab_index = -1
+        self.add_question_button.clicked.connect(self.questionGroupAddRequested.emit)
+        self.delete_question_button.clicked.connect(self.questionGroupDeleteRequested.emit)
+        self.question_list.currentRowChanged.connect(self.questionGroupSelectionChanged.emit)
+        self.question_editor.textChanged.connect(self.questionTextChanged.emit)
 
-        tab_bar = self.question_tabs.tabBar()
-        tab_bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        tab_bar.customContextMenuRequested.connect(self._on_tab_context_menu_requested)
-        tab_bar.tabBarClicked.connect(self._on_tab_bar_clicked)
-
-        self.question_tabs.currentChanged.connect(self._on_current_tab_changed)
+        self.add_answer_button.clicked.connect(self.answerAddRequested.emit)
+        self.delete_answer_button.clicked.connect(self.answerDeleteRequested.emit)
+        self.answer_list.currentRowChanged.connect(self.answerSelectionChanged.emit)
         self.answer_editor.textChanged.connect(self.answerTextChanged.emit)
 
-    def set_questions(self, questions, selected_question_id: str = ""):
-        selected_question_id = str(selected_question_id or "")
-
-        valid_questions = []
-        for entry in list(questions or []):
-            if not isinstance(entry, dict):
+    def set_question_groups(self, groups, selected_group_index: int = 0, selected_answer_index: int = 0):
+        valid_groups = []
+        for group in list(groups or []):
+            if not isinstance(group, dict):
                 continue
-            question_id = str(entry.get("id") or "").strip()
-            question_text = str(entry.get("question") or "").strip()
-            if not question_id or not question_text:
-                continue
-            valid_questions.append({"id": question_id, "question": question_text})
+            question = str(group.get("question") or "")
+            answers = [str(answer or "") for answer in list(group.get("answers") or [])]
+            valid_groups.append({"question": question, "answers": answers})
 
-        self._suspend_tab_change = True
+        self._suspend_changes = True
         try:
-            self.question_tabs.blockSignals(True)
-            self.question_tabs.clear()
+            self._block_editor_signals(True)
+            self.question_list.clear()
+            for index, group in enumerate(valid_groups, start=1):
+                item = QListWidgetItem(self._question_label(group, index))
+                item.setData(Qt.ItemDataRole.UserRole, index - 1)
+                self.question_list.addItem(item)
 
-            selected_index = -1
-            for entry in valid_questions:
-                tab_widget = self._build_question_tab(entry["question"])
-                tab_index = self.question_tabs.addTab(tab_widget, entry["id"])
-                self.question_tabs.tabBar().setTabData(tab_index, entry["id"])
-                self.question_tabs.setTabToolTip(tab_index, entry["question"])
-                if entry["id"] == selected_question_id:
-                    selected_index = tab_index
-
-            plus_index = self.question_tabs.addTab(QWidget(), self._PLUS_TAB_LABEL)
-            self.question_tabs.tabBar().setTabData(plus_index, None)
-            self.question_tabs.setTabToolTip(plus_index, "Add a new question")
-
-            if selected_index < 0 and valid_questions:
-                selected_index = 0
-
-            if selected_index >= 0:
-                self.question_tabs.setCurrentIndex(selected_index)
-                self._last_selected_question_tab_index = selected_index
+            if valid_groups:
+                selected_group_index = self._bounded_index(selected_group_index, len(valid_groups))
+                self.question_list.setCurrentRow(selected_group_index)
+                self.set_question_text(valid_groups[selected_group_index].get("question", ""))
+                self.set_answer_rows(
+                    valid_groups[selected_group_index].get("answers", []),
+                    selected_answer_index=selected_answer_index,
+                )
             else:
-                self.question_tabs.setCurrentIndex(plus_index)
-                self._last_selected_question_tab_index = -1
+                self.question_list.setCurrentRow(-1)
+                self.set_question_text("")
+                self.set_answer_rows([], selected_answer_index=-1)
         finally:
-            self.question_tabs.blockSignals(False)
-            self._suspend_tab_change = False
+            self._block_editor_signals(False)
+            self._suspend_changes = False
 
-        self.questionSelectionChanged.emit(self.get_selected_question_id())
+    def set_answer_rows(self, answers, selected_answer_index: int = 0):
+        answer_texts = [str(answer or "") for answer in list(answers or [])]
 
-    def get_selected_question_id(self) -> str:
-        tab_index = int(self.question_tabs.currentIndex())
-        if tab_index < 0:
-            return ""
-        question_id = self.question_tabs.tabBar().tabData(tab_index)
-        return str(question_id or "")
+        self._suspend_changes = True
+        try:
+            self._block_answer_signals(True)
+            self.answer_list.clear()
+            for index, answer_text in enumerate(answer_texts, start=1):
+                item = QListWidgetItem(self._answer_label(answer_text, index))
+                item.setData(Qt.ItemDataRole.UserRole, index - 1)
+                self.answer_list.addItem(item)
 
-    def set_question_bank_enabled(self, enabled: bool):
-        self.question_tabs.setEnabled(bool(enabled))
+            if answer_texts:
+                selected_answer_index = self._bounded_index(selected_answer_index, len(answer_texts))
+                self.answer_list.setCurrentRow(selected_answer_index)
+                self.set_answer_text(answer_texts[selected_answer_index])
+            else:
+                self.answer_list.setCurrentRow(-1)
+                self.set_answer_text("")
+        finally:
+            self._block_answer_signals(False)
+            self._suspend_changes = False
 
-    def set_answer_editor_enabled(self, enabled: bool):
-        self.answer_editor.setEnabled(bool(enabled))
+    def get_selected_group_index(self) -> int:
+        return int(self.question_list.currentRow())
+
+    def get_selected_answer_index(self) -> int:
+        return int(self.answer_list.currentRow())
+
+    def set_question_text(self, text: str):
+        self.question_editor.setPlainText(str(text or ""))
+
+    def get_question_text(self) -> str:
+        return self.question_editor.toPlainText()
 
     def set_answer_text(self, text: str):
         self.answer_editor.setPlainText(str(text or ""))
@@ -121,105 +130,69 @@ class QuestionAnswerAnnotationPanel(QWidget):
     def get_answer_text(self) -> str:
         return self.answer_editor.toPlainText()
 
-    def _build_question_tab(self, question_text: str) -> QWidget:
-        tab_widget = QWidget()
-        layout = QVBoxLayout(tab_widget)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(4)
+    def set_controls_enabled(
+        self,
+        *,
+        editor_enabled: bool,
+        has_group: bool,
+        has_answer: bool,
+    ):
+        editor_enabled = bool(editor_enabled)
+        has_group = bool(has_group)
+        has_answer = bool(has_answer)
 
-        question_label = QLabel(str(question_text or ""))
-        question_label.setWordWrap(True)
-        question_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(question_label)
-        return tab_widget
+        self.question_list.setEnabled(editor_enabled)
+        self.add_question_button.setEnabled(editor_enabled)
+        self.delete_question_button.setEnabled(editor_enabled and has_group)
+        self.question_editor.setEnabled(editor_enabled and has_group)
 
-    def _on_current_tab_changed(self, tab_index: int):
-        if self._suspend_tab_change:
-            return
+        self.answer_list.setEnabled(editor_enabled and has_group)
+        self.add_answer_button.setEnabled(editor_enabled and has_group)
+        self.delete_answer_button.setEnabled(editor_enabled and has_answer)
+        self.answer_editor.setEnabled(editor_enabled and has_answer)
 
-        if tab_index < 0:
-            self.questionSelectionChanged.emit("")
-            return
+    def refresh_question_label(self, group: dict, index: int):
+        item = self.question_list.item(index)
+        if item is not None:
+            item.setText(self._question_label(group, index + 1))
 
-        question_id = self._question_id_for_tab_index(tab_index)
-        if question_id:
-            self._last_selected_question_tab_index = tab_index
-            self.questionSelectionChanged.emit(question_id)
-            return
+    def refresh_answer_label(self, answer_text: str, index: int):
+        item = self.answer_list.item(index)
+        if item is not None:
+            item.setText(self._answer_label(answer_text, index + 1))
 
-        # '+' tab selected: restore previous question tab first, then trigger add flow.
-        restore_index = self._last_selected_question_tab_index
-        if restore_index < 0 or restore_index >= self._question_tab_count():
-            self.questionSelectionChanged.emit("")
-            self.questionAddRequested.emit()
-            return
+    def _block_editor_signals(self, blocked: bool):
+        self.question_list.blockSignals(blocked)
+        self.question_editor.blockSignals(blocked)
+        self._block_answer_signals(blocked)
 
-        self._suspend_tab_change = True
+    def _block_answer_signals(self, blocked: bool):
+        self.answer_list.blockSignals(blocked)
+        self.answer_editor.blockSignals(blocked)
+
+    @staticmethod
+    def _bounded_index(index: int, size: int) -> int:
+        if size <= 0:
+            return -1
         try:
-            self.question_tabs.setCurrentIndex(restore_index)
-        finally:
-            self._suspend_tab_change = False
-        restored_question_id = self._question_id_for_tab_index(restore_index)
-        self.questionSelectionChanged.emit(restored_question_id)
-        self.questionAddRequested.emit()
+            index = int(index)
+        except Exception:
+            index = 0
+        return min(max(index, 0), size - 1)
 
-    def _on_tab_context_menu_requested(self, pos):
-        if not self.question_tabs.isEnabled():
-            return
+    @staticmethod
+    def _question_label(group: dict, index: int) -> str:
+        question = str(group.get("question") or "").strip()
+        if not question:
+            question = f"Question {index}"
+        return question if len(question) <= 80 else f"{question[:77]}..."
 
-        tab_bar = self.question_tabs.tabBar()
-        tab_index = tab_bar.tabAt(pos)
-        if tab_index < 0:
-            return
-
-        question_id = self._question_id_for_tab_index(tab_index)
-        if not question_id:
-            return
-
-        if self.question_tabs.currentIndex() != tab_index:
-            self.question_tabs.setCurrentIndex(tab_index)
-
-        menu = QMenu(self)
-        rename_action = menu.addAction("Rename Question")
-        delete_action = menu.addAction("Delete Question")
-        selected_action = menu.exec(tab_bar.mapToGlobal(pos))
-        if selected_action == rename_action:
-            self.questionRenameRequested.emit(question_id)
-        elif selected_action == delete_action:
-            self.questionDeleteRequested.emit(question_id)
-
-    def _on_tab_bar_clicked(self, tab_index: int):
-        if tab_index < 0:
-            return
-        if self._question_id_for_tab_index(tab_index):
-            return
-        # Handle '+' when it is already selected; currentChanged is not emitted in that case.
-        if tab_index != self.question_tabs.currentIndex():
-            return
-
-        restore_index = self._last_selected_question_tab_index
-        if restore_index < 0 or restore_index >= self._question_tab_count():
-            self.questionSelectionChanged.emit("")
-            self.questionAddRequested.emit()
-            return
-
-        self._suspend_tab_change = True
-        try:
-            self.question_tabs.setCurrentIndex(restore_index)
-        finally:
-            self._suspend_tab_change = False
-        self.questionSelectionChanged.emit(self._question_id_for_tab_index(restore_index))
-        self.questionAddRequested.emit()
-
-    def _question_tab_count(self) -> int:
-        count = int(self.question_tabs.count())
-        return max(0, count - 1)
-
-    def _question_id_for_tab_index(self, tab_index: int) -> str:
-        if tab_index < 0 or tab_index >= self.question_tabs.count():
-            return ""
-        tab_data = self.question_tabs.tabBar().tabData(tab_index)
-        return str(tab_data or "")
+    @staticmethod
+    def _answer_label(answer_text: str, index: int) -> str:
+        answer = str(answer_text or "").strip()
+        if not answer:
+            return f"Answer {index}"
+        return answer if len(answer) <= 80 else f"{answer[:77]}..."
 
 
 __all__ = ["QuestionAnswerAnnotationPanel"]

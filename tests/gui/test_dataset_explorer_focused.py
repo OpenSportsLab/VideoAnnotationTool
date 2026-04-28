@@ -74,7 +74,7 @@ def test_normalize_dataset_json_inserts_defaults_preserves_unknowns_and_fixes_id
     assert "task" not in normalized
     assert normalized["metadata"] == {}
     assert normalized["modalities"] == ["video"]
-    assert normalized["questions"] == []
+    assert "questions" not in normalized
     assert normalized["custom_root"] == {"keep": True}
     assert [sample["id"] for sample in normalized["data"]] == ["clip_dup", "clip_dup__2", "sample_3"]
     assert normalized["data"][0]["events"][0]["position_ms"] == 1001
@@ -94,7 +94,7 @@ def test_normalize_dataset_json_rejects_invalid_root_and_non_list_data(explorer_
     assert error == "Top-level 'data' must be a list."
 
 
-def test_normalize_dataset_json_drops_legacy_smart_keys(explorer_panel_and_controller):
+def test_normalize_dataset_json_drops_legacy_vqa_and_smart_keys(explorer_panel_and_controller):
     _panel, controller = explorer_panel_and_controller
     raw = {
         "questions": [
@@ -124,8 +124,8 @@ def test_normalize_dataset_json_drops_legacy_smart_keys(explorer_panel_and_contr
     normalized, error = controller._normalize_dataset_json(raw)
     assert error == ""
     sample = normalized["data"][0]
-    assert normalized["questions"] == [{"id": "q1", "question": "How are you?"}]
-    assert sample["answers"] == [{"question_id": "q1", "answer": "ok"}]
+    assert "questions" not in normalized
+    assert "answers" not in sample
     assert sample["labels"]["phase"]["label"] == "build"
     assert "smart_labels" not in sample
     assert "smart_events" not in sample
@@ -157,10 +157,7 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
         "modalities": ["video"],
         "metadata": {},
         "labels": {},
-        "questions": [
-            {"id": "q1", "question": "How are you?"},
-            {"id": "q2", "question": "What happened?"},
-        ],
+        "questions": [{"id": "q1", "question": "Legacy question"}],
         "custom_root": {"keep": True},
         "data": [
             {
@@ -171,8 +168,10 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
                 "captions": [],
                 "dense_captions": [],
                 "answers": [
-                    {"question_id": "q1", "answer": "I am fine."},
-                    {"question_id": "qmissing", "answer": "drop"},
+                    {"question": "How are you?", "answers": ["I am fine.", "I am good."]},
+                    {"question": "How are you?", "answers": ["Still fine."]},
+                    {"question": "", "answers": ["drop"]},
+                    {"question_id": "q1", "answer": "drop legacy"},
                 ],
                 "metadata": {},
                 "custom_sample": {"keep": 1},
@@ -187,16 +186,15 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
     assert written["modalities"] == ["video"]
     assert written["task"] == "video_annotation"
     assert written["custom_root"] == {"keep": True}
-    assert written["questions"] == [
-        {"id": "q1", "question": "How are you?"},
-        {"id": "q2", "question": "What happened?"},
-    ]
+    assert "questions" not in written
     assert written["data"][0]["inputs"][0]["path"] == "../project/clips/clip.mp4"
     assert "labels" not in written["data"][0]
     assert "events" not in written["data"][0]
     assert "captions" not in written["data"][0]
     assert "dense_captions" not in written["data"][0]
-    assert written["data"][0]["answers"] == [{"question_id": "q1", "answer": "I am fine."}]
+    assert written["data"][0]["answers"] == [
+        {"question": "How are you?", "answers": ["I am fine.", "I am good.", "Still fine."]}
+    ]
     assert "metadata" not in written["data"][0]
     assert written["data"][0]["custom_sample"] == {"keep": 1}
 
@@ -211,13 +209,13 @@ def test_available_mode_indices_for_sample_prefers_fixed_order(explorer_panel_an
         ],
         "captions": [{"lang": "en", "text": "caption"}],
         "dense_captions": [{"position_ms": 1500, "lang": "en", "text": "dense"}],
-        "answers": [{"question_id": "q1", "answer": "answer"}],
+        "answers": [{"question": "How are you?", "answers": ["answer"]}],
     }
-    controller.dataset_json["questions"] = [{"id": "q1", "question": "How are you?"}]
     assert controller._available_mode_indices_for_sample(sample) == [0, 1, 2, 3, 4]
     assert controller._available_mode_indices_for_sample({"events": [{"position_ms": 1}]}) == [1]
     assert controller._available_mode_indices_for_sample({"captions": [{"text": ""}]}) == []
-    assert controller._available_mode_indices_for_sample({"answers": [{"question_id": "q1", "answer": "x"}]}) == [4]
+    assert controller._available_mode_indices_for_sample({"answers": [{"question": "Q", "answers": ["x"]}]}) == [4]
+    assert controller._available_mode_indices_for_sample({"answers": [{"question_id": "q1", "answer": "x"}]}) == []
 
 
 def test_dataset_tree_sample_label_shows_average_smart_confidence_suffix(

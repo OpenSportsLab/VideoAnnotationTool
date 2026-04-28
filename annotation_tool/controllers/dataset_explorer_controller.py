@@ -227,7 +227,6 @@ class DatasetExplorerController(QObject):
     dataSelected = pyqtSignal(str)
     sampleSelectionChanged = pyqtSignal(object)
     schemaContextChanged = pyqtSignal(dict)
-    questionBankChanged = pyqtSignal(list)
     classificationActionListChanged = pyqtSignal(list)
     mediaRouteRequested = pyqtSignal(object, bool)
     mediaStopRequested = pyqtSignal()
@@ -345,18 +344,6 @@ class DatasetExplorerController(QObject):
     @modalities.setter
     def modalities(self, value):
         self.dataset_json["modalities"] = list(value) if isinstance(value, list) else ["video"]
-
-    @property
-    def question_definitions(self) -> list:
-        questions = self.dataset_json.get("questions")
-        if not isinstance(questions, list):
-            questions = []
-            self.dataset_json["questions"] = questions
-        return questions
-
-    @question_definitions.setter
-    def question_definitions(self, value):
-        self.dataset_json["questions"] = list(value) if isinstance(value, list) else []
 
     @property
     def project_header_known(self) -> dict:
@@ -595,9 +582,6 @@ class DatasetExplorerController(QObject):
 
     def _emit_schema_context(self):
         self.schemaContextChanged.emit(copy.deepcopy(self.label_definitions))
-
-    def _emit_question_bank_context(self):
-        self.questionBankChanged.emit(copy.deepcopy(self.question_definitions))
 
     def _emit_classification_action_list(self):
         self.classificationActionListChanged.emit(copy.deepcopy(self.action_item_data))
@@ -1054,7 +1038,6 @@ class DatasetExplorerController(QObject):
             "modalities": ["video"],
             "metadata": {},
             "labels": {},
-            "questions": [],
             "data": [],
         }
 
@@ -1122,60 +1105,41 @@ class DatasetExplorerController(QObject):
         )
 
     @staticmethod
-    def _normalize_question_id(question_id: str) -> str:
-        return str(question_id or "").strip()
-
-    def _normalize_questions_payload(self, questions) -> list:
+    def _normalize_sample_answers_payload(answers) -> list:
         normalized = []
-        seen_ids = set()
-        for raw_question in list(questions or []):
-            if not isinstance(raw_question, dict):
-                continue
-
-            question_id = self._normalize_question_id(raw_question.get("id"))
-            question_text = str(raw_question.get("question") or "").strip()
-            if not question_id or not question_text:
-                continue
-            if question_id in seen_ids:
-                continue
-
-            seen_ids.add(question_id)
-            normalized.append({"id": question_id, "question": question_text})
-        return normalized
-
-    @staticmethod
-    def _normalize_sample_answers_payload(answers, valid_question_ids: set) -> list:
-        normalized = []
-        seen_question_ids = set()
+        index_by_question = {}
         for raw_answer in list(answers or []):
             if not isinstance(raw_answer, dict):
                 continue
-            question_id = str(raw_answer.get("question_id") or "").strip()
-            if (
-                not question_id
-                or question_id not in valid_question_ids
-                or question_id in seen_question_ids
-            ):
-                continue
-            answer_text = str(raw_answer.get("answer") or "").strip()
-            if not answer_text:
-                continue
-            normalized.append({"question_id": question_id, "answer": answer_text})
-            seen_question_ids.add(question_id)
-        return normalized
 
-    def next_question_id(self) -> str:
-        max_suffix = 0
-        for question in self.question_definitions:
-            if not isinstance(question, dict):
+            # Legacy question_id/answer entries require explicit migration and
+            # are intentionally not accepted by the grouped VQA schema.
+            if "question_id" in raw_answer:
                 continue
-            question_id = self._normalize_question_id(question.get("id"))
-            if not question_id.startswith("q"):
+
+            question_text = str(raw_answer.get("question") or "").strip()
+            if not question_text:
                 continue
-            suffix = question_id[1:]
-            if suffix.isdigit():
-                max_suffix = max(max_suffix, int(suffix))
-        return f"q{max_suffix + 1}"
+
+            raw_answers = raw_answer.get("answers")
+            if not isinstance(raw_answers, list):
+                continue
+
+            answer_texts = []
+            for raw_text in raw_answers:
+                answer_text = str(raw_text or "").strip()
+                if answer_text:
+                    answer_texts.append(answer_text)
+            if not answer_texts:
+                continue
+
+            existing_index = index_by_question.get(question_text)
+            if existing_index is None:
+                index_by_question[question_text] = len(normalized)
+                normalized.append({"question": question_text, "answers": answer_texts})
+            else:
+                normalized[existing_index]["answers"].extend(answer_texts)
+        return normalized
 
     def _normalize_dataset_json(self, data):
         if not isinstance(data, dict):
@@ -1189,8 +1153,7 @@ class DatasetExplorerController(QObject):
 
         if not isinstance(normalized.get("labels"), dict):
             normalized["labels"] = {}
-        normalized["questions"] = self._normalize_questions_payload(normalized.get("questions"))
-        valid_question_ids = {question["id"] for question in normalized["questions"]}
+        normalized.pop("questions", None)
         if not isinstance(normalized.get("metadata"), dict):
             normalized["metadata"] = {}
         if not isinstance(normalized.get("data"), list):
@@ -1241,10 +1204,7 @@ class DatasetExplorerController(QObject):
                     if isinstance(event, dict):
                         event["position_ms"] = _safe_int(event.get("position_ms", 0))
 
-            normalized_answers = self._normalize_sample_answers_payload(
-                sample.get("answers"),
-                valid_question_ids,
-            )
+            normalized_answers = self._normalize_sample_answers_payload(sample.get("answers"))
             if normalized_answers:
                 sample["answers"] = normalized_answers
             else:
@@ -1880,8 +1840,11 @@ class DatasetExplorerController(QObject):
         for entry in answers:
             if not isinstance(entry, dict):
                 continue
-            if str(entry.get("answer") or "").strip():
-                return True
+            if not str(entry.get("question") or "").strip():
+                continue
+            for answer_text in list(entry.get("answers") or []):
+                if str(answer_text or "").strip():
+                    return True
         return False
 
     @staticmethod
@@ -2212,8 +2175,7 @@ class DatasetExplorerController(QObject):
 
         base_dir = os.path.dirname(os.path.abspath(save_path))
         written = copy.deepcopy(normalized)
-        written["questions"] = self._normalize_questions_payload(written.get("questions"))
-        valid_question_ids = {question["id"] for question in written["questions"]}
+        written.pop("questions", None)
         for sample in written.get("data", []):
             new_inputs = []
 
@@ -2243,10 +2205,7 @@ class DatasetExplorerController(QObject):
                 sample.pop("captions", None)
             if not sample.get("dense_captions"):
                 sample.pop("dense_captions", None)
-            normalized_answers = self._normalize_sample_answers_payload(
-                sample.get("answers"),
-                valid_question_ids,
-            )
+            normalized_answers = self._normalize_sample_answers_payload(sample.get("answers"))
             if normalized_answers:
                 sample["answers"] = normalized_answers
             else:
@@ -2266,7 +2225,6 @@ class DatasetExplorerController(QObject):
             written.get("modalities"),
             written.get("data", []),
         )
-        written.setdefault("questions", [])
         if not written.get("description"):
             written["description"] = ""
         return written
@@ -2299,4 +2257,3 @@ class DatasetExplorerController(QObject):
     def _refresh_schema_panels(self):
         self.schemaRefreshRequested.emit()
         self._emit_schema_context()
-        self._emit_question_bank_context()

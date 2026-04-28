@@ -304,8 +304,8 @@ def synthetic_project_json(tmp_path):
                     ],
                     "answers": [
                         {
-                            "question_id": "q1",
-                            "answer": "I am fine." if idx == 1 else f"Answer {idx}",
+                            "question": "How are you?",
+                            "answers": ["I am fine." if idx == 1 else f"Answer {idx}"],
                         }
                     ],
                 }
@@ -344,7 +344,7 @@ def synthetic_project_json(tmp_path):
                             {"position_ms": 1500, "lang": "en", "text": "Mixed dense caption"},
                         ],
                         "answers": [
-                            {"question_id": "q1", "answer": "Mixed answer"},
+                            {"question": "How are you?", "answers": ["Mixed answer"]},
                         ],
                     }
                 )
@@ -408,10 +408,6 @@ def synthetic_project_json(tmp_path):
                 "metadata": {
                     "source": "pytest-qt",
                 },
-                "questions": [
-                    {"id": "q1", "question": "How are you?"},
-                    {"id": "q2", "question": "What happened?"},
-                ],
                 "data": qa_data,
             },
             "mixed": {
@@ -436,10 +432,6 @@ def synthetic_project_json(tmp_path):
                         "labels": ["pass", "shot"],
                     },
                 },
-                "questions": [
-                    {"id": "q1", "question": "How are you?"},
-                    {"id": "q2", "question": "What happened?"},
-                ],
                 "data": mixed_data,
             },
             "multiview": {

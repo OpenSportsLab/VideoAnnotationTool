@@ -32,7 +32,7 @@ Use the right-side tabs:
 - `LOC` for timestamped events
 - `DESC` for clip-level captions
 - `DENSE` for timestamped dense captions
-- `Q/A` for question bank + per-sample answers
+- `Q/A` for per-sample question groups and answers
 
 ## 5. Save
 

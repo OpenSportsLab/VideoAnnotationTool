@@ -13,7 +13,6 @@ Required/standard fields:
 - `modalities` (array, usually `["video"]`)
 - `metadata` (object)
 - `labels` (object)
-- `questions` (array)
 - `data` (array)
 
 Unknown root keys are preserved.
@@ -96,21 +95,16 @@ The current dense editor uses point timestamps:
 ]
 ```
 
-### Q/A payload (`questions` + `answers`)
+### Q/A payload (`answers`)
 
-Top-level bank:
-
-```json
-"questions": [
-  {"id": "q1", "question": "How are you?"}
-]
-```
-
-Per-sample sparse answers:
+Per-sample grouped answers keep the question text next to one or more answers:
 
 ```json
 "answers": [
-  {"question_id": "q1", "answer": "I am fine."}
+  {
+    "question": "How are you?",
+    "answers": ["I am fine.", "I am good."]
+  }
 ]
 ```
 
@@ -120,6 +114,7 @@ On save/export, the app:
 
 - ensures unique sample IDs
 - normalizes/filters invalid or empty answer entries
+- drops legacy top-level `questions` and `question_id` answers; convert old VQA files with `tools/convert_legacy_vqa_to_grouped.py`
 - removes empty optional task blocks
 - rewrites input paths relative to the output JSON location
 - preserves unknown root/sample fields

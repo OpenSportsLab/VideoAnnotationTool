@@ -1,19 +1,15 @@
 import copy
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QInputDialog
 
 
 class QAEditorController(QObject):
     """
     Question/Answer editor controller.
-    Owns shared question bank actions and per-sample answer editing.
+    Owns per-sample grouped question/answer editing.
     """
 
     statusMessageRequested = pyqtSignal(str, str, int)
-    qaQuestionAddRequested = pyqtSignal(str)
-    qaQuestionRenameRequested = pyqtSignal(str, str)
-    qaQuestionDeleteRequested = pyqtSignal(str)
     qaAnswersUpdateRequested = pyqtSignal(str, object)
 
     def __init__(self, question_answer_panel):
@@ -21,15 +17,15 @@ class QAEditorController(QObject):
         self.question_answer_panel = question_answer_panel
 
         self._active_mode_index = 0
+        self._project_enabled = False
         self._selection_enabled = False
-        self._question_bank_enabled = False
         self._suspend_autosave = False
-        self._pending_select_question_id = ""
 
-        self._question_bank = []
         self.current_sample_id = ""
         self._current_sample_snapshot = {}
-        self._answers_by_question_id = {}
+        self._answer_groups = []
+        self._selected_group_index = -1
+        self._selected_answer_index = -1
 
         self._autosave_timer = QTimer(self.question_answer_panel)
         self._autosave_timer.setSingleShot(True)
@@ -37,63 +33,44 @@ class QAEditorController(QObject):
         self._autosave_timer.timeout.connect(self.save_current_answers)
 
     def setup_connections(self):
-        self.question_answer_panel.questionAddRequested.connect(self._on_add_question_requested)
-        self.question_answer_panel.questionRenameRequested.connect(self._on_rename_question_requested)
-        self.question_answer_panel.questionDeleteRequested.connect(self._on_delete_question_requested)
-        self.question_answer_panel.questionSelectionChanged.connect(self._on_question_selection_changed)
+        self.question_answer_panel.questionGroupAddRequested.connect(
+            self._on_add_question_group_requested
+        )
+        self.question_answer_panel.questionGroupDeleteRequested.connect(
+            self._on_delete_question_group_requested
+        )
+        self.question_answer_panel.questionGroupSelectionChanged.connect(
+            self._on_question_group_selection_changed
+        )
+        self.question_answer_panel.questionTextChanged.connect(self._on_question_text_changed)
+        self.question_answer_panel.answerAddRequested.connect(self._on_add_answer_requested)
+        self.question_answer_panel.answerDeleteRequested.connect(self._on_delete_answer_requested)
+        self.question_answer_panel.answerSelectionChanged.connect(self._on_answer_selection_changed)
         self.question_answer_panel.answerTextChanged.connect(self._on_answer_text_changed)
 
     def on_mode_changed(self, index: int):
         self._active_mode_index = index
 
-    def set_question_bank_enabled(self, enabled: bool):
-        self._question_bank_enabled = bool(enabled)
-        self.question_answer_panel.set_question_bank_enabled(self._question_bank_enabled)
-        self._update_answer_editor_enabled()
+    def set_project_enabled(self, enabled: bool):
+        self._project_enabled = bool(enabled)
+        self._update_editor_enabled()
 
     def set_sample_selection_enabled(self, enabled: bool):
         self._selection_enabled = bool(enabled)
-        self._update_answer_editor_enabled()
+        self._update_editor_enabled()
 
     def reset_ui(self):
         self._autosave_timer.stop()
+        self._project_enabled = False
         self._selection_enabled = False
-        self._question_bank_enabled = False
-        self._pending_select_question_id = ""
-        self._question_bank = []
         self.current_sample_id = ""
         self._current_sample_snapshot = {}
-        self._answers_by_question_id = {}
+        self._answer_groups = []
+        self._selected_group_index = -1
+        self._selected_answer_index = -1
 
-        self.question_answer_panel.set_questions([])
-        self._set_answer_text("")
-        self.question_answer_panel.set_question_bank_enabled(False)
-        self.question_answer_panel.set_answer_editor_enabled(False)
-
-    def on_question_bank_changed(self, questions):
-        self._question_bank = self._normalize_questions(questions)
-        valid_ids = {question["id"] for question in self._question_bank}
-        self._answers_by_question_id = {
-            question_id: answer
-            for question_id, answer in self._answers_by_question_id.items()
-            if question_id in valid_ids
-        }
-
-        selected_question_id = self.question_answer_panel.get_selected_question_id()
-        if self._pending_select_question_id and self._pending_select_question_id in valid_ids:
-            selected_question_id = self._pending_select_question_id
-        elif selected_question_id not in valid_ids:
-            selected_question_id = self._question_bank[0]["id"] if self._question_bank else ""
-
-        self._pending_select_question_id = ""
-        self.question_answer_panel.set_questions(self._question_bank, selected_question_id=selected_question_id)
-        self.question_answer_panel.set_question_bank_enabled(self._question_bank_enabled)
-
-        if selected_question_id:
-            self._set_answer_text(self._answers_by_question_id.get(selected_question_id, ""))
-        else:
-            self._set_answer_text("")
-        self._update_answer_editor_enabled()
+        self._set_question_groups([])
+        self._update_editor_enabled()
 
     def on_selected_sample_changed(self, sample):
         if self._autosave_timer.isActive():
@@ -102,117 +79,135 @@ class QAEditorController(QObject):
 
         self.current_sample_id = ""
         self._current_sample_snapshot = {}
-        self._answers_by_question_id = {}
+        self._answer_groups = []
+        self._selected_group_index = -1
+        self._selected_answer_index = -1
 
         if isinstance(sample, dict):
             sample_id = str(sample.get("id") or "")
             if sample_id:
                 self.current_sample_id = sample_id
                 self._current_sample_snapshot = copy.deepcopy(sample)
-                self._answers_by_question_id = self._answers_map_from_sample(sample)
+                self._answer_groups = self._normalize_answers_payload(sample.get("answers"))
 
-        selected_question_id = self.question_answer_panel.get_selected_question_id()
-        if selected_question_id:
-            self._set_answer_text(self._answers_by_question_id.get(selected_question_id, ""))
+        if self._answer_groups:
+            self._selected_group_index = 0
+            self._selected_answer_index = 0 if self._answer_groups[0].get("answers") else -1
+
+        self._set_question_groups(self._answer_groups)
+        self._update_editor_enabled()
+
+    def _on_add_question_group_requested(self):
+        if not self.current_sample_id:
+            return
+        self._answer_groups.append({"question": "", "answers": [""]})
+        self._selected_group_index = len(self._answer_groups) - 1
+        self._selected_answer_index = 0
+        self._set_question_groups(self._answer_groups)
+        self._update_editor_enabled()
+
+    def _on_delete_question_group_requested(self):
+        group_index = self._selected_group_index
+        if not self._valid_group_index(group_index):
+            return
+
+        self._answer_groups.pop(group_index)
+        if self._answer_groups:
+            self._selected_group_index = min(group_index, len(self._answer_groups) - 1)
+            answers = self._answer_groups[self._selected_group_index].get("answers", [])
+            self._selected_answer_index = 0 if answers else -1
         else:
-            self._set_answer_text("")
-        self._update_answer_editor_enabled()
+            self._selected_group_index = -1
+            self._selected_answer_index = -1
+        self._set_question_groups(self._answer_groups)
+        self._start_autosave()
+        self._update_editor_enabled()
 
-    def _on_add_question_requested(self):
-        text, accepted = QInputDialog.getText(
-            self.question_answer_panel,
-            "Add Question",
-            "Question:",
-        )
-        if not accepted:
+    def _on_question_group_selection_changed(self, index: int):
+        if self._suspend_autosave:
             return
-
-        question_text = str(text or "").strip()
-        if not question_text:
-            return
-
-        if any(entry["question"].lower() == question_text.lower() for entry in self._question_bank):
-            self.statusMessageRequested.emit("Duplicate", "Question already exists.", 1500)
-            return
-
-        self._pending_select_question_id = self._next_question_id_from_bank()
-        self.qaQuestionAddRequested.emit(question_text)
-
-    def _on_rename_question_requested(self, question_id: str):
-        target_id = str(question_id or "").strip()
-        if not target_id:
-            return
-
-        current_question = self._question_text_for_id(target_id)
-        if not current_question:
-            return
-
-        text, accepted = QInputDialog.getText(
-            self.question_answer_panel,
-            "Rename Question",
-            "Question:",
-            text=current_question,
-        )
-        if not accepted:
-            return
-
-        new_text = str(text or "").strip()
-        if not new_text or new_text == current_question:
-            return
-
-        if any(
-            entry["id"] != target_id and entry["question"].lower() == new_text.lower()
-            for entry in self._question_bank
-        ):
-            self.statusMessageRequested.emit("Duplicate", "Question already exists.", 1500)
-            return
-
-        self._pending_select_question_id = target_id
-        self.qaQuestionRenameRequested.emit(target_id, new_text)
-
-    def _on_delete_question_requested(self, question_id: str):
-        target_id = str(question_id or "").strip()
-        if not target_id:
-            return
-
-        current_question = self._question_text_for_id(target_id)
-        if not current_question:
-            return
-
-        self.qaQuestionDeleteRequested.emit(target_id)
-        self._answers_by_question_id.pop(target_id, None)
-
-    def _on_question_selection_changed(self, question_id: str):
         if self._autosave_timer.isActive():
             self._autosave_timer.stop()
             self.save_current_answers()
 
-        selected_id = str(question_id or "")
-        if selected_id:
-            self._set_answer_text(self._answers_by_question_id.get(selected_id, ""))
+        self._selected_group_index = int(index)
+        if self._valid_group_index(self._selected_group_index):
+            answers = self._answer_groups[self._selected_group_index].get("answers", [])
+            self._selected_answer_index = 0 if answers else -1
+            self._sync_editors_from_selection()
         else:
-            self._set_answer_text("")
-        self._update_answer_editor_enabled()
+            self._selected_answer_index = -1
+            self._sync_editors_from_selection()
+        self._update_editor_enabled()
 
-    def _on_answer_text_changed(self):
+    def _on_question_text_changed(self):
+        if self._suspend_autosave or not self.current_sample_id:
+            return
+        if not self._valid_group_index(self._selected_group_index):
+            return
+
+        self._answer_groups[self._selected_group_index]["question"] = (
+            self.question_answer_panel.get_question_text()
+        )
+        self.question_answer_panel.refresh_question_label(
+            self._answer_groups[self._selected_group_index],
+            self._selected_group_index,
+        )
+        self._start_autosave()
+
+    def _on_add_answer_requested(self):
+        if not self._valid_group_index(self._selected_group_index):
+            return
+        answers = self._answer_groups[self._selected_group_index].setdefault("answers", [])
+        answers.append("")
+        self._selected_answer_index = len(answers) - 1
+        self._set_answer_rows(answers)
+        self._update_editor_enabled()
+
+    def _on_delete_answer_requested(self):
+        if not self._valid_answer_index(self._selected_group_index, self._selected_answer_index):
+            return
+        answers = self._answer_groups[self._selected_group_index].setdefault("answers", [])
+        answers.pop(self._selected_answer_index)
+        if answers:
+            self._selected_answer_index = min(self._selected_answer_index, len(answers) - 1)
+        else:
+            self._selected_answer_index = -1
+        self._set_answer_rows(answers)
+        self._start_autosave()
+        self._update_editor_enabled()
+
+    def _on_answer_selection_changed(self, index: int):
         if self._suspend_autosave:
             return
-        if not self.current_sample_id:
+        if self._autosave_timer.isActive():
+            self._autosave_timer.stop()
+            self.save_current_answers()
+
+        self._selected_answer_index = int(index)
+        self._sync_answer_editor_from_selection()
+        self._update_editor_enabled()
+
+    def _on_answer_text_changed(self):
+        if self._suspend_autosave or not self.current_sample_id:
+            return
+        if not self._valid_answer_index(self._selected_group_index, self._selected_answer_index):
             return
 
-        question_id = self.question_answer_panel.get_selected_question_id()
-        if not question_id:
-            return
-
-        self._answers_by_question_id[str(question_id)] = self.question_answer_panel.get_answer_text()
-        self._autosave_timer.start()
+        answers = self._answer_groups[self._selected_group_index].setdefault("answers", [])
+        answers[self._selected_answer_index] = self.question_answer_panel.get_answer_text()
+        self.question_answer_panel.refresh_answer_label(
+            answers[self._selected_answer_index],
+            self._selected_answer_index,
+        )
+        self._start_autosave()
 
     def save_current_answers(self):
         if not self.current_sample_id:
             return False
 
-        new_answers = self._answers_list_from_map(self._answers_by_question_id)
-        old_answers = self._normalized_answers_list(self._current_sample_snapshot.get("answers"))
+        new_answers = self._normalize_answers_payload(self._answer_groups)
+        old_answers = self._normalize_answers_payload(self._current_sample_snapshot.get("answers"))
         if old_answers == new_answers:
             return False
 
@@ -223,84 +218,118 @@ class QAEditorController(QObject):
             self._current_sample_snapshot.pop("answers", None)
         return True
 
-    def _update_answer_editor_enabled(self):
-        has_sample = bool(self.current_sample_id)
-        has_question = bool(self.question_answer_panel.get_selected_question_id())
-        enabled = bool(self._selection_enabled and has_sample and has_question)
-        self.question_answer_panel.set_answer_editor_enabled(enabled)
+    def _start_autosave(self):
+        if self.current_sample_id:
+            self._autosave_timer.start()
 
-    def _set_answer_text(self, text: str):
+    def _set_question_groups(self, groups):
         self._suspend_autosave = True
         try:
-            self.question_answer_panel.set_answer_text(text)
+            self.question_answer_panel.set_question_groups(
+                groups,
+                selected_group_index=self._selected_group_index,
+                selected_answer_index=self._selected_answer_index,
+            )
         finally:
             self._suspend_autosave = False
 
-    def _question_text_for_id(self, question_id: str) -> str:
-        for entry in self._question_bank:
-            if entry["id"] == question_id:
-                return entry["question"]
-        return ""
+    def _set_answer_rows(self, answers):
+        self._suspend_autosave = True
+        try:
+            self.question_answer_panel.set_answer_rows(
+                answers,
+                selected_answer_index=self._selected_answer_index,
+            )
+        finally:
+            self._suspend_autosave = False
 
-    def _normalize_questions(self, questions) -> list:
+    def _sync_editors_from_selection(self):
+        self._suspend_autosave = True
+        try:
+            if self._valid_group_index(self._selected_group_index):
+                group = self._answer_groups[self._selected_group_index]
+                self.question_answer_panel.set_question_text(group.get("question", ""))
+                self.question_answer_panel.set_answer_rows(
+                    group.get("answers", []),
+                    selected_answer_index=self._selected_answer_index,
+                )
+            else:
+                self.question_answer_panel.set_question_text("")
+                self.question_answer_panel.set_answer_rows([], selected_answer_index=-1)
+        finally:
+            self._suspend_autosave = False
+
+    def _sync_answer_editor_from_selection(self):
+        self._suspend_autosave = True
+        try:
+            if self._valid_answer_index(self._selected_group_index, self._selected_answer_index):
+                answer_text = self._answer_groups[self._selected_group_index]["answers"][
+                    self._selected_answer_index
+                ]
+                self.question_answer_panel.set_answer_text(answer_text)
+            else:
+                self.question_answer_panel.set_answer_text("")
+        finally:
+            self._suspend_autosave = False
+
+    def _update_editor_enabled(self):
+        editor_enabled = bool(
+            self._project_enabled and self._selection_enabled and self.current_sample_id
+        )
+        has_group = self._valid_group_index(self._selected_group_index)
+        has_answer = self._valid_answer_index(self._selected_group_index, self._selected_answer_index)
+        self.question_answer_panel.set_controls_enabled(
+            editor_enabled=editor_enabled,
+            has_group=has_group,
+            has_answer=has_answer,
+        )
+
+    def _valid_group_index(self, index: int) -> bool:
+        try:
+            index = int(index)
+        except Exception:
+            return False
+        return 0 <= index < len(self._answer_groups)
+
+    def _valid_answer_index(self, group_index: int, answer_index: int) -> bool:
+        try:
+            group_index = int(group_index)
+            answer_index = int(answer_index)
+        except Exception:
+            return False
+        if not self._valid_group_index(group_index):
+            return False
+        answers = self._answer_groups[group_index].get("answers")
+        return isinstance(answers, list) and 0 <= answer_index < len(answers)
+
+    @classmethod
+    def _normalize_answers_payload(cls, answers) -> list:
         normalized = []
-        seen_ids = set()
-        for raw_entry in list(questions or []):
-            if not isinstance(raw_entry, dict):
+        index_by_question = {}
+        for raw_group in list(answers or []):
+            if not isinstance(raw_group, dict) or "question_id" in raw_group:
                 continue
-            question_id = str(raw_entry.get("id") or "").strip()
-            question_text = str(raw_entry.get("question") or "").strip()
-            if not question_id or not question_text:
+
+            question = str(raw_group.get("question") or "").strip()
+            if not question:
                 continue
-            if question_id in seen_ids:
+
+            raw_answers = raw_group.get("answers")
+            if not isinstance(raw_answers, list):
                 continue
-            seen_ids.add(question_id)
-            normalized.append({"id": question_id, "question": question_text})
+
+            answer_texts = []
+            for raw_answer in raw_answers:
+                answer_text = str(raw_answer or "").strip()
+                if answer_text:
+                    answer_texts.append(answer_text)
+            if not answer_texts:
+                continue
+
+            existing_index = index_by_question.get(question)
+            if existing_index is None:
+                index_by_question[question] = len(normalized)
+                normalized.append({"question": question, "answers": answer_texts})
+            else:
+                normalized[existing_index]["answers"].extend(answer_texts)
         return normalized
-
-    def _normalized_answers_list(self, answers) -> list:
-        valid_ids = {question["id"] for question in self._question_bank}
-        normalized = []
-        seen_ids = set()
-        for raw_entry in list(answers or []):
-            if not isinstance(raw_entry, dict):
-                continue
-            question_id = str(raw_entry.get("question_id") or "").strip()
-            if not question_id or question_id not in valid_ids or question_id in seen_ids:
-                continue
-            answer_text = str(raw_entry.get("answer") or "").strip()
-            if not answer_text:
-                continue
-            normalized.append({"question_id": question_id, "answer": answer_text})
-            seen_ids.add(question_id)
-        return normalized
-
-    def _answers_map_from_sample(self, sample: dict) -> dict:
-        answer_map = {}
-        for entry in self._normalized_answers_list(sample.get("answers")):
-            answer_map[entry["question_id"]] = entry["answer"]
-        return answer_map
-
-    def _answers_list_from_map(self, answer_map: dict) -> list:
-        normalized = []
-        valid_ids = {question["id"] for question in self._question_bank}
-        for question in self._question_bank:
-            question_id = question["id"]
-            if question_id not in valid_ids:
-                continue
-            answer_text = str(answer_map.get(question_id) or "").strip()
-            if not answer_text:
-                continue
-            normalized.append({"question_id": question_id, "answer": answer_text})
-        return normalized
-
-    def _next_question_id_from_bank(self) -> str:
-        max_suffix = 0
-        for question in self._question_bank:
-            question_id = str(question.get("id") or "")
-            if not question_id.startswith("q"):
-                continue
-            suffix = question_id[1:]
-            if suffix.isdigit():
-                max_suffix = max(max_suffix, int(suffix))
-        return f"q{max_suffix + 1}"

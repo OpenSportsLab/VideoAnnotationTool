@@ -71,7 +71,7 @@ The workspace has three regions: Dataset Explorer (left), Media Center (middle),
 
 ![Question/Answer Interface](assets/question-answer-UI.png)
 
-- Dataset-level question tabs (`q1`, `q2`, ...)
-- `+` tab adds a question
-- Right-click question tab to rename/delete
-- Per-sample answer editor autosaves after short idle delay
+- Per-sample question groups
+- Selected question text editor
+- Multiple answers per question
+- Edits autosave after short idle delay

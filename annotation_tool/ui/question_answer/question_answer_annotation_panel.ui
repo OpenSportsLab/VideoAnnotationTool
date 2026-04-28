@@ -37,48 +37,79 @@
     </widget>
    </item>
    <item>
-   <widget class="QTabWidget" name="questionTabs">
-     <property name="sizePolicy">
-      <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
-       <horstretch>0</horstretch>
-       <verstretch>0</verstretch>
-      </sizepolicy>
+    <layout class="QHBoxLayout" name="questionButtonLayout">
+     <property name="spacing">
+      <number>4</number>
      </property>
-     <property name="documentMode">
-      <bool>true</bool>
+     <item>
+      <widget class="QPushButton" name="addQuestionButton">
+       <property name="text">
+        <string>Add</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="deleteQuestionButton">
+       <property name="text">
+        <string>Delete</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QListWidget" name="questionList">
+     <property name="minimumHeight">
+      <number>120</number>
      </property>
-     <property name="currentIndex">
-      <number>0</number>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPlainTextEdit" name="questionEditor">
+     <property name="minimumHeight">
+      <number>90</number>
      </property>
-     <widget class="QWidget" name="questionPlaceholderTab">
-      <attribute name="title">
-       <string>q1</string>
-      </attribute>
-      <layout class="QVBoxLayout" name="questionPlaceholderLayout">
-       <property name="leftMargin">
-        <number>6</number>
+     <property name="placeholderText">
+      <string>Write the question for this sample.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="answerHeaderLabel">
+     <property name="text">
+      <string>Answers</string>
+     </property>
+     <property name="class" stdset="0">
+      <string notr="true">panel_header_lbl</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="answerButtonLayout">
+     <property name="spacing">
+      <number>4</number>
+     </property>
+     <item>
+      <widget class="QPushButton" name="addAnswerButton">
+       <property name="text">
+        <string>Add</string>
        </property>
-       <property name="topMargin">
-        <number>6</number>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="deleteAnswerButton">
+       <property name="text">
+        <string>Delete</string>
        </property>
-       <property name="rightMargin">
-        <number>6</number>
-       </property>
-       <property name="bottomMargin">
-        <number>6</number>
-       </property>
-       <item>
-       <widget class="QLabel" name="questionPlainLabel">
-         <property name="text">
-          <string>Select or add a question.</string>
-         </property>
-         <property name="wordWrap">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-      </layout>
-     </widget>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QListWidget" name="answerList">
+     <property name="minimumHeight">
+      <number>100</number>
+     </property>
     </widget>
    </item>
    <item>
@@ -90,7 +121,7 @@
       </sizepolicy>
      </property>
      <property name="placeholderText">
-      <string>Write the answer for the selected question.</string>
+      <string>Write the selected answer.</string>
      </property>
     </widget>
    </item>

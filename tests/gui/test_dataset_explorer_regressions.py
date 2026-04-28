@@ -121,8 +121,8 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     assert saved_sample["events"][1]["confidence_score"] == pytest.approx(0.7)
     assert saved_sample["captions"][0]["text"] == "Mixed caption"
     assert saved_sample["dense_captions"][0]["text"] == "Mixed dense caption"
-    assert saved["questions"][0]["id"] == "q1"
-    assert saved_sample["answers"][0]["answer"] == "Mixed answer"
+    assert "questions" not in saved
+    assert saved_sample["answers"][0]["answers"] == ["Mixed answer"]
 
     window.dataset_explorer_controller.close_project()
     _open_project(window, monkeypatch, project_json_path)
@@ -136,7 +136,7 @@ def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     assert reloaded_sample["events"][1]["confidence_score"] == pytest.approx(0.7)
     assert reloaded_sample["captions"][0]["text"] == "Mixed caption"
     assert reloaded_sample["dense_captions"][0]["text"] == "Mixed dense caption"
-    assert reloaded_sample["answers"][0]["answer"] == "Mixed answer"
+    assert reloaded_sample["answers"][0]["answers"] == ["Mixed answer"]
     assert window.dataset_explorer_controller.dataset_json["custom_root"] == {"keep": True}
 
 
@@ -516,7 +516,6 @@ def test_frames_npy_tab_switch_same_selection_does_not_restart_media(
         "dataset_name": "frames_tab_switch",
         "modalities": ["frames_npy"],
         "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
-        "questions": [{"id": "q1", "question": "What happened?"}],
         "data": [
             {
                 "id": "frames_clip",
@@ -525,7 +524,7 @@ def test_frames_npy_tab_switch_same_selection_does_not_restart_media(
                 "events": [{"head": "action", "label": "pass", "position_ms": 1000}],
                 "captions": [{"lang": "en", "text": "caption"}],
                 "dense_captions": [{"position_ms": 1500, "lang": "en", "text": "dense"}],
-                "answers": [{"question_id": "q1", "answer": "answer"}],
+                "answers": [{"question": "What happened?", "answers": ["answer"]}],
             }
         ],
     }
@@ -580,7 +579,6 @@ def test_tracking_parquet_tab_switch_same_selection_does_not_restart_media(
         "dataset_name": "tracking_tab_switch",
         "modalities": ["tracking_parquet"],
         "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
-        "questions": [{"id": "q1", "question": "What happened?"}],
         "data": [
             {
                 "id": "tracking_clip",
@@ -589,7 +587,7 @@ def test_tracking_parquet_tab_switch_same_selection_does_not_restart_media(
                 "events": [{"head": "action", "label": "pass", "position_ms": 1000}],
                 "captions": [{"lang": "en", "text": "caption"}],
                 "dense_captions": [{"position_ms": 1500, "lang": "en", "text": "dense"}],
-                "answers": [{"question_id": "q1", "answer": "answer"}],
+                "answers": [{"question": "What happened?", "answers": ["answer"]}],
             }
         ],
     }
