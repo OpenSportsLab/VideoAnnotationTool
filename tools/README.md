@@ -1,7 +1,6 @@
 # Tools
 
-Standalone command-line scripts for converting between the OSL JSON annotation format and a
-Parquet + WebDataset representation suited for large-scale ML training pipelines.
+Standalone command-line scripts for OSL JSON annotation conversion and dataset preparation.
 
 ---
 
@@ -57,6 +56,52 @@ python tools/osl_json_to_parquet_webdataset.py \
     --shard-size 500MB \
     --missing-policy skip \
     --overwrite
+```
+
+---
+
+## `merge_mvfouls_classification_into_vqa.py`
+
+Copies MVFouls classification labels into XFoul VQA annotation samples. The script matches
+samples by ID, stripping the MVFouls `test_` prefix and applying labels to duplicate VQA
+samples with suffixes such as `__2` or `__3`.
+
+### Usage
+
+```bash
+python tools/merge_mvfouls_classification_into_vqa.py [options]
+```
+
+### Optional arguments
+
+| Flag | Default | Description |
+|---|---|---|
+| `--classification-json PATH` | `test_data/MVFouls/test/annotations_test.json` | Path to the MVFouls classification annotation JSON. |
+| `--vqa-json PATH` | `test_data/VQA/XFoul-test/test.json` | Path to the XFoul VQA annotation JSON. |
+| `--output-json PATH` | `test_data/VQA/XFoul-test/test_with_classification.json` | Path where the merged JSON should be written. |
+| `--indent N` | `2` | JSON indentation level for the output file. |
+
+### Examples
+
+```bash
+# Merge using the default repository test-data paths
+python tools/merge_mvfouls_classification_into_vqa.py
+
+# Merge explicit input/output files
+python tools/merge_mvfouls_classification_into_vqa.py \
+    --classification-json test_data/MVFouls/test/annotations_test.json \
+    --vqa-json test_data/VQA/XFoul-test/test.json \
+    --output-json test_data/VQA/XFoul-test/test_with_classification.json
+
+python tools/merge_mvfouls_classification_into_vqa.py \
+    --classification-json test_data/MVFouls-jsonly/annotations_valid.json \
+    --vqa-json test_data/VQA/XFoul-valid/valid.json \
+    --output-json test_data/VQA/XFoul-valid/valid_with_classification.json
+
+python tools/merge_mvfouls_classification_into_vqa.py \
+    --classification-json test_data/MVFouls-jsonly/annotations_train.json \
+    --vqa-json test_data/VQA/XFoul-train/train.json \
+    --output-json test_data/VQA/XFoul-train/train_with_classification.json
 ```
 
 ---
