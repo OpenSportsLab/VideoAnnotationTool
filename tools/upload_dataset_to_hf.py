@@ -57,6 +57,7 @@ def upload_dataset_to_hf(
     repo_id: str,
     json_path: Path,
     revision: str = "main",
+    split: str | None = None,
     commit_message: str | None = None,
     token: str | None = None,
     upload_format: str = "json",
@@ -92,6 +93,7 @@ def upload_dataset_to_hf(
                 repo_id=repo_id,
                 json_path=str(json_path),
                 revision=revision,
+                split=split,
                 commit_message=commit_message,
                 token=token,
                 progress_cb=progress_cb,
@@ -101,6 +103,7 @@ def upload_dataset_to_hf(
             repo_id=repo_id,
             json_path=str(json_path),
             revision=revision,
+            split=split,
             commit_message=commit_message,
             shard_mode=shard_mode,
             shard_size=shard_size,
@@ -159,6 +162,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--json-path", required=True, type=Path, help="Local OSL dataset JSON path.")
     parser.add_argument("--revision", default="main", help="Target branch/revision in the dataset repo.")
     parser.add_argument(
+        "--split",
+        default=None,
+        help="Remote split/artifact name. JSON uploads <split>.json; parquet uploads <split>/.",
+    )
+    parser.add_argument(
         "--commit-message",
         default="Upload dataset inputs from JSON",
         help="Commit message for the upload.",
@@ -194,6 +202,7 @@ def main() -> int:
             repo_id=args.repo_id,
             json_path=args.json_path,
             revision=args.revision,
+            split=args.split,
             commit_message=args.commit_message,
             token=args.token,
             upload_format=args.upload_format,

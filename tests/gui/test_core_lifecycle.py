@@ -611,13 +611,18 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
 
     opened_json = tmp_path / "opened_dataset.json"
     opened_json.write_text("{}", encoding="utf-8")
-    custom_url = "https://huggingface.co/datasets/OpenSportsLab/custom/blob/main/annotations.json"
+    custom_transfer = {
+        "repo_id": "OpenSportsLab/custom",
+        "revision": "main",
+        "split": "test",
+        "download_format": "json",
+    }
     window.dataset_explorer_controller.settings.setValue(
-        HfDownloadDialog._KEY_SUCCESS_URLS,
+        HfDownloadDialog._KEY_SUCCESS_TRANSFERS,
         [
-            HfDownloadDialog._AVAILABLE_DATASET_URLS[0],
-            custom_url,
-            custom_url,
+            HfDownloadDialog._transfer_key(HfDownloadDialog._AVAILABLE_DATASET_TRANSFERS[0]),
+            HfDownloadDialog._transfer_key(custom_transfer),
+            HfDownloadDialog._transfer_key(custom_transfer),
         ],
     )
     window.dataset_explorer_controller.settings.sync()
@@ -626,10 +631,11 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
     download_box = download_dialog.findChild(QDialogButtonBox)
     assert download_box is not None
     assert download_box.button(QDialogButtonBox.StandardButton.Ok).text() == "Download"
-    assert download_dialog.url_combo.isEditable() is True
-    combo_items = [download_dialog.url_combo.itemText(i) for i in range(download_dialog.url_combo.count())]
-    assert combo_items.count(custom_url) == 1
-    assert combo_items.count(HfDownloadDialog._AVAILABLE_DATASET_URLS[0]) == 1
+    assert download_dialog.repo_id_edit.text()
+    saved_transfers = HfDownloadDialog.get_successful_transfers_from_settings(
+        window.dataset_explorer_controller.settings
+    )
+    assert saved_transfers.count(HfDownloadDialog._transfer_key(custom_transfer)) == 1
     download_dialog.close()
 
     upload_dialog = HfUploadDialog(
@@ -641,6 +647,7 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
     assert upload_box is not None
     assert upload_box.button(QDialogButtonBox.StandardButton.Ok).text() == "Upload"
     assert upload_dialog.revision_edit.text() == "main"
+    assert upload_dialog.split_edit.text() == "opened_dataset"
     assert upload_dialog.upload_as_json_checkbox.isChecked() is True
     assert upload_dialog.shard_size_spin.value() == 1000
     assert upload_dialog.shard_size_spin.isEnabled() is False
@@ -746,7 +753,10 @@ def test_data_menu_actions_dispatch_hf_download_and_upload(window, monkeypatch, 
     assert window.action_hf_upload.isEnabled() is True
 
     download_payload = {
-        "url": "https://huggingface.co/datasets/OpenSportsLab/repo/blob/main/annotations.json",
+        "repo_id": "OpenSportsLab/repo",
+        "revision": "main",
+        "split": "test",
+        "download_format": "json",
         "output_dir": "test_data/Classification/svfouls",
         "dry_run": False,
         "token": None,
@@ -755,6 +765,7 @@ def test_data_menu_actions_dispatch_hf_download_and_upload(window, monkeypatch, 
         "repo_id": "OpenSportsLab/OSL-loc-tennis-public",
         "json_path": str(opened_json),
         "revision": "main",
+        "split": "test",
         "commit_message": "Upload dataset inputs from JSON",
         "token": None,
     }
@@ -849,16 +860,21 @@ def test_download_completion_prompts_and_opens_dataset_when_accepted(window, mon
 
 
 @pytest.mark.gui
-def test_download_success_appends_url_to_settings_without_duplicates(window, monkeypatch, tmp_path):
+def test_download_success_appends_transfer_to_settings_without_duplicates(window, monkeypatch, tmp_path):
     from ui.dialogs import HfDownloadDialog
 
     downloaded_json = tmp_path / "annotations_test.json"
     downloaded_json.write_text("{}", encoding="utf-8")
-    successful_url = "https://huggingface.co/datasets/OpenSportsLab/repo/blob/main/annotations.json"
+    successful_transfer = {
+        "repo_id": "OpenSportsLab/repo",
+        "revision": "main",
+        "split": "test",
+        "download_format": "json",
+    }
 
     settings = window.dataset_explorer_controller.settings
-    HfDownloadDialog.add_successful_url_to_settings(settings, successful_url)
-    window._last_hf_download_payload = {"url": successful_url}
+    HfDownloadDialog.add_successful_transfer_to_settings(settings, successful_transfer)
+    window._last_hf_download_payload = dict(successful_transfer)
 
     monkeypatch.setattr("main_window.QMessageBox.information", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -875,18 +891,23 @@ def test_download_success_appends_url_to_settings_without_duplicates(window, mon
         }
     )
 
-    saved_urls = HfDownloadDialog.get_successful_urls_from_settings(settings)
-    assert saved_urls.count(successful_url) == 1
+    saved_transfers = HfDownloadDialog.get_successful_transfers_from_settings(settings)
+    assert saved_transfers.count(HfDownloadDialog._transfer_key(successful_transfer)) == 1
 
 
 @pytest.mark.gui
-def test_download_not_found_removes_url_from_settings(window, monkeypatch):
+def test_download_not_found_removes_transfer_from_settings(window, monkeypatch):
     from ui.dialogs import HfDownloadDialog
 
-    stale_url = "https://huggingface.co/datasets/OpenSportsLab/repo/blob/main/missing.json"
+    stale_transfer = {
+        "repo_id": "OpenSportsLab/repo",
+        "revision": "main",
+        "split": "missing",
+        "download_format": "json",
+    }
     settings = window.dataset_explorer_controller.settings
-    HfDownloadDialog.add_successful_url_to_settings(settings, stale_url)
-    window._last_hf_download_payload = {"url": stale_url}
+    HfDownloadDialog.add_successful_transfer_to_settings(settings, stale_transfer)
+    window._last_hf_download_payload = dict(stale_transfer)
 
     monkeypatch.setattr("main_window.QMessageBox.critical", lambda *args, **kwargs: None)
 
@@ -895,8 +916,8 @@ def test_download_not_found_removes_url_from_settings(window, monkeypatch):
         "https://huggingface.co/datasets/OpenSportsLab/repo/resolve/main/missing.json."
     )
 
-    saved_urls = HfDownloadDialog.get_successful_urls_from_settings(settings)
-    assert stale_url not in saved_urls
+    saved_transfers = HfDownloadDialog.get_successful_transfers_from_settings(settings)
+    assert HfDownloadDialog._transfer_key(stale_transfer) not in saved_transfers
 
 
 @pytest.mark.gui

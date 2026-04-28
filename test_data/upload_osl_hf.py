@@ -13,6 +13,7 @@ from opensportslib.tools.hf_transfer import upload_dataset_inputs_from_json_to_h
 def main(
     repo_id: str,
     json_path: str,
+    split: str,
     revision: str = "main",
     commit_message: str | None = None,
     token: str | None = None,
@@ -21,6 +22,7 @@ def main(
         repo_id=repo_id,
         json_path=json_path,
         revision=revision,
+        split=split,
         commit_message=commit_message,
         token=token,
         progress_cb=lambda msg: print(f"[HF] {msg}"),
@@ -29,6 +31,7 @@ def main(
     print("Upload complete.")
     print(f"Repo: {result['repo_id']}")
     print(f"Branch: {result['revision']}")
+    print(f"Split: {result.get('split') or split}")
     print(f"Dataset JSON: {result['json_path']}")
     if "unique_input_file_count" in result:
         print(f"Unique input files: {result['unique_input_file_count']}")
@@ -43,6 +46,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--repo-id", required=True, help="Dataset repo id, e.g. OpenSportsLab/OSL-loc-tennis-public")
     parser.add_argument("--json-path", required=True, help="Local dataset JSON path.")
+    parser.add_argument("--split", required=True, help="Remote split/artifact name.")
     parser.add_argument(
         "--revision",
         default="main",
@@ -63,6 +67,7 @@ if __name__ == "__main__":
     main(
         repo_id=args.repo_id,
         json_path=args.json_path,
+        split=args.split,
         revision=args.revision,
         commit_message=args.commit_message,
         token=args.token,

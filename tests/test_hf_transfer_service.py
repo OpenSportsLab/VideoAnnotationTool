@@ -7,7 +7,7 @@ from controllers.hf_transfer_controller import _HfDownloadWorker, _HfUploadWorke
 
 def test_controller_module_uses_opensportslib_transfer_functions():
     assert hf_transfer_controller.HfTransferCancelled is hf_transfer.HfTransferCancelled
-    assert hf_transfer_controller.download_dataset_from_hf is hf_transfer.download_dataset_from_hf
+    assert hf_transfer_controller.download_dataset_split_from_hf is hf_transfer.download_dataset_split_from_hf
     assert hf_transfer_controller.upload_dataset_inputs_from_json_to_hf is hf_transfer.upload_dataset_inputs_from_json_to_hf
     assert hf_transfer_controller.upload_dataset_as_parquet_to_hf is hf_transfer.upload_dataset_as_parquet_to_hf
 
@@ -15,20 +15,24 @@ def test_controller_module_uses_opensportslib_transfer_functions():
 def test_download_worker_routes_to_library_api(monkeypatch):
     calls = {}
 
-    def _fake_download_dataset_from_hf(url, output_dir, **kwargs):
-        calls["url"] = url
+    def _fake_download_dataset_split_from_hf(repo_id, revision, split, output_dir, **kwargs):
+        calls["repo_id"] = repo_id
+        calls["revision"] = revision
+        calls["split"] = split
         calls["output_dir"] = output_dir
         calls.update(kwargs)
         return {"ok": True}
 
-    monkeypatch.setattr(hf_transfer_controller, "download_dataset_from_hf", _fake_download_dataset_from_hf)
+    monkeypatch.setattr(hf_transfer_controller, "download_dataset_split_from_hf", _fake_download_dataset_split_from_hf)
 
     worker = _HfDownloadWorker(
         {
-            "url": "https://huggingface.co/datasets/OpenSportsLab/repo/blob/main/annotations.json",
+            "repo_id": "OpenSportsLab/repo",
+            "revision": "main",
+            "split": "test",
+            "download_format": "json",
             "output_dir": "/tmp/output",
             "dry_run": True,
-            "types": "video",
             "token": "hf_test",
         }
     )
@@ -37,10 +41,12 @@ def test_download_worker_routes_to_library_api(monkeypatch):
     worker.completed.connect(lambda payload: completed_payloads.append(payload))
     worker.run()
 
-    assert calls["url"].endswith("annotations.json")
+    assert calls["repo_id"] == "OpenSportsLab/repo"
+    assert calls["revision"] == "main"
+    assert calls["split"] == "test"
+    assert calls["download_format"] == "json"
     assert calls["output_dir"] == "/tmp/output"
     assert calls["dry_run"] is True
-    assert calls["types_arg"] == "video"
     assert calls["token"] == "hf_test"
     assert callable(calls["progress_cb"])
     assert callable(calls["is_cancelled"])
@@ -69,6 +75,7 @@ def test_upload_worker_routes_json_mode_to_library_api(monkeypatch, tmp_path):
             "repo_id": "OpenSportsLab/repo",
             "json_path": str(json_path),
             "revision": "main",
+            "split": "test",
             "commit_message": "msg",
             "token": "hf_test",
         }
@@ -81,6 +88,7 @@ def test_upload_worker_routes_json_mode_to_library_api(monkeypatch, tmp_path):
     assert calls["repo_id"] == "OpenSportsLab/repo"
     assert calls["json_path"] == str(json_path)
     assert calls["revision"] == "main"
+    assert calls["split"] == "test"
     assert calls["commit_message"] == "msg"
     assert calls["token"] == "hf_test"
     assert callable(calls["progress_cb"])
@@ -110,6 +118,7 @@ def test_upload_worker_routes_parquet_mode_to_library_api(monkeypatch, tmp_path)
             "repo_id": "OpenSportsLab/repo",
             "json_path": str(json_path),
             "revision": "dev",
+            "split": "test",
             "commit_message": "msg",
             "shard_size": 250_000_000,
             "token": "hf_test",
@@ -123,6 +132,7 @@ def test_upload_worker_routes_parquet_mode_to_library_api(monkeypatch, tmp_path)
     assert calls["repo_id"] == "OpenSportsLab/repo"
     assert calls["json_path"] == str(json_path)
     assert calls["revision"] == "dev"
+    assert calls["split"] == "test"
     assert calls["shard_mode"] == "size"
     assert calls["shard_size"] == 250_000_000
     assert calls["token"] == "hf_test"
@@ -135,9 +145,9 @@ def test_download_worker_emits_cancelled_for_transfer_cancel(monkeypatch):
     def _raise_cancel(*args, **kwargs):
         raise hf_transfer.HfTransferCancelled("Transfer cancelled by user.")
 
-    monkeypatch.setattr(hf_transfer_controller, "download_dataset_from_hf", _raise_cancel)
+    monkeypatch.setattr(hf_transfer_controller, "download_dataset_split_from_hf", _raise_cancel)
 
-    worker = _HfDownloadWorker({"url": "u", "output_dir": "o"})
+    worker = _HfDownloadWorker({"repo_id": "r", "revision": "main", "split": "s", "output_dir": "o"})
     cancelled_messages = []
     worker.cancelled.connect(lambda msg: cancelled_messages.append(msg))
     worker.run()

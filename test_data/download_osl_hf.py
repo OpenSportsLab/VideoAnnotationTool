@@ -8,21 +8,25 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from opensportslib.tools.hf_transfer import download_dataset_from_hf
+from opensportslib.tools.hf_transfer import download_dataset_split_from_hf
 
 
 def main(
-    osl_json_url: str,
+    repo_id: str,
+    revision: str,
+    split: str,
     output_dir: str = "downloaded_data",
+    download_format: str = "parquet",
     dry_run: bool = False,
-    types_arg: str = "video",
     token: str | None = None,
 ) -> None:
-    result = download_dataset_from_hf(
-        osl_json_url,
+    result = download_dataset_split_from_hf(
+        repo_id,
+        revision,
+        split,
         output_dir,
+        download_format=download_format,
         dry_run=dry_run,
-        types_arg=types_arg,
         token=token,
         progress_cb=lambda msg: print(f"[HF] {msg}"),
     )
@@ -57,26 +61,29 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Download files referenced in an OSL JSON from a Hugging Face dataset repo."
+        description="Download an OSL dataset split from a Hugging Face dataset repo."
     )
     parser.add_argument(
-        "--url",
+        "--repo-id",
         required=True,
-        help="URL of the OSL JSON file on Hugging Face (blob/resolve forms supported).",
+        help="Dataset repo id, e.g. OpenSportsLab/OSL-XFoul.",
+    )
+    parser.add_argument(
+        "--revision",
+        required=True,
+        help="Dataset branch/revision.",
+    )
+    parser.add_argument(
+        "--split",
+        required=True,
+        help="Dataset split/artifact name. JSON mode downloads <split>.json; parquet mode downloads <split>/.",
     )
     parser.add_argument(
         "--output-dir",
         default="downloaded_data",
-        help="Directory to store downloaded files.",
+        help="Root directory for downloads. Files are stored under <output-dir>/<revision>/<split>.",
     )
-    parser.add_argument(
-        "--types",
-        default="video",
-        help=(
-            "Comma-separated input types (e.g. 'video', 'video,captions,features') "
-            "or 'all'. Default: video."
-        ),
-    )
+    parser.add_argument("--format", choices=["json", "parquet"], default="parquet", help="Download format.")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -90,9 +97,11 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(
-        osl_json_url=args.url,
+        repo_id=args.repo_id,
+        revision=args.revision,
+        split=args.split,
         output_dir=args.output_dir,
+        download_format=args.format,
         dry_run=args.dry_run,
-        types_arg=args.types,
         token=args.token,
     )

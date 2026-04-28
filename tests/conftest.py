@@ -81,7 +81,7 @@ def _install_opensportslib_stub() -> None:
     hf_transfer_module.create_dataset_branch_on_hf = lambda *args, **kwargs: {}
     hf_transfer_module.create_dataset_repo_on_hf = lambda *args, **kwargs: {}
     hf_transfer_module.dataset_repo_exists_on_hf = lambda *args, **kwargs: False
-    hf_transfer_module.download_dataset_from_hf = lambda *args, **kwargs: {}
+    hf_transfer_module.download_dataset_split_from_hf = lambda *args, **kwargs: {}
 
     def _error_text(value) -> str:
         return str(value or "").strip().lower()

@@ -56,18 +56,22 @@ If authentication is missing or access is not granted, the script will fail with
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/<org>/<dataset>/blob/<revision>/<annotations.json> \
+  --repo-id <org>/<dataset> \
+  --revision <revision> \
+  --split <split> \
+  --format json \
   --output-dir <output_directory>
 ```
-- The URL should be copied directly from the Hugging Face web interface
-(i.e. `blob/... URLs`).
-- The script automatically converts it to the correct `resolve/...` format internally.
+- JSON mode downloads `<split>.json` and every file referenced by that JSON.
+- Parquet mode downloads and converts the `<split>/` folder.
 
 **Arguments:**
 
-* `--url`: (required) The direct Hugging Face URL of the OSL JSON file (should be in “blob/main/...” form, like you see in the web interface).
-* `--output-dir`: (optional) Path to the directory where the dataset and videos should be downloaded. Defaults to `downloaded_data` if not specified.
-* `--types`: (optional) Comma-separated input types (e.g. `video,captions,features`) or `all`. Defaults to `video`.
+* `--repo-id`: (required) Hugging Face dataset repo ID, such as `OpenSportsLab/OSL-XFoul`.
+* `--revision`: (required) Hugging Face branch/revision.
+* `--split`: (required) Split/artifact name.
+* `--format`: (optional) `json` or `parquet`. Defaults to `parquet`.
+* `--output-dir`: (optional) Download root. Files are written under `<output-dir>/<revision>/<split>`. Defaults to `downloaded_data`.
 * `--dry-run`: (optional) If provided, lists all files that would be downloaded and total size, but does not actually download any files.
 * `--token`: (optional) HF token override. If omitted, your local HF login is used.
 
@@ -77,7 +81,10 @@ Classification – svfouls
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-classification-vars/blob/svfouls/annotations_test.json \
+  --repo-id OpenSportsLab/soccernetpro-classification-vars \
+  --revision svfouls \
+  --split annotations_test \
+  --format json \
   --output-dir test_data/Classification/svfouls
 ```
 
@@ -85,7 +92,10 @@ Classification – mvfouls
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-classification-vars/blob/mvfouls/annotations_test.json \
+  --repo-id OpenSportsLab/soccernetpro-classification-vars \
+  --revision mvfouls \
+  --split annotations_test \
+  --format json \
   --output-dir test_data/Classification/mvfouls
 ```
 
@@ -93,7 +103,10 @@ Localization – Action Spotting (SNBAS)
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-snbas/blob/224p/annotations-test.json \
+  --repo-id OpenSportsLab/soccernetpro-localization-snbas \
+  --revision 224p \
+  --split annotations-test \
+  --format json \
   --output-dir test_data/Localization/snbas
 ```
 
@@ -101,7 +114,10 @@ Localization – Action Spotting (Tennis)
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-tennis/blob/main/annotations-localization-test.json \
+  --repo-id OpenSportsLab/soccernetpro-localization-tennis \
+  --revision main \
+  --split annotations-localization-test \
+  --format json \
   --output-dir test_data/Localization/tennis
 ```
 
@@ -109,7 +125,10 @@ Localization – Action Spotting (Gymnastics)
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-gymnastics/blob/main/annotations-localization-test.json \
+  --repo-id OpenSportsLab/soccernetpro-localization-gymnastics \
+  --revision main \
+  --split annotations-localization-test \
+  --format json \
   --output-dir test_data/Localization/gymnastics
 ```
 
@@ -117,7 +136,10 @@ Description – Video Captioning (xFoul)
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-description-xfoul/blob/main/annotations_test.json \
+  --repo-id OpenSportsLab/soccernetpro-description-xfoul \
+  --revision main \
+  --split annotations_test \
+  --format json \
   --output-dir test_data/Description/xfoul
 ```
 
@@ -125,7 +147,10 @@ Dense Description – Dense Video Captioning (SNDVC)
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-densedescription-sndvc/blob/main/annotations-test.json \
+  --repo-id OpenSportsLab/soccernetpro-densedescription-sndvc \
+  --revision main \
+  --split annotations-test \
+  --format json \
   --output-dir test_data/DenseDescription/sndvc
 ```
 
@@ -133,7 +158,10 @@ python test_data/download_osl_hf.py \
 Before downloading large video files, run the script in dry-run mode
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-classification-vars/blob/svfouls/annotations_test.json \
+  --repo-id OpenSportsLab/soccernetpro-classification-vars \
+  --revision svfouls \
+  --split annotations_test \
+  --format json \
   --dry-run
 ```
 Dry-run mode will:

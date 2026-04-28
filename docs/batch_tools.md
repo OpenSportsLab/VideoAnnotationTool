@@ -7,17 +7,21 @@ The app supports Hugging Face dataset transfer from the **Data** menu and script
 ### Download Dataset from HF...
 
 - Opens a dialog for:
-  - HF URL
+  - repo ID
+  - branch/revision
+  - split
+  - format
   - output directory
   - optional token
   - dry-run mode
 - Supports:
-  - JSON file URLs (`.../blob/.../annotations.json`)
-  - Parquet folder URLs (`.../tree/.../<folder>`)
+  - JSON split downloads (`<split>.json`)
+  - Parquet split downloads (`<split>/`)
+- Writes files under `<output directory>/<revision>/<split>`.
 - On successful non-dry-run JSON download, source metadata is written into the JSON root:
-  - `hf_source_url`
   - `hf_repo_id`
   - `hf_branch`
+  - `hf_split`
 
 ### Upload Dataset to HF...
 
@@ -36,9 +40,11 @@ If repository/branch is missing, the app can prompt to create it and retry.
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url <HF_JSON_OR_FOLDER_URL> \
+  --repo-id <org/repo> \
+  --revision main \
+  --split test \
+  --format json \
   --output-dir <LOCAL_DIR> \
-  --types video \
   --dry-run
 ```
 
@@ -48,6 +54,7 @@ python test_data/download_osl_hf.py \
 python test_data/upload_osl_hf.py \
   --repo-id <org/repo> \
   --json-path <local_dataset.json> \
+  --split test \
   --revision main
 ```
 

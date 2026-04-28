@@ -940,10 +940,9 @@ class VideoAnnotationWindow(QMainWindow):
 
     def _on_hf_download_failed(self, error: str) -> None:
         failed_payload = dict(self._last_hf_download_payload or {})
-        failed_url = str(failed_payload.get("url") or "").strip()
-        if failed_url and is_hf_download_url_not_found_error(error):
+        if failed_payload and is_hf_download_url_not_found_error(error):
             settings = getattr(self.dataset_explorer_controller, "settings", None)
-            HfDownloadDialog.remove_successful_url_from_settings(settings, failed_url)
+            HfDownloadDialog.remove_successful_transfer_from_settings(settings, failed_payload)
 
         self._last_hf_download_payload = None
         self._on_hf_transfer_failed("HF Download Failed", error)
@@ -972,9 +971,8 @@ class VideoAnnotationWindow(QMainWindow):
             return
 
         completed_payload = dict(self._last_hf_download_payload or {})
-        completed_url = str(completed_payload.get("url") or "").strip()
         settings = getattr(self.dataset_explorer_controller, "settings", None)
-        HfDownloadDialog.add_successful_url_to_settings(settings, completed_url)
+        HfDownloadDialog.add_successful_transfer_to_settings(settings, completed_payload)
         self._last_hf_download_payload = None
 
         download_kind = str(result.get("download_kind") or "json")

@@ -75,7 +75,7 @@ the upload once.
 ### Usage
 
 ```bash
-python tools/upload_dataset_to_hf.py --repo-id <org/repo> --json-path <json_path> [options]
+python tools/upload_dataset_to_hf.py --repo-id <org/repo> --json-path <json_path> --split <split> [options]
 ```
 
 ### Required arguments
@@ -84,6 +84,7 @@ python tools/upload_dataset_to_hf.py --repo-id <org/repo> --json-path <json_path
 |---|---|
 | `--repo-id REPO` | Target Hugging Face dataset repo ID, such as `OpenSportsLab/my-dataset`. |
 | `--json-path PATH` | Local OSL dataset JSON path. |
+| `--split SPLIT` | Remote split/artifact name. JSON uploads `<split>.json`; Parquet uploads `<split>/`. |
 
 ### Optional arguments
 
