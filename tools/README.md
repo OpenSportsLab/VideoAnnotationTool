@@ -365,3 +365,189 @@ Both scripts require `opensportslib` latest version
 pip install opensportslib==0.1.3
 pip install -e ~/git/opensportslib/
 ```
+
+
+
+**Basic Command:**
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id <org>/<dataset> \
+  --revision <revision> \
+  --split <split> \
+  --format json \
+  --output-dir <output_directory>
+```
+- JSON mode downloads `<split>.json` and every file referenced by that JSON.
+- Parquet mode downloads and converts the `<split>/` folder.
+
+**Arguments:**
+
+* `--repo-id`: (required) Hugging Face dataset repo ID, such as `OpenSportsLab/OSL-XFoul`.
+* `--revision`: (required) Hugging Face branch/revision.
+* `--split`: (required) Split/artifact name.
+* `--format`: (optional) `json` or `parquet`. Defaults to `parquet`.
+* `--output-dir`: (optional) Download root. Files are written under `<output-dir>/<revision>/<split>`. Defaults to `downloaded_data`.
+* `--dry-run`: (optional) If provided, lists all files that would be downloaded and total size, but does not actually download any files.
+* `--token`: (optional) HF token override. If omitted, your local HF login is used.
+
+
+**Example:**
+Classification – svfouls
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-classification-vars \
+  --revision svfouls \
+  --split annotations_test \
+  --format json \
+  --output-dir test_data/Classification/svfouls
+```
+
+Classification – mvfouls
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-classification-vars \
+  --revision mvfouls \
+  --split annotations_test \
+  --format json \
+  --output-dir test_data/Classification/mvfouls
+```
+
+Localization – Action Spotting (SNBAS)
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-localization-snbas \
+  --revision 224p \
+  --split annotations-test \
+  --format json \
+  --output-dir test_data/Localization/snbas
+```
+
+Localization – Action Spotting (Tennis)
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-localization-tennis \
+  --revision main \
+  --split annotations-localization-test \
+  --format json \
+  --output-dir test_data/Localization/tennis
+```
+
+Localization – Action Spotting (Gymnastics)
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-localization-gymnastics \
+  --revision main \
+  --split annotations-localization-test \
+  --format json \
+  --output-dir test_data/Localization/gymnastics
+```
+
+Description – Video Captioning (xFoul)
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-description-xfoul \
+  --revision main \
+  --split annotations_test \
+  --format json \
+  --output-dir test_data/Description/xfoul
+```
+
+Dense Description – Dense Video Captioning (SNDVC)
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-densedescription-sndvc \
+  --revision main \
+  --split annotations-test \
+  --format json \
+  --output-dir test_data/DenseDescription/sndvc
+```
+
+**Dry Run Example:**
+Before downloading large video files, run the script in dry-run mode
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-classification-vars \
+  --revision svfouls \
+  --split annotations_test \
+  --format json \
+  --dry-run
+```
+Dry-run mode will:
+- List all video files that would be downloaded
+- Show the estimated total storage required
+- Report missing files (if any)
+- Download nothing
+
+---
+
+**Output Structure:**
+Output Structure
+After downloading, the output directory will contain:
+- The annotation JSON file
+- All referenced video files
+- The original Hugging Face repository folder structure
+
+
+Example:
+
+```bash
+output_dir/
+├── annotations-test.json
+└── test/
+    └── action_0/
+        ├── clip_0.mp4
+        └── clip_1.mp4
+```
+
+
+# DL old format
+```bash
+for revision in 224p 720p 224p-2023 720p-2023; do
+for split in train test valid challenge; do
+python tools/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-localization-snbas \
+  --revision $revision \
+  --split annotations-$split \
+  --format json \
+  --output-dir test_data/soccernetpro-localization-snbas
+done
+done
+```
+
+# Upload new format
+```bash
+for revision in 224p-2024 720p-2024 224p-2023 720p-2023; do
+for split in train test valid challenge; do
+python tools/upload_dataset_to_hf.py \
+    --repo-id OpenSportsLab/OSL-SNBAS \
+    --revision $revision \
+    --split $split \
+    --json-path test_data/soccernetpro-localization-snbas/$revision/$split/$split.json \
+    --format parquet \
+    --shard-size 5GB \
+    --commit-message "Upload SNBAS $revision $split dataset"
+done
+done
+```
+
+# Download new format
+```bash
+for revision in 224p-2024 720p-2024 224p-2023 720p-2023; do
+for split in train test valid challenge; do
+python tools/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-localization-snbas \
+  --revision $revision \
+  --split $split \
+  --format json \
+  --output-dir test_data/soccernetpro-localization-snbas
+done
+done
+```
