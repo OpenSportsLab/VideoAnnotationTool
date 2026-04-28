@@ -832,6 +832,10 @@ def test_localization_inference_persists_confidence_and_confirm_strips_it(
         and int(evt.get("position_ms", 0)) == 4321
     )
     assert inferred.get("confidence_score") == pytest.approx(0.64)
+    tree_item = window.dataset_explorer_controller.action_item_map[
+        window.dataset_explorer_controller.get_path_by_id("clip_1")
+    ]
+    assert tree_item.text() == "clip_1 (conf:0.64)"
 
     row = next(
         i
@@ -852,6 +856,7 @@ def test_localization_inference_persists_confidence_and_confirm_strips_it(
         and int(evt.get("position_ms", 0)) == 4321
     )
     assert "confidence_score" not in confirmed
+    assert tree_item.text() == "clip_1"
 
 
 @pytest.mark.gui

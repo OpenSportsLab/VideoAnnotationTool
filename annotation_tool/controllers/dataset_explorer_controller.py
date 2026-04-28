@@ -450,6 +450,8 @@ class DatasetExplorerController(QObject):
 
         if hasattr(self.tree_model, "clear"):
             self.tree_model.clear()
+            if hasattr(self.tree_model, "configure_columns"):
+                self.tree_model.configure_columns()
         if hasattr(self.panel, "tree") and self.panel.tree is not None:
             self.panel.tree.setCurrentIndex(QModelIndex())
 
@@ -1400,14 +1402,14 @@ class DatasetExplorerController(QObject):
             return
 
         item_idx = item.index()
-        if not item_idx.isValid() or item_idx.parent().isValid():
+        if not item_idx.isValid() or item_idx.parent().isValid() or item_idx.column() != 0:
             return
 
         old_sample_id = str(item.data(getattr(self.tree_model, "DataIdRole", 0x0101)) or "")
         if not old_sample_id:
             return
 
-        requested_id = str(item.text() or "").strip()
+        requested_id = self._sample_id_from_tree_item_text(item.text())
         if not requested_id:
             self._suspend_tree_item_changed = True
             try:
@@ -1443,12 +1445,22 @@ class DatasetExplorerController(QObject):
             lambda old_id=old_sample_id, new_id=requested_id: self.sampleRenameRequested.emit(old_id, new_id),
         )
 
+    @staticmethod
+    def _sample_id_from_tree_item_text(text: str) -> str:
+        sample_id = str(text or "").strip()
+        marker = " (conf:"
+        if sample_id.endswith(")") and marker in sample_id:
+            sample_id = sample_id.rsplit(marker, 1)[0].strip()
+        return sample_id
+
     # ------------------------------------------------------------------
     # Tree population and selection
     # ------------------------------------------------------------------
     def populate_tree(self):
         self._rebuild_runtime_index()
         self.tree_model.clear()
+        if hasattr(self.tree_model, "configure_columns"):
+            self.tree_model.configure_columns()
         self.action_item_map.clear()
 
         sorted_items = sorted(
@@ -1464,6 +1476,7 @@ class DatasetExplorerController(QObject):
                     path=entry["path"],
                     source_files=entry.get("source_files"),
                     data_id=entry["data_id"],
+                    confidence_score=self._average_smart_confidence_for_sample(entry.get("sample_ref")),
                 )
                 self.action_item_map[entry["path"]] = item
                 self.update_item_status(entry["path"])
@@ -1486,8 +1499,21 @@ class DatasetExplorerController(QObject):
 
     def update_item_status(self, action_path: str):
         item = self.action_item_map.get(action_path)
+        sample = self.get_sample_by_path(action_path)
+        if item is None and isinstance(sample, dict):
+            entry = self.sample_id_to_entry.get(str(sample.get("id") or ""))
+            if entry:
+                item = self.action_item_map.get(entry.get("path"))
         if not item:
             return
+
+        if isinstance(sample, dict):
+            self._suspend_tree_item_changed = True
+            try:
+                item.setText(self._tree_display_name_for_sample(sample))
+            finally:
+                self._suspend_tree_item_changed = False
+
         done_icon, empty_icon = self._done_icon, self._empty_icon
         if done_icon is not None and empty_icon is not None:
             item.setIcon(done_icon if self.is_action_done(action_path) else empty_icon)
@@ -1508,6 +1534,15 @@ class DatasetExplorerController(QObject):
 
     def _active_mode_idx(self) -> int:
         return int(self._active_mode_index)
+
+    def _tree_display_name_for_sample(self, sample: dict) -> str:
+        display_name = self._display_name_for_sample(sample)
+        confidence_score = self._average_smart_confidence_for_sample(sample)
+        if hasattr(self.tree_model, "entry_display_name"):
+            return self.tree_model.entry_display_name(display_name, confidence_score)
+        if confidence_score is None:
+            return display_name
+        return f"{display_name} (conf:{float(confidence_score):.2f})"
 
     def _get_action_index(self, index: QModelIndex) -> QModelIndex:
         if not index.isValid():
@@ -1826,6 +1861,34 @@ class DatasetExplorerController(QObject):
                 if isinstance(event, dict) and "confidence_score" in event:
                     return True
         return False
+
+    @staticmethod
+    def _average_smart_confidence_for_sample(sample: dict):
+        if not isinstance(sample, dict):
+            return None
+
+        scores = []
+        labels = sample.get("labels")
+        if isinstance(labels, dict):
+            for payload in labels.values():
+                if isinstance(payload, dict) and "confidence_score" in payload:
+                    try:
+                        scores.append(float(payload.get("confidence_score")))
+                    except (TypeError, ValueError):
+                        pass
+
+        events = sample.get("events")
+        if isinstance(events, list):
+            for event in events:
+                if isinstance(event, dict) and "confidence_score" in event:
+                    try:
+                        scores.append(float(event.get("confidence_score")))
+                    except (TypeError, ValueError):
+                        pass
+
+        if not scores:
+            return None
+        return sum(scores) / len(scores)
 
     # ------------------------------------------------------------------
     # Sample add/remove/clear

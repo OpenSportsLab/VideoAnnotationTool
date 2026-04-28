@@ -1,4 +1,5 @@
 import types
+import subprocess
 
 import yaml
 
@@ -207,4 +208,97 @@ def test_localization_worker_uses_class_model_weights_and_position_fallback(monk
             "position_ms": 1200,
             "confidence_score": 0.75,
         }
+    ]
+
+
+def test_localization_worker_clip_falls_back_to_reencode(monkeypatch, tmp_path):
+    import opensportslib
+
+    calls = {"commands": []}
+
+    class _FakeLocalizationModel:
+        def __init__(self, config):
+            calls["config"] = config
+
+        def infer(self, **kwargs):
+            calls["infer_kwargs"] = kwargs
+            return {"data": [{"events": [{"label": "pass", "position_ms": 250}]}]}
+
+    def _fake_run(command, capture_output=False, text=False, check=False, **_kwargs):
+        calls["commands"].append(command)
+        if command[-3:-1] == ["-c", "copy"]:
+            raise subprocess.CalledProcessError(254, command, stderr="copy failed")
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        opensportslib,
+        "model",
+        types.SimpleNamespace(LocalizationModel=_FakeLocalizationModel),
+        raising=False,
+    )
+    monkeypatch.setattr(localization_inference_module, "_resolve_ffmpeg_executable", lambda: "ffmpeg")
+    monkeypatch.setattr(localization_inference_module.subprocess, "run", _fake_run)
+
+    config_path = tmp_path / "loc_config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "dali": False,
+                "DATA": {
+                    "classes": ["pass", "shot"],
+                    "test": {"dataloader": {"batch_size": 1, "num_workers": 0}},
+                },
+                "MODEL": {},
+                "SYSTEM": {},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"video")
+
+    worker = localization_inference_module.LocInferenceWorker(
+        video_path=str(video_path),
+        start_ms=1000,
+        end_ms=4000,
+        config_path=str(config_path),
+        model_id="OpenSportsLab/some-localizer",
+        head_name="ball_action",
+        labels=["pass", "shot"],
+        input_fps=25.0,
+    )
+
+    finished_payloads = []
+    worker.finished_signal.connect(lambda payload: finished_payloads.append(payload))
+    worker.run()
+
+    assert len(calls["commands"]) == 2
+    assert calls["commands"][0][-3:-1] == ["-c", "copy"]
+    fallback_command = calls["commands"][1]
+    assert fallback_command[fallback_command.index("-c:v") : fallback_command.index("-c:v") + 2] == [
+        "-c:v",
+        "libx264",
+    ]
+    assert fallback_command[fallback_command.index("-preset") : fallback_command.index("-preset") + 4] == [
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+    ]
+    assert fallback_command[fallback_command.index("-c:a") : fallback_command.index("-c:a") + 2] == [
+        "-c:a",
+        "aac",
+    ]
+    assert calls["infer_kwargs"]["weights"] == "OpenSportsLab/some-localizer"
+    assert finished_payloads == [
+        [
+            {
+                "head": "ball_action",
+                "label": "pass",
+                "position_ms": 1250,
+                "confidence_score": 1.0,
+            }
+        ]
     ]

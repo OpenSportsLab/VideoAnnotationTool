@@ -220,6 +220,114 @@ def test_available_mode_indices_for_sample_prefers_fixed_order(explorer_panel_an
     assert controller._available_mode_indices_for_sample({"answers": [{"question_id": "q1", "answer": "x"}]}) == [4]
 
 
+def test_dataset_tree_sample_label_shows_average_smart_confidence_suffix(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    controller.project_root = str(tmp_path)
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "data": [
+            {
+                "id": "clip_1",
+                "inputs": [{"path": "clips/one.mp4", "type": "video"}],
+                "labels": {"action": {"label": "shot", "confidence_score": 0.8}},
+                "events": [
+                    {"head": "ball_action", "label": "pass", "position_ms": 1000},
+                    {"head": "ball_action", "label": "shot", "position_ms": 2000, "confidence_score": 0.7},
+                ],
+            },
+            {
+                "id": "clip_2",
+                "inputs": [{"path": "clips/two.mp4", "type": "video"}],
+                "labels": {"action": {"label": "pass"}},
+            },
+        ]
+    }
+
+    controller.populate_tree()
+
+    assert panel.tree_model.columnCount() == 1
+    assert panel.tree.isHeaderHidden()
+    assert panel.tree_model.index(0, 0).data() == "clip_1 (conf:0.75)"
+    assert panel.tree_model.index(1, 0).data() == "clip_2"
+    assert controller._average_smart_confidence_for_sample(controller.get_sample("clip_1")) == pytest.approx(0.75)
+    assert controller._average_smart_confidence_for_sample(controller.get_sample("clip_2")) is None
+
+
+def test_dataset_tree_sample_label_keeps_natural_sample_sort(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    controller.project_root = str(tmp_path)
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "data": [
+            {
+                "id": "clip_10",
+                "inputs": [{"path": "clips/ten.mp4", "type": "video"}],
+                "events": [{"head": "action", "label": "pass", "position_ms": 1, "confidence_score": 0.2}],
+            },
+            {
+                "id": "clip_1",
+                "inputs": [{"path": "clips/one.mp4", "type": "video"}],
+            },
+            {
+                "id": "clip_2",
+                "inputs": [{"path": "clips/two.mp4", "type": "video"}],
+                "labels": {"action": {"label": "shot", "confidence_score": 0.85}},
+            },
+        ]
+    }
+
+    controller.populate_tree()
+    panel.tree_model.sort(0, Qt.SortOrder.AscendingOrder)
+
+    assert [panel.tree_model.index(row, 0).data() for row in range(3)] == [
+        "clip_1",
+        "clip_2 (conf:0.85)",
+        "clip_10 (conf:0.20)",
+    ]
+
+
+def test_dataset_tree_child_inputs_keep_roles_and_no_conf_suffix(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    controller.project_root = str(tmp_path)
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "data": [
+            {
+                "id": "multi",
+                "inputs": [
+                    {"path": "clips/view_1.mp4", "type": "video"},
+                    {"path": "clips/view_2.mp4", "type": "video"},
+                ],
+                "labels": {"action": {"label": "shot", "confidence_score": 0.9}},
+            }
+        ]
+    }
+
+    controller.populate_tree()
+
+    parent = panel.tree_model.index(0, 0)
+    child_name = panel.tree_model.index(0, 0, parent)
+    assert child_name.isValid()
+    assert child_name.data(panel.tree_model.DataIdRole) == "multi"
+    assert child_name.data() == "view_1.mp4"
+
+
+def test_dataset_tree_rename_strips_conf_suffix(explorer_panel_and_controller):
+    _panel, controller = explorer_panel_and_controller
+
+    assert controller._sample_id_from_tree_item_text("clip_1 (conf:0.75)") == "clip_1"
+    assert controller._sample_id_from_tree_item_text("renamed_clip") == "renamed_clip"
+
+
 def test_group_selected_files_and_sample_id_rules(
     explorer_panel_and_controller,
     tmp_path,
