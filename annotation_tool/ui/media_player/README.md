@@ -6,7 +6,7 @@ Provides the central video/timeline panel used across all annotation modes.
 ## Architecture Context
 - `MediaCenterPanel` loads static controls from `media_center_panel.ui`.
 - It hosts `QMediaPlayer`, `QAudioOutput`, `QVideoWidget`, and a frame-preview surface for rendering.
-- Playback business policy (routing/restart guards/watchdog decisions) remains in `MediaController`.
+- Playback business policy (routing/restart guards/backend selection/error dialogs) remains in `MediaController`.
 
 ## Public Surface
 ### Main Classes
@@ -47,7 +47,7 @@ Provides the central video/timeline panel used across all annotation modes.
 
 ## Conventions
 - Keep widget logic and presentation in this module.
-- Keep playback decision logic in `MediaController`.
+- Keep playback decision logic in `MediaController`; backend-specific parsing/rendering lives under `controllers/media/`.
 
 ## Interactions
 - Inbound from controller:
@@ -62,6 +62,7 @@ Provides the central video/timeline panel used across all annotation modes.
 
 ## Developer Knowledge
 - `MediaCenterPanel` owns widget/player primitives, but route/restart logic belongs in `MediaController`.
+- The panel stays backend-agnostic: internal backends push either Qt video output or raster images into the same preview area.
 - The preview surface is backend-agnostic: Qt video output for `video`, raster frame rendering for `frames_npy`, and pitch rendering for `tracking_parquet`.
 - Marker payload contract:
   list of dicts with at least `start_ms`, optional `color`.

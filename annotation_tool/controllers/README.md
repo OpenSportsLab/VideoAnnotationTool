@@ -14,7 +14,8 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `command_types.py`: `CmdType` enum for undo/redo command types.
 - `dataset_explorer_controller.py`: dataset and explorer orchestration.
 - `history_manager.py`: mutation/undo/redo engine.
-- `media_controller.py`: media playback and mute routing.
+- `media_controller.py`: media playback facade and mute routing.
+- `media/`: internal playback backends used by `MediaController` (`video`, `frames_npy`, `tracking_parquet`).
 - `welcome_controller.py`: welcome-page routing.
 - `hf_transfer_controller.py`: threaded Hugging Face download/upload orchestration for GUI menu actions.
 - `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`: mode controllers.
@@ -38,6 +39,8 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `route_media_selection()`: selection-aware route (reload/replay guard logic) for `video`, `frames_npy`, and `tracking_parquet` sources.
 - `load_and_play()`, `toggle_play_pause()`, `stop()`, `seek_relative()`, `set_position()`, `set_playback_rate()`: playback control.
 - `is_muted()`, `set_muted()`, `toggle_mute()`: mute control and signaling.
+- Internal structure:
+  `MediaController` is the stable public facade; format-specific playback lives in `media/video_backend.py`, `media/frames_npy_backend.py`, and `media/tracking_parquet_backend.py`, with shared raster runtime in `media/raster_backend.py`.
 
 ### `WelcomeController`
 - `_setup_connections()`: welcome signal wiring to dataset routes.
