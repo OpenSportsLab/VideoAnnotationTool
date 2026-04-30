@@ -10,6 +10,8 @@ import pytest
 from PyQt6.QtCore import QModelIndex, Qt
 from PyQt6.QtWidgets import QDialogButtonBox, QMessageBox
 
+from app_info import APP_DISPLAY_NAME, APP_VERSION
+
 
 MODE_TO_TAB_INDEX = {
     "classification": 0,
@@ -18,6 +20,22 @@ MODE_TO_TAB_INDEX = {
     "dense_description": 3,
     "question_answer": 4,
 }
+
+FRAME_STACK_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "test_data"
+    / "sn-gar"
+    / "sngar-frames"
+    / "train"
+    / "clip_000000.npy"
+)
+TRACKING_PARQUET_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "test_data"
+    / "sngar-tracking"
+    / "test"
+    / "clip_000000.parquet"
+)
 
 
 @pytest.mark.gui
@@ -136,6 +154,50 @@ def test_dataset_explorer_prev_next_sample_buttons_navigate_rows(
 
 
 @pytest.mark.gui
+def test_add_data_accepts_npy_and_creates_frames_npy_sample(window, monkeypatch, qtbot):
+    window.dataset_explorer_controller.create_new_project("classification")
+    assert window.dataset_explorer_controller.json_loaded is True
+
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(FRAME_STACK_PATH)],
+    )
+
+    window.dataset_explorer_controller.handle_add_sample()
+    qtbot.wait(50)
+
+    assert window.tree_model.rowCount() == 1
+    sample = window.dataset_explorer_controller.get_sample("clip_000000")
+    assert sample is not None
+    assert sample["inputs"][0]["type"] == "frames_npy"
+    assert sample["inputs"][0]["fps"] == pytest.approx(2.0)
+    assert "frames_npy" in window.dataset_explorer_controller.modalities
+
+
+@pytest.mark.gui
+def test_add_data_accepts_parquet_and_creates_tracking_sample(window, monkeypatch, qtbot):
+    window.dataset_explorer_controller.create_new_project("classification")
+    assert window.dataset_explorer_controller.json_loaded is True
+
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(TRACKING_PARQUET_PATH)],
+    )
+
+    window.dataset_explorer_controller.handle_add_sample()
+    qtbot.wait(50)
+
+    assert window.tree_model.rowCount() == 1
+    sample = window.dataset_explorer_controller.get_sample("clip_000000")
+    assert sample is not None
+    assert sample["inputs"][0]["type"] == "tracking_parquet"
+    assert sample["inputs"][0]["fps"] == pytest.approx(2.0)
+    assert "tracking_parquet" in window.dataset_explorer_controller.modalities
+
+
+@pytest.mark.gui
 # Workflow: Selecting a sample emits Data ID (not path) and routes media load from Dataset Explorer.
 def test_dataset_selection_emits_data_id_and_routes_media(
     window,
@@ -171,6 +233,175 @@ def test_dataset_selection_emits_data_id_and_routes_media(
     assert media_calls
     assert media_calls[-1] == selected_entry.get("path")
     assert selected_data_id != media_calls[-1]
+
+
+@pytest.mark.gui
+def test_frames_npy_dataset_selection_routes_canonical_media_source(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    rel_frame_path = os.path.relpath(FRAME_STACK_PATH, start=tmp_path).replace("\\", "/")
+    project_json_path = tmp_path / "frames_selection.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-26",
+        "task": "action_classification",
+        "dataset_name": "frames_selection",
+        "modalities": ["frame_npy"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "data": [
+            {
+                "id": "frames_clip",
+                "inputs": [{"path": rel_frame_path, "type": "frame_npy"}],
+                "labels": {},
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    media_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda source, auto_play=True: media_calls.append(source),
+    )
+
+    window.dataset_explorer_controller.import_annotations()
+    first_index = window.tree_model.index(0, 0)
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    assert media_calls
+    routed_source = media_calls[-1]
+    assert isinstance(routed_source, dict)
+    assert routed_source["type"] == "frames_npy"
+    assert routed_source["path"] == str(FRAME_STACK_PATH)
+    assert routed_source["fps"] == pytest.approx(2.0)
+    assert window.dataset_explorer_controller.dataset_json["modalities"] == ["frames_npy"]
+    assert window.dataset_explorer_controller.current_selected_input_path == str(FRAME_STACK_PATH)
+
+
+@pytest.mark.gui
+def test_tracking_parquet_dataset_selection_routes_canonical_media_source(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    rel_tracking_path = os.path.relpath(TRACKING_PARQUET_PATH, start=tmp_path).replace("\\", "/")
+    project_json_path = tmp_path / "tracking_selection.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-28",
+        "task": "action_classification",
+        "dataset_name": "tracking_selection",
+        "modalities": ["tracking_parquet"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "data": [
+            {
+                "id": "tracking_clip",
+                "inputs": [{"path": rel_tracking_path, "type": "tracking_parquet"}],
+                "labels": {},
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    media_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda source, auto_play=True: media_calls.append(source),
+    )
+
+    window.dataset_explorer_controller.import_annotations()
+    first_index = window.tree_model.index(0, 0)
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    assert media_calls
+    routed_source = media_calls[-1]
+    assert isinstance(routed_source, dict)
+    assert routed_source["type"] == "tracking_parquet"
+    assert routed_source["path"] == str(TRACKING_PARQUET_PATH)
+    assert routed_source["fps"] == pytest.approx(2.0)
+    assert window.dataset_explorer_controller.dataset_json["modalities"] == ["tracking_parquet"]
+    assert window.dataset_explorer_controller.current_selected_input_path == str(TRACKING_PARQUET_PATH)
+
+
+@pytest.mark.gui
+def test_mixed_video_and_tracking_selection_routes_selected_input(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    source_video = Path(__file__).resolve().parents[1] / "data" / "test_video_1.mp4"
+    assert source_video.exists()
+    rel_video_path = os.path.relpath(source_video, start=tmp_path).replace("\\", "/")
+    rel_tracking_path = os.path.relpath(TRACKING_PARQUET_PATH, start=tmp_path).replace("\\", "/")
+
+    project_json_path = tmp_path / "mixed_video_tracking.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-04-28",
+        "task": "action_classification",
+        "dataset_name": "mixed_video_tracking",
+        "modalities": ["video", "tracking_parquet"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "data": [
+            {
+                "id": "mixed_clip",
+                "inputs": [
+                    {"path": rel_video_path, "type": "video"},
+                    {"path": rel_tracking_path, "type": "tracking_parquet"},
+                ],
+                "labels": {},
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    media_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda source, auto_play=True: media_calls.append(source),
+    )
+
+    window.dataset_explorer_controller.import_annotations()
+    parent_index = window.tree_model.index(0, 0)
+    tracking_child_index = window.tree_model.index(1, 0, parent_index)
+    assert parent_index.isValid()
+    assert tracking_child_index.isValid()
+
+    window.dataset_explorer_panel.tree.setCurrentIndex(parent_index)
+    qtbot.wait(50)
+    window.dataset_explorer_panel.tree.setCurrentIndex(tracking_child_index)
+    qtbot.wait(50)
+
+    assert len(media_calls) >= 2
+    assert media_calls[0] == str(source_video)
+    assert isinstance(media_calls[-1], dict)
+    assert media_calls[-1]["type"] == "tracking_parquet"
+    assert media_calls[-1]["path"] == str(TRACKING_PARQUET_PATH)
 
 
 @pytest.mark.gui
@@ -334,12 +565,44 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 
 
 @pytest.mark.gui
-def test_menu_bar_contains_data_menu_between_file_and_edit(window):
+def test_menu_bar_contains_file_data_edit_help_menus(window):
     menu_names = [action.text().replace("&", "") for action in window.menuBar().actions()]
-    assert menu_names[:3] == ["File", "Data", "Edit"]
+    assert menu_names[:4] == ["File", "Data", "Edit", "Help"]
     assert hasattr(window, "action_hf_download")
     assert hasattr(window, "action_hf_upload")
     assert window.action_hf_upload.isEnabled() is False
+
+
+@pytest.mark.gui
+def test_help_menu_actions_open_shortcuts_and_info_popups(window, monkeypatch):
+    popup_calls = []
+
+    def _fake_information(parent, title, text, *args, **kwargs):
+        popup_calls.append((title, text))
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr("main_window.QMessageBox.information", _fake_information)
+
+    assert hasattr(window, "action_shortcuts")
+    assert hasattr(window, "action_info")
+    assert window.action_shortcuts.isEnabled() is True
+    assert window.action_info.isEnabled() is True
+
+    window.action_shortcuts.trigger()
+    window.action_info.trigger()
+
+    assert len(popup_calls) == 2
+
+    shortcuts_title, shortcuts_text = popup_calls[0]
+    info_title, info_text = popup_calls[1]
+
+    assert shortcuts_title == "Shortcuts"
+    assert "Ctrl+S" in shortcuts_text
+    assert "Space" in shortcuts_text
+
+    assert info_title == "Info"
+    assert APP_DISPLAY_NAME in info_text
+    assert f"Version: {APP_VERSION}" in info_text
 
 
 @pytest.mark.gui
@@ -348,13 +611,18 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
 
     opened_json = tmp_path / "opened_dataset.json"
     opened_json.write_text("{}", encoding="utf-8")
-    custom_url = "https://huggingface.co/datasets/OpenSportsLab/custom/blob/main/annotations.json"
+    custom_transfer = {
+        "repo_id": "OpenSportsLab/custom",
+        "revision": "main",
+        "split": "test",
+        "download_format": "json",
+    }
     window.dataset_explorer_controller.settings.setValue(
-        HfDownloadDialog._KEY_SUCCESS_URLS,
+        HfDownloadDialog._KEY_SUCCESS_TRANSFERS,
         [
-            HfDownloadDialog._AVAILABLE_DATASET_URLS[0],
-            custom_url,
-            custom_url,
+            HfDownloadDialog._transfer_key(HfDownloadDialog._AVAILABLE_DATASET_TRANSFERS[0]),
+            HfDownloadDialog._transfer_key(custom_transfer),
+            HfDownloadDialog._transfer_key(custom_transfer),
         ],
     )
     window.dataset_explorer_controller.settings.sync()
@@ -363,10 +631,11 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
     download_box = download_dialog.findChild(QDialogButtonBox)
     assert download_box is not None
     assert download_box.button(QDialogButtonBox.StandardButton.Ok).text() == "Download"
-    assert download_dialog.url_combo.isEditable() is True
-    combo_items = [download_dialog.url_combo.itemText(i) for i in range(download_dialog.url_combo.count())]
-    assert combo_items.count(custom_url) == 1
-    assert combo_items.count(HfDownloadDialog._AVAILABLE_DATASET_URLS[0]) == 1
+    assert download_dialog.repo_id_edit.text()
+    saved_transfers = HfDownloadDialog.get_successful_transfers_from_settings(
+        window.dataset_explorer_controller.settings
+    )
+    assert saved_transfers.count(HfDownloadDialog._transfer_key(custom_transfer)) == 1
     download_dialog.close()
 
     upload_dialog = HfUploadDialog(
@@ -378,9 +647,10 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
     assert upload_box is not None
     assert upload_box.button(QDialogButtonBox.StandardButton.Ok).text() == "Upload"
     assert upload_dialog.revision_edit.text() == "main"
+    assert upload_dialog.split_edit.text() == "opened_dataset"
     assert upload_dialog.upload_as_json_checkbox.isChecked() is True
-    assert upload_dialog.samples_per_shard_spin.value() == 100
-    assert upload_dialog.samples_per_shard_spin.isEnabled() is False
+    assert upload_dialog.shard_size_spin.value() == 1000
+    assert upload_dialog.shard_size_spin.isEnabled() is False
     upload_dialog.close()
 
 
@@ -397,7 +667,7 @@ def test_hf_upload_dialog_prefill_prefers_json_metadata_over_settings(window, tm
     settings.setValue(HfUploadDialog._KEY_COMMIT_MESSAGE, "Settings commit message")
     settings.setValue(HfUploadDialog._KEY_TOKEN, "settings-token")
     settings.setValue(HfUploadDialog._KEY_UPLOAD_AS_JSON, False)
-    settings.setValue(HfUploadDialog._KEY_SAMPLES_PER_SHARD, 64)
+    settings.setValue(HfUploadDialog._KEY_SHARD_SIZE, 640_000_000)
     settings.sync()
 
     upload_dialog = HfUploadDialog(
@@ -415,8 +685,8 @@ def test_hf_upload_dialog_prefill_prefers_json_metadata_over_settings(window, tm
     assert upload_dialog.commit_message_edit.text() == "Settings commit message"
     assert upload_dialog.token_edit.text() == "settings-token"
     assert upload_dialog.upload_as_json_checkbox.isChecked() is False
-    assert upload_dialog.samples_per_shard_spin.value() == 64
-    assert upload_dialog.samples_per_shard_spin.isEnabled() is True
+    assert upload_dialog.shard_size_spin.value() == 640
+    assert upload_dialog.shard_size_spin.isEnabled() is True
     upload_dialog.close()
 
 
@@ -429,6 +699,7 @@ def test_hf_upload_dialog_persists_upload_as_json_checkbox(window, tmp_path):
     settings = window.dataset_explorer_controller.settings
     settings.remove(HfUploadDialog._KEY_UPLOAD_AS_JSON)
     settings.remove(HfUploadDialog._KEY_SAMPLES_PER_SHARD)
+    settings.remove(HfUploadDialog._KEY_SHARD_SIZE)
     settings.sync()
 
     upload_dialog = HfUploadDialog(
@@ -437,7 +708,7 @@ def test_hf_upload_dialog_persists_upload_as_json_checkbox(window, tmp_path):
         parent=window,
     )
     upload_dialog.upload_as_json_checkbox.setChecked(False)
-    upload_dialog.samples_per_shard_spin.setValue(123)
+    upload_dialog.shard_size_spin.setValue(123)
     upload_dialog.repo_id_edit.setText("OpenSportsLab/test-repo")
     upload_dialog._validate_and_accept()
     upload_dialog.close()
@@ -448,13 +719,13 @@ def test_hf_upload_dialog_persists_upload_as_json_checkbox(window, tmp_path):
         parent=window,
     )
     assert reloaded_dialog.upload_as_json_checkbox.isChecked() is False
-    assert reloaded_dialog.samples_per_shard_spin.value() == 123
-    assert reloaded_dialog.samples_per_shard_spin.isEnabled() is True
+    assert reloaded_dialog.shard_size_spin.value() == 123
+    assert reloaded_dialog.shard_size_spin.isEnabled() is True
     reloaded_dialog.close()
 
 
 @pytest.mark.gui
-def test_hf_upload_dialog_greys_out_samples_per_shard_when_json_selected(window, tmp_path):
+def test_hf_upload_dialog_greys_out_shard_size_when_json_selected(window, tmp_path):
     from ui.dialogs import HfUploadDialog
 
     opened_json = tmp_path / "opened_dataset.json"
@@ -466,9 +737,9 @@ def test_hf_upload_dialog_greys_out_samples_per_shard_when_json_selected(window,
         parent=window,
     )
     dialog.upload_as_json_checkbox.setChecked(False)
-    assert dialog.samples_per_shard_spin.isEnabled() is True
+    assert dialog.shard_size_spin.isEnabled() is True
     dialog.upload_as_json_checkbox.setChecked(True)
-    assert dialog.samples_per_shard_spin.isEnabled() is False
+    assert dialog.shard_size_spin.isEnabled() is False
     dialog.close()
 
 
@@ -482,7 +753,10 @@ def test_data_menu_actions_dispatch_hf_download_and_upload(window, monkeypatch, 
     assert window.action_hf_upload.isEnabled() is True
 
     download_payload = {
-        "url": "https://huggingface.co/datasets/OpenSportsLab/repo/blob/main/annotations.json",
+        "repo_id": "OpenSportsLab/repo",
+        "revision": "main",
+        "split": "test",
+        "download_format": "json",
         "output_dir": "test_data/Classification/svfouls",
         "dry_run": False,
         "token": None,
@@ -491,6 +765,7 @@ def test_data_menu_actions_dispatch_hf_download_and_upload(window, monkeypatch, 
         "repo_id": "OpenSportsLab/OSL-loc-tennis-public",
         "json_path": str(opened_json),
         "revision": "main",
+        "split": "test",
         "commit_message": "Upload dataset inputs from JSON",
         "token": None,
     }
@@ -585,16 +860,21 @@ def test_download_completion_prompts_and_opens_dataset_when_accepted(window, mon
 
 
 @pytest.mark.gui
-def test_download_success_appends_url_to_settings_without_duplicates(window, monkeypatch, tmp_path):
+def test_download_success_appends_transfer_to_settings_without_duplicates(window, monkeypatch, tmp_path):
     from ui.dialogs import HfDownloadDialog
 
     downloaded_json = tmp_path / "annotations_test.json"
     downloaded_json.write_text("{}", encoding="utf-8")
-    successful_url = "https://huggingface.co/datasets/OpenSportsLab/repo/blob/main/annotations.json"
+    successful_transfer = {
+        "repo_id": "OpenSportsLab/repo",
+        "revision": "main",
+        "split": "test",
+        "download_format": "json",
+    }
 
     settings = window.dataset_explorer_controller.settings
-    HfDownloadDialog.add_successful_url_to_settings(settings, successful_url)
-    window._last_hf_download_payload = {"url": successful_url}
+    HfDownloadDialog.add_successful_transfer_to_settings(settings, successful_transfer)
+    window._last_hf_download_payload = dict(successful_transfer)
 
     monkeypatch.setattr("main_window.QMessageBox.information", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -611,18 +891,23 @@ def test_download_success_appends_url_to_settings_without_duplicates(window, mon
         }
     )
 
-    saved_urls = HfDownloadDialog.get_successful_urls_from_settings(settings)
-    assert saved_urls.count(successful_url) == 1
+    saved_transfers = HfDownloadDialog.get_successful_transfers_from_settings(settings)
+    assert saved_transfers.count(HfDownloadDialog._transfer_key(successful_transfer)) == 1
 
 
 @pytest.mark.gui
-def test_download_not_found_removes_url_from_settings(window, monkeypatch):
+def test_download_not_found_removes_transfer_from_settings(window, monkeypatch):
     from ui.dialogs import HfDownloadDialog
 
-    stale_url = "https://huggingface.co/datasets/OpenSportsLab/repo/blob/main/missing.json"
+    stale_transfer = {
+        "repo_id": "OpenSportsLab/repo",
+        "revision": "main",
+        "split": "missing",
+        "download_format": "json",
+    }
     settings = window.dataset_explorer_controller.settings
-    HfDownloadDialog.add_successful_url_to_settings(settings, stale_url)
-    window._last_hf_download_payload = {"url": stale_url}
+    HfDownloadDialog.add_successful_transfer_to_settings(settings, stale_transfer)
+    window._last_hf_download_payload = dict(stale_transfer)
 
     monkeypatch.setattr("main_window.QMessageBox.critical", lambda *args, **kwargs: None)
 
@@ -631,8 +916,8 @@ def test_download_not_found_removes_url_from_settings(window, monkeypatch):
         "https://huggingface.co/datasets/OpenSportsLab/repo/resolve/main/missing.json."
     )
 
-    saved_urls = HfDownloadDialog.get_successful_urls_from_settings(settings)
-    assert stale_url not in saved_urls
+    saved_transfers = HfDownloadDialog.get_successful_transfers_from_settings(settings)
+    assert HfDownloadDialog._transfer_key(stale_transfer) not in saved_transfers
 
 
 @pytest.mark.gui

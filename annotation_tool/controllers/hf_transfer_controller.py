@@ -2,9 +2,9 @@ from typing import Any
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
-from controllers.hf_transfer_service import (
+from opensportslib.tools.hf_transfer import (
     HfTransferCancelled,
-    download_dataset_from_hf,
+    download_dataset_split_from_hf,
     upload_dataset_as_parquet_to_hf,
     upload_dataset_inputs_from_json_to_hf,
 )
@@ -22,11 +22,13 @@ class _HfDownloadWorker(QThread):
 
     def run(self) -> None:
         try:
-            result = download_dataset_from_hf(
-                self._config.get("url", ""),
+            result = download_dataset_split_from_hf(
+                self._config.get("repo_id", ""),
+                self._config.get("revision", "main"),
+                self._config.get("split", ""),
                 self._config.get("output_dir", ""),
+                download_format=str(self._config.get("download_format", "parquet") or "parquet"),
                 dry_run=bool(self._config.get("dry_run", False)),
-                types_arg=str(self._config.get("types", "video")),
                 token=self._config.get("token"),
                 progress_cb=self.progress.emit,
                 is_cancelled=self.isInterruptionRequested,
@@ -55,6 +57,7 @@ class _HfUploadWorker(QThread):
                     repo_id=self._config.get("repo_id", ""),
                     json_path=self._config.get("json_path", ""),
                     revision=self._config.get("revision", "main"),
+                    split=self._config.get("split"),
                     commit_message=self._config.get("commit_message"),
                     token=self._config.get("token"),
                     progress_cb=self.progress.emit,
@@ -65,8 +68,10 @@ class _HfUploadWorker(QThread):
                     repo_id=self._config.get("repo_id", ""),
                     json_path=self._config.get("json_path", ""),
                     revision=self._config.get("revision", "main"),
+                    split=self._config.get("split"),
                     commit_message=self._config.get("commit_message"),
-                    samples_per_shard=int(self._config.get("samples_per_shard", 100) or 100),
+                    shard_mode=str(self._config.get("shard_mode", "size") or "size"),
+                    shard_size=int(self._config.get("shard_size", 1_000_000_000) or 1_000_000_000),
                     token=self._config.get("token"),
                     progress_cb=self.progress.emit,
                     is_cancelled=self.isInterruptionRequested,

@@ -30,6 +30,9 @@
 ## Question/Answer
 
 1. Open `Q/A`.
-2. Add or select a question tab.
-3. Enter the sample answer.
-4. Answers are stored as sparse `answers` keyed by `question_id`.
+2. Add or select a sample question group.
+3. Use the add/edit dialog to choose a previous dataset question or enter custom text.
+4. Double-click a question group to edit it, or right-click it to edit/remove it.
+5. Click **Answer** to add an answer in a multiline dialog.
+6. Double-click an answer to edit it, or right-click it to edit/remove it.
+7. Answers are stored as grouped `answers` with `question` and `answers[]`.

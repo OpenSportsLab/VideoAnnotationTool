@@ -1,4 +1,3 @@
-import glob
 import json
 import os
 import shutil
@@ -157,26 +156,44 @@ class LocInferenceWorker(QThread):
         return temp_config_path, model_labels
 
     @staticmethod
-    def _find_prediction_json(tmp_dir: str) -> str:
-        patterns = [
-            os.path.join(tmp_dir, "**", "predictions_test_epoch_*.json"),
-            os.path.join(tmp_dir, "**", "predictions*.json"),
-            os.path.join(tmp_dir, "**", "*.json"),
-        ]
-        candidates = []
-        for pattern in patterns:
-            candidates.extend(glob.glob(pattern, recursive=True))
+    def _normalize_prediction_payload(predictions) -> dict:
+        if isinstance(predictions, dict):
+            return predictions
+        if isinstance(predictions, str):
+            with open(predictions, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if isinstance(payload, dict):
+                return payload
+        raise TypeError(
+            f"Unsupported localization predictions type: {type(predictions).__name__}. Expected dict."
+        )
 
-        filtered = []
-        for candidate in candidates:
-            filename = os.path.basename(candidate)
-            if filename.startswith("temp_"):
+    @staticmethod
+    def _extract_prediction_events(payload: dict) -> list[dict]:
+        events = []
+        for item in list(payload.get("data", []) or []):
+            if not isinstance(item, dict):
                 continue
-            filtered.append(candidate)
+            for event in list(item.get("events", []) or []):
+                if isinstance(event, dict):
+                    events.append(event)
+        if events:
+            return events
 
-        if not filtered:
-            raise FileNotFoundError(f"Could not find any generated prediction JSON in {tmp_dir}")
-        return max(filtered, key=os.path.getctime)
+        for event in list(payload.get("predictions", []) or []):
+            if isinstance(event, dict):
+                events.append(event)
+        return events
+
+    @staticmethod
+    def _event_position_ms(event: dict) -> int:
+        raw_position = event.get("position_ms")
+        if raw_position is None:
+            raw_position = event.get("position")
+        try:
+            return int(float(raw_position or 0))
+        except Exception:
+            return 0
 
     def run(self):
         try:
@@ -204,47 +221,33 @@ class LocInferenceWorker(QThread):
                     with open(tmp_input_json, "w", encoding="utf-8") as handle:
                         json.dump(test_data, handle)
 
-                    loc_model = model.localization(config=tmp_config_yaml)
-                    known_eval_error = None
-                    try:
+                    loc_model = model.LocalizationModel(config=tmp_config_yaml)
+                    output_data = self._normalize_prediction_payload(
                         loc_model.infer(
                             test_set=tmp_input_json,
-                            pretrained=self.model_id
+                            weights=self.model_id,
+                            use_wandb=False,
                         )
-                    except FileNotFoundError as exc:
-                        known_eval_error = exc
-
-                    actual_output_json = None
-                    try:
-                        actual_output_json = self._find_prediction_json(tmp_dir)
-                    except FileNotFoundError:
-                        if known_eval_error is not None:
-                            raise known_eval_error
-                        raise
-
+                    )
+                    raw_evts = self._extract_prediction_events(output_data)
                     predicted_events = []
-                    if os.path.exists(actual_output_json):
-                        with open(actual_output_json, "r", encoding="utf-8") as handle:
-                            output_data = json.load(handle)
+                    default_label = runtime_labels[0] if runtime_labels else "Unknown"
+                    for evt in raw_evts:
+                        p_ms = self._event_position_ms(evt)
+                        if p_ms == 0 and evt.get("label") == default_label:
+                            continue
+                        absolute_ms = p_ms + clip_offset_ms
+                        if self.end_ms > 0 and absolute_ms > self.end_ms:
+                            continue
 
-                        raw_evts = output_data.get("data", [{}])[0].get("events", [])
-                        for evt in raw_evts:
-                            p_ms = int(evt.get("position_ms", 0) or 0)
-
-                            if p_ms == 0 and evt.get("label") == (runtime_labels[0] if runtime_labels else "Unknown"):
-                                continue
-                            absolute_ms = p_ms + clip_offset_ms
-                            if self.end_ms > 0 and absolute_ms > self.end_ms:
-                                continue
-
-                            predicted_events.append(
-                                {
-                                    "head": self.target_head,
-                                    "label": evt.get("label", "Unknown"),
-                                    "position_ms": absolute_ms,
-                                    "confidence_score": _runtime_confidence(evt),
-                                }
-                            )
+                        predicted_events.append(
+                            {
+                                "head": self.target_head,
+                                "label": evt.get("label", "Unknown"),
+                                "position_ms": absolute_ms,
+                                "confidence_score": _runtime_confidence(evt),
+                            }
+                        )
 
                     self.finished_signal.emit(predicted_events)
                 finally:

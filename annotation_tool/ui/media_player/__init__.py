@@ -2,10 +2,10 @@ import os
 
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
-from PyQt6.QtWidgets import QScrollArea, QSizePolicy, QSlider, QStyle, QStyleOptionSlider, QWidget
+from PyQt6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QSlider, QStyle, QStyleOptionSlider, QWidget
 
 from utils import resource_path
 
@@ -56,6 +56,41 @@ class AnnotationSlider(QSlider):
         painter.drawRoundedRect(handle_rect, 4, 4)
 
 
+class FramePreviewLabel(QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._source_pixmap = None
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def clear_frame(self):
+        self._source_pixmap = None
+        self.clear()
+
+    def set_frame_pixmap(self, pixmap: QPixmap):
+        self._source_pixmap = QPixmap(pixmap) if pixmap and not pixmap.isNull() else None
+        self._refresh_scaled_pixmap()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_scaled_pixmap()
+
+    def _refresh_scaled_pixmap(self):
+        if self._source_pixmap is None or self._source_pixmap.isNull():
+            self.clear()
+            return
+
+        if self.width() <= 0 or self.height() <= 0:
+            super().setPixmap(self._source_pixmap)
+            return
+
+        scaled = self._source_pixmap.scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        super().setPixmap(scaled)
+
+
 class MediaCenterPanel(QWidget):
     """
     Unified center panel for all annotation modes.
@@ -97,25 +132,23 @@ class MediaCenterPanel(QWidget):
         self.zoom_level = 1.0
         self.auto_scroll_active = True
 
-        # Timeline seek should drive player seeking by default
-        self.seekRequested.connect(self.set_position)
-
     def _setup_media_player(self):
         self.video_widget = QVideoWidget(self.video_container)
         self.video_widget.setProperty("class", "video_preview_widget")
         self.video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.videoLayout.addWidget(self.video_widget)
 
+        self.frame_widget = FramePreviewLabel(self.video_container)
+        self.frame_widget.setProperty("class", "video_preview_widget")
+        self.frame_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.frame_widget.hide()
+        self.videoLayout.addWidget(self.frame_widget)
+
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
         self.audio.setVolume(1.0)
         self.player.setAudioOutput(self.audio)
         self.player.setVideoOutput(self.video_widget)
-
-        self.player.positionChanged.connect(self._on_player_position_changed)
-        self.player.durationChanged.connect(self._on_player_duration_changed)
-        self.player.playbackStateChanged.connect(self.stateChanged.emit)
-        self.player.errorOccurred.connect(self._on_error)
 
     def _setup_timeline(self):
         self.scroll_area: QScrollArea
@@ -161,9 +194,7 @@ class MediaCenterPanel(QWidget):
         """Load media source and keep player stopped (controller decides when to play)."""
         self.player.stop()
         self.player.setSource(QUrl())
-
-        if not self.video_widget.isVisible():
-            self.video_widget.show()
+        self.show_video_surface()
 
         if path:
             self.player.setSource(QUrl.fromLocalFile(path))
@@ -208,6 +239,28 @@ class MediaCenterPanel(QWidget):
         self.slider.setRange(0, ms)
         self._update_label(self.slider.value())
 
+    def show_video_surface(self):
+        self.frame_widget.hide()
+        self.video_widget.show()
+
+    def show_frame_surface(self):
+        self.video_widget.hide()
+        self.frame_widget.show()
+
+    def clear_preview(self):
+        self.frame_widget.clear_frame()
+        self.frame_widget.hide()
+        self.video_widget.show()
+        self.video_widget.update()
+        self.video_widget.repaint()
+
+    def set_frame_image(self, image):
+        if image is None or image.isNull():
+            self.clear_preview()
+            return
+        self.frame_widget.set_frame_pixmap(QPixmap.fromImage(image))
+        self.show_frame_surface()
+
     def set_markers(self, markers):
         self.slider.markers = markers
         self.slider.update()
@@ -215,11 +268,11 @@ class MediaCenterPanel(QWidget):
     # ------------------------------------------------------------------
     # Player/timeline synchronization
     # ------------------------------------------------------------------
-    def _on_player_position_changed(self, ms):
+    def on_media_position_changed(self, ms):
         self._set_timeline_position(ms)
         self.positionChanged.emit(ms)
 
-    def _on_player_duration_changed(self, ms):
+    def on_media_duration_changed(self, ms):
         self.set_duration(ms)
         self.durationChanged.emit(ms)
 

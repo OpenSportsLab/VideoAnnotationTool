@@ -1,5 +1,4 @@
 import copy
-import glob
 import json
 import os
 import re
@@ -48,20 +47,21 @@ def _run_opensportslib_inference(base_config_path: str, temp_data: dict, prefix:
         with open(temp_config_path, "w", encoding="utf-8") as handle:
             handle.write(config_text)
 
-        runner = model.classification(config=temp_config_path)
-        metrics = runner.infer(test_set=temp_json_path, pretrained=pretrained_model)
+        runner = model.ClassificationModel(config=temp_config_path)
+        pred_data = runner.infer(
+            test_set=temp_json_path,
+            weights=pretrained_model,
+            use_wandb=False,
+        )
+        if isinstance(pred_data, str):
+            with open(pred_data, "r", encoding="utf-8") as handle:
+                pred_data = json.load(handle)
+        if not isinstance(pred_data, dict):
+            raise TypeError(
+                f"Unsupported classification predictions type: {type(pred_data).__name__}. Expected dict."
+            )
 
-        checkpoint_dir = os.path.join(writable_dir, "checkpoints")
-        search_pattern = os.path.join(checkpoint_dir, "**", "predictions_test_epoch_*.json")
-        pred_files = glob.glob(search_pattern, recursive=True)
-        if not pred_files:
-            raise FileNotFoundError("Could not find the generated prediction JSON file.")
-
-        latest_pred_file = max(pred_files, key=os.path.getctime)
-        with open(latest_pred_file, "r", encoding="utf-8") as handle:
-            pred_data = json.load(handle)
-
-        return metrics if metrics else {}, pred_data
+        return {}, pred_data
     finally:
         if os.path.exists(temp_json_path):
             try:

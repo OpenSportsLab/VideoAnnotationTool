@@ -19,7 +19,7 @@ In the Dataset Explorer header table:
 - Localization: edit event time/head/label directly in the table.
 - Description: edit caption text.
 - Dense: edit event text/time in the table.
-- Q/A: edit answers per selected question.
+- Q/A: add question groups with a dialog, choose prior questions there or enter custom text, double-click or right-click to edit/remove groups, and use the **Answer** dialog plus answer-list right-click/double-click actions for answers.
 
 ## Remove Data
 

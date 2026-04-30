@@ -847,6 +847,9 @@ class LocalizationEditorController(QObject):
 
     def _select_row_by_time_in_table(self, table_adapter, time_ms):
         model = table_adapter.model
+        selection_model = table_adapter.table.selectionModel()
+        if selection_model is not None:
+            selection_model.blockSignals(True)
         for row in range(model.rowCount()):
             item = model.get_annotation_at(row)
             if item and abs(item.get("position_ms", 0) - time_ms) < 10:
@@ -854,6 +857,8 @@ class LocalizationEditorController(QObject):
                 table_adapter.table.selectRow(row)
                 table_adapter.table.scrollTo(idx)
                 break
+        if selection_model is not None:
+            selection_model.blockSignals(False)
 
     def _reselect_event(self, target_event):
         model = self.localization_panel.table.model

@@ -1,14 +1,16 @@
 import copy
 import html
+import importlib.metadata
 import os
 
 from PyQt6.QtCore import Qt, QModelIndex, QTimer
 from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QLabel, QDockWidget, QMainWindow, QMessageBox, QStackedWidget, QTabWidget
 
+from app_info import APP_DISPLAY_NAME, APP_VERSION, SHORTCUTS_HELP_TEXT
 from controllers.classification import ClassificationEditorController
 from controllers.hf_transfer_controller import HfTransferController
-from controllers.hf_transfer_service import (
+from opensportslib.tools.hf_transfer import (
     create_dataset_branch_on_hf,
     create_dataset_repo_on_hf,
     dataset_repo_exists_on_hf,
@@ -50,7 +52,7 @@ class VideoAnnotationWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        self.setWindowTitle("Video Annotation Tool")
+        self.setWindowTitle(APP_DISPLAY_NAME)
         self.resize(1200, 800)
 
         # --- 1. Center Area: Stacked Widget (Welcome vs Media Player) ---
@@ -111,7 +113,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.setDockOptions(QMainWindow.DockOption.AllowNestedDocks | QMainWindow.DockOption.AnimatedDocks)
 
         # Central playback controller.
-        self.media_controller = MediaController(self.center_panel.player, self.center_panel.video_widget)
+        self.media_controller = MediaController(self.center_panel.player, self.center_panel)
 
         # --- Local UI state (icons, etc.) ---
         bright_blue = QColor("#00BFFF")
@@ -241,7 +243,7 @@ class VideoAnnotationWindow(QMainWindow):
         """Enables/Disables all project-related docks and editors."""
         self.data_dock.setEnabled(enabled)
         self.editor_dock.setEnabled(enabled)
-        self.qa_editor_controller.set_question_bank_enabled(enabled)
+        self.qa_editor_controller.set_project_enabled(enabled)
         
         # Also explicitly disable the sub-editors to be safe
         self._set_annotation_panels_enabled_for_selection(enabled)
@@ -301,17 +303,17 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.sampleSelectionChanged.connect(
             self.qa_editor_controller.on_selected_sample_changed
         )
+        self.dataset_explorer_controller.qaQuestionCatalogChanged.connect(
+            self.qa_editor_controller.on_question_catalog_changed
+        )
         self.dataset_explorer_controller.schemaContextChanged.connect(
             self.classification_editor_controller.on_schema_context_changed
         )
         self.dataset_explorer_controller.schemaContextChanged.connect(
             self.localization_editor_controller.on_schema_context_changed
         )
-        self.dataset_explorer_controller.questionBankChanged.connect(
-            self.qa_editor_controller.on_question_bank_changed
-        )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
-            lambda path, ensure_playback: self.media_controller.route_media_selection(path, ensure_playback)
+            lambda media_source, ensure_playback: self.media_controller.route_media_selection(media_source, ensure_playback)
         )
         self.dataset_explorer_controller.mediaStopRequested.connect(lambda: self.media_controller.stop())
         self.dataset_explorer_controller.statusMessageRequested.connect(self.show_temp_msg)
@@ -364,9 +366,12 @@ class VideoAnnotationWindow(QMainWindow):
         # --- Center panel (Unified Playback) ---
         center_panel.playPauseRequested.connect(self.media_controller.toggle_play_pause)
         center_panel.muteToggleRequested.connect(self.media_controller.toggle_mute)
+        center_panel.seekRequested.connect(lambda ms: self.media_controller.set_position(ms))
         center_panel.seekRelativeRequested.connect(self.media_controller.seek_relative)
         center_panel.stopRequested.connect(lambda: self.media_controller.stop())
-        center_panel.playbackRateRequested.connect(center_panel.set_playback_rate)
+        center_panel.playbackRateRequested.connect(lambda rate: self.media_controller.set_playback_rate(rate))
+        self.media_controller.positionChanged.connect(center_panel.on_media_position_changed)
+        self.media_controller.durationChanged.connect(center_panel.on_media_duration_changed)
         self.media_controller.playbackStateChanged.connect(self.localization_editor_controller.on_playback_state_changed)
         center_panel.positionChanged.connect(self.localization_editor_controller.on_media_position_changed)
         center_panel.durationChanged.connect(self.localization_editor_controller.on_media_duration_changed)
@@ -379,13 +384,13 @@ class VideoAnnotationWindow(QMainWindow):
         self.dense_panel.addEventRequested.connect(self.media_controller.pause)
         # Snapshot runtime media position on dense actions.
         self.dense_panel.addEventRequested.connect(
-            lambda: self.dense_editor_controller.on_media_position_changed(self.center_panel.player.position())
+            lambda: self.dense_editor_controller.on_media_position_changed(self.media_controller.current_position_ms())
         )
         self.dense_panel.updateTimeForSelectedRequested.connect(
-            lambda _event: self.dense_editor_controller.on_media_position_changed(self.center_panel.player.position())
+            lambda _event: self.dense_editor_controller.on_media_position_changed(self.media_controller.current_position_ms())
         )
         self.dense_panel.eventNavigateRequested.connect(
-            lambda _step: self.dense_editor_controller.on_media_position_changed(self.center_panel.player.position())
+            lambda _step: self.dense_editor_controller.on_media_position_changed(self.media_controller.current_position_ms())
         )
 
         # --- Controller shell update signals ---
@@ -414,7 +419,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.localization_editor_controller.statusMessageRequested.connect(self.show_temp_msg)
         self.localization_editor_controller.saveStateRefreshRequested.connect(self.update_save_export_button_state)
         self.localization_editor_controller.itemStatusRefreshRequested.connect(self.update_action_item_status)
-        self.localization_editor_controller.mediaSeekRequested.connect(self.center_panel.set_position)
+        self.localization_editor_controller.mediaSeekRequested.connect(
+            lambda ms: self.media_controller.set_position(ms)
+        )
         self.localization_editor_controller.markersUpdateRequested.connect(self.center_panel.set_markers)
         self.localization_editor_controller.mediaTogglePlaybackRequested.connect(
             lambda: self.center_panel.playPauseRequested.emit()
@@ -470,19 +477,12 @@ class VideoAnnotationWindow(QMainWindow):
         self.dense_editor_controller.denseEventDelRequested.connect(
             self.history_manager.execute_dense_event_del
         )
-        self.dense_editor_controller.mediaSeekRequested.connect(self.center_panel.set_position)
+        self.dense_editor_controller.mediaSeekRequested.connect(
+            lambda ms: self.media_controller.set_position(ms)
+        )
         self.dense_editor_controller.markersUpdateRequested.connect(self.center_panel.set_markers)
 
         self.qa_editor_controller.statusMessageRequested.connect(self.show_temp_msg)
-        self.qa_editor_controller.qaQuestionAddRequested.connect(
-            self.history_manager.execute_qa_question_add
-        )
-        self.qa_editor_controller.qaQuestionRenameRequested.connect(
-            self.history_manager.execute_qa_question_rename
-        )
-        self.qa_editor_controller.qaQuestionDeleteRequested.connect(
-            self.history_manager.execute_qa_question_delete
-        )
         self.qa_editor_controller.qaAnswersUpdateRequested.connect(
             self.history_manager.execute_qa_answers_update
         )
@@ -501,9 +501,6 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.history_manager.localizationClipEventsRefreshRequested.connect(
             self.localization_editor_controller._refresh_current_clip_events
-        )
-        self.history_manager.questionBankRefreshRequested.connect(
-            self.dataset_explorer_controller._emit_question_bank_context
         )
         self.history_manager.denseDisplayRequested.connect(self.dense_editor_controller.display_events_for_item)
         self.history_manager.itemStatusRefreshRequested.connect(self.update_action_item_status)
@@ -613,6 +610,16 @@ class VideoAnnotationWindow(QMainWindow):
         self.action_redo.triggered.connect(self.history_manager.perform_redo)
         edit_menu.addAction(self.action_redo)
 
+        help_menu = menu_bar.addMenu("&Help")
+
+        self.action_shortcuts = QAction("Shortcuts", self)
+        self.action_shortcuts.triggered.connect(self._show_shortcuts_popup)
+        help_menu.addAction(self.action_shortcuts)
+
+        self.action_info = QAction("Info", self)
+        self.action_info.triggered.connect(self._show_info_popup)
+        help_menu.addAction(self.action_info)
+
     def _setup_shortcuts(self) -> None:
         """Register common keyboard shortcuts."""
         QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self._safe_import_annotations)
@@ -622,9 +629,6 @@ class VideoAnnotationWindow(QMainWindow):
             self.dataset_explorer_controller.export_project
         )
 
-        QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(
-            lambda: self.show_temp_msg("Settings", "Settings dialog not implemented yet.")
-        )
         QShortcut(QKeySequence("Ctrl+D"), self).activated.connect(
             self._open_hf_download_dialog
         )
@@ -657,9 +661,15 @@ class VideoAnnotationWindow(QMainWindow):
             lambda: self.media_controller.seek_relative(5000)
         )
 
-        QShortcut(QKeySequence("S"), self).activated.connect(
-            lambda: self.show_temp_msg("Info", "Select an event and edit time via right-click.")
-        )
+    def _show_shortcuts_popup(self) -> None:
+        QMessageBox.information(self, "Shortcuts", SHORTCUTS_HELP_TEXT)
+
+    def _show_info_popup(self) -> None:
+        try:
+            osl_version = importlib.metadata.version("opensportslib")
+        except importlib.metadata.PackageNotFoundError:
+            osl_version = "not installed"
+        QMessageBox.information(self, "Info", f"{APP_DISPLAY_NAME}\nVersion: {APP_VERSION}\nOpenSportsLib: {osl_version}")
 
     # # ---------------------------------------------------------------------
     # # Mode-aware dispatchers (Deprecated?)
@@ -923,10 +933,9 @@ class VideoAnnotationWindow(QMainWindow):
 
     def _on_hf_download_failed(self, error: str) -> None:
         failed_payload = dict(self._last_hf_download_payload or {})
-        failed_url = str(failed_payload.get("url") or "").strip()
-        if failed_url and is_hf_download_url_not_found_error(error):
+        if failed_payload and is_hf_download_url_not_found_error(error):
             settings = getattr(self.dataset_explorer_controller, "settings", None)
-            HfDownloadDialog.remove_successful_url_from_settings(settings, failed_url)
+            HfDownloadDialog.remove_successful_transfer_from_settings(settings, failed_payload)
 
         self._last_hf_download_payload = None
         self._on_hf_transfer_failed("HF Download Failed", error)
@@ -955,9 +964,8 @@ class VideoAnnotationWindow(QMainWindow):
             return
 
         completed_payload = dict(self._last_hf_download_payload or {})
-        completed_url = str(completed_payload.get("url") or "").strip()
         settings = getattr(self.dataset_explorer_controller, "settings", None)
-        HfDownloadDialog.add_successful_url_to_settings(settings, completed_url)
+        HfDownloadDialog.add_successful_transfer_to_settings(settings, completed_payload)
         self._last_hf_download_payload = None
 
         download_kind = str(result.get("download_kind") or "json")

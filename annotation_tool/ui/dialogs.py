@@ -105,33 +105,29 @@ class FolderPickerDialog(QDialog):
     
 class MediaErrorDialog(QMessageBox):
     """
-    [NEW] A standardized error dialog for media playback failures.
-    Provides a concise explanation and an FFmpeg command to fix the codec issue.
-    Technical logs are hidden in the details section to keep the UI clean.
+    Standardized dialog for media playback failures.
     """
-    def __init__(self, error_string: str, parent=None) -> None:
+
+    def __init__(
+        self,
+        error_string: str,
+        parent=None,
+        *,
+        title: str = "Video Decoding Error",
+        text: str = "<b>Unsupported Video Codec Detected</b>",
+        informative_text: str = "",
+    ) -> None:
         super().__init__(parent)
-        
+
         self.setIcon(QMessageBox.Icon.Critical)
-        
-        # Main short title
-        self.setWindowTitle("Video Decoding Error")
-        self.setText("<b>Unsupported Video Codec Detected</b>")
-        
-        # Concise explanation with the FFmpeg terminal command
-        info_text = (
-            "Your system cannot decode this video's format (e.g., AV1, DivX, or Xvid). "
-            "The audio might play, but the video hardware decoder has failed.\n\n"
-            "To fix this, please transcode your file to a standard H.264 MP4 format. "
-            "Run the following command in your terminal:\n\n"
-            "ffmpeg -i input.mp4 -vcodec libx264 -acodec aac output.mp4"
-        )
-        self.setInformativeText(info_text)
-        
-        # Hide the long, ugly technical error logs inside a collapsible "Show Details..." button
+        self.setWindowTitle(title)
+        self.setText(text)
+        if informative_text:
+            self.setInformativeText(informative_text)
+
         if error_string:
             self.setDetailedText(f"System Diagnostic Logs:\n{error_string}")
-            
+
         self.setStandardButtons(QMessageBox.StandardButton.Ok)
 
 
@@ -140,17 +136,20 @@ class HfDownloadDialog(QDialog):
 
     _SETTINGS_PREFIX = "hf_transfer/download"
     _KEY_URL = f"{_SETTINGS_PREFIX}/url"
+    _KEY_REPO_ID = f"{_SETTINGS_PREFIX}/repo_id"
+    _KEY_REVISION = f"{_SETTINGS_PREFIX}/revision"
+    _KEY_SPLIT = f"{_SETTINGS_PREFIX}/split"
+    _KEY_DOWNLOAD_FORMAT = f"{_SETTINGS_PREFIX}/download_format"
+    _KEY_SUCCESS_TRANSFERS = f"{_SETTINGS_PREFIX}/successful_transfers"
     _KEY_SUCCESS_URLS = f"{_SETTINGS_PREFIX}/successful_urls"
     _KEY_OUTPUT_DIR = f"{_SETTINGS_PREFIX}/output_dir"
     _KEY_DRY_RUN = f"{_SETTINGS_PREFIX}/dry_run"
     _KEY_TOKEN = f"{_SETTINGS_PREFIX}/token"
-    _AVAILABLE_DATASET_URLS = [
-        "https://huggingface.co/datasets/OpenSportsLab/soccernetpro-classification-vars/blob/mvfouls/annotations_train.json",
-        "https://huggingface.co/datasets/OpenSportsLab/soccernetpro-classification-vars/blob/mvfouls/annotations_valid.json",
-        "https://huggingface.co/datasets/OpenSportsLab/soccernetpro-classification-vars/blob/mvfouls/annotations_test.json",
-        "https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-snas/blob/224p/annotations-train.json",
-        "https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-snas/blob/224p/annotations-valid.json",
-        "https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-snas/blob/224p/annotations-test.json",
+    _AVAILABLE_DATASET_TRANSFERS = [
+        {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "test", "download_format": "parquet"},
+        {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "valid", "download_format": "parquet"},
+        {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "train", "download_format": "parquet"},
+        {"repo_id": "OpenSportsLab/soccernetpro-classification-vars", "revision": "mvfouls", "split": "annotations_test", "download_format": "json"},
     ]
 
     def __init__(self, settings: QSettings | None = None, parent=None) -> None:
@@ -166,10 +165,22 @@ class HfDownloadDialog(QDialog):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         layout.addLayout(form)
 
-        self.url_combo = QComboBox(self)
-        self.url_combo.setEditable(True)
-        self.url_combo.addItems(self._AVAILABLE_DATASET_URLS)
-        form.addRow("HF URL*", self.url_combo)
+        self.repo_id_edit = QLineEdit(self)
+        self.repo_id_edit.setPlaceholderText("OpenSportsLab/OSL-XFoul")
+        form.addRow("Repo ID*", self.repo_id_edit)
+
+        self.revision_edit = QLineEdit("main", self)
+        self.revision_edit.setPlaceholderText("main-parquet")
+        form.addRow("Branch*", self.revision_edit)
+
+        self.split_edit = QLineEdit(self)
+        self.split_edit.setPlaceholderText("test")
+        form.addRow("Split*", self.split_edit)
+
+        self.download_format_combo = QComboBox(self)
+        self.download_format_combo.addItem("Parquet + WebDataset", "parquet")
+        self.download_format_combo.addItem("JSON + referenced inputs", "json")
+        form.addRow("Format*", self.download_format_combo)
 
         self.output_dir_edit = QLineEdit(self)
         self.output_dir_edit.setPlaceholderText("test_data/Classification/svfouls")
@@ -188,9 +199,9 @@ class HfDownloadDialog(QDialog):
         self.token_edit.setPlaceholderText("Optional token override")
         form.addRow("HF Token", self.token_edit)
 
-        self.url_combo.setMinimumHeight(34)
-        self.url_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        for edit in (self.output_dir_edit, self.token_edit):
+        self.download_format_combo.setMinimumHeight(34)
+        self.download_format_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        for edit in (self.repo_id_edit, self.revision_edit, self.split_edit, self.output_dir_edit, self.token_edit):
             edit.setMinimumHeight(34)
             edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -208,53 +219,92 @@ class HfDownloadDialog(QDialog):
         self._load_settings()
 
     @classmethod
-    def _normalize_urls(cls, raw_urls) -> list[str]:
-        if raw_urls is None:
+    @classmethod
+    def _normalize_transfer(cls, transfer: dict | None) -> dict:
+        payload = transfer if isinstance(transfer, dict) else {}
+        return {
+            "repo_id": str(payload.get("repo_id") or "").strip(),
+            "revision": str(payload.get("revision") or "main").strip() or "main",
+            "split": str(payload.get("split") or "").strip(),
+            "download_format": str(payload.get("download_format") or "parquet").strip().lower() or "parquet",
+        }
+
+    @classmethod
+    def _transfer_key(cls, transfer: dict | None) -> str:
+        normalized = cls._normalize_transfer(transfer)
+        if not normalized["repo_id"] or not normalized["split"]:
+            return ""
+        return "|".join(
+            [
+                normalized["repo_id"],
+                normalized["revision"],
+                normalized["split"],
+                normalized["download_format"],
+            ]
+        )
+
+    @classmethod
+    def _transfer_from_key(cls, key: str) -> dict:
+        parts = str(key or "").split("|")
+        if len(parts) != 4:
+            return {}
+        return cls._normalize_transfer(
+            {
+                "repo_id": parts[0],
+                "revision": parts[1],
+                "split": parts[2],
+                "download_format": parts[3],
+            }
+        )
+
+    @classmethod
+    def _normalize_transfers(cls, raw_transfers) -> list[str]:
+        if raw_transfers is None:
             candidates = []
-        elif isinstance(raw_urls, str):
-            candidates = [raw_urls]
-        elif isinstance(raw_urls, (list, tuple)):
-            candidates = list(raw_urls)
+        elif isinstance(raw_transfers, str):
+            candidates = [raw_transfers]
+        elif isinstance(raw_transfers, (list, tuple)):
+            candidates = list(raw_transfers)
         else:
             candidates = []
 
         normalized: list[str] = []
         seen: set[str] = set()
         for item in candidates:
-            url = str(item or "").strip()
-            if not url or url in seen:
+            key = str(item or "").strip()
+            if not key or key in seen:
                 continue
-            seen.add(url)
-            normalized.append(url)
+            seen.add(key)
+            normalized.append(key)
         return normalized
 
     @classmethod
-    def get_successful_urls_from_settings(cls, settings: QSettings | None) -> list[str]:
+    def get_successful_transfers_from_settings(cls, settings: QSettings | None) -> list[str]:
         if not settings:
             return []
-        return cls._normalize_urls(settings.value(cls._KEY_SUCCESS_URLS, []))
+        return cls._normalize_transfers(settings.value(cls._KEY_SUCCESS_TRANSFERS, []))
 
     @classmethod
-    def add_successful_url_to_settings(cls, settings: QSettings | None, url: str) -> None:
+    def add_successful_transfer_to_settings(cls, settings: QSettings | None, transfer: dict) -> None:
         if not settings:
             return
-        clean_url = str(url or "").strip()
-        if not clean_url:
+        key = cls._transfer_key(transfer)
+        if not key:
             return
-        urls = cls.get_successful_urls_from_settings(settings)
-        urls.append(clean_url)
-        settings.setValue(cls._KEY_SUCCESS_URLS, cls._normalize_urls(urls))
+        transfers = cls.get_successful_transfers_from_settings(settings)
+        transfers.append(key)
+        settings.setValue(cls._KEY_SUCCESS_TRANSFERS, cls._normalize_transfers(transfers))
         settings.sync()
 
     @classmethod
-    def remove_successful_url_from_settings(cls, settings: QSettings | None, url: str) -> None:
+    def remove_successful_transfer_from_settings(cls, settings: QSettings | None, transfer: dict) -> None:
         if not settings:
             return
-        clean_url = str(url or "").strip()
-        if not clean_url:
+        key = cls._transfer_key(transfer)
+        if not key:
             return
-        urls = [item for item in cls.get_successful_urls_from_settings(settings) if item != clean_url]
-        settings.setValue(cls._KEY_SUCCESS_URLS, urls)
+        transfers = [item for item in cls.get_successful_transfers_from_settings(settings) if item != key]
+        settings.setValue(cls._KEY_SUCCESS_TRANSFERS, transfers)
         settings.sync()
 
     def _pick_output_dir(self) -> None:
@@ -268,14 +318,25 @@ class HfDownloadDialog(QDialog):
             self.output_dir_edit.setText(chosen)
 
     def _validate_and_accept(self) -> bool:
-        url = self.url_combo.currentText().strip()
+        repo_id = self.repo_id_edit.text().strip()
+        revision = self.revision_edit.text().strip()
+        split = self.split_edit.text().strip()
         output_dir = self.output_dir_edit.text().strip()
 
-        if not url:
-            QMessageBox.warning(self, "Missing Required Field", "HF URL is required.")
+        if not repo_id:
+            QMessageBox.warning(self, "Missing Required Field", "Repo ID is required.")
+            return False
+        if not revision:
+            QMessageBox.warning(self, "Missing Required Field", "Branch is required.")
+            return False
+        if not split:
+            QMessageBox.warning(self, "Missing Required Field", "Split is required.")
             return False
         if not output_dir:
             QMessageBox.warning(self, "Missing Required Field", "Output directory is required.")
+            return False
+        if self.dry_run_checkbox.isChecked() and self.download_format_combo.currentData() == "parquet":
+            QMessageBox.warning(self, "Unsupported Dry-Run", "Dry-run is available only for JSON downloads.")
             return False
         return True
 
@@ -291,7 +352,10 @@ class HfDownloadDialog(QDialog):
 
     def get_payload(self) -> dict:
         return {
-            "url": self.url_combo.currentText().strip(),
+            "repo_id": self.repo_id_edit.text().strip(),
+            "revision": self.revision_edit.text().strip() or "main",
+            "split": self.split_edit.text().strip(),
+            "download_format": str(self.download_format_combo.currentData() or "parquet"),
             "output_dir": self.output_dir_edit.text().strip(),
             "dry_run": self.dry_run_checkbox.isChecked(),
             "token": self.token_edit.text().strip() or None,
@@ -303,17 +367,15 @@ class HfDownloadDialog(QDialog):
     def _load_settings(self) -> None:
         if not self._settings:
             return
-        for saved_url_option in self.get_successful_urls_from_settings(self._settings):
-            if self.url_combo.findText(saved_url_option) < 0:
-                self.url_combo.addItem(saved_url_option)
-
-        saved_url = str(self._settings.value(self._KEY_URL, "") or "")
-        if saved_url:
-            idx = self.url_combo.findText(saved_url)
-            if idx >= 0:
-                self.url_combo.setCurrentIndex(idx)
-            else:
-                self.url_combo.setEditText(saved_url)
+        saved_transfer = {
+            "repo_id": str(self._settings.value(self._KEY_REPO_ID, "") or ""),
+            "revision": str(self._settings.value(self._KEY_REVISION, "main") or "main"),
+            "split": str(self._settings.value(self._KEY_SPLIT, "") or ""),
+            "download_format": str(self._settings.value(self._KEY_DOWNLOAD_FORMAT, "parquet") or "parquet"),
+        }
+        if not saved_transfer["repo_id"] or not saved_transfer["split"]:
+            saved_transfer = self._AVAILABLE_DATASET_TRANSFERS[0]
+        self._apply_transfer(saved_transfer)
         self.output_dir_edit.setText(str(self._settings.value(self._KEY_OUTPUT_DIR, "") or ""))
         dry_run_raw = self._settings.value(self._KEY_DRY_RUN, False)
         if isinstance(dry_run_raw, str):
@@ -325,20 +387,36 @@ class HfDownloadDialog(QDialog):
     def _save_settings(self) -> None:
         if not self._settings:
             return
-        self._settings.setValue(self._KEY_URL, self.url_combo.currentText().strip())
+        payload = self.get_payload()
+        self._settings.setValue(self._KEY_REPO_ID, payload["repo_id"])
+        self._settings.setValue(self._KEY_REVISION, payload["revision"])
+        self._settings.setValue(self._KEY_SPLIT, payload["split"])
+        self._settings.setValue(self._KEY_DOWNLOAD_FORMAT, payload["download_format"])
         self._settings.setValue(self._KEY_OUTPUT_DIR, self.output_dir_edit.text().strip())
         self._settings.setValue(self._KEY_DRY_RUN, self.dry_run_checkbox.isChecked())
         self._settings.setValue(self._KEY_TOKEN, self.token_edit.text().strip())
         self._settings.sync()
 
+    def _apply_transfer(self, transfer: dict) -> None:
+        normalized = self._normalize_transfer(transfer)
+        self.repo_id_edit.setText(normalized["repo_id"])
+        self.revision_edit.setText(normalized["revision"])
+        self.split_edit.setText(normalized["split"])
+        index = self.download_format_combo.findData(normalized["download_format"])
+        self.download_format_combo.setCurrentIndex(index if index >= 0 else 0)
+
 
 class HfUploadDialog(QDialog):
     _SETTINGS_PREFIX = "hf_transfer/upload"
+    _DEFAULT_SHARD_SIZE_BYTES = 1_000_000_000
+    _SHARD_SIZE_UNIT_BYTES = 1_000_000
     _KEY_REPO_ID = f"{_SETTINGS_PREFIX}/repo_id"
     _KEY_REVISION = f"{_SETTINGS_PREFIX}/revision"
+    _KEY_SPLIT = f"{_SETTINGS_PREFIX}/split"
     _KEY_COMMIT_MESSAGE = f"{_SETTINGS_PREFIX}/commit_message"
     _KEY_TOKEN = f"{_SETTINGS_PREFIX}/token"
     _KEY_UPLOAD_AS_JSON = f"{_SETTINGS_PREFIX}/upload_as_json"
+    _KEY_SHARD_SIZE = f"{_SETTINGS_PREFIX}/shard_size"
     _KEY_SAMPLES_PER_SHARD = f"{_SETTINGS_PREFIX}/samples_per_shard"
 
     def __init__(
@@ -366,6 +444,10 @@ class HfUploadDialog(QDialog):
         self.repo_id_edit.setPlaceholderText("OpenSportsLab/OSL-loc-tennis-public")
         form.addRow("Repo ID*", self.repo_id_edit)
 
+        self.split_edit = QLineEdit(self)
+        self.split_edit.setPlaceholderText("test")
+        form.addRow("Split*", self.split_edit)
+
         self.opened_json_edit = QLineEdit(self._opened_json_path, self)
         self.opened_json_edit.setReadOnly(True)
         form.addRow("Opened Dataset JSON*", self.opened_json_edit)
@@ -374,11 +456,12 @@ class HfUploadDialog(QDialog):
         self.upload_as_json_checkbox.setChecked(True)
         form.addRow("", self.upload_as_json_checkbox)
 
-        self.samples_per_shard_spin = QSpinBox(self)
-        self.samples_per_shard_spin.setRange(1, 1_000_000)
-        self.samples_per_shard_spin.setValue(100)
-        self.samples_per_shard_spin.setToolTip("Only used for Parquet + WebDataset upload mode.")
-        form.addRow("Samples per Shard", self.samples_per_shard_spin)
+        self.shard_size_spin = QSpinBox(self)
+        self.shard_size_spin.setRange(1, 1_000_000)
+        self.shard_size_spin.setValue(self._DEFAULT_SHARD_SIZE_BYTES // self._SHARD_SIZE_UNIT_BYTES)
+        self.shard_size_spin.setSuffix(" MB")
+        self.shard_size_spin.setToolTip("Target TAR shard size for Parquet + WebDataset upload mode.")
+        form.addRow("Shard Size", self.shard_size_spin)
 
         self.revision_edit = QLineEdit("main", self)
         self.revision_edit.setPlaceholderText("main")
@@ -394,6 +477,7 @@ class HfUploadDialog(QDialog):
 
         for edit in (
             self.repo_id_edit,
+            self.split_edit,
             self.opened_json_edit,
             self.revision_edit,
             self.commit_message_edit,
@@ -401,8 +485,8 @@ class HfUploadDialog(QDialog):
         ):
             edit.setMinimumHeight(34)
             edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.samples_per_shard_spin.setMinimumHeight(34)
-        self.samples_per_shard_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.shard_size_spin.setMinimumHeight(34)
+        self.shard_size_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -425,6 +509,9 @@ class HfUploadDialog(QDialog):
         if not repo_id:
             QMessageBox.warning(self, "Missing Required Field", "Repo ID is required.")
             return
+        if not self.split_edit.text().strip():
+            QMessageBox.warning(self, "Missing Required Field", "Split is required.")
+            return
         if not self.revision_edit.text().strip():
             QMessageBox.warning(self, "Missing Required Field", "Branch is required.")
             return
@@ -446,16 +533,19 @@ class HfUploadDialog(QDialog):
             "repo_id": self.repo_id_edit.text().strip(),
             "json_path": self._opened_json_path,
             "revision": self.revision_edit.text().strip() or "main",
+            "split": self.split_edit.text().strip(),
             "commit_message": self.commit_message_edit.text().strip() or "Upload dataset inputs from JSON",
             "token": self.token_edit.text().strip() or None,
             "upload_as_json": self.upload_as_json_checkbox.isChecked(),
-            "samples_per_shard": int(self.samples_per_shard_spin.value()),
+            "shard_mode": "size",
+            "shard_size": int(self.shard_size_spin.value()) * self._SHARD_SIZE_UNIT_BYTES,
         }
 
     def _load_settings(self) -> None:
         if self._settings:
             self.repo_id_edit.setText(str(self._settings.value(self._KEY_REPO_ID, "") or ""))
             self.revision_edit.setText(str(self._settings.value(self._KEY_REVISION, "main") or "main"))
+            self.split_edit.setText(str(self._settings.value(self._KEY_SPLIT, "") or ""))
             self.commit_message_edit.setText(
                 str(
                     self._settings.value(
@@ -473,34 +563,57 @@ class HfUploadDialog(QDialog):
                 )
             else:
                 self.upload_as_json_checkbox.setChecked(bool(upload_as_json_raw))
-            saved_samples_per_shard = self._settings.value(self._KEY_SAMPLES_PER_SHARD, 100)
+            has_saved_shard_size = self._settings.contains(self._KEY_SHARD_SIZE)
+            saved_shard_size = self._settings.value(self._KEY_SHARD_SIZE, self._DEFAULT_SHARD_SIZE_BYTES)
             try:
-                parsed_samples_per_shard = int(saved_samples_per_shard)
+                parsed_shard_size = int(saved_shard_size)
             except (TypeError, ValueError):
-                parsed_samples_per_shard = 100
-            self.samples_per_shard_spin.setValue(max(1, parsed_samples_per_shard))
+                parsed_shard_size = self._DEFAULT_SHARD_SIZE_BYTES
+            if not has_saved_shard_size and self._settings.contains(self._KEY_SAMPLES_PER_SHARD):
+                legacy_value = self._settings.value(self._KEY_SAMPLES_PER_SHARD, self._DEFAULT_SHARD_SIZE_BYTES)
+                try:
+                    parsed_legacy_value = int(legacy_value)
+                except (TypeError, ValueError):
+                    parsed_legacy_value = self._DEFAULT_SHARD_SIZE_BYTES
+                parsed_shard_size = (
+                    parsed_legacy_value
+                    if parsed_legacy_value >= self._SHARD_SIZE_UNIT_BYTES
+                    else self._DEFAULT_SHARD_SIZE_BYTES
+                )
+            shard_size_mb = max(1, (parsed_shard_size + self._SHARD_SIZE_UNIT_BYTES - 1) // self._SHARD_SIZE_UNIT_BYTES)
+            self.shard_size_spin.setValue(int(shard_size_mb))
 
         default_repo_id = str(self._hf_defaults.get("repo_id") or "").strip()
         default_branch = str(self._hf_defaults.get("branch") or "").strip()
+        default_split = str(self._hf_defaults.get("split") or "").strip()
+        inferred_split = os.path.splitext(os.path.basename(self._opened_json_path))[0]
         if default_repo_id:
             self.repo_id_edit.setText(default_repo_id)
         if default_branch:
             self.revision_edit.setText(default_branch)
+        if default_split:
+            self.split_edit.setText(default_split)
+        elif not self.split_edit.text().strip() and inferred_split:
+            self.split_edit.setText(inferred_split)
 
     def _save_settings(self) -> None:
         if not self._settings:
             return
         self._settings.setValue(self._KEY_REPO_ID, self.repo_id_edit.text().strip())
         self._settings.setValue(self._KEY_REVISION, self.revision_edit.text().strip() or "main")
+        self._settings.setValue(self._KEY_SPLIT, self.split_edit.text().strip())
         self._settings.setValue(self._KEY_COMMIT_MESSAGE, self.commit_message_edit.text().strip())
         self._settings.setValue(self._KEY_TOKEN, self.token_edit.text().strip())
         self._settings.setValue(self._KEY_UPLOAD_AS_JSON, self.upload_as_json_checkbox.isChecked())
-        self._settings.setValue(self._KEY_SAMPLES_PER_SHARD, int(self.samples_per_shard_spin.value()))
+        self._settings.setValue(
+            self._KEY_SHARD_SIZE,
+            int(self.shard_size_spin.value()) * self._SHARD_SIZE_UNIT_BYTES,
+        )
         self._settings.sync()
 
     def _update_parquet_controls_state(self, upload_as_json: bool) -> None:
         # Parquet-only option: disable it when JSON upload mode is selected.
-        self.samples_per_shard_spin.setEnabled(not bool(upload_as_json))
+        self.shard_size_spin.setEnabled(not bool(upload_as_json))
 
 
 class BusyStatusDialog(QDialog):

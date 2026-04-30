@@ -17,7 +17,7 @@ This folder contains GUI smoke/persistence tests for the PyQt application.
 - `tests/conftest.py`
   - Configures headless Qt (`QT_QPA_PLATFORM=offscreen`).
   - Adds `annotation_tool/` to `sys.path`.
-  - Stubs `opensportslib` import.
+  - Stubs only `opensportslib.model` (keeps real `opensportslib` package importable).
   - Isolates `QSettings` to a per-test `.ini` file.
   - Defines shared fixtures (`window`, `synthetic_project_json`).
   - `synthetic_project_json(mode, item_count=1)` can now generate multi-item fixtures.
@@ -141,7 +141,7 @@ Each function has an inline workflow header comment that explains setup, action,
   - run single test with `-k <name> -vv`,
   - verify `QT_QPA_PLATFORM=offscreen` is active.
 - If imports fail due to ML stack:
-  - confirm `tests/conftest.py` is loaded (it installs the `opensportslib` stub).
+  - confirm `tests/conftest.py` is loaded (it installs the lightweight `opensportslib.model` stub).
 
 ## Extending the Suite
 

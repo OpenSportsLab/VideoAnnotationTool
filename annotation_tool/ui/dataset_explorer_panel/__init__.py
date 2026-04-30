@@ -1,12 +1,14 @@
 import os
 import copy
 import json
+import re
 
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QModelIndex, pyqtSignal
 from PyQt6.QtGui import QStandardItem, QStandardItemModel
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QHeaderView,
@@ -21,6 +23,11 @@ from PyQt6.QtWidgets import (
 from utils import resource_path
 
 
+def _natural_sort_text(value) -> str:
+    parts = re.split(r"([0-9]+)", str(value or "").casefold())
+    return "".join(part.zfill(12) if part.isdigit() else part for part in parts)
+
+
 class DatasetExplorerTreeModel(QStandardItemModel):
     """
     Internal tree model used by DatasetExplorerPanel.
@@ -28,10 +35,15 @@ class DatasetExplorerTreeModel(QStandardItemModel):
 
     FilePathRole = Qt.ItemDataRole.UserRole
     DataIdRole = Qt.ItemDataRole.UserRole + 1
+    SortRole = Qt.ItemDataRole.UserRole + 2
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.configure_columns()
+
+    def configure_columns(self):
         self.setColumnCount(1)
+        self.setSortRole(self.SortRole)
 
     def add_entry(
         self,
@@ -40,11 +52,14 @@ class DatasetExplorerTreeModel(QStandardItemModel):
         source_files: list = None,
         icon=None,
         data_id: str = None,
+        confidence_score: float = None,
     ) -> QStandardItem:
-        item = QStandardItem(name)
+        display_name = self.entry_display_name(name, confidence_score)
+        item = QStandardItem(display_name)
         item.setEditable(True)
         item.setData(path, self.FilePathRole)
         item.setData(data_id, self.DataIdRole)
+        item.setData(_natural_sort_text(name), self.SortRole)
 
         if icon:
             item.setIcon(icon)
@@ -56,10 +71,18 @@ class DatasetExplorerTreeModel(QStandardItemModel):
                 child.setEditable(False)
                 child.setData(src, self.FilePathRole)
                 child.setData(data_id, self.DataIdRole)
+                child.setData(_natural_sort_text(child_name), self.SortRole)
                 item.appendRow(child)
 
         self.appendRow(item)
         return item
+
+    @staticmethod
+    def entry_display_name(name: str, confidence_score: float = None) -> str:
+        display_name = str(name or "")
+        if confidence_score is not None:
+            display_name = f"{display_name} (conf:{float(confidence_score):.2f})"
+        return display_name
 
 
 class DatasetExplorerPanel(QWidget):
@@ -71,6 +94,7 @@ class DatasetExplorerPanel(QWidget):
     addDataRequested = pyqtSignal()
     sampleNavigateRequested = pyqtSignal(int)
     headerDraftChanged = pyqtSignal(dict)
+    confidenceSortToggled = pyqtSignal(bool)
 
     _HEADER_VALUE_ROLE = Qt.ItemDataRole.UserRole + 200
     _HEADER_HAS_VALUE_ROLE = Qt.ItemDataRole.UserRole + 201
@@ -126,9 +150,17 @@ class DatasetExplorerPanel(QWidget):
         self.filter_combo.clear()
         if filter_items:
             self.filter_combo.addItems(filter_items)
+        self.sort_conf_checkbox = QCheckBox("Sort by conf", self)
+        self.sort_conf_checkbox.setObjectName("sort_conf_checkbox")
+        self.bottomLayout.insertWidget(2, self.sort_conf_checkbox)
+        self.sort_conf_checkbox.toggled.connect(self.confidenceSortToggled.emit)
         self.bottomLayout.setStretch(1, 1)
 
         self.tree.setHeaderHidden(True)
+        self.tree.setSortingEnabled(True)
+        header = self.tree.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setStretchLastSection(True)
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.json_raw_text.setReadOnly(True)

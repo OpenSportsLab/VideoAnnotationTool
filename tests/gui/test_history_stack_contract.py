@@ -381,7 +381,7 @@ def test_history_contract_dense_mutations(window, monkeypatch, qtbot, synthetic_
     qtbot.wait(50)
 
     controller = window.dense_editor_controller
-    monkeypatch.setattr(window.center_panel.player, "position", lambda: 5500)
+    monkeypatch.setattr(window.media_controller, "current_position_ms", lambda: 5500)
     monkeypatch.setattr(
         "controllers.dense_description.dense_editor_controller.QInputDialog.getMultiLineText",
         lambda *args, **kwargs: ("Dense history event", True),
@@ -422,31 +422,27 @@ def test_history_contract_question_answer_mutations(window, monkeypatch, qtbot, 
     controller = window.qa_editor_controller
     panel = window.qa_panel
 
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: window.history_manager.execute_qa_question_add("Who committed the foul?"),
-    )
-
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: window.history_manager.execute_qa_question_rename("q1", "How are you doing?"),
-    )
-
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: window.history_manager.execute_qa_question_delete("q2"),
-    )
-
     def _edit_answer():
-        panel.set_questions(window.dataset_explorer_controller.question_definitions, selected_question_id="q1")
-        panel.answer_editor.setPlainText("History contract Q/A edit.")
+        monkeypatch.setattr(
+            "controllers.question_answer.qa_editor_controller.QInputDialog.getMultiLineText",
+            lambda *args, **kwargs: ("History contract Q/A edit.", True),
+        )
+        panel._on_answer_item_double_clicked(panel.answer_list.item(0))
         controller.save_current_answers()
         qtbot.wait(300)
 
     _assert_mutating_action_creates_single_history_entry(window, qtbot, _edit_answer)
+
+    def _add_second_answer():
+        monkeypatch.setattr(
+            "controllers.question_answer.qa_editor_controller.QInputDialog.getMultiLineText",
+            lambda *args, **kwargs: ("Second grouped answer.", True),
+        )
+        panel.add_answer_button.click()
+        controller.save_current_answers()
+        qtbot.wait(300)
+
+    _assert_mutating_action_creates_single_history_entry(window, qtbot, _add_second_answer)
 
 
 @pytest.mark.gui

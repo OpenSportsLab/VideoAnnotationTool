@@ -99,25 +99,24 @@ Common usage:
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url <HF_JSON_URL> \
-  --output-dir <LOCAL_OUTPUT_DIR> \
-  --types video
+  --repo-id <HF_DATASET_REPO> \
+  --revision <HF_REVISION> \
+  --split <SPLIT> \
+  --format json \
+  --output-dir <LOCAL_OUTPUT_DIR>
 ````
 
-`--types` controls what input types to download from `item.inputs`:
-
-* `video` (default)
-* `video,captions`
-* `video,captions,features`
-* `all` (download all inputs that contain a `path`)
+JSON downloads fetch `<split>.json` and every file referenced from its inputs. Parquet downloads fetch and convert the `<split>/` folder. Files are written under `<output-dir>/<revision>/<split>`.
 
 Use `--dry-run` to preview and estimate total size:
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url <HF_JSON_URL> \
+  --repo-id <HF_DATASET_REPO> \
+  --revision <HF_REVISION> \
+  --split <SPLIT> \
+  --format json \
   --output-dir <LOCAL_OUTPUT_DIR> \
-  --types video,captions,features \
   --dry-run
 ```
 
@@ -134,7 +133,10 @@ This folder contains multiple action-category subfolders (e.g. `action_0`, `acti
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-classification-vars/blob/svfouls/annotations_test.json \
+  --repo-id OpenSportsLab/soccernetpro-classification-vars \
+  --revision svfouls \
+  --split annotations_test \
+  --format json \
   --output-dir Test_Data/Classification/svfouls
 ```
 
@@ -142,7 +144,10 @@ python test_data/download_osl_hf.py \
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-classification-vars/blob/mvfouls/annotations_test.json \
+  --repo-id OpenSportsLab/soccernetpro-classification-vars \
+  --revision mvfouls \
+  --split annotations_test \
+  --format json \
   --output-dir Test_Data/Classification/mvfouls
 ```
 
@@ -160,7 +165,10 @@ From the repository root:
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-localization-snbas/blob/224p/annotations-test.json \
+  --repo-id OpenSportsLab/soccernetpro-localization-snbas \
+  --revision 224p \
+  --split annotations-test \
+  --format json \
   --output-dir Test_Data/Localization
 ```
 
@@ -176,13 +184,15 @@ Each split JSON references clips under its corresponding folder:
 * `annotations_valid.json` → `valid/`
 * `annotations_test.json` → `test/`
 
-### 📥 Download Test Split (videos only)
+### 📥 Download Test Split
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-description-xfoul/blob/main/annotations_test.json \
-  --output-dir Test_Data/Description/XFoul \
-  --types video
+  --repo-id OpenSportsLab/soccernetpro-description-xfoul \
+  --revision main \
+  --split annotations_test \
+  --format json \
+  --output-dir Test_Data/Description/XFoul
 ```
 
 After download, you should have a structure like:
@@ -212,22 +222,15 @@ Each item typically references:
 * raw caption file (`.../Labels-caption.json`)
 * optional visual features (e.g., `features/I3D/.../*.npy`)
 
-### 📥 Download Test Split (videos only — recommended for GUI)
+### 📥 Download Test Split
 
 ```bash
 python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-densedescription-sndvc/blob/main/annotations-test.json \
-  --output-dir Test_Data/DenseDescription/SNDVC \
-  --types video
-```
-
-### 📥 Download Test Split (videos + raw captions + features)
-
-```bash
-python test_data/download_osl_hf.py \
-  --url https://huggingface.co/datasets/OpenSportsLab/soccernetpro-densedescription-sndvc/blob/main/annotations-test.json \
-  --output-dir Test_Data/DenseDescription/SNDVC \
-  --types video,captions,features
+  --repo-id OpenSportsLab/soccernetpro-densedescription-sndvc \
+  --revision main \
+  --split annotations-test \
+  --format json \
+  --output-dir Test_Data/DenseDescription/SNDVC
 ```
 
 Expected structure (example):
@@ -363,7 +366,3 @@ This Video Annotation Tool project offers two licensing options to suit differen
 ), this option allows you to integrate this software into proprietary products and services without the open-source obligations of GPL-3.0. If your use case involves commercial deployment, please contact the maintainers to obtain a commercial license.
 
 **Contact:** OpenSportsLab / project maintainers.
-
-
-
-

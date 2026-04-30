@@ -350,6 +350,10 @@ def test_classification_smart_inference_persists_confidence_and_confirm_strips_i
     assert isinstance(sample, dict)
     assert sample["labels"]["action"]["label"] == "shot"
     assert sample["labels"]["action"]["confidence_score"] == pytest.approx(0.87)
+    tree_item = window.dataset_explorer_controller.action_item_map[
+        window.dataset_explorer_controller.get_path_by_id("clip_1")
+    ]
+    assert tree_item.text() == "clip_1 (conf:0.87)"
 
     smart_widgets = window.classification_panel.get_head_row_smart_widgets("action", "shot")
     assert smart_widgets is not None
@@ -366,6 +370,7 @@ def test_classification_smart_inference_persists_confidence_and_confirm_strips_i
     assert isinstance(sample, dict)
     assert sample["labels"]["action"]["label"] == "shot"
     assert "confidence_score" not in sample["labels"]["action"]
+    assert tree_item.text() == "clip_1"
 
 
 @pytest.mark.gui

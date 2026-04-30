@@ -74,7 +74,7 @@ def test_normalize_dataset_json_inserts_defaults_preserves_unknowns_and_fixes_id
     assert "task" not in normalized
     assert normalized["metadata"] == {}
     assert normalized["modalities"] == ["video"]
-    assert normalized["questions"] == []
+    assert "questions" not in normalized
     assert normalized["custom_root"] == {"keep": True}
     assert [sample["id"] for sample in normalized["data"]] == ["clip_dup", "clip_dup__2", "sample_3"]
     assert normalized["data"][0]["events"][0]["position_ms"] == 1001
@@ -94,7 +94,7 @@ def test_normalize_dataset_json_rejects_invalid_root_and_non_list_data(explorer_
     assert error == "Top-level 'data' must be a list."
 
 
-def test_normalize_dataset_json_drops_legacy_smart_keys(explorer_panel_and_controller):
+def test_normalize_dataset_json_drops_legacy_vqa_and_smart_keys(explorer_panel_and_controller):
     _panel, controller = explorer_panel_and_controller
     raw = {
         "questions": [
@@ -124,8 +124,8 @@ def test_normalize_dataset_json_drops_legacy_smart_keys(explorer_panel_and_contr
     normalized, error = controller._normalize_dataset_json(raw)
     assert error == ""
     sample = normalized["data"][0]
-    assert normalized["questions"] == [{"id": "q1", "question": "How are you?"}]
-    assert sample["answers"] == [{"question_id": "q1", "answer": "ok"}]
+    assert "questions" not in normalized
+    assert "answers" not in sample
     assert sample["labels"]["phase"]["label"] == "build"
     assert "smart_labels" not in sample
     assert "smart_events" not in sample
@@ -157,10 +157,7 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
         "modalities": ["video"],
         "metadata": {},
         "labels": {},
-        "questions": [
-            {"id": "q1", "question": "How are you?"},
-            {"id": "q2", "question": "What happened?"},
-        ],
+        "questions": [{"id": "q1", "question": "Legacy question"}],
         "custom_root": {"keep": True},
         "data": [
             {
@@ -171,8 +168,10 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
                 "captions": [],
                 "dense_captions": [],
                 "answers": [
-                    {"question_id": "q1", "answer": "I am fine."},
-                    {"question_id": "qmissing", "answer": "drop"},
+                    {"question": "How are you?", "answers": ["I am fine.", "I am good."]},
+                    {"question": "How are you?", "answers": ["Still fine."]},
+                    {"question": "", "answers": ["drop"]},
+                    {"question_id": "q1", "answer": "drop legacy"},
                 ],
                 "metadata": {},
                 "custom_sample": {"keep": 1},
@@ -187,16 +186,15 @@ def test_dataset_json_for_write_rewrites_relative_paths_and_strips_empty_fields(
     assert written["modalities"] == ["video"]
     assert written["task"] == "video_annotation"
     assert written["custom_root"] == {"keep": True}
-    assert written["questions"] == [
-        {"id": "q1", "question": "How are you?"},
-        {"id": "q2", "question": "What happened?"},
-    ]
+    assert "questions" not in written
     assert written["data"][0]["inputs"][0]["path"] == "../project/clips/clip.mp4"
     assert "labels" not in written["data"][0]
     assert "events" not in written["data"][0]
     assert "captions" not in written["data"][0]
     assert "dense_captions" not in written["data"][0]
-    assert written["data"][0]["answers"] == [{"question_id": "q1", "answer": "I am fine."}]
+    assert written["data"][0]["answers"] == [
+        {"question": "How are you?", "answers": ["I am fine.", "I am good.", "Still fine."]}
+    ]
     assert "metadata" not in written["data"][0]
     assert written["data"][0]["custom_sample"] == {"keep": 1}
 
@@ -211,13 +209,214 @@ def test_available_mode_indices_for_sample_prefers_fixed_order(explorer_panel_an
         ],
         "captions": [{"lang": "en", "text": "caption"}],
         "dense_captions": [{"position_ms": 1500, "lang": "en", "text": "dense"}],
-        "answers": [{"question_id": "q1", "answer": "answer"}],
+        "answers": [{"question": "How are you?", "answers": ["answer"]}],
     }
-    controller.dataset_json["questions"] = [{"id": "q1", "question": "How are you?"}]
     assert controller._available_mode_indices_for_sample(sample) == [0, 1, 2, 3, 4]
     assert controller._available_mode_indices_for_sample({"events": [{"position_ms": 1}]}) == [1]
     assert controller._available_mode_indices_for_sample({"captions": [{"text": ""}]}) == []
-    assert controller._available_mode_indices_for_sample({"answers": [{"question_id": "q1", "answer": "x"}]}) == [4]
+    assert controller._available_mode_indices_for_sample({"answers": [{"question": "Q", "answers": ["x"]}]}) == [4]
+    assert controller._available_mode_indices_for_sample({"answers": [{"question_id": "q1", "answer": "x"}]}) == []
+
+
+def test_dataset_tree_sample_label_shows_average_smart_confidence_suffix(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    controller.project_root = str(tmp_path)
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "data": [
+            {
+                "id": "clip_1",
+                "inputs": [{"path": "clips/one.mp4", "type": "video"}],
+                "labels": {"action": {"label": "shot", "confidence_score": 0.8}},
+                "events": [
+                    {"head": "ball_action", "label": "pass", "position_ms": 1000},
+                    {"head": "ball_action", "label": "shot", "position_ms": 2000, "confidence_score": 0.7},
+                ],
+            },
+            {
+                "id": "clip_2",
+                "inputs": [{"path": "clips/two.mp4", "type": "video"}],
+                "labels": {"action": {"label": "pass"}},
+            },
+        ]
+    }
+
+    controller.populate_tree()
+
+    assert panel.tree_model.columnCount() == 1
+    assert panel.tree.isHeaderHidden()
+    assert panel.tree_model.index(0, 0).data() == "clip_1 (conf:0.75)"
+    assert panel.tree_model.index(1, 0).data() == "clip_2"
+    assert controller._average_smart_confidence_for_sample(controller.get_sample("clip_1")) == pytest.approx(0.75)
+    assert controller._average_smart_confidence_for_sample(controller.get_sample("clip_2")) is None
+
+
+def test_dataset_tree_sample_label_keeps_natural_sample_sort(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    controller.project_root = str(tmp_path)
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "data": [
+            {
+                "id": "clip_10",
+                "inputs": [{"path": "clips/ten.mp4", "type": "video"}],
+                "events": [{"head": "action", "label": "pass", "position_ms": 1, "confidence_score": 0.2}],
+            },
+            {
+                "id": "clip_1",
+                "inputs": [{"path": "clips/one.mp4", "type": "video"}],
+            },
+            {
+                "id": "clip_2",
+                "inputs": [{"path": "clips/two.mp4", "type": "video"}],
+                "labels": {"action": {"label": "shot", "confidence_score": 0.85}},
+            },
+        ]
+    }
+
+    controller.populate_tree()
+    panel.tree_model.sort(0, Qt.SortOrder.AscendingOrder)
+
+    assert [panel.tree_model.index(row, 0).data() for row in range(3)] == [
+        "clip_1",
+        "clip_2 (conf:0.85)",
+        "clip_10 (conf:0.20)",
+    ]
+
+
+def test_dataset_tree_confidence_sort_checkbox_defaults_unchecked(explorer_panel_and_controller):
+    panel, _controller = explorer_panel_and_controller
+
+    assert panel.sort_conf_checkbox.text() == "Sort by conf"
+    assert panel.sort_conf_checkbox.isChecked() is False
+
+
+def test_dataset_tree_confidence_sort_checkbox_toggles_order(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    controller.project_root = str(tmp_path)
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "data": [
+            {
+                "id": "clip_10",
+                "inputs": [{"path": "clips/ten.mp4", "type": "video"}],
+                "labels": {"action": {"label": "pass", "confidence_score": 0.2}},
+            },
+            {
+                "id": "clip_1",
+                "inputs": [{"path": "clips/one.mp4", "type": "video"}],
+            },
+            {
+                "id": "clip_2",
+                "inputs": [{"path": "clips/two.mp4", "type": "video"}],
+                "labels": {"action": {"label": "shot", "confidence_score": 0.85}},
+            },
+        ]
+    }
+
+    controller.populate_tree()
+    assert [panel.tree_model.index(row, 0).data() for row in range(3)] == [
+        "clip_1",
+        "clip_2 (conf:0.85)",
+        "clip_10 (conf:0.20)",
+    ]
+
+    panel.sort_conf_checkbox.setChecked(True)
+    assert [panel.tree_model.index(row, 0).data() for row in range(3)] == [
+        "clip_2 (conf:0.85)",
+        "clip_10 (conf:0.20)",
+        "clip_1",
+    ]
+
+    panel.sort_conf_checkbox.setChecked(False)
+    assert [panel.tree_model.index(row, 0).data() for row in range(3)] == [
+        "clip_1",
+        "clip_2 (conf:0.85)",
+        "clip_10 (conf:0.20)",
+    ]
+
+
+def test_dataset_tree_confidence_sort_reorders_after_confidence_refresh(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    controller.project_root = str(tmp_path)
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "data": [
+            {
+                "id": "clip_1",
+                "inputs": [{"path": "clips/one.mp4", "type": "video"}],
+            },
+            {
+                "id": "clip_2",
+                "inputs": [{"path": "clips/two.mp4", "type": "video"}],
+                "labels": {"action": {"label": "shot", "confidence_score": 0.5}},
+            },
+        ]
+    }
+
+    controller.populate_tree()
+    panel.sort_conf_checkbox.setChecked(True)
+    assert [panel.tree_model.index(row, 0).data() for row in range(2)] == [
+        "clip_2 (conf:0.50)",
+        "clip_1",
+    ]
+
+    sample = controller.get_sample("clip_1")
+    sample["labels"] = {"action": {"label": "pass", "confidence_score": 0.9}}
+    controller.update_item_status(controller.get_path_by_id("clip_1"))
+
+    assert [panel.tree_model.index(row, 0).data() for row in range(2)] == [
+        "clip_1 (conf:0.90)",
+        "clip_2 (conf:0.50)",
+    ]
+
+
+def test_dataset_tree_child_inputs_keep_roles_and_no_conf_suffix(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    controller.project_root = str(tmp_path)
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "data": [
+            {
+                "id": "multi",
+                "inputs": [
+                    {"path": "clips/view_1.mp4", "type": "video"},
+                    {"path": "clips/view_2.mp4", "type": "video"},
+                ],
+                "labels": {"action": {"label": "shot", "confidence_score": 0.9}},
+            }
+        ]
+    }
+
+    controller.populate_tree()
+
+    parent = panel.tree_model.index(0, 0)
+    child_name = panel.tree_model.index(0, 0, parent)
+    assert child_name.isValid()
+    assert child_name.data(panel.tree_model.DataIdRole) == "multi"
+    assert child_name.data() == "view_1.mp4"
+
+
+def test_dataset_tree_rename_strips_conf_suffix(explorer_panel_and_controller):
+    _panel, controller = explorer_panel_and_controller
+
+    assert controller._sample_id_from_tree_item_text("clip_1 (conf:0.75)") == "clip_1"
+    assert controller._sample_id_from_tree_item_text("renamed_clip") == "renamed_clip"
 
 
 def test_group_selected_files_and_sample_id_rules(

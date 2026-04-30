@@ -1,7 +1,132 @@
 # Tools
 
-Standalone command-line scripts for converting between the OSL JSON annotation format and a
-Parquet + WebDataset representation suited for large-scale ML training pipelines.
+Standalone command-line scripts for OSL JSON annotation conversion and dataset preparation.
+
+---
+
+## `convert_dataset_videos_to_224p.py`
+
+Converts every video input referenced by an OSL-style JSON annotation file to 224p copies,
+preserving aspect ratio and writing a new JSON file that points at the converted videos.
+
+The output videos keep the same relative folder structure under `output_media_root`.
+Non-video inputs and all annotation fields are preserved unchanged.
+If FFmpeg fails for a specific video, the tool skips that file, continues with the
+remaining videos, removes any partial output for that failed file, and prints the
+failed source/output paths at the end.
+
+### Usage
+
+```bash
+python tools/convert_dataset_videos_to_224p.py <json_path> <media_root> <output_json_path> <output_media_root> [options]
+```
+
+### Positional arguments
+
+| Argument | Description |
+|---|---|
+| `json_path` | Path to the source OSL JSON annotation file. |
+| `media_root` | Root directory containing the files referenced in `inputs[].path`. |
+| `output_json_path` | Destination path for the converted dataset JSON. |
+| `output_media_root` | Destination root for the converted video files. |
+
+### Optional arguments
+
+| Flag | Default | Description |
+|---|---|---|
+| `--height N` | `224` | Target output video height. Width is chosen by FFmpeg to preserve aspect ratio with an encoder-compatible even value. |
+| `--fps FPS` | `25` | Forced output video frame rate. |
+| `--overwrite` | off | Replace existing output JSON and video files. |
+| `--missing-policy {raise,skip}` | `raise` | Action when a referenced source video is missing. |
+| `--dry-run` | off | Print planned conversions without writing JSON or media. |
+
+### Examples
+
+```bash
+# Convert a dataset to a parallel 224p media root
+python tools/convert_dataset_videos_to_224p.py \
+    test_data/VQA/XFoul-train/train.json \
+    test_data/VQA/XFoul-train \
+    test_data/VQA/XFoul-train-224p/train.json \
+    test_data/VQA/XFoul-train-224p \
+    --overwrite
+
+# Preview conversions without writing files
+python tools/convert_dataset_videos_to_224p.py \
+    test_data/VQA/XFoul-test/test.json \
+    test_data/VQA/XFoul-test \
+    test_data/VQA/XFoul-test-224p/test.json \
+    test_data/VQA/XFoul-test-224p \
+    --dry-run
+```
+
+---
+
+## `upload_dataset_to_hf.py`
+
+Uploads an OSL dataset to Hugging Face using `opensportslib.tools.hf_transfer`.
+
+The default mode uploads the dataset JSON plus every file referenced in `data[].inputs[].path`,
+preserving the paths declared in the JSON. The Parquet mode uploads the dataset as
+Parquet + WebDataset shards through the OpenSportsLib upload API.
+If the target dataset repo or branch/revision does not exist, the tool creates it and retries
+the upload once.
+
+### Usage
+
+```bash
+python tools/upload_dataset_to_hf.py --repo-id <org/repo> --json-path <json_path> --split <split> [options]
+```
+
+### Required arguments
+
+| Flag | Description |
+|---|---|
+| `--repo-id REPO` | Target Hugging Face dataset repo ID, such as `OpenSportsLab/my-dataset`. |
+| `--json-path PATH` | Local OSL dataset JSON path. |
+| `--split SPLIT` | Remote split/artifact name. JSON uploads `<split>.json`; Parquet uploads `<split>/`. |
+
+### Optional arguments
+
+| Flag | Default | Description |
+|---|---|---|
+| `--revision REV` | `main` | Target branch/revision in the dataset repo. |
+| `--commit-message MSG` | `Upload dataset inputs from JSON` | Commit message for the upload. |
+| `--token TOKEN` | — | Optional Hugging Face token. If omitted, local HF login is used. |
+| `--format {json,parquet}` | `json` | Upload JSON + referenced inputs, or Parquet + WebDataset shards. |
+| `--shard-mode {size,samples}` | `size` | Shard grouping mode for `--format parquet`. |
+| `--shard-size SIZE` | `1GB` | Target TAR shard size for `--format parquet`. Supports values like `500MB`, `1GB`, `1024MiB`, or plain bytes. |
+
+### Examples
+
+```bash
+# Upload the JSON dataset and referenced input files
+python tools/upload_dataset_to_hf.py \
+    --repo-id OpenSportsLab/OSL-loc-tennis-public \
+    --json-path test_data/VQA/XFoul-test/test.json \
+    --commit-message "Upload XFoul test dataset"
+
+# Upload as Parquet + WebDataset shards
+for split in test valid train; do
+python tools/upload_dataset_to_hf.py \
+    --repo-id OpenSportsLab/OSL-XFoul \
+    --revision 224p \
+    --split $split \
+    --json-path test_data/VQA/XFoul-$split-224p/$split.json \
+    --format parquet \
+    --shard-size 1GB \
+    --commit-message "Upload XFoul $split 224p dataset"
+
+python tools/upload_dataset_to_hf.py \
+    --repo-id OpenSportsLab/OSL-XFoul \
+    --revision 720p \
+    --split $split \
+    --json-path test_data/VQA/XFoul-$split/$split.json \
+    --format parquet \
+    --shard-size 1GB \
+    --commit-message "Upload XFoul $split 720p dataset"
+done
+```
 
 ---
 
@@ -31,7 +156,9 @@ python tools/osl_json_to_parquet_webdataset.py <json_path> <media_root> <output_
 
 | Flag | Default | Description |
 |---|---|---|
-| `--samples-per-shard N` | `100` | Number of samples packed into each TAR shard. |
+| `--shard-mode {size,samples}` | `size` | Group samples by target TAR size or by sample count. |
+| `--shard-size SIZE` | `1GB` | Target TAR shard size in size mode. Supports values like `500MB`, `1GB`, `1024MiB`, or plain bytes. |
+| `--samples-per-shard N` | `100` | Number of samples packed into each TAR shard when `--shard-mode samples` is used. |
 | `--compression {zstd,snappy,gzip,brotli,none}` | `zstd` | Parquet compression codec. |
 | `--shard-prefix PREFIX` | `shard` | File name prefix for TAR shard files. |
 | `--missing-policy {raise,skip}` | `raise` | Action when a referenced input file is missing. `raise` aborts; `skip` omits the file from the shard but keeps the sample in Parquet. |
@@ -47,14 +174,60 @@ python tools/osl_json_to_parquet_webdataset.py \
     /data/videos \
     /output/converted_dataset
 
-# 50 samples per shard, skip missing files, overwrite existing output
+# 500 MB shards, skip missing files, overwrite existing output
 python tools/osl_json_to_parquet_webdataset.py \
     annotations.json \
     /data/videos \
     /output/converted_dataset \
-    --samples-per-shard 50 \
+    --shard-size 500MB \
     --missing-policy skip \
     --overwrite
+```
+
+---
+
+## `merge_mvfouls_classification_into_vqa.py`
+
+Copies MVFouls classification labels into XFoul VQA annotation samples. The script matches
+samples by ID, stripping the MVFouls `test_` prefix and applying labels to duplicate VQA
+samples with suffixes such as `__2` or `__3`.
+
+### Usage
+
+```bash
+python tools/merge_mvfouls_classification_into_vqa.py [options]
+```
+
+### Optional arguments
+
+| Flag | Default | Description |
+|---|---|---|
+| `--classification-json PATH` | `test_data/MVFouls/test/annotations_test.json` | Path to the MVFouls classification annotation JSON. |
+| `--vqa-json PATH` | `test_data/VQA/XFoul-test/test.json` | Path to the XFoul VQA annotation JSON. |
+| `--output-json PATH` | `test_data/VQA/XFoul-test/test_with_classification.json` | Path where the merged JSON should be written. |
+| `--indent N` | `2` | JSON indentation level for the output file. |
+
+### Examples
+
+```bash
+# Merge using the default repository test-data paths
+python tools/merge_mvfouls_classification_into_vqa.py
+
+# Merge explicit input/output files
+python tools/merge_mvfouls_classification_into_vqa.py \
+    --classification-json test_data/MVFouls/test/annotations_test.json \
+    --vqa-json test_data/VQA/XFoul-test/test.json \
+    --output-json test_data/VQA/XFoul-test/test_with_classification.json
+
+python tools/merge_mvfouls_classification_into_vqa.py \
+    --classification-json test_data/MVFouls-jsonly/annotations_valid.json \
+    --vqa-json test_data/VQA/XFoul-valid/valid.json \
+    --output-json test_data/VQA/XFoul-valid/valid_with_classification.json
+
+python tools/merge_mvfouls_classification_into_vqa.py \
+    --classification-json test_data/MVFouls-jsonly/annotations_train.json \
+    --vqa-json test_data/VQA/XFoul-train/train.json \
+    --output-json test_data/VQA/XFoul-train/train_with_classification.json
 ```
 
 ---
@@ -136,7 +309,7 @@ python tools/osl_json_to_parquet_webdataset.py \
     test_data/Description/xfoul/annotations_test.json \
     test_data/Description/xfoul \
     test_data/xfoul_parquet_webdataset \
-    --samples-per-shard 50 \
+    --shard-size 500MB \
     --missing-policy skip \
     --overwrite
 
@@ -153,7 +326,7 @@ python tools/osl_json_to_parquet_webdataset.py \
     test_data/Classification/svfouls/annotations_test.json \
     test_data/Classification/svfouls \
     test_data/svfouls_parquet_webdataset \
-    --samples-per-shard 50 \
+    --shard-size 500MB \
     --missing-policy skip \
     --overwrite
 
@@ -170,7 +343,7 @@ python tools/osl_json_to_parquet_webdataset.py \
     test_data/sngar-tracking/annotations_test.json \
     test_data/sngar-tracking \
     test_data/sngar-tracking_parquet_webdataset \
-    --samples-per-shard 50 \
+    --shard-size 500MB \
     --missing-policy skip \
     --overwrite
 
@@ -186,8 +359,195 @@ python tools/parquet_webdataset_to_osl_json.py \
 
 ## Dependencies
 
-Both scripts require `pandas` and `pyarrow`. Install all project dependencies with:
+Both scripts require `opensportslib` latest version
 
 ```bash
-pip install -r requirements.txt
+pip install opensportslib==0.1.3
+pip install -e ~/git/opensportslib/
+```
+
+
+
+**Basic Command:**
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id <org>/<dataset> \
+  --revision <revision> \
+  --split <split> \
+  --format json \
+  --output-dir <output_directory>
+```
+- JSON mode downloads `<split>.json` and every file referenced by that JSON.
+- Parquet mode downloads and converts the `<split>/` folder.
+
+**Arguments:**
+
+* `--repo-id`: (required) Hugging Face dataset repo ID, such as `OpenSportsLab/OSL-XFoul`.
+* `--revision`: (required) Hugging Face branch/revision.
+* `--split`: (required) Split/artifact name.
+* `--format`: (optional) `json` or `parquet`. Defaults to `parquet`.
+* `--output-dir`: (optional) Download root. Files are written under `<output-dir>/<revision>/<split>`. Defaults to `downloaded_data`.
+* `--dry-run`: (optional) If provided, lists all files that would be downloaded and total size, but does not actually download any files.
+* `--token`: (optional) HF token override. If omitted, your local HF login is used.
+
+
+**Example:**
+Classification – svfouls
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-classification-vars \
+  --revision svfouls \
+  --split annotations_test \
+  --format json \
+  --output-dir test_data/Classification/svfouls
+```
+
+Classification – mvfouls
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-classification-vars \
+  --revision mvfouls \
+  --split annotations_test \
+  --format json \
+  --output-dir test_data/Classification/mvfouls
+```
+
+Localization – Action Spotting (SNBAS)
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-localization-snbas \
+  --revision 224p \
+  --split annotations-test \
+  --format json \
+  --output-dir test_data/Localization/snbas
+```
+
+Localization – Action Spotting (Tennis)
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-localization-tennis \
+  --revision main \
+  --split annotations-localization-test \
+  --format json \
+  --output-dir test_data/Localization/tennis
+```
+
+Localization – Action Spotting (Gymnastics)
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-localization-gymnastics \
+  --revision main \
+  --split annotations-localization-test \
+  --format json \
+  --output-dir test_data/Localization/gymnastics
+```
+
+Description – Video Captioning (xFoul)
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-description-xfoul \
+  --revision main \
+  --split annotations_test \
+  --format json \
+  --output-dir test_data/Description/xfoul
+```
+
+Dense Description – Dense Video Captioning (SNDVC)
+
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-densedescription-sndvc \
+  --revision main \
+  --split annotations-test \
+  --format json \
+  --output-dir test_data/DenseDescription/sndvc
+```
+
+**Dry Run Example:**
+Before downloading large video files, run the script in dry-run mode
+```bash
+python test_data/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-classification-vars \
+  --revision svfouls \
+  --split annotations_test \
+  --format json \
+  --dry-run
+```
+Dry-run mode will:
+- List all video files that would be downloaded
+- Show the estimated total storage required
+- Report missing files (if any)
+- Download nothing
+
+---
+
+**Output Structure:**
+Output Structure
+After downloading, the output directory will contain:
+- The annotation JSON file
+- All referenced video files
+- The original Hugging Face repository folder structure
+
+
+Example:
+
+```bash
+output_dir/
+├── annotations-test.json
+└── test/
+    └── action_0/
+        ├── clip_0.mp4
+        └── clip_1.mp4
+```
+
+
+# DL old format
+```bash
+for revision in 224p 720p 224p-2023 720p-2023; do
+for split in train test valid challenge; do
+python tools/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-localization-snbas \
+  --revision $revision \
+  --split annotations-$split \
+  --format json \
+  --output-dir test_data/soccernetpro-localization-snbas
+done
+done
+```
+
+# Upload new format
+```bash
+for revision in 224p-2024 720p-2024 224p-2023 720p-2023; do
+for split in train test valid challenge; do
+python tools/upload_dataset_to_hf.py \
+    --repo-id OpenSportsLab/OSL-SNBAS \
+    --revision $revision \
+    --split $split \
+    --json-path test_data/soccernetpro-localization-snbas/$revision/$split/$split.json \
+    --format parquet \
+    --shard-size 5GB \
+    --commit-message "Upload SNBAS $revision $split dataset"
+done
+done
+```
+
+# Download new format
+```bash
+for revision in 224p-2024 720p-2024 224p-2023 720p-2023; do
+for split in train test valid challenge; do
+python tools/download_osl_hf.py \
+  --repo-id OpenSportsLab/soccernetpro-localization-snbas \
+  --revision $revision \
+  --split $split \
+  --format json \
+  --output-dir test_data/soccernetpro-localization-snbas
+done
+done
 ```

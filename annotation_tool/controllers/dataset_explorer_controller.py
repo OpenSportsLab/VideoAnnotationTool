@@ -226,10 +226,10 @@ class DatasetExplorerController(QObject):
 
     dataSelected = pyqtSignal(str)
     sampleSelectionChanged = pyqtSignal(object)
+    qaQuestionCatalogChanged = pyqtSignal(list)
     schemaContextChanged = pyqtSignal(dict)
-    questionBankChanged = pyqtSignal(list)
     classificationActionListChanged = pyqtSignal(list)
-    mediaRouteRequested = pyqtSignal(str, bool)
+    mediaRouteRequested = pyqtSignal(object, bool)
     mediaStopRequested = pyqtSignal()
     statusMessageRequested = pyqtSignal(str, str, int)
     saveStateRefreshRequested = pyqtSignal()
@@ -301,6 +301,8 @@ class DatasetExplorerController(QObject):
         self.current_selected_input_path = None
         self._last_routed_media_path = None
         self._suspend_tree_item_changed = False
+        self._sort_by_confidence = False
+        self._is_populating_tree = False
 
         self.manual_annotations = _ManualAnnotationsProxy(self)
         self.localization_events = _SampleListProxy(self, "events")
@@ -343,18 +345,6 @@ class DatasetExplorerController(QObject):
     @modalities.setter
     def modalities(self, value):
         self.dataset_json["modalities"] = list(value) if isinstance(value, list) else ["video"]
-
-    @property
-    def question_definitions(self) -> list:
-        questions = self.dataset_json.get("questions")
-        if not isinstance(questions, list):
-            questions = []
-            self.dataset_json["questions"] = questions
-        return questions
-
-    @question_definitions.setter
-    def question_definitions(self, value):
-        self.dataset_json["questions"] = list(value) if isinstance(value, list) else []
 
     @property
     def project_header_known(self) -> dict:
@@ -418,6 +408,8 @@ class DatasetExplorerController(QObject):
         self.panel.clear_btn.clicked.connect(self.handle_clear_workspace)
         self.panel.removeItemRequested.connect(self.handle_remove_item)
         self.panel.filter_combo.currentIndexChanged.connect(self.handle_filter_change)
+        if hasattr(self.panel, "confidenceSortToggled"):
+            self.panel.confidenceSortToggled.connect(self._on_confidence_sort_toggled)
         self.panel.sampleNavigateRequested.connect(self.navigate_samples)
         self.panel.headerDraftChanged.connect(self._on_header_draft_changed)
         if hasattr(self.panel, "header_tabs"):
@@ -447,9 +439,18 @@ class DatasetExplorerController(QObject):
         self.current_selected_input_path = None
         self._last_routed_media_path = None
         self._suspend_tree_item_changed = False
+        self._sort_by_confidence = False
+        self._is_populating_tree = False
+
+        if hasattr(self.panel, "sort_conf_checkbox"):
+            was_blocked = self.panel.sort_conf_checkbox.blockSignals(True)
+            self.panel.sort_conf_checkbox.setChecked(False)
+            self.panel.sort_conf_checkbox.blockSignals(was_blocked)
 
         if hasattr(self.tree_model, "clear"):
             self.tree_model.clear()
+            if hasattr(self.tree_model, "configure_columns"):
+                self.tree_model.configure_columns()
         if hasattr(self.panel, "tree") and self.panel.tree is not None:
             self.panel.tree.setCurrentIndex(QModelIndex())
 
@@ -542,6 +543,23 @@ class DatasetExplorerController(QObject):
             return []
         return list(entry.get("source_files", []))
 
+    def get_media_source_by_id(self, data_id: str, preferred_path: str = ""):
+        entry = self.action_id_to_item.get(data_id)
+        if not entry:
+            return None
+
+        media_sources = list(entry.get("media_sources", []))
+        if not media_sources:
+            return None
+
+        preferred_key = self._fs_path_key(preferred_path)
+        if preferred_key:
+            for media_source in media_sources:
+                if self._fs_path_key(media_source.get("path")) == preferred_key:
+                    return copy.deepcopy(media_source)
+
+        return copy.deepcopy(media_sources[0])
+
     def get_data_id_by_path(self, path: str):
         sample = self.get_sample_by_path(path)
         if isinstance(sample, dict):
@@ -566,8 +584,20 @@ class DatasetExplorerController(QObject):
     def _emit_schema_context(self):
         self.schemaContextChanged.emit(copy.deepcopy(self.label_definitions))
 
-    def _emit_question_bank_context(self):
-        self.questionBankChanged.emit(copy.deepcopy(self.question_definitions))
+    def _emit_qa_question_catalog_context(self):
+        questions = []
+        seen = set()
+        for sample in self.get_samples():
+            if not isinstance(sample, dict):
+                continue
+            for group in list(sample.get("answers") or []):
+                if not isinstance(group, dict):
+                    continue
+                question = str(group.get("question") or "").strip()
+                if question and question not in seen:
+                    seen.add(question)
+                    questions.append(question)
+        self.qaQuestionCatalogChanged.emit(questions)
 
     def _emit_classification_action_list(self):
         self.classificationActionListChanged.emit(copy.deepcopy(self.action_item_data))
@@ -595,11 +625,12 @@ class DatasetExplorerController(QObject):
         inputs = extra_fields.pop("inputs", None)
         if not isinstance(inputs, list):
             paths = list(source_files or [path])
-            inputs = [{"type": "video", "path": src} for src in paths]
+            inputs = [self._new_input_payload_for_source(src) for src in paths]
 
         sample = {"id": sample_id, "inputs": inputs}
         sample.update(extra_fields)
         self.get_samples().append(sample)
+        self.ensure_modalities_for_inputs(inputs)
         self._rebuild_runtime_index()
         return self.sample_id_to_entry.get(sample_id)
 
@@ -1023,65 +1054,108 @@ class DatasetExplorerController(QObject):
             "modalities": ["video"],
             "metadata": {},
             "labels": {},
-            "questions": [],
             "data": [],
         }
 
     @staticmethod
-    def _normalize_question_id(question_id: str) -> str:
-        return str(question_id or "").strip()
-
-    def _normalize_questions_payload(self, questions) -> list:
-        normalized = []
-        seen_ids = set()
-        for raw_question in list(questions or []):
-            if not isinstance(raw_question, dict):
-                continue
-
-            question_id = self._normalize_question_id(raw_question.get("id"))
-            question_text = str(raw_question.get("question") or "").strip()
-            if not question_id or not question_text:
-                continue
-            if question_id in seen_ids:
-                continue
-
-            seen_ids.add(question_id)
-            normalized.append({"id": question_id, "question": question_text})
-        return normalized
+    def _canonical_input_type(input_type, path: str = "") -> str:
+        clean = str(input_type or "").strip().lower()
+        if clean == "frame_npy":
+            return "frames_npy"
+        if clean:
+            return clean
+        _, extension = os.path.splitext(str(path or ""))
+        if extension.lower() == ".npy":
+            return "frames_npy"
+        if extension.lower() == ".parquet":
+            return "tracking_parquet"
+        return "video"
 
     @staticmethod
-    def _normalize_sample_answers_payload(answers, valid_question_ids: set) -> list:
+    def _coerce_frames_fps(value, default: float = 2.0) -> float:
+        try:
+            fps = float(value)
+        except Exception:
+            fps = default
+        if fps <= 0:
+            return default
+        return fps
+
+    def _normalized_modalities(self, raw_modalities, samples=None) -> list[str]:
         normalized = []
-        seen_question_ids = set()
+        seen = set()
+
+        def _add(modality):
+            clean = str(modality or "").strip()
+            if not clean:
+                return
+            canonical = self._canonical_input_type(clean)
+            if canonical not in seen:
+                seen.add(canonical)
+                normalized.append(canonical)
+
+        if isinstance(raw_modalities, list):
+            for item in raw_modalities:
+                _add(item)
+
+        for sample in list(samples or []):
+            if not isinstance(sample, dict):
+                continue
+            for input_item in list(sample.get("inputs", [])):
+                if not isinstance(input_item, dict):
+                    continue
+                path = str(input_item.get("path") or "")
+                canonical = self._canonical_input_type(input_item.get("type"), path)
+                _add(canonical)
+
+        if not normalized:
+            normalized.append("video")
+        return normalized
+
+    def ensure_modalities_for_inputs(self, inputs) -> None:
+        if not isinstance(inputs, list):
+            return
+        self.modalities = self._normalized_modalities(
+            self.modalities,
+            [{"inputs": copy.deepcopy(inputs)}],
+        )
+
+    @staticmethod
+    def _normalize_sample_answers_payload(answers) -> list:
+        normalized = []
+        index_by_question = {}
         for raw_answer in list(answers or []):
             if not isinstance(raw_answer, dict):
                 continue
-            question_id = str(raw_answer.get("question_id") or "").strip()
-            if (
-                not question_id
-                or question_id not in valid_question_ids
-                or question_id in seen_question_ids
-            ):
-                continue
-            answer_text = str(raw_answer.get("answer") or "").strip()
-            if not answer_text:
-                continue
-            normalized.append({"question_id": question_id, "answer": answer_text})
-            seen_question_ids.add(question_id)
-        return normalized
 
-    def next_question_id(self) -> str:
-        max_suffix = 0
-        for question in self.question_definitions:
-            if not isinstance(question, dict):
+            # Legacy question_id/answer entries require explicit migration and
+            # are intentionally not accepted by the grouped VQA schema.
+            if "question_id" in raw_answer:
                 continue
-            question_id = self._normalize_question_id(question.get("id"))
-            if not question_id.startswith("q"):
+
+            question_text = str(raw_answer.get("question") or "").strip()
+            if not question_text:
                 continue
-            suffix = question_id[1:]
-            if suffix.isdigit():
-                max_suffix = max(max_suffix, int(suffix))
-        return f"q{max_suffix + 1}"
+
+            raw_answers = raw_answer.get("answers")
+            if not isinstance(raw_answers, list):
+                continue
+
+            answer_texts = []
+            for raw_text in raw_answers:
+                answer_text = str(raw_text or "").strip()
+                if answer_text:
+                    answer_texts.append(answer_text)
+            if not answer_texts:
+                continue
+
+            existing_index = index_by_question.get(question_text)
+            if existing_index is None:
+                index_by_question[question_text] = len(normalized)
+                normalized.append({"question": question_text, "answers": answer_texts})
+            else:
+                normalized[existing_index]["answers"].extend(answer_texts)
+        return normalized
 
     def _normalize_dataset_json(self, data):
         if not isinstance(data, dict):
@@ -1095,12 +1169,9 @@ class DatasetExplorerController(QObject):
 
         if not isinstance(normalized.get("labels"), dict):
             normalized["labels"] = {}
-        normalized["questions"] = self._normalize_questions_payload(normalized.get("questions"))
-        valid_question_ids = {question["id"] for question in normalized["questions"]}
+        normalized.pop("questions", None)
         if not isinstance(normalized.get("metadata"), dict):
             normalized["metadata"] = {}
-        if not isinstance(normalized.get("modalities"), list):
-            normalized["modalities"] = ["video"]
         if not isinstance(normalized.get("data"), list):
             return None, "Top-level 'data' must be a list."
 
@@ -1119,6 +1190,13 @@ class DatasetExplorerController(QObject):
             if not isinstance(inputs, list):
                 inputs = []
                 sample["inputs"] = inputs
+            for input_item in inputs:
+                if not isinstance(input_item, dict):
+                    continue
+                input_item["type"] = self._canonical_input_type(
+                    input_item.get("type"),
+                    input_item.get("path"),
+                )
             sample["metadata"] = sample.get("metadata", {}) if isinstance(sample.get("metadata"), dict) else {}
 
             # Drop legacy smart keys. Smart state is represented via confidence_score
@@ -1142,10 +1220,7 @@ class DatasetExplorerController(QObject):
                     if isinstance(event, dict):
                         event["position_ms"] = _safe_int(event.get("position_ms", 0))
 
-            normalized_answers = self._normalize_sample_answers_payload(
-                sample.get("answers"),
-                valid_question_ids,
-            )
+            normalized_answers = self._normalize_sample_answers_payload(sample.get("answers"))
             if normalized_answers:
                 sample["answers"] = normalized_answers
             else:
@@ -1154,6 +1229,10 @@ class DatasetExplorerController(QObject):
             cleaned_data.append(sample)
 
         normalized["data"] = cleaned_data
+        normalized["modalities"] = self._normalized_modalities(
+            normalized.get("modalities"),
+            cleaned_data,
+        )
         return normalized, ""
 
     def _ensure_sample_ids(self):
@@ -1182,6 +1261,45 @@ class DatasetExplorerController(QObject):
     def _display_name_for_sample(self, sample: dict) -> str:
         return str(sample.get("id") or "sample")
 
+    def _resolved_media_source_from_input(self, input_item: dict):
+        if not isinstance(input_item, dict):
+            return None
+
+        raw_path = input_item.get("path")
+        if not raw_path:
+            return None
+
+        resolved_path = self._resolve_media_path(raw_path)
+        if not resolved_path:
+            return None
+
+        source_type = self._canonical_input_type(
+            input_item.get("type"),
+            raw_path,
+        )
+        media_source = {
+            "path": resolved_path,
+            "type": source_type,
+        }
+        if source_type in {"frames_npy", "tracking_parquet"}:
+            media_source["fps"] = self._coerce_frames_fps(input_item.get("fps"), 2.0)
+        else:
+            try:
+                fps = float(input_item.get("fps"))
+            except Exception:
+                fps = None
+            if fps and fps > 0:
+                media_source["fps"] = fps
+        return media_source
+
+    def _resolved_media_sources_for_sample(self, sample: dict):
+        sources = []
+        for input_item in sample.get("inputs", []):
+            media_source = self._resolved_media_source_from_input(input_item)
+            if media_source:
+                sources.append(media_source)
+        return sources
+
     def _raw_source_paths_for_sample(self, sample: dict):
         raw_paths = []
         for input_item in sample.get("inputs", []):
@@ -1207,12 +1325,16 @@ class DatasetExplorerController(QObject):
         return os.path.normcase(os.path.normpath(str(path)))
 
     def _resolved_source_paths_for_sample(self, sample: dict):
-        return [self._resolve_media_path(path) for path in self._raw_source_paths_for_sample(sample)]
+        return [
+            source["path"]
+            for source in self._resolved_media_sources_for_sample(sample)
+            if source.get("path")
+        ]
 
     def _primary_runtime_path_for_sample(self, sample: dict):
-        sources = self._resolved_source_paths_for_sample(sample)
+        sources = self._resolved_media_sources_for_sample(sample)
         if sources:
-            return sources[0]
+            return sources[0]["path"]
         return f"sample://{sample.get('id', 'unknown')}"
 
     def _rebuild_runtime_index(self):
@@ -1227,12 +1349,14 @@ class DatasetExplorerController(QObject):
 
         for sample in self.get_samples():
             sample_id = str(sample.get("id"))
-            source_files = self._resolved_source_paths_for_sample(sample)
-            path = self._primary_runtime_path_for_sample(sample)
+            media_sources = self._resolved_media_sources_for_sample(sample)
+            source_files = [source["path"] for source in media_sources if source.get("path")]
+            path = media_sources[0]["path"] if media_sources else self._primary_runtime_path_for_sample(sample)
             entry = {
                 "name": self._display_name_for_sample(sample),
                 "path": path,
                 "source_files": source_files,
+                "media_sources": media_sources,
                 "data_id": sample_id,
                 "id": sample_id,
                 "inputs": sample.get("inputs", []),
@@ -1265,14 +1389,14 @@ class DatasetExplorerController(QObject):
             return
 
         item_idx = item.index()
-        if not item_idx.isValid() or item_idx.parent().isValid():
+        if not item_idx.isValid() or item_idx.parent().isValid() or item_idx.column() != 0:
             return
 
         old_sample_id = str(item.data(getattr(self.tree_model, "DataIdRole", 0x0101)) or "")
         if not old_sample_id:
             return
 
-        requested_id = str(item.text() or "").strip()
+        requested_id = self._sample_id_from_tree_item_text(item.text())
         if not requested_id:
             self._suspend_tree_item_changed = True
             try:
@@ -1308,18 +1432,28 @@ class DatasetExplorerController(QObject):
             lambda old_id=old_sample_id, new_id=requested_id: self.sampleRenameRequested.emit(old_id, new_id),
         )
 
+    @staticmethod
+    def _sample_id_from_tree_item_text(text: str) -> str:
+        sample_id = str(text or "").strip()
+        marker = " (conf:"
+        if sample_id.endswith(")") and marker in sample_id:
+            sample_id = sample_id.rsplit(marker, 1)[0].strip()
+        return sample_id
+
     # ------------------------------------------------------------------
     # Tree population and selection
     # ------------------------------------------------------------------
     def populate_tree(self):
+        self._is_populating_tree = True
         self._rebuild_runtime_index()
+        preferred_sample_id = self.current_selected_sample_id
+        preferred_input_path = self.current_selected_input_path
         self.tree_model.clear()
+        if hasattr(self.tree_model, "configure_columns"):
+            self.tree_model.configure_columns()
         self.action_item_map.clear()
 
-        sorted_items = sorted(
-            self.action_item_data,
-            key=lambda item: natural_sort_key(item.get("name", "")),
-        )
+        sorted_items = self._sorted_action_items()
 
         self._suspend_tree_item_changed = True
         try:
@@ -1329,6 +1463,7 @@ class DatasetExplorerController(QObject):
                     path=entry["path"],
                     source_files=entry.get("source_files"),
                     data_id=entry["data_id"],
+                    confidence_score=self._average_smart_confidence_for_sample(entry.get("sample_ref")),
                 )
                 self.action_item_map[entry["path"]] = item
                 self.update_item_status(entry["path"])
@@ -1338,21 +1473,63 @@ class DatasetExplorerController(QObject):
         self.handle_filter_change(self.panel.filter_combo.currentIndex())
 
         if self.tree_model.rowCount() > 0:
-            first_index = self.tree_model.index(0, 0)
-            if first_index.isValid():
-                self.panel.tree.setCurrentIndex(first_index)
-                self._expand_current_parent()
+            restored = self._restore_tree_selection(preferred_sample_id, preferred_input_path)
+            if not restored:
+                first_index = self.tree_model.index(0, 0)
+                if first_index.isValid():
+                    self.panel.tree.setCurrentIndex(first_index)
+                    self._expand_current_parent()
         else:
             self._clear_selection_for_empty_filtered_view()
 
         self._refresh_json_preview()
         self.batchDropdownSyncRequested.emit()
         self._emit_classification_action_list()
+        self._is_populating_tree = False
+
+    def _sorted_action_items(self):
+        if not self._sort_by_confidence:
+            return sorted(
+                self.action_item_data,
+                key=lambda item: natural_sort_key(item.get("name", "")),
+            )
+
+        def confidence_sort_key(item):
+            score = self._average_smart_confidence_for_sample(item.get("sample_ref"))
+            if score is None:
+                return (1, 0.0, natural_sort_key(item.get("name", "")))
+            return (0, -float(score), natural_sort_key(item.get("name", "")))
+
+        return sorted(self.action_item_data, key=confidence_sort_key)
+
+    def _on_confidence_sort_toggled(self, checked: bool):
+        checked = bool(checked)
+        if self._sort_by_confidence == checked:
+            return
+        self._sort_by_confidence = checked
+        self.populate_tree()
 
     def update_item_status(self, action_path: str):
         item = self.action_item_map.get(action_path)
+        sample = self.get_sample_by_path(action_path)
+        if item is None and isinstance(sample, dict):
+            entry = self.sample_id_to_entry.get(str(sample.get("id") or ""))
+            if entry:
+                item = self.action_item_map.get(entry.get("path"))
         if not item:
             return
+
+        if isinstance(sample, dict):
+            self._suspend_tree_item_changed = True
+            try:
+                item.setText(self._tree_display_name_for_sample(sample))
+            finally:
+                self._suspend_tree_item_changed = False
+
+        if self._sort_by_confidence and not self._is_populating_tree:
+            self.populate_tree()
+            return
+
         done_icon, empty_icon = self._done_icon, self._empty_icon
         if done_icon is not None and empty_icon is not None:
             item.setIcon(done_icon if self.is_action_done(action_path) else empty_icon)
@@ -1373,6 +1550,15 @@ class DatasetExplorerController(QObject):
 
     def _active_mode_idx(self) -> int:
         return int(self._active_mode_index)
+
+    def _tree_display_name_for_sample(self, sample: dict) -> str:
+        display_name = self._display_name_for_sample(sample)
+        confidence_score = self._average_smart_confidence_for_sample(sample)
+        if hasattr(self.tree_model, "entry_display_name"):
+            return self.tree_model.entry_display_name(display_name, confidence_score)
+        if confidence_score is None:
+            return display_name
+        return f"{display_name} (conf:{float(confidence_score):.2f})"
 
     def _get_action_index(self, index: QModelIndex) -> QModelIndex:
         if not index.isValid():
@@ -1554,19 +1740,21 @@ class DatasetExplorerController(QObject):
         sample_id: str,
         ensure_playback: bool = False,
     ):
-        media_paths = [path for path in self.get_sources_by_id(sample_id) if path]
-        if not media_paths:
+        preferred_path = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
+        media_source = self.get_media_source_by_id(sample_id, preferred_path)
+        if not media_source:
             return
 
-        preferred = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-        primary_path = preferred or media_paths[0]
+        primary_path = str(media_source.get("path") or "")
+        if not primary_path:
+            return
         self.current_selected_input_path = primary_path
         if (
             not ensure_playback
             and self._fs_path_key(self._last_routed_media_path) == self._fs_path_key(primary_path)
         ):
             return
-        self.mediaRouteRequested.emit(primary_path, ensure_playback)
+        self.mediaRouteRequested.emit(media_source, ensure_playback)
         self._last_routed_media_path = primary_path
 
     def handle_active_mode_changed(self, mode_idx: int = None):
@@ -1668,8 +1856,11 @@ class DatasetExplorerController(QObject):
         for entry in answers:
             if not isinstance(entry, dict):
                 continue
-            if str(entry.get("answer") or "").strip():
-                return True
+            if not str(entry.get("question") or "").strip():
+                continue
+            for answer_text in list(entry.get("answers") or []):
+                if str(answer_text or "").strip():
+                    return True
         return False
 
     @staticmethod
@@ -1690,14 +1881,42 @@ class DatasetExplorerController(QObject):
                     return True
         return False
 
+    @staticmethod
+    def _average_smart_confidence_for_sample(sample: dict):
+        if not isinstance(sample, dict):
+            return None
+
+        scores = []
+        labels = sample.get("labels")
+        if isinstance(labels, dict):
+            for payload in labels.values():
+                if isinstance(payload, dict) and "confidence_score" in payload:
+                    try:
+                        scores.append(float(payload.get("confidence_score")))
+                    except (TypeError, ValueError):
+                        pass
+
+        events = sample.get("events")
+        if isinstance(events, list):
+            for event in events:
+                if isinstance(event, dict) and "confidence_score" in event:
+                    try:
+                        scores.append(float(event.get("confidence_score")))
+                    except (TypeError, ValueError):
+                        pass
+
+        if not scores:
+            return None
+        return sum(scores) / len(scores)
+
     # ------------------------------------------------------------------
     # Sample add/remove/clear
     # ------------------------------------------------------------------
     def _sample_file_filter(self) -> str:
-        return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp);;All Files (*)"
+        return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp *.npy *.parquet);;All Files (*)"
 
     def _supported_media_extensions(self):
-        return (".mp4", ".avi", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp")
+        return (".mp4", ".avi", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp", ".npy", ".parquet")
 
     def _is_supported_media_file(self, path: str) -> bool:
         _, extension = os.path.splitext(str(path))
@@ -1876,16 +2095,18 @@ class DatasetExplorerController(QObject):
                 return path
         return path
 
+    def _new_input_payload_for_source(self, source_path: str) -> dict:
+        input_payload = {
+            "type": self._canonical_input_type(None, source_path),
+            "path": self._raw_path_for_new_input(source_path),
+        }
+        if input_payload["type"] in {"frames_npy", "tracking_parquet"}:
+            input_payload["fps"] = 2.0
+        return input_payload
+
     def _build_new_sample(self, source_group):
         sample_id = self._make_unique_sample_id(self._sample_id_from_group(source_group))
-        inputs = []
-        for source_path in source_group:
-            inputs.append(
-                {
-                    "type": "video",
-                    "path": self._raw_path_for_new_input(source_path),
-                }
-            )
+        inputs = [self._new_input_payload_for_source(source_path) for source_path in source_group]
         return {
             "id": sample_id,
             "metadata": {},
@@ -1970,8 +2191,7 @@ class DatasetExplorerController(QObject):
 
         base_dir = os.path.dirname(os.path.abspath(save_path))
         written = copy.deepcopy(normalized)
-        written["questions"] = self._normalize_questions_payload(written.get("questions"))
-        valid_question_ids = {question["id"] for question in written["questions"]}
+        written.pop("questions", None)
         for sample in written.get("data", []):
             new_inputs = []
 
@@ -1981,6 +2201,10 @@ class DatasetExplorerController(QObject):
                 raw_path = input_item.get("path")
                 abs_path = self._resolve_media_path(raw_path)
                 new_input = copy.deepcopy(input_item)
+                new_input["type"] = self._canonical_input_type(
+                    new_input.get("type"),
+                    raw_path,
+                )
                 if abs_path:
                     try:
                         new_input["path"] = os.path.relpath(abs_path, base_dir).replace("\\", "/")
@@ -1997,10 +2221,7 @@ class DatasetExplorerController(QObject):
                 sample.pop("captions", None)
             if not sample.get("dense_captions"):
                 sample.pop("dense_captions", None)
-            normalized_answers = self._normalize_sample_answers_payload(
-                sample.get("answers"),
-                valid_question_ids,
-            )
+            normalized_answers = self._normalize_sample_answers_payload(sample.get("answers"))
             if normalized_answers:
                 sample["answers"] = normalized_answers
             else:
@@ -2016,8 +2237,10 @@ class DatasetExplorerController(QObject):
             if isinstance(definition, dict):
                 definition.pop("label_colors", None)
         written.setdefault("metadata", {})
-        written.setdefault("modalities", ["video"])
-        written.setdefault("questions", [])
+        written["modalities"] = self._normalized_modalities(
+            written.get("modalities"),
+            written.get("data", []),
+        )
         if not written.get("description"):
             written["description"] = ""
         return written
@@ -2050,4 +2273,4 @@ class DatasetExplorerController(QObject):
     def _refresh_schema_panels(self):
         self.schemaRefreshRequested.emit()
         self._emit_schema_context()
-        self._emit_question_bank_context()
+        self._emit_qa_question_catalog_context()
