@@ -1,7 +1,7 @@
 """Application-level metadata and static help text."""
 
 APP_DISPLAY_NAME = "Video Annotation Tool"
-APP_VERSION = "v1.2.3"
+APP_VERSION = "v1.2.4"
 
 SHORTCUTS_HELP_TEXT = """Project
 Ctrl+O: Load dataset JSON
