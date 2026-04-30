@@ -1,5 +1,6 @@
 import copy
 import html
+import importlib.metadata
 import os
 
 from PyQt6.QtCore import Qt, QModelIndex, QTimer
@@ -664,7 +665,11 @@ class VideoAnnotationWindow(QMainWindow):
         QMessageBox.information(self, "Shortcuts", SHORTCUTS_HELP_TEXT)
 
     def _show_info_popup(self) -> None:
-        QMessageBox.information(self, "Info", f"{APP_DISPLAY_NAME}\nVersion: {APP_VERSION}")
+        try:
+            osl_version = importlib.metadata.version("opensportslib")
+        except importlib.metadata.PackageNotFoundError:
+            osl_version = "not installed"
+        QMessageBox.information(self, "Info", f"{APP_DISPLAY_NAME}\nVersion: {APP_VERSION}\nOpenSportsLib: {osl_version}")
 
     # # ---------------------------------------------------------------------
     # # Mode-aware dispatchers (Deprecated?)

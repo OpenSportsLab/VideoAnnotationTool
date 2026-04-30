@@ -12,7 +12,6 @@ Implements Localization (action spotting) behavior, including schema management,
 - Uses `LocalizationInferenceManager` for smart inference execution.
 - Smart inference resolves a dedicated `annotation_tool/loc_config.yaml` template, clips the requested time range for inference, and maps predictions back onto the selected head.
 - Emits media seek/marker/toggle intents instead of mutating media widgets directly.
-- OpenSportsLib compatibility matters for Localization: `opensportslib==0.1.0` reintroduced a hard DALI-backed localization path, while the `smart-annotation` feature relies on the older non-DALI localization implementation from `opensportslib==0.0.1.dev18`.
 
 ## Public Surface
 ### Class
