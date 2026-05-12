@@ -1,3 +1,4 @@
+import html
 import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QRadioButton, QTreeView, QDialogButtonBox,
@@ -145,6 +146,12 @@ class HfDownloadDialog(QDialog):
     _KEY_OUTPUT_DIR = f"{_SETTINGS_PREFIX}/output_dir"
     _KEY_DRY_RUN = f"{_SETTINGS_PREFIX}/dry_run"
     _KEY_TOKEN = f"{_SETTINGS_PREFIX}/token"
+    _DEFAULT_REPOS = [
+        "OpenSportsLab/OSL-XFoul",
+        "OpenSportsLab/OSL-SoccerNet",
+        "OpenSportsLab/OSL-SNBAS",
+    ]
+
     _AVAILABLE_DATASET_TRANSFERS = [
         {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "test", "download_format": "parquet"},
         {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "valid", "download_format": "parquet"},
@@ -165,17 +172,40 @@ class HfDownloadDialog(QDialog):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         layout.addLayout(form)
 
-        self.repo_id_edit = QLineEdit(self)
-        self.repo_id_edit.setPlaceholderText("OpenSportsLab/OSL-XFoul")
-        form.addRow("Repo ID*", self.repo_id_edit)
+        # Repo ID combo box with default repos and download history
+        self.repo_id_combo = QComboBox(self)
+        self.repo_id_combo.setEditable(True)
+        self.repo_id_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.repo_id_combo.setMinimumHeight(34)
+        self.repo_id_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        form.addRow("Repo ID*", self.repo_id_combo)
 
-        self.revision_edit = QLineEdit("main", self)
-        self.revision_edit.setPlaceholderText("main-parquet")
-        form.addRow("Branch*", self.revision_edit)
+        # Revision combo box with fetch capability
+        revision_layout = QHBoxLayout()
+        self.revision_combo = QComboBox(self)
+        self.revision_combo.setEditable(True)
+        self.revision_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.revision_combo.addItem("main")
+        self.revision_combo.setMinimumHeight(34)
+        self.revision_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        revision_layout.addWidget(self.revision_combo, 1)
 
-        self.split_edit = QLineEdit(self)
-        self.split_edit.setPlaceholderText("test")
-        form.addRow("Split*", self.split_edit)
+        self.fetch_revisions_btn = QPushButton("Fetch Revisions", self)
+        self.fetch_revisions_btn.setMinimumHeight(34)
+        self.fetch_revisions_btn.setMaximumWidth(160)
+        self.fetch_revisions_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.fetch_revisions_btn.clicked.connect(self._on_fetch_revisions)
+        revision_layout.addWidget(self.fetch_revisions_btn, 0)
+        form.addRow("Branch*", revision_layout)
+
+        self.split_combo = QComboBox(self)
+        self.split_combo.setEditable(True)
+        self.split_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.split_combo.addItems(["train", "valid", "test", "challenge"])
+        self.split_combo.setCurrentText("test")
+        self.split_combo.setMinimumHeight(34)
+        self.split_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        form.addRow("Split*", self.split_combo)
 
         self.download_format_combo = QComboBox(self)
         self.download_format_combo.addItem("Parquet + WebDataset", "parquet")
@@ -201,7 +231,7 @@ class HfDownloadDialog(QDialog):
 
         self.download_format_combo.setMinimumHeight(34)
         self.download_format_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        for edit in (self.repo_id_edit, self.revision_edit, self.split_edit, self.output_dir_edit, self.token_edit):
+        for edit in (self.split_combo, self.output_dir_edit, self.token_edit):
             edit.setMinimumHeight(34)
             edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -216,7 +246,25 @@ class HfDownloadDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        # Hugging Face repo link label
+        self.hf_repo_link_label = QLabel(self)
+        self.hf_repo_link_label.setOpenExternalLinks(True)
+        self.hf_repo_link_label.setTextFormat(Qt.TextFormat.RichText)
+        self.hf_repo_link_label.setWordWrap(True)
+        self.hf_repo_link_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        self.hf_repo_link_label.setStyleSheet(
+            "color: #3498db; font-size: 12px; padding: 4px;"
+        )
+        layout.addWidget(self.hf_repo_link_label)
+
         self._load_settings()
+        self._update_hf_link()
+
+        # Update link dynamically as user types
+        self.repo_id_combo.editTextChanged.connect(self._update_hf_link)
+        self.revision_combo.editTextChanged.connect(self._update_hf_link)
 
     @classmethod
     @classmethod
@@ -318,9 +366,9 @@ class HfDownloadDialog(QDialog):
             self.output_dir_edit.setText(chosen)
 
     def _validate_and_accept(self) -> bool:
-        repo_id = self.repo_id_edit.text().strip()
-        revision = self.revision_edit.text().strip()
-        split = self.split_edit.text().strip()
+        repo_id = self.repo_id_combo.currentText().strip()
+        revision = self.revision_combo.currentText().strip()
+        split = self.split_combo.currentText().strip()
         output_dir = self.output_dir_edit.text().strip()
 
         if not repo_id:
@@ -352,9 +400,9 @@ class HfDownloadDialog(QDialog):
 
     def get_payload(self) -> dict:
         return {
-            "repo_id": self.repo_id_edit.text().strip(),
-            "revision": self.revision_edit.text().strip() or "main",
-            "split": self.split_edit.text().strip(),
+            "repo_id": self.repo_id_combo.currentText().strip(),
+            "revision": self.revision_combo.currentText().strip() or "main",
+            "split": self.split_combo.currentText().strip(),
             "download_format": str(self.download_format_combo.currentData() or "parquet"),
             "output_dir": self.output_dir_edit.text().strip(),
             "dry_run": self.dry_run_checkbox.isChecked(),
@@ -376,6 +424,12 @@ class HfDownloadDialog(QDialog):
         if not saved_transfer["repo_id"] or not saved_transfer["split"]:
             saved_transfer = self._AVAILABLE_DATASET_TRANSFERS[0]
         self._apply_transfer(saved_transfer)
+        # Populate repo ID combo with defaults + history
+        self._populate_repo_id_combo()
+        # Ensure the current revision is set in the combo box
+        current_rev = self.revision_combo.currentText()
+        if not current_rev:
+            self.revision_combo.setCurrentText("main")
         self.output_dir_edit.setText(str(self._settings.value(self._KEY_OUTPUT_DIR, "") or ""))
         dry_run_raw = self._settings.value(self._KEY_DRY_RUN, False)
         if isinstance(dry_run_raw, str):
@@ -399,11 +453,128 @@ class HfDownloadDialog(QDialog):
 
     def _apply_transfer(self, transfer: dict) -> None:
         normalized = self._normalize_transfer(transfer)
-        self.repo_id_edit.setText(normalized["repo_id"])
-        self.revision_edit.setText(normalized["revision"])
-        self.split_edit.setText(normalized["split"])
+        self.repo_id_combo.setCurrentText(normalized["repo_id"])
+        self.revision_combo.setCurrentText(normalized["revision"])
+        self.split_combo.setCurrentText(normalized["split"])
         index = self.download_format_combo.findData(normalized["download_format"])
         self.download_format_combo.setCurrentIndex(index if index >= 0 else 0)
+
+    def _populate_repo_id_combo(self) -> None:
+        """Populate the repo_id_combo with default repos merged with successful download history."""
+        if not self._settings:
+            return
+
+        # Get default repositories
+        default_repos = list(self._DEFAULT_REPOS)
+
+        # Get successful transfer repo IDs from settings (deduplicated, reversed for recent-first order)
+        successful_transfers = self.get_successful_transfers_from_settings(self._settings)
+        history_repos: list[str] = []
+        for key in successful_transfers:
+            parts = key.split("|")
+            if len(parts) >= 1 and parts[0]:
+                repo = parts[0].strip()
+                if repo and repo not in history_repos and repo not in default_repos:
+                    history_repos.append(repo)
+
+        # Reverse to show most recent first
+        history_repos = list(reversed(history_repos))
+
+        # Merge: default repos first, then history repos right after (no separator)
+        merged_repos = list(default_repos) + history_repos
+
+        # Clear and repopulate
+        current = self.repo_id_combo.currentText()
+        self.repo_id_combo.clear()
+        self.repo_id_combo.addItems(merged_repos)
+
+        # Restore previous selection if valid
+        if current and self.repo_id_combo.findText(current) >= 0:
+            self.repo_id_combo.setCurrentText(current)
+
+    def _on_fetch_revisions(self) -> None:
+        """Fetch available branches/revisions from Hugging Face for the current repo_id."""
+        repo_id = self.repo_id_combo.currentText().strip()
+        if not repo_id:
+            QMessageBox.warning(self, "Missing Repo ID", "Please enter a Repo ID first.")
+            return
+
+        self.fetch_revisions_btn.setEnabled(False)
+        self.fetch_revisions_btn.setText("Fetching...")
+        self.revision_combo.clear()
+
+        from PyQt6.QtCore import QThread
+
+        class _FetchRevisionsWorker(QThread):
+            revisionsReady = pyqtSignal(list)
+            fetchError = pyqtSignal(str)
+
+            def __init__(self, repo_id: str, token: str | None) -> None:
+                super().__init__()
+                self._repo_id = repo_id
+                self._token = token
+
+            def run(self) -> None:
+                try:
+                    from huggingface_hub import HfApi
+                    api = HfApi()
+                    refs = api.list_repo_refs(self._repo_id, repo_type="dataset")
+                    branch_names = [b.name for b in refs.branches] if hasattr(refs, "branches") and refs.branches else []
+                    self.revisionsReady.emit(branch_names)
+                except Exception as exc:
+                    self.fetchError.emit(str(exc))
+
+        self._fetch_worker = _FetchRevisionsWorker(repo_id, self.token_edit.text().strip() or None)
+        self._fetch_worker.revisionsReady.connect(self._on_revisions_fetched)
+        self._fetch_worker.fetchError.connect(self._on_revisions_fetch_error)
+        self._fetch_worker.finished.connect(lambda: self._cleanup_fetch_worker())
+        self._fetch_worker.start()
+
+    def _on_revisions_fetched(self, branches: list) -> None:
+        if not branches:
+            QMessageBox.information(self, "No Revisions Found", "No branches found on this repository.")
+        else:
+            current = self.revision_combo.currentText()
+            self.revision_combo.clear()
+            # Sort branches: 'main' first, then alphabetically
+            sorted_branches = sorted(branches, key=lambda x: (x != "main", x))
+            self.revision_combo.addItems(sorted_branches)
+            # Restore previous selection if it's still valid
+            if current and current in branches:
+                self.revision_combo.setCurrentText(current)
+        self.fetch_revisions_btn.setEnabled(True)
+        self.fetch_revisions_btn.setText("Fetch Revisions")
+
+    def _on_revisions_fetch_error(self, error_msg: str) -> None:
+        QMessageBox.warning(
+            self,
+            "Failed to Fetch Revisions",
+            f"Could not fetch branches from Hugging Face.\n\nError:\n{error_msg}",
+        )
+        self.fetch_revisions_btn.setEnabled(True)
+        self.fetch_revisions_btn.setText("Fetch Revisions")
+
+    def _cleanup_fetch_worker(self) -> None:
+        self._fetch_worker = None
+
+    def _update_hf_link(self) -> None:
+        """Update the Hugging Face repo link based on current repo_id and revision."""
+        repo_id = self.repo_id_combo.currentText().strip()
+        revision = self.revision_combo.currentText().strip() or "main"
+
+        if repo_id:
+            url = f"https://huggingface.co/datasets/{repo_id}/tree/{revision}"
+            safe_repo_id = html.escape(repo_id)
+            safe_revision = html.escape(revision)
+            link_text = (
+                f'View dataset on Hugging Face: '
+                f'<a href="{url}"><b>{safe_repo_id}</b>@<b>{safe_revision}</b></a>'
+            )
+            self.hf_repo_link_label.setText(link_text)
+            self.hf_repo_link_label.setToolTip(f"Click to open {url}")
+        else:
+            self.hf_repo_link_label.setText("Enter a Repo ID to view the dataset on Hugging Face")
+            self.hf_repo_link_label.setToolTip("")
 
 
 class HfUploadDialog(QDialog):
@@ -440,13 +611,43 @@ class HfUploadDialog(QDialog):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         layout.addLayout(form)
 
-        self.repo_id_edit = QLineEdit(self)
-        self.repo_id_edit.setPlaceholderText("OpenSportsLab/OSL-loc-tennis-public")
-        form.addRow("Repo ID*", self.repo_id_edit)
+        # Repo ID combo (editable) with defaults + history (populated later)
+        self.repo_id_combo = QComboBox(self)
+        self.repo_id_combo.setEditable(True)
+        self.repo_id_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        # Start with download defaults for consistency
+        self.repo_id_combo.addItems(list(HfDownloadDialog._DEFAULT_REPOS))
+        self.repo_id_combo.setMinimumHeight(34)
+        self.repo_id_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        form.addRow("Repo ID*", self.repo_id_combo)
 
-        self.split_edit = QLineEdit(self)
-        self.split_edit.setPlaceholderText("test")
-        form.addRow("Split*", self.split_edit)
+        # Revision combo (editable) with fetch capability to mirror download dialog
+        revision_layout = QHBoxLayout()
+        self.revision_combo = QComboBox(self)
+        self.revision_combo.setEditable(True)
+        self.revision_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.revision_combo.addItem("main")
+        self.revision_combo.setMinimumHeight(34)
+        self.revision_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        revision_layout.addWidget(self.revision_combo, 1)
+
+        self.fetch_revisions_btn = QPushButton("Fetch Revisions", self)
+        self.fetch_revisions_btn.setMinimumHeight(34)
+        self.fetch_revisions_btn.setMaximumWidth(160)
+        self.fetch_revisions_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.fetch_revisions_btn.clicked.connect(self._on_fetch_revisions)
+        revision_layout.addWidget(self.fetch_revisions_btn, 0)
+        form.addRow("Branch*", revision_layout)
+
+        # Split combo matches download dialog
+        self.split_combo = QComboBox(self)
+        self.split_combo.setEditable(True)
+        self.split_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.split_combo.addItems(["train", "valid", "test", "challenge"])
+        self.split_combo.setCurrentText("test")
+        self.split_combo.setMinimumHeight(34)
+        self.split_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        form.addRow("Split*", self.split_combo)
 
         self.opened_json_edit = QLineEdit(self._opened_json_path, self)
         self.opened_json_edit.setReadOnly(True)
@@ -463,10 +664,6 @@ class HfUploadDialog(QDialog):
         self.shard_size_spin.setToolTip("Target TAR shard size for Parquet + WebDataset upload mode.")
         form.addRow("Shard Size", self.shard_size_spin)
 
-        self.revision_edit = QLineEdit("main", self)
-        self.revision_edit.setPlaceholderText("main")
-        form.addRow("Branch*", self.revision_edit)
-
         self.commit_message_edit = QLineEdit("Upload dataset inputs from JSON", self)
         form.addRow("Commit Message", self.commit_message_edit)
 
@@ -476,10 +673,10 @@ class HfUploadDialog(QDialog):
         form.addRow("HF Token", self.token_edit)
 
         for edit in (
-            self.repo_id_edit,
-            self.split_edit,
+            self.repo_id_combo,
+            self.split_combo,
             self.opened_json_edit,
-            self.revision_edit,
+            self.revision_combo,
             self.commit_message_edit,
             self.token_edit,
         ):
@@ -504,15 +701,15 @@ class HfUploadDialog(QDialog):
         self._update_parquet_controls_state(self.upload_as_json_checkbox.isChecked())
 
     def _validate_and_accept(self) -> None:
-        repo_id = self.repo_id_edit.text().strip()
+        repo_id = self.repo_id_combo.currentText().strip()
 
         if not repo_id:
             QMessageBox.warning(self, "Missing Required Field", "Repo ID is required.")
             return
-        if not self.split_edit.text().strip():
+        if not self.split_combo.currentText().strip():
             QMessageBox.warning(self, "Missing Required Field", "Split is required.")
             return
-        if not self.revision_edit.text().strip():
+        if not self.revision_combo.currentText().strip():
             QMessageBox.warning(self, "Missing Required Field", "Branch is required.")
             return
         if not self._opened_json_path:
@@ -530,10 +727,10 @@ class HfUploadDialog(QDialog):
 
     def get_payload(self) -> dict:
         return {
-            "repo_id": self.repo_id_edit.text().strip(),
+            "repo_id": self.repo_id_combo.currentText().strip(),
             "json_path": self._opened_json_path,
-            "revision": self.revision_edit.text().strip() or "main",
-            "split": self.split_edit.text().strip(),
+            "revision": self.revision_combo.currentText().strip() or "main",
+            "split": self.split_combo.currentText().strip(),
             "commit_message": self.commit_message_edit.text().strip() or "Upload dataset inputs from JSON",
             "token": self.token_edit.text().strip() or None,
             "upload_as_json": self.upload_as_json_checkbox.isChecked(),
@@ -543,9 +740,9 @@ class HfUploadDialog(QDialog):
 
     def _load_settings(self) -> None:
         if self._settings:
-            self.repo_id_edit.setText(str(self._settings.value(self._KEY_REPO_ID, "") or ""))
-            self.revision_edit.setText(str(self._settings.value(self._KEY_REVISION, "main") or "main"))
-            self.split_edit.setText(str(self._settings.value(self._KEY_SPLIT, "") or ""))
+            self.repo_id_combo.setCurrentText(str(self._settings.value(self._KEY_REPO_ID, "") or ""))
+            self.revision_combo.setCurrentText(str(self._settings.value(self._KEY_REVISION, "main") or "main"))
+            self.split_combo.setCurrentText(str(self._settings.value(self._KEY_SPLIT, "") or ""))
             self.commit_message_edit.setText(
                 str(
                     self._settings.value(
@@ -587,21 +784,23 @@ class HfUploadDialog(QDialog):
         default_branch = str(self._hf_defaults.get("branch") or "").strip()
         default_split = str(self._hf_defaults.get("split") or "").strip()
         inferred_split = os.path.splitext(os.path.basename(self._opened_json_path))[0]
+        # Populate repo combo with defaults + history, then apply hf defaults if provided
+        self._populate_repo_id_combo()
         if default_repo_id:
-            self.repo_id_edit.setText(default_repo_id)
+            self.repo_id_combo.setCurrentText(default_repo_id)
         if default_branch:
-            self.revision_edit.setText(default_branch)
+            self.revision_combo.setCurrentText(default_branch)
         if default_split:
-            self.split_edit.setText(default_split)
-        elif not self.split_edit.text().strip() and inferred_split:
-            self.split_edit.setText(inferred_split)
+            self.split_combo.setCurrentText(default_split)
+        elif not self.split_combo.currentText().strip() and inferred_split:
+            self.split_combo.setCurrentText(inferred_split)
 
     def _save_settings(self) -> None:
         if not self._settings:
             return
-        self._settings.setValue(self._KEY_REPO_ID, self.repo_id_edit.text().strip())
-        self._settings.setValue(self._KEY_REVISION, self.revision_edit.text().strip() or "main")
-        self._settings.setValue(self._KEY_SPLIT, self.split_edit.text().strip())
+        self._settings.setValue(self._KEY_REPO_ID, self.repo_id_combo.currentText().strip())
+        self._settings.setValue(self._KEY_REVISION, self.revision_combo.currentText().strip() or "main")
+        self._settings.setValue(self._KEY_SPLIT, self.split_combo.currentText().strip())
         self._settings.setValue(self._KEY_COMMIT_MESSAGE, self.commit_message_edit.text().strip())
         self._settings.setValue(self._KEY_TOKEN, self.token_edit.text().strip())
         self._settings.setValue(self._KEY_UPLOAD_AS_JSON, self.upload_as_json_checkbox.isChecked())
@@ -614,6 +813,103 @@ class HfUploadDialog(QDialog):
     def _update_parquet_controls_state(self, upload_as_json: bool) -> None:
         # Parquet-only option: disable it when JSON upload mode is selected.
         self.shard_size_spin.setEnabled(not bool(upload_as_json))
+
+    def _populate_repo_id_combo(self) -> None:
+        """Populate the repo_id combo with default repos merged with successful download history."""
+        if not self._settings:
+            return
+
+        # Get default repositories from download dialog for consistency
+        default_repos = list(HfDownloadDialog._DEFAULT_REPOS)
+
+        successful_transfers = HfDownloadDialog.get_successful_transfers_from_settings(self._settings)
+        history_repos: list[str] = []
+        for key in successful_transfers:
+            parts = key.split("|")
+            if len(parts) >= 1 and parts[0]:
+                repo = parts[0].strip()
+                if repo and repo not in history_repos and repo not in default_repos:
+                    history_repos.append(repo)
+
+        # Reverse to show most recent first
+        history_repos = list(reversed(history_repos))
+
+        # Merge: default repos first, then history repos right after (no separator)
+        merged_repos = list(default_repos) + history_repos
+
+        # Clear and repopulate
+        current = self.repo_id_combo.currentText()
+        self.repo_id_combo.clear()
+        self.repo_id_combo.addItems(merged_repos)
+
+        # Restore previous selection if valid
+        if current and self.repo_id_combo.findText(current) >= 0:
+            self.repo_id_combo.setCurrentText(current)
+
+    def _on_fetch_revisions(self) -> None:
+        """Fetch available branches/revisions from Hugging Face for the current repo_id."""
+        repo_id = self.repo_id_combo.currentText().strip()
+        if not repo_id:
+            QMessageBox.warning(self, "Missing Repo ID", "Please enter a Repo ID first.")
+            return
+
+        self.fetch_revisions_btn.setEnabled(False)
+        self.fetch_revisions_btn.setText("Fetching...")
+        self.revision_combo.clear()
+
+        from PyQt6.QtCore import QThread
+
+        class _FetchRevisionsWorker(QThread):
+            revisionsReady = pyqtSignal(list)
+            fetchError = pyqtSignal(str)
+
+            def __init__(self, repo_id: str, token: str | None) -> None:
+                super().__init__()
+                self._repo_id = repo_id
+                self._token = token
+
+            def run(self) -> None:
+                try:
+                    from huggingface_hub import HfApi
+                    api = HfApi()
+                    refs = api.list_repo_refs(self._repo_id, repo_type="dataset")
+                    branch_names = [b.name for b in refs.branches] if hasattr(refs, "branches") and refs.branches else []
+                    self.revisionsReady.emit(branch_names)
+                except Exception as exc:
+                    self.fetchError.emit(str(exc))
+
+        self._fetch_worker = _FetchRevisionsWorker(repo_id, self.token_edit.text().strip() or None)
+        self._fetch_worker.revisionsReady.connect(self._on_revisions_fetched)
+        self._fetch_worker.fetchError.connect(self._on_revisions_fetch_error)
+        self._fetch_worker.finished.connect(lambda: self._cleanup_fetch_worker())
+        self._fetch_worker.start()
+
+    def _on_revisions_fetched(self, branches: list) -> None:
+        if not branches:
+            QMessageBox.information(self, "No Revisions Found", "No branches found on this repository.")
+        else:
+            current = self.revision_combo.currentText()
+            self.revision_combo.clear()
+            # Sort branches: 'main' first, then alphabetically
+            sorted_branches = sorted(branches, key=lambda x: (x != "main", x))
+            self.revision_combo.addItems(sorted_branches)
+            # Restore previous selection if it's still valid
+            if current and current in branches:
+                self.revision_combo.setCurrentText(current)
+        self.fetch_revisions_btn.setEnabled(True)
+        self.fetch_revisions_btn.setText("Fetch Revisions")
+
+    def _on_revisions_fetch_error(self, error_msg: str) -> None:
+        QMessageBox.warning(
+            self,
+            "Failed to Fetch Revisions",
+            f"Could not fetch branches from Hugging Face.\n\nError:\n{error_msg}",
+        )
+        self.fetch_revisions_btn.setEnabled(True)
+        self.fetch_revisions_btn.setText("Fetch Revisions")
+
+    def _cleanup_fetch_worker(self) -> None:
+        self._fetch_worker = None
 
 
 class BusyStatusDialog(QDialog):
