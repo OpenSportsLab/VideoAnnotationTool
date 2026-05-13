@@ -11,17 +11,14 @@ from ui.media_player import MediaCenterPanel
 
 FRAME_STACK_PATH = (
     Path(__file__).resolve().parents[2]
-    / "test_data"
-    / "sn-gar"
-    / "sngar-frames"
-    / "train"
+    / "tests"
+    / "data"
     / "clip_000000.npy"
 )
 TRACKING_PARQUET_PATH = (
     Path(__file__).resolve().parents[2]
-    / "test_data"
-    / "sngar-tracking"
-    / "test"
+    / "tests"
+    / "data"
     / "clip_000000.parquet"
 )
 

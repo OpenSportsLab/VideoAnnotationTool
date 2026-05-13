@@ -23,17 +23,14 @@ MODE_TO_TAB_INDEX = {
 
 FRAME_STACK_PATH = (
     Path(__file__).resolve().parents[2]
-    / "test_data"
-    / "sn-gar"
-    / "sngar-frames"
-    / "train"
+    / "tests"
+    / "data"
     / "clip_000000.npy"
 )
 TRACKING_PARQUET_PATH = (
     Path(__file__).resolve().parents[2]
-    / "test_data"
-    / "sngar-tracking"
-    / "test"
+    / "tests"
+    / "data"
     / "clip_000000.parquet"
 )
 
@@ -631,7 +628,7 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
     download_box = download_dialog.findChild(QDialogButtonBox)
     assert download_box is not None
     assert download_box.button(QDialogButtonBox.StandardButton.Ok).text() == "Download"
-    assert download_dialog.repo_id_edit.text()
+    assert download_dialog.repo_id_combo.currentText()
     saved_transfers = HfDownloadDialog.get_successful_transfers_from_settings(
         window.dataset_explorer_controller.settings
     )
@@ -646,8 +643,8 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
     upload_box = upload_dialog.findChild(QDialogButtonBox)
     assert upload_box is not None
     assert upload_box.button(QDialogButtonBox.StandardButton.Ok).text() == "Upload"
-    assert upload_dialog.revision_edit.text() == "main"
-    assert upload_dialog.split_edit.text() == "opened_dataset"
+    assert upload_dialog.revision_combo.currentText() == "main"
+    assert upload_dialog.split_combo.currentText() == "opened_dataset"
     assert upload_dialog.upload_as_json_checkbox.isChecked() is True
     assert upload_dialog.shard_size_spin.value() == 1000
     assert upload_dialog.shard_size_spin.isEnabled() is False
@@ -680,8 +677,8 @@ def test_hf_upload_dialog_prefill_prefers_json_metadata_over_settings(window, tm
         parent=window,
     )
 
-    assert upload_dialog.repo_id_edit.text() == "OpenSportsLab/from-json"
-    assert upload_dialog.revision_edit.text() == "json-branch"
+    assert upload_dialog.repo_id_combo.currentText() == "OpenSportsLab/from-json"
+    assert upload_dialog.revision_combo.currentText() == "json-branch"
     assert upload_dialog.commit_message_edit.text() == "Settings commit message"
     assert upload_dialog.token_edit.text() == "settings-token"
     assert upload_dialog.upload_as_json_checkbox.isChecked() is False
@@ -709,7 +706,7 @@ def test_hf_upload_dialog_persists_upload_as_json_checkbox(window, tmp_path):
     )
     upload_dialog.upload_as_json_checkbox.setChecked(False)
     upload_dialog.shard_size_spin.setValue(123)
-    upload_dialog.repo_id_edit.setText("OpenSportsLab/test-repo")
+    upload_dialog.repo_id_combo.setCurrentText("OpenSportsLab/test-repo")
     upload_dialog._validate_and_accept()
     upload_dialog.close()
 
