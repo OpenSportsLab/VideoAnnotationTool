@@ -3,6 +3,9 @@ site_description: A PyQt6 GUI tool for analyzing and annotating OSL datasets (Op
 site_author: OpenSportsLab
 repo_url: https://github.com/OpenSportsLab/VideoAnnotationTool
 repo_name: OpenSportsLab/VideoAnnotationTool
+exclude_docs: |
+  README.md
+  assets/README.md
 
 theme:
   name: material
