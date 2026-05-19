@@ -7,6 +7,49 @@ An OSL JSON file is a single JSON object with dataset metadata, a label schema,
 and a `data` array of samples. Each sample points to one or more media inputs and
 can carry task-specific annotations.
 
+## Minimal Valid File
+
+This is the smallest practical shape for a dataset with one video sample:
+
+```json
+{
+  "version": "2.0",
+  "date": "2026-05-19",
+  "dataset_name": "minimal-demo",
+  "description": "",
+  "modalities": ["video"],
+  "metadata": {},
+  "labels": {},
+  "data": [
+    {
+      "id": "clip_0001",
+      "inputs": [
+        {
+          "type": "video",
+          "path": "clips/clip_0001.mp4"
+        }
+      ]
+    }
+  ]
+}
+```
+
+!!! note "Relative paths"
+    Relative `inputs[].path` values are resolved from the folder that contains
+    the JSON file. If you move the JSON without moving its media folders,
+    playback can fail.
+
+## Common Mistakes
+
+| Mistake | Result | Fix |
+|---|---|---|
+| Root JSON is an array | The app rejects the file. | Use one root object with a `data` array. |
+| `data` is missing or not a list | The app rejects the file. | Set `data` to `[]` or a list of sample objects. |
+| Using top-level `questions` for Q/A | Legacy question banks are dropped on save. | Store Q/A in each sample's grouped `answers[]`. |
+| Dense captions use `start_ms`/`end_ms` only | The current dense editor expects point timestamps. | Use `dense_captions[].position_ms`. |
+| Annotation head names do not match root `labels` | Controls may not show the expected labels. | Keep `data[].labels` keys and `events[].head` values aligned with root `labels`. |
+| Relative media paths no longer point to files | Samples load but playback cannot find media. | Keep media beside the JSON or resave after correcting paths. |
+
 ## Top-Level Object
 
 The smallest useful file is a JSON object with `data` as a list. When loading,
