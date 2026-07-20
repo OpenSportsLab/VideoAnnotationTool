@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import h5py
 import numpy as np
 import pandas as pd
 import pytest
@@ -24,6 +25,34 @@ TRACKING_PARQUET_PATH = (
     / "test"
     / "clip_000000.parquet"
 )
+PLAYER_JOINTS_H5_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "test_data"
+    / "live_joints_sirus_mini_test.h5"
+)
+BALL_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_ball.h5"
+
+
+def _write_minimal_player_joints_h5(path: Path, timestamps: list[bytes]):
+    row_count = len(timestamps)
+    with h5py.File(path, "w") as h5_file:
+        h5_file.create_dataset("timestamp_utc", data=np.array(timestamps))
+        h5_file.create_dataset("neck_x", data=np.linspace(0.0, 1.0, row_count))
+        h5_file.create_dataset("neck_y", data=np.linspace(0.0, 1.0, row_count))
+        h5_file.create_dataset("neck_z", data=np.linspace(1.4, 1.5, row_count))
+
+
+def _write_ball_h5(path: Path, timestamps: list[bytes], x_values, y_values=None, z_values=None):
+    row_count = len(timestamps)
+    if y_values is None:
+        y_values = np.zeros(row_count)
+    if z_values is None:
+        z_values = np.full(row_count, 0.12)
+    with h5py.File(path, "w") as h5_file:
+        h5_file.create_dataset("timestamp_utc", data=np.array(timestamps))
+        h5_file.create_dataset("x", data=np.array(x_values, dtype=float))
+        h5_file.create_dataset("y", data=np.array(y_values, dtype=float))
+        h5_file.create_dataset("z", data=np.array(z_values, dtype=float))
 
 
 @pytest.fixture
@@ -428,3 +457,433 @@ def test_tracking_parquet_invalid_schema_reports_clear_error(
     assert errors
     assert errors[-1][0]["title"] == "Unsupported Tracking Schema"
     assert "unexpected" in errors[-1][1]
+
+
+@pytest.mark.gui
+def test_player_joints_h5_controller_play_pause_seek_and_rate(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+
+    durations = []
+    states = []
+    controller.durationChanged.connect(durations.append)
+    controller.playbackStateChanged.connect(states.append)
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)})
+
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+    qtbot.waitUntil(lambda: controller.current_position_ms() > 0, timeout=1500)
+
+    assert panel.frame_widget.isVisible() is True
+    assert panel.video_widget.isVisible() is False
+    assert durations
+    assert durations[-1] == 2000
+    assert states and states[-1] is True
+
+    first_position = controller.current_position_ms()
+    controller.set_playback_rate(2.0)
+    qtbot.wait(250)
+    assert controller.current_position_ms() > first_position
+
+    controller.pause()
+    paused_position = controller.current_position_ms()
+    qtbot.wait(150)
+    assert abs(controller.current_position_ms() - paused_position) <= 40
+    assert states[-1] is False
+
+    controller.set_position(345)
+    qtbot.wait(30)
+    assert controller.current_position_ms() == 340
+
+
+@pytest.mark.gui
+def test_player_joints_h5_rate_change_keeps_current_position_anchor(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)})
+
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+    qtbot.waitUntil(lambda: controller.current_position_ms() >= 300, timeout=1500)
+
+    before_rate_change = controller.current_position_ms()
+    controller.set_playback_rate(4.0)
+    after_rate_change = controller.current_position_ms()
+
+    assert after_rate_change >= before_rate_change
+    assert after_rate_change - before_rate_change <= 80
+
+
+@pytest.mark.gui
+def test_player_joints_h5_load_keeps_h5_datasets_lazy_and_closes_on_stop(
+    media_panel_and_controller,
+    qtbot,
+):
+    panel, controller = media_panel_and_controller
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)}, auto_play=False)
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    backend = controller._active_backend
+    frame_source = backend._clip.frame_source
+    assert not isinstance(frame_source, list)
+    assert isinstance(frame_source._datasets["nose_x"], h5py.Dataset)
+    assert frame_source._h5_file.id.valid == 1
+
+    controller.stop()
+
+    assert frame_source._h5_file.id.valid == 0
+
+
+@pytest.mark.gui
+def test_player_joints_h5_normalized_source_preserves_ball_path(media_panel_and_controller):
+    _panel, controller = media_panel_and_controller
+
+    source = controller._normalize_media_source(
+        {
+            "type": "player_joints_h5",
+            "path": str(PLAYER_JOINTS_H5_PATH),
+            "ball_path": str(BALL_H5_PATH),
+        }
+    )
+
+    assert source["type"] == "player_joints_h5"
+    assert source["path"] == str(PLAYER_JOINTS_H5_PATH)
+    assert source["ball_path"] == str(BALL_H5_PATH)
+    assert "fps" not in source
+
+
+@pytest.mark.gui
+def test_player_joints_h5_ball_overlay_loads_lazily_aligns_and_closes(
+    media_panel_and_controller,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    joints_path = tmp_path / "joints.h5"
+    ball_path = tmp_path / "ball.h5"
+    _write_minimal_player_joints_h5(
+        joints_path,
+        [
+            b"2026-01-01 00:00:00.000000",
+            b"2026-01-01 00:00:00.040000",
+        ],
+    )
+    _write_ball_h5(
+        ball_path,
+        [
+            b"2026-01-01 00:00:00.000000",
+            b"2026-01-01 00:00:00.020000",
+            b"2026-01-01 00:00:00.080000",
+        ],
+        [1.0, 2.0, 3.0],
+    )
+
+    controller.load_and_play(
+        {"type": "player_joints_h5", "path": str(joints_path), "ball_path": str(ball_path)},
+        auto_play=False,
+    )
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    frame_source = controller._active_backend._clip.frame_source
+    ball_source = frame_source._ball_source
+    assert ball_source is not None
+    assert isinstance(ball_source._datasets["x"], h5py.Dataset)
+    assert frame_source[0]["ball"]["x"] == pytest.approx(1.0)
+    assert frame_source[1]["ball"]["x"] == pytest.approx(2.0)
+
+    controller.stop()
+
+    assert ball_source._h5_file.id.valid == 0
+
+
+@pytest.mark.gui
+def test_player_joints_h5_invalid_ball_rows_are_skipped_without_failing(
+    media_panel_and_controller,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    errors = []
+    joints_path = tmp_path / "joints.h5"
+    ball_path = tmp_path / "ball.h5"
+    _write_minimal_player_joints_h5(
+        joints_path,
+        [
+            b"2026-01-01 00:00:00.000000",
+            b"2026-01-01 00:00:00.040000",
+        ],
+    )
+    _write_ball_h5(
+        ball_path,
+        [b"2026-01-01 00:00:00.000000", b"2026-01-01 00:00:00.020000"],
+        [1.0, -1.0],
+    )
+    monkeypatch.setattr(
+        controller,
+        "_trigger_error_dialog",
+        lambda error_details, **kwargs: errors.append((kwargs, error_details)),
+    )
+
+    controller.load_and_play(
+        {"type": "player_joints_h5", "path": str(joints_path), "ball_path": str(ball_path)},
+        auto_play=False,
+    )
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    frame_source = controller._active_backend._clip.frame_source
+    assert frame_source[0]["ball"]["x"] == pytest.approx(1.0)
+    assert "ball" not in frame_source[1]
+    assert errors == []
+
+
+@pytest.mark.gui
+def test_player_joints_h5_missing_ball_file_is_nonfatal(
+    media_panel_and_controller,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    errors = []
+    monkeypatch.setattr(
+        controller,
+        "_trigger_error_dialog",
+        lambda error_details, **kwargs: errors.append((kwargs, error_details)),
+    )
+
+    controller.load_and_play(
+        {
+            "type": "player_joints_h5",
+            "path": str(PLAYER_JOINTS_H5_PATH),
+            "ball_path": str(tmp_path / "missing_ball.h5"),
+        },
+        auto_play=False,
+    )
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    assert controller._active_backend._clip.frame_source._ball_source is None
+    assert errors == []
+
+
+@pytest.mark.gui
+def test_player_joints_h5_render_cache_is_bounded(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+    controller._RASTER_FRAME_CACHE_LIMIT = 3
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)}, auto_play=False)
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    backend = controller._active_backend
+    for position_ms in (0, 100, 200, 300, 400, 500):
+        controller.set_position(position_ms)
+        qtbot.wait(10)
+
+    assert len(backend._frame_image_cache) <= 3
+
+
+@pytest.mark.gui
+def test_player_joints_h5_3d_projection_uses_depth_and_z_height(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)}, auto_play=False)
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    backend = controller._active_backend
+    layout = backend._joint_scene_layout(
+        controller._TRACKING_IMAGE_WIDTH,
+        controller._TRACKING_IMAGE_HEIGHT,
+    )
+    origin_x, origin_y = backend._project_joint_scene_point(0.0, 0.0, 0.0, layout)
+    depth_x, depth_y = backend._project_joint_scene_point(10.0, 10.0, 0.0, layout)
+    elevated_x, elevated_y = backend._project_joint_scene_point(0.0, 0.0, 1.5, layout)
+    _origin_u, origin_v = backend._scene_basis(0.0, 0.0, 0.0)
+    _elevated_u, elevated_v = backend._scene_basis(0.0, 0.0, 1.5)
+
+    assert depth_x == pytest.approx(origin_x)
+    assert depth_y > origin_y
+    assert elevated_x == pytest.approx(origin_x)
+    assert elevated_y < origin_y
+    assert origin_v - elevated_v == pytest.approx(1.5 * backend._SCENE_Z_SCALE)
+
+
+@pytest.mark.gui
+def test_player_joints_h5_goal_posts_project_above_field(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)}, auto_play=False)
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    backend = controller._active_backend
+    layout = backend._joint_scene_layout(
+        controller._TRACKING_IMAGE_WIDTH,
+        controller._TRACKING_IMAGE_HEIGHT,
+    )
+    goal_x = controller._TRACKING_PITCH_LENGTH / 2.0
+    ground_x, ground_y = backend._project_joint_scene_point(goal_x, backend._GOAL_WIDTH / 2.0, 0.0, layout)
+    crossbar_x, crossbar_y = backend._project_joint_scene_point(goal_x, backend._GOAL_WIDTH / 2.0, backend._GOAL_HEIGHT, layout)
+    _ground_u, ground_v = backend._scene_basis(goal_x, backend._GOAL_WIDTH / 2.0, 0.0)
+    _crossbar_u, crossbar_v = backend._scene_basis(goal_x, backend._GOAL_WIDTH / 2.0, backend._GOAL_HEIGHT)
+
+    assert crossbar_x == pytest.approx(ground_x)
+    assert crossbar_y < ground_y
+    assert ground_v - crossbar_v == pytest.approx(backend._GOAL_HEIGHT * backend._SCENE_Z_SCALE)
+
+
+@pytest.mark.gui
+def test_player_joints_h5_joint_marker_radius_is_small_and_parameterized(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)}, auto_play=False)
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    backend = controller._active_backend
+    layout = backend._joint_scene_layout(
+        controller._TRACKING_IMAGE_WIDTH,
+        controller._TRACKING_IMAGE_HEIGHT,
+    )
+    radius = backend._joint_marker_radius(layout)
+
+    assert radius == pytest.approx(
+        max(
+            backend._JOINT_MARKER_RADIUS_MIN,
+            layout["scale"] * backend._JOINT_MARKER_RADIUS_SCALE,
+        )
+    )
+    assert radius < 3.0
+
+
+@pytest.mark.gui
+def test_player_joints_h5_missing_timestamp_reports_clear_error(
+    media_panel_and_controller,
+    monkeypatch,
+    tmp_path,
+):
+    _panel, controller = media_panel_and_controller
+    errors = []
+    h5_path = tmp_path / "missing_timestamp.h5"
+    with h5py.File(h5_path, "w") as h5_file:
+        h5_file.create_dataset("nose_x", data=np.array([0.0, 1.0]))
+        h5_file.create_dataset("nose_y", data=np.array([0.0, 1.0]))
+
+    monkeypatch.setattr(
+        controller,
+        "_trigger_error_dialog",
+        lambda error_details, **kwargs: errors.append((kwargs, error_details)),
+    )
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(h5_path)})
+
+    assert errors
+    assert errors[-1][0]["title"] == "Unsupported H5 Schema"
+    assert "timestamp_utc" in errors[-1][1]
+
+
+@pytest.mark.gui
+def test_player_joints_h5_malformed_rows_render_without_failing(
+    media_panel_and_controller,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    errors = []
+    h5_path = tmp_path / "partial_nan_joints.h5"
+    with h5py.File(h5_path, "w") as h5_file:
+        h5_file.create_dataset(
+            "timestamp_utc",
+            data=np.array(
+                [
+                    b"2026-01-01 00:00:00.000000",
+                    b"2026-01-01 00:00:00.040000",
+                ]
+            ),
+        )
+        h5_file.create_dataset("is_home", data=np.array([1, 0]))
+        h5_file.create_dataset("jersey_number", data=np.array([b"10", b"7"]))
+        h5_file.create_dataset("nose_x", data=np.array([0.0, np.nan]))
+        h5_file.create_dataset("nose_y", data=np.array([0.0, np.nan]))
+        h5_file.create_dataset("neck_x", data=np.array([1.0, 2.0]))
+        h5_file.create_dataset("neck_y", data=np.array([1.0, 2.0]))
+
+    monkeypatch.setattr(
+        controller,
+        "_trigger_error_dialog",
+        lambda error_details, **kwargs: errors.append((kwargs, error_details)),
+    )
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(h5_path)})
+
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+    assert errors == []
+
+
+@pytest.mark.gui
+def test_player_joints_h5_missing_dependency_reports_clear_error(
+    media_panel_and_controller,
+    monkeypatch,
+):
+    _panel, controller = media_panel_and_controller
+    errors = []
+
+    monkeypatch.setattr("controllers.media_controller.h5py", None)
+    monkeypatch.setattr(
+        controller,
+        "_trigger_error_dialog",
+        lambda error_details, **kwargs: errors.append((kwargs, error_details)),
+    )
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)})
+
+    assert errors
+    assert errors[-1][0]["title"] == "H5 Dependency Missing"
+    assert "h5py must be installed" in errors[-1][1]
+
+
+@pytest.mark.gui
+def test_player_joints_h5_missing_file_reports_clear_error(
+    media_panel_and_controller,
+    monkeypatch,
+    tmp_path,
+):
+    _panel, controller = media_panel_and_controller
+    errors = []
+    missing_path = tmp_path / "missing_joints.h5"
+
+    monkeypatch.setattr(
+        controller,
+        "_trigger_error_dialog",
+        lambda error_details, **kwargs: errors.append((kwargs, error_details)),
+    )
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(missing_path)})
+
+    assert errors
+    assert errors[-1][0]["title"] == "Media Load Error"
+    assert str(missing_path) in errors[-1][1]
+
+
+@pytest.mark.gui
+def test_player_joints_h5_inconsistent_lengths_reports_clear_error(
+    media_panel_and_controller,
+    monkeypatch,
+    tmp_path,
+):
+    _panel, controller = media_panel_and_controller
+    errors = []
+    h5_path = tmp_path / "bad_lengths.h5"
+    with h5py.File(h5_path, "w") as h5_file:
+        h5_file.create_dataset("timestamp_utc", data=np.array([b"2026-01-01 00:00:00.000000"]))
+        h5_file.create_dataset("nose_x", data=np.array([0.0, 1.0]))
+        h5_file.create_dataset("nose_y", data=np.array([0.0, 1.0]))
+
+    monkeypatch.setattr(
+        controller,
+        "_trigger_error_dialog",
+        lambda error_details, **kwargs: errors.append((kwargs, error_details)),
+    )
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(h5_path)})
+
+    assert errors
+    assert errors[-1][0]["title"] == "Unsupported H5 Schema"
+    assert "equal-length" in errors[-1][1]

@@ -136,9 +136,21 @@ Supported input types:
 | `video` | `clips/clip_0001.mp4` | Default when type is missing and the extension is not special. |
 | `frames_npy` | `frames/clip_0001.npy` | Uses `fps` for playback timing. The legacy alias `frame_npy` is normalized to `frames_npy`. |
 | `tracking_parquet` | `tracking/clip_0001.parquet` | Uses parquet timestamps when available. Optional `fps` is a fallback. |
+| `player_joints_h5` | `tracking/live_joints.h5` | Uses absolute UTC values from `timestamp_utc` for playback timing and renders a 3D stickman preview. Optional `ball_path` overlays ball XYZ from a separate H5 file. |
 
-Input paths can be relative or absolute when loading. On save, input paths are
-rewritten relative to the saved JSON file location when possible.
+Input paths, including optional `ball_path` overlays, can be relative or absolute
+when loading. On save, paths are rewritten relative to the saved JSON file
+location when possible.
+
+Optional ball overlay for player-joint H5 inputs:
+
+```json
+{
+  "type": "player_joints_h5",
+  "path": "tracking/live_joints.h5",
+  "ball_path": "tracking/live_ball.h5"
+}
+```
 
 Multi-view samples use more than one input:
 

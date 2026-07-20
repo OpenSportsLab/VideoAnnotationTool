@@ -37,6 +37,12 @@ TRACKING_PARQUET_PATH = (
     / "test"
     / "clip_000000.parquet"
 )
+PLAYER_JOINTS_H5_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "test_data"
+    / "live_joints_sirus_mini_test.h5"
+)
+BALL_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_ball.h5"
 
 
 def _open_project(window, monkeypatch, project_json_path: Path):
@@ -46,6 +52,25 @@ def _open_project(window, monkeypatch, project_json_path: Path):
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+
+
+def _write_player_joints_h5_project(project_json_path: Path, inputs: list[dict]):
+    payload = {
+        "version": "2.0",
+        "date": "2026-07-20",
+        "task": "action_classification",
+        "dataset_name": "ball_h5_ui",
+        "modalities": ["player_joints_h5"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "data": [
+            {
+                "id": "joints_clip",
+                "inputs": inputs,
+                "labels": {"action": {"label": "pass"}},
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _select_top_row(window, qtbot, row: int = 0):
@@ -627,6 +652,69 @@ def test_tracking_parquet_tab_switch_same_selection_does_not_restart_media(
 
 
 @pytest.mark.gui
+def test_player_joints_h5_tab_switch_same_selection_does_not_restart_media(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    rel_h5_path = os.path.relpath(PLAYER_JOINTS_H5_PATH, start=tmp_path).replace("\\", "/")
+    project_json_path = tmp_path / "player_joints_h5_tab_switch.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-07-20",
+        "task": "action_classification",
+        "dataset_name": "player_joints_h5_tab_switch",
+        "modalities": ["player_joints_h5"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "data": [
+            {
+                "id": "joints_clip",
+                "inputs": [{"path": rel_h5_path, "type": "player_joints_h5"}],
+                "labels": {"action": {"label": "pass"}},
+                "events": [{"head": "action", "label": "pass", "position_ms": 1000}],
+                "captions": [{"lang": "en", "text": "caption"}],
+                "dense_captions": [{"position_ms": 1500, "lang": "en", "text": "dense"}],
+                "answers": [{"question": "What happened?", "answers": ["answer"]}],
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+
+    populate_calls = {"count": 0}
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "populate_tree",
+        lambda: populate_calls.__setitem__("count", populate_calls["count"] + 1),
+    )
+
+    play_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda source, auto_play=True: play_calls.append(source),
+    )
+
+    for mode_idx in (
+        MODE_TO_TAB_INDEX["localization"],
+        MODE_TO_TAB_INDEX["description"],
+        MODE_TO_TAB_INDEX["dense_description"],
+        MODE_TO_TAB_INDEX["question_answer"],
+        MODE_TO_TAB_INDEX["classification"],
+    ):
+        window.right_tabs.setCurrentIndex(mode_idx)
+        qtbot.wait(50)
+
+    assert populate_calls["count"] == 0
+    assert play_calls == []
+    assert window.dataset_explorer_controller.current_selected_sample_id == "joints_clip"
+    assert window.dataset_explorer_panel.tree.currentIndex().isValid()
+
+
+@pytest.mark.gui
 def test_media_boundary_controllers_do_not_import_qmediaplayer():
     repo_root = Path(__file__).resolve().parents[2]
     targets = [
@@ -694,6 +782,133 @@ def test_remove_child_row_removes_one_input_and_keeps_multiview_sample(
     assert window.dataset_explorer_controller.current_selected_sample_id == "mv_clip"
     assert window.dataset_explorer_controller.current_selected_input_path == remaining_child.data(window.tree_model.FilePathRole)
     assert window.dataset_explorer_panel.tree.currentIndex() == remaining_child
+
+
+@pytest.mark.gui
+def test_associate_ball_h5_from_joint_child_updates_tree_and_undo_redo(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    tracking_dir = tmp_path / "tracking"
+    tracking_dir.mkdir()
+    joints_path = tracking_dir / "live_joints.h5"
+    ball_path = tracking_dir / "live_ball.h5"
+    joints_path.write_bytes(b"joints")
+    ball_path.write_bytes(b"ball")
+    project_json_path = tmp_path / "project.json"
+    _write_player_joints_h5_project(
+        project_json_path,
+        [{"path": "tracking/live_joints.h5", "type": "player_joints_h5"}],
+    )
+    _open_project(window, monkeypatch, project_json_path)
+
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(ball_path), "H5 Files (*.h5 *.hdf5)"),
+    )
+
+    parent_index = window.tree_model.index(0, 0)
+    child_index = window.tree_model.index(0, 0, parent_index)
+    window.dataset_explorer_controller.handle_associate_ball_h5(child_index)
+    qtbot.wait(50)
+
+    sample = window.dataset_explorer_controller.get_sample("joints_clip")
+    assert sample["inputs"][0]["ball_path"] == "tracking/live_ball.h5"
+    refreshed_parent = window.tree_model.index(0, 0)
+    refreshed_child = window.tree_model.index(0, 0, refreshed_parent)
+    assert "(ball: live_ball.h5)" in refreshed_child.data()
+    assert "Ball H5:" in refreshed_child.data(Qt.ItemDataRole.ToolTipRole)
+
+    window.history_manager.perform_undo()
+    qtbot.wait(50)
+    assert "ball_path" not in window.dataset_explorer_controller.get_sample("joints_clip")["inputs"][0]
+
+    window.history_manager.perform_redo()
+    qtbot.wait(50)
+    assert window.dataset_explorer_controller.get_sample("joints_clip")["inputs"][0]["ball_path"] == "tracking/live_ball.h5"
+
+
+@pytest.mark.gui
+def test_clear_ball_h5_association_from_single_h5_sample_row(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    tracking_dir = tmp_path / "tracking"
+    tracking_dir.mkdir()
+    (tracking_dir / "live_joints.h5").write_bytes(b"joints")
+    (tracking_dir / "live_ball.h5").write_bytes(b"ball")
+    project_json_path = tmp_path / "project.json"
+    _write_player_joints_h5_project(
+        project_json_path,
+        [
+            {
+                "path": "tracking/live_joints.h5",
+                "ball_path": "tracking/live_ball.h5",
+                "type": "player_joints_h5",
+            }
+        ],
+    )
+    _open_project(window, monkeypatch, project_json_path)
+
+    parent_index = window.tree_model.index(0, 0)
+    window.dataset_explorer_controller.handle_clear_ball_h5_association(parent_index)
+    qtbot.wait(50)
+
+    assert "ball_path" not in window.dataset_explorer_controller.get_sample("joints_clip")["inputs"][0]
+    refreshed_child = window.tree_model.index(0, 0, window.tree_model.index(0, 0))
+    assert "(ball:" not in refreshed_child.data()
+
+    window.history_manager.perform_undo()
+    qtbot.wait(50)
+    assert window.dataset_explorer_controller.get_sample("joints_clip")["inputs"][0]["ball_path"] == "tracking/live_ball.h5"
+
+
+@pytest.mark.gui
+def test_associate_ball_h5_sample_with_multiple_joint_inputs_requires_child(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    tracking_dir = tmp_path / "tracking"
+    tracking_dir.mkdir()
+    for name in ("live_joints_left.h5", "live_joints_right.h5", "live_ball.h5"):
+        (tracking_dir / name).write_bytes(name.encode("utf-8"))
+    project_json_path = tmp_path / "project.json"
+    _write_player_joints_h5_project(
+        project_json_path,
+        [
+            {"path": "tracking/live_joints_left.h5", "type": "player_joints_h5"},
+            {"path": "tracking/live_joints_right.h5", "type": "player_joints_h5"},
+        ],
+    )
+    _open_project(window, monkeypatch, project_json_path)
+
+    called = []
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: called.append(True) or (str(tracking_dir / "live_ball.h5"), "H5 Files (*.h5 *.hdf5)"),
+    )
+
+    parent_index = window.tree_model.index(0, 0)
+    window.dataset_explorer_controller.handle_associate_ball_h5(parent_index)
+    qtbot.wait(50)
+
+    sample = window.dataset_explorer_controller.get_sample("joints_clip")
+    assert called == []
+    assert all("ball_path" not in input_item for input_item in sample["inputs"])
+
+    first_child_index = window.tree_model.index(0, 0, parent_index)
+    window.dataset_explorer_controller.handle_associate_ball_h5(first_child_index)
+    qtbot.wait(50)
+
+    assert called == [True]
+    assert sample["inputs"][0]["ball_path"] == "tracking/live_ball.h5"
+    assert "ball_path" not in sample["inputs"][1]
 
 
 @pytest.mark.gui

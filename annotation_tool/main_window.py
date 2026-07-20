@@ -354,6 +354,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.removeItemMutationRequested.connect(
             self.history_manager.execute_remove_item
         )
+        self.dataset_explorer_controller.ballH5AssociationMutationRequested.connect(
+            self.history_manager.execute_set_ball_h5_association
+        )
         self.dataset_explorer_controller.settingsChanged.connect(
             lambda _settings: self._restore_mute_state_from_settings()
         )

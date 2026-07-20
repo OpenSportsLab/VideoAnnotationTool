@@ -36,6 +36,12 @@ TRACKING_PARQUET_PATH = (
     / "test"
     / "clip_000000.parquet"
 )
+PLAYER_JOINTS_H5_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "test_data"
+    / "live_joints_sirus_mini_test.h5"
+)
+BALL_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_ball.h5"
 
 
 @pytest.mark.gui
@@ -198,6 +204,104 @@ def test_add_data_accepts_parquet_and_creates_tracking_sample(window, monkeypatc
 
 
 @pytest.mark.gui
+def test_add_data_accepts_h5_and_creates_player_joints_sample(window, monkeypatch, qtbot):
+    window.dataset_explorer_controller.create_new_project("classification")
+    assert window.dataset_explorer_controller.json_loaded is True
+
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(PLAYER_JOINTS_H5_PATH)],
+    )
+
+    window.dataset_explorer_controller.handle_add_sample()
+    qtbot.wait(50)
+
+    assert window.tree_model.rowCount() == 1
+    sample = window.dataset_explorer_controller.get_sample("live_joints_sirus_mini_test")
+    assert sample is not None
+    assert sample["inputs"][0]["type"] == "player_joints_h5"
+    assert "fps" not in sample["inputs"][0]
+    assert "player_joints_h5" in window.dataset_explorer_controller.modalities
+
+
+@pytest.mark.gui
+def test_add_data_auto_pairs_obvious_joint_and_ball_h5(window, monkeypatch, qtbot):
+    window.dataset_explorer_controller.create_new_project("classification")
+    assert window.dataset_explorer_controller.json_loaded is True
+
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(PLAYER_JOINTS_H5_PATH), str(BALL_H5_PATH)],
+    )
+
+    window.dataset_explorer_controller.handle_add_sample()
+    qtbot.wait(50)
+
+    assert window.tree_model.rowCount() == 1
+    sample = window.dataset_explorer_controller.get_sample("live_joints_sirus_mini_test")
+    assert sample is not None
+    assert len(sample["inputs"]) == 1
+    assert sample["inputs"][0]["type"] == "player_joints_h5"
+    assert sample["inputs"][0]["path"] == str(PLAYER_JOINTS_H5_PATH)
+    assert sample["inputs"][0]["ball_path"] == str(BALL_H5_PATH)
+
+
+@pytest.mark.gui
+def test_add_data_ambiguous_ball_h5_candidates_are_not_auto_paired(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    window.dataset_explorer_controller.create_new_project("classification")
+    media_dir = tmp_path / "tracking"
+    media_dir.mkdir()
+    joints_path = media_dir / "live_joints.h5"
+    ball_path = media_dir / "live_ball.h5"
+    alternate_ball_path = media_dir / "alt_ball.h5"
+    for path in (joints_path, ball_path, alternate_ball_path):
+        path.write_bytes(b"h5")
+
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(joints_path), str(ball_path), str(alternate_ball_path)],
+    )
+
+    window.dataset_explorer_controller.handle_add_sample()
+    qtbot.wait(50)
+
+    assert window.tree_model.rowCount() == 3
+    sample = window.dataset_explorer_controller.get_sample("live_joints")
+    assert sample is not None
+    assert "ball_path" not in sample["inputs"][0]
+
+
+@pytest.mark.gui
+def test_add_data_standalone_ball_h5_remains_regular_h5_input(window, monkeypatch, qtbot):
+    window.dataset_explorer_controller.create_new_project("classification")
+    assert window.dataset_explorer_controller.json_loaded is True
+
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(BALL_H5_PATH)],
+    )
+
+    window.dataset_explorer_controller.handle_add_sample()
+    qtbot.wait(50)
+
+    sample = window.dataset_explorer_controller.get_sample("live_ball")
+    assert sample is not None
+    assert len(sample["inputs"]) == 1
+    assert sample["inputs"][0]["type"] == "player_joints_h5"
+    assert sample["inputs"][0]["path"] == str(BALL_H5_PATH)
+    assert "ball_path" not in sample["inputs"][0]
+
+
+@pytest.mark.gui
 # Workflow: Selecting a sample emits Data ID (not path) and routes media load from Dataset Explorer.
 def test_dataset_selection_emits_data_id_and_routes_media(
     window,
@@ -339,6 +443,104 @@ def test_tracking_parquet_dataset_selection_routes_canonical_media_source(
     assert routed_source["fps"] == pytest.approx(2.0)
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["tracking_parquet"]
     assert window.dataset_explorer_controller.current_selected_input_path == str(TRACKING_PARQUET_PATH)
+
+
+@pytest.mark.gui
+def test_player_joints_h5_dataset_selection_routes_canonical_media_source(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    rel_h5_path = os.path.relpath(PLAYER_JOINTS_H5_PATH, start=tmp_path).replace("\\", "/")
+    rel_ball_path = os.path.relpath(BALL_H5_PATH, start=tmp_path).replace("\\", "/")
+    project_json_path = tmp_path / "player_joints_h5_project.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-07-20",
+        "task": "action_classification",
+        "dataset_name": "player_joints_h5_project",
+        "modalities": ["player_joints_h5"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "data": [
+            {
+                "id": "joints_clip",
+                "inputs": [{"path": rel_h5_path, "ball_path": rel_ball_path, "type": "player_joints_h5"}],
+                "labels": {"action": {"label": "pass"}},
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    media_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda source, auto_play=True: media_calls.append(source),
+    )
+
+    window.dataset_explorer_controller.import_annotations()
+    first_index = window.tree_model.index(0, 0)
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    routed_source = media_calls[-1]
+    assert routed_source["type"] == "player_joints_h5"
+    assert routed_source["path"] == str(PLAYER_JOINTS_H5_PATH)
+    assert routed_source["ball_path"] == str(BALL_H5_PATH)
+    assert "fps" not in routed_source
+    assert window.dataset_explorer_controller.dataset_json["modalities"] == ["player_joints_h5"]
+    assert window.dataset_explorer_controller.current_selected_input_path == str(PLAYER_JOINTS_H5_PATH)
+
+
+@pytest.mark.gui
+def test_player_joints_h5_save_rewrites_ball_path_relative(window, tmp_path):
+    project_root = tmp_path / "project"
+    save_root = tmp_path / "exports"
+    media_dir = project_root / "tracking"
+    media_dir.mkdir(parents=True)
+    save_root.mkdir(parents=True)
+    joints_path = media_dir / "joints.h5"
+    ball_path = media_dir / "ball.h5"
+    joints_path.write_bytes(b"joints")
+    ball_path.write_bytes(b"ball")
+
+    controller = window.dataset_explorer_controller
+    controller.project_root = str(project_root)
+    controller.current_working_directory = str(project_root)
+    controller.dataset_json = {
+        "version": "2.0",
+        "date": "2026-07-20",
+        "task": "action_classification",
+        "dataset_name": "player_joints_h5_save",
+        "modalities": ["player_joints_h5"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "data": [
+            {
+                "id": "joints_clip",
+                "inputs": [
+                    {
+                        "type": "player_joints_h5",
+                        "path": "tracking/joints.h5",
+                        "ball_path": "tracking/ball.h5",
+                    }
+                ],
+                "labels": {"action": {"label": "pass"}},
+            }
+        ],
+    }
+
+    written = controller._dataset_json_for_write(str(save_root / "dataset.json"))
+    saved_input = written["data"][0]["inputs"][0]
+
+    assert saved_input["path"] == "../project/tracking/joints.h5"
+    assert saved_input["ball_path"] == "../project/tracking/ball.h5"
 
 
 @pytest.mark.gui
