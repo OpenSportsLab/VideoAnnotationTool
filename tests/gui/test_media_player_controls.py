@@ -510,6 +510,77 @@ def test_player_joints_h5_render_cache_is_bounded(media_panel_and_controller, qt
 
 
 @pytest.mark.gui
+def test_player_joints_h5_3d_projection_uses_depth_and_z_height(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)}, auto_play=False)
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    backend = controller._active_backend
+    layout = backend._joint_scene_layout(
+        controller._TRACKING_IMAGE_WIDTH,
+        controller._TRACKING_IMAGE_HEIGHT,
+    )
+    origin_x, origin_y = backend._project_joint_scene_point(0.0, 0.0, 0.0, layout)
+    depth_x, depth_y = backend._project_joint_scene_point(10.0, 10.0, 0.0, layout)
+    elevated_x, elevated_y = backend._project_joint_scene_point(0.0, 0.0, 1.5, layout)
+    _origin_u, origin_v = backend._scene_basis(0.0, 0.0, 0.0)
+    _elevated_u, elevated_v = backend._scene_basis(0.0, 0.0, 1.5)
+
+    assert depth_x == pytest.approx(origin_x)
+    assert depth_y > origin_y
+    assert elevated_x == pytest.approx(origin_x)
+    assert elevated_y < origin_y
+    assert origin_v - elevated_v == pytest.approx(1.5 * backend._SCENE_Z_SCALE)
+
+
+@pytest.mark.gui
+def test_player_joints_h5_goal_posts_project_above_field(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)}, auto_play=False)
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    backend = controller._active_backend
+    layout = backend._joint_scene_layout(
+        controller._TRACKING_IMAGE_WIDTH,
+        controller._TRACKING_IMAGE_HEIGHT,
+    )
+    goal_x = controller._TRACKING_PITCH_LENGTH / 2.0
+    ground_x, ground_y = backend._project_joint_scene_point(goal_x, backend._GOAL_WIDTH / 2.0, 0.0, layout)
+    crossbar_x, crossbar_y = backend._project_joint_scene_point(goal_x, backend._GOAL_WIDTH / 2.0, backend._GOAL_HEIGHT, layout)
+    _ground_u, ground_v = backend._scene_basis(goal_x, backend._GOAL_WIDTH / 2.0, 0.0)
+    _crossbar_u, crossbar_v = backend._scene_basis(goal_x, backend._GOAL_WIDTH / 2.0, backend._GOAL_HEIGHT)
+
+    assert crossbar_x == pytest.approx(ground_x)
+    assert crossbar_y < ground_y
+    assert ground_v - crossbar_v == pytest.approx(backend._GOAL_HEIGHT * backend._SCENE_Z_SCALE)
+
+
+@pytest.mark.gui
+def test_player_joints_h5_joint_marker_radius_is_small_and_parameterized(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)}, auto_play=False)
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    backend = controller._active_backend
+    layout = backend._joint_scene_layout(
+        controller._TRACKING_IMAGE_WIDTH,
+        controller._TRACKING_IMAGE_HEIGHT,
+    )
+    radius = backend._joint_marker_radius(layout)
+
+    assert radius == pytest.approx(
+        max(
+            backend._JOINT_MARKER_RADIUS_MIN,
+            layout["scale"] * backend._JOINT_MARKER_RADIUS_SCALE,
+        )
+    )
+    assert radius < 3.0
+
+
+@pytest.mark.gui
 def test_player_joints_h5_missing_timestamp_reports_clear_error(
     media_panel_and_controller,
     monkeypatch,

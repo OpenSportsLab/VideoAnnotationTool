@@ -5,8 +5,8 @@ import math
 import os
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QRectF, Qt
-from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen
+from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import QApplication
 
 from .raster_backend import RasterClip
@@ -53,6 +53,14 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
 
     _TIME_COLUMN = "timestamp_utc"
     _TIMESTAMP_CHUNK_ROWS = 100000
+    _SCENE_MARGIN = 42.0
+    _SCENE_Z_SCALE = 1.00
+    _SCENE_Z_MAX = 2.4
+    _GOAL_WIDTH = 7.32
+    _GOAL_HEIGHT = 2.44
+    _GOAL_DEPTH = 2.0
+    _JOINT_MARKER_RADIUS_MIN = 1.0
+    _JOINT_MARKER_RADIUS_SCALE = 0.18
     _SKELETON_EDGES = (
         ("l_ear", "l_eye"),
         ("l_eye", "nose"),
@@ -178,13 +186,13 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
             self.controller._TRACKING_IMAGE_HEIGHT,
             QImage.Format.Format_ARGB32,
         )
-        image.fill(QColor(self.controller._TRACKING_FIELD_LIGHT))
+        image.fill(QColor("#1E252B"))
 
         painter = QPainter(image)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        layout = self._tracking_pitch_layout(image.width(), image.height())
-        self._draw_tracking_pitch(painter, layout)
-        for person in list(frame_payload.get("people", [])):
+        layout = self._joint_scene_layout(image.width(), image.height())
+        self._draw_joint_scene_ground(painter, layout)
+        for person in sorted(list(frame_payload.get("people", [])), key=self._person_scene_depth):
             self._draw_person_skeleton(painter, person, layout)
         self._draw_h5_overlay(painter, frame_index, frame_payload)
         painter.end()
@@ -341,7 +349,7 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
 
         fill_color = self._color_for_person(person)
         line_pen = QPen(fill_color)
-        line_pen.setWidthF(max(1.5, layout["scale"] * 0.12))
+        line_pen.setWidthF(max(2.0, layout["scale"] * 0.18))
         painter.setPen(line_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
 
@@ -353,10 +361,10 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
             painter.drawLine(int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)))
 
         outline_pen = QPen(QColor("black"))
-        outline_pen.setWidthF(max(0.6, layout["scale"] * 0.05))
+        outline_pen.setWidthF(max(0.8, layout["scale"] * 0.06))
         painter.setPen(outline_pen)
         painter.setBrush(fill_color)
-        radius = max(2.5, layout["scale"] * 0.34)
+        radius = self._joint_marker_radius(layout)
         for joint in joints.values():
             canvas_x, canvas_y = self._canvas_for_joint(joint, layout)
             painter.drawEllipse(QRectF(canvas_x - radius, canvas_y - radius, radius * 2, radius * 2))
@@ -366,9 +374,228 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
         if label:
             self._draw_person_label(painter, str(label), anchor, layout, fill_color)
 
+    def _joint_marker_radius(self, layout: dict) -> float:
+        return max(
+            self._JOINT_MARKER_RADIUS_MIN,
+            float(layout.get("scale", 0.0)) * self._JOINT_MARKER_RADIUS_SCALE,
+        )
+
     def _canvas_for_joint(self, joint: dict, layout: dict):
-        pitch_x, pitch_y = self._tracking_pitch_coordinates(joint["x"], joint["y"])
-        return self._tracking_world_to_canvas(pitch_x, pitch_y, layout)
+        return self._project_joint_scene_point(
+            joint["x"],
+            joint["y"],
+            joint.get("z", 0.0),
+            layout,
+        )
+
+    def _joint_scene_layout(self, image_width: int, image_height: int) -> dict:
+        pitch_length = self.controller._TRACKING_PITCH_LENGTH
+        pitch_width = self.controller._TRACKING_PITCH_WIDTH
+        corners = (
+            (-pitch_length / 2.0, -pitch_width / 2.0, 0.0),
+            (pitch_length / 2.0, -pitch_width / 2.0, 0.0),
+            (pitch_length / 2.0, pitch_width / 2.0, 0.0),
+            (-pitch_length / 2.0, pitch_width / 2.0, 0.0),
+            (-pitch_length / 2.0, -pitch_width / 2.0, self._SCENE_Z_MAX),
+            (pitch_length / 2.0, pitch_width / 2.0, self._SCENE_Z_MAX),
+        )
+        projected = [self._scene_basis(x, y, z) for x, y, z in corners]
+        min_u = min(point[0] for point in projected)
+        max_u = max(point[0] for point in projected)
+        min_v = min(point[1] for point in projected)
+        max_v = max(point[1] for point in projected)
+        scale = min(
+            (image_width - (2 * self._SCENE_MARGIN)) / max(1.0, max_u - min_u),
+            (image_height - (2 * self._SCENE_MARGIN)) / max(1.0, max_v - min_v),
+        )
+        return {
+            "scale": scale,
+            "origin_x": (image_width / 2.0) - (((min_u + max_u) / 2.0) * scale),
+            "origin_y": (image_height / 2.0) - (((min_v + max_v) / 2.0) * scale) + 36.0,
+        }
+
+    def _scene_basis(self, x: float, y: float, z: float):
+        u = (x - y) * 0.70710678118
+        v = ((x + y) * 0.35355339059) - (max(0.0, self._coerce_finite_float(z) or 0.0) * self._SCENE_Z_SCALE)
+        return u, v
+
+    def _project_joint_scene_point(self, x: float, y: float, z: float, layout: dict):
+        u, v = self._scene_basis(x, y, z)
+        return (
+            layout["origin_x"] + (u * layout["scale"]),
+            layout["origin_y"] + (v * layout["scale"]),
+        )
+
+    def _draw_joint_scene_ground(self, painter: QPainter, layout: dict):
+        pitch_length = self.controller._TRACKING_PITCH_LENGTH
+        pitch_width = self.controller._TRACKING_PITCH_WIDTH
+        corners = [
+            self._project_joint_scene_point(-pitch_length / 2.0, -pitch_width / 2.0, 0.0, layout),
+            self._project_joint_scene_point(pitch_length / 2.0, -pitch_width / 2.0, 0.0, layout),
+            self._project_joint_scene_point(pitch_length / 2.0, pitch_width / 2.0, 0.0, layout),
+            self._project_joint_scene_point(-pitch_length / 2.0, pitch_width / 2.0, 0.0, layout),
+        ]
+        field = QPolygonF([QPointF(x, y) for x, y in corners])
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#5C9A3A"))
+        painter.drawPolygon(field)
+
+        grid_pen = QPen(QColor(255, 255, 255, 42))
+        grid_pen.setWidthF(max(0.6, layout["scale"] * 0.035))
+        painter.setPen(grid_pen)
+        for x in range(-50, 51, 10):
+            x1, y1 = self._project_joint_scene_point(float(x), -pitch_width / 2.0, 0.0, layout)
+            x2, y2 = self._project_joint_scene_point(float(x), pitch_width / 2.0, 0.0, layout)
+            painter.drawLine(int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)))
+        for y in range(-30, 31, 10):
+            x1, y1 = self._project_joint_scene_point(-pitch_length / 2.0, float(y), 0.0, layout)
+            x2, y2 = self._project_joint_scene_point(pitch_length / 2.0, float(y), 0.0, layout)
+            painter.drawLine(int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)))
+
+        outline_pen = QPen(QColor("white"))
+        outline_pen.setWidthF(max(1.6, layout["scale"] * 0.08))
+        painter.setPen(outline_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPolygon(field)
+        self._draw_football_pitch_markings(painter, layout)
+        self._draw_3d_goals(painter, layout)
+
+    def _draw_football_pitch_markings(self, painter: QPainter, layout: dict):
+        pitch_length = self.controller._TRACKING_PITCH_LENGTH
+        pitch_width = self.controller._TRACKING_PITCH_WIDTH
+        half_length = pitch_length / 2.0
+        half_width = pitch_width / 2.0
+
+        line_pen = QPen(QColor("white"))
+        line_pen.setWidthF(max(1.4, layout["scale"] * 0.07))
+        painter.setPen(line_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        self._draw_scene_line(painter, (0.0, -half_width, 0.0), (0.0, half_width, 0.0), layout)
+        self._draw_scene_ellipse(painter, 0.0, 0.0, 9.15, 9.15, layout)
+        self._draw_scene_spot(painter, 0.0, 0.0, layout)
+
+        for sign in (-1.0, 1.0):
+            goal_x = sign * half_length
+            penalty_inner_x = sign * (half_length - 16.5)
+            six_inner_x = sign * (half_length - 5.5)
+            penalty_spot_x = sign * (half_length - 11.0)
+
+            self._draw_scene_polyline(
+                painter,
+                [
+                    (goal_x, -20.15, 0.0),
+                    (penalty_inner_x, -20.15, 0.0),
+                    (penalty_inner_x, 20.15, 0.0),
+                    (goal_x, 20.15, 0.0),
+                ],
+                layout,
+            )
+            self._draw_scene_polyline(
+                painter,
+                [
+                    (goal_x, -9.16, 0.0),
+                    (six_inner_x, -9.16, 0.0),
+                    (six_inner_x, 9.16, 0.0),
+                    (goal_x, 9.16, 0.0),
+                ],
+                layout,
+            )
+            self._draw_scene_spot(painter, penalty_spot_x, 0.0, layout)
+            self._draw_penalty_arc(painter, sign, penalty_spot_x, layout)
+
+        for corner_x in (-half_length, half_length):
+            for corner_y in (-half_width, half_width):
+                self._draw_corner_arc(painter, corner_x, corner_y, layout)
+
+    def _draw_3d_goals(self, painter: QPainter, layout: dict):
+        half_length = self.controller._TRACKING_PITCH_LENGTH / 2.0
+        half_goal = self._GOAL_WIDTH / 2.0
+        goal_pen = QPen(QColor("#F5F5F5"))
+        goal_pen.setWidthF(max(2.0, layout["scale"] * 0.12))
+        painter.setPen(goal_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        for sign in (-1.0, 1.0):
+            front_x = sign * half_length
+            back_x = sign * (half_length + self._GOAL_DEPTH)
+            posts = (
+                (front_x, -half_goal, 0.0),
+                (front_x, half_goal, 0.0),
+                (front_x, -half_goal, self._GOAL_HEIGHT),
+                (front_x, half_goal, self._GOAL_HEIGHT),
+                (back_x, -half_goal, 0.0),
+                (back_x, half_goal, 0.0),
+                (back_x, -half_goal, self._GOAL_HEIGHT),
+                (back_x, half_goal, self._GOAL_HEIGHT),
+            )
+            edges = (
+                (0, 2),
+                (1, 3),
+                (2, 3),
+                (0, 4),
+                (1, 5),
+                (2, 6),
+                (3, 7),
+                (4, 6),
+                (5, 7),
+                (6, 7),
+            )
+            for start_idx, end_idx in edges:
+                self._draw_scene_line(painter, posts[start_idx], posts[end_idx], layout)
+
+    def _draw_scene_line(self, painter: QPainter, start: tuple, end: tuple, layout: dict):
+        x1, y1 = self._project_joint_scene_point(start[0], start[1], start[2], layout)
+        x2, y2 = self._project_joint_scene_point(end[0], end[1], end[2], layout)
+        painter.drawLine(int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)))
+
+    def _draw_scene_polyline(self, painter: QPainter, points: list[tuple], layout: dict):
+        if len(points) < 2:
+            return
+        for start, end in zip(points, points[1:]):
+            self._draw_scene_line(painter, start, end, layout)
+
+    def _draw_scene_ellipse(self, painter: QPainter, center_x: float, center_y: float, radius_x: float, radius_y: float, layout: dict):
+        points = []
+        for step in range(73):
+            angle = (math.tau * step) / 72.0
+            x = center_x + (math.cos(angle) * radius_x)
+            y = center_y + (math.sin(angle) * radius_y)
+            points.append((x, y, 0.0))
+        self._draw_scene_polyline(painter, points, layout)
+
+    def _draw_scene_spot(self, painter: QPainter, x: float, y: float, layout: dict):
+        canvas_x, canvas_y = self._project_joint_scene_point(x, y, 0.0, layout)
+        radius = max(2.0, layout["scale"] * 0.12)
+        painter.setBrush(QColor("white"))
+        painter.drawEllipse(QRectF(canvas_x - radius, canvas_y - radius, radius * 2, radius * 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    def _draw_penalty_arc(self, painter: QPainter, sign: float, center_x: float, layout: dict):
+        points = []
+        for step in range(49):
+            angle = -math.pi / 2.0 + (math.pi * step / 48.0)
+            x = center_x - (sign * math.cos(angle) * 9.15)
+            y = math.sin(angle) * 9.15
+            if (sign < 0 and x > center_x) or (sign > 0 and x < center_x):
+                points.append((x, y, 0.0))
+        self._draw_scene_polyline(painter, points, layout)
+
+    def _draw_corner_arc(self, painter: QPainter, corner_x: float, corner_y: float, layout: dict):
+        points = []
+        for step in range(19):
+            theta = (math.pi / 2.0) * step / 18.0
+            x = corner_x + (-math.copysign(math.cos(theta), corner_x) * 1.0)
+            y = corner_y + (-math.copysign(math.sin(theta), corner_y) * 1.0)
+            points.append((x, y, 0.0))
+        self._draw_scene_polyline(painter, points, layout)
+
+    def _person_scene_depth(self, person: dict):
+        joints = person.get("joints")
+        if not isinstance(joints, dict) or not joints:
+            return 0.0
+        anchor = joints.get("mid_hip") or joints.get("neck") or next(iter(joints.values()))
+        return float(anchor.get("x", 0.0)) + float(anchor.get("y", 0.0))
 
     def _draw_person_label(self, painter: QPainter, label: str, anchor: dict, layout: dict, fill_color: QColor):
         canvas_x, canvas_y = self._canvas_for_joint(anchor, layout)
