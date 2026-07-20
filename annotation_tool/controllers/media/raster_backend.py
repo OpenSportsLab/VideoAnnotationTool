@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import statistics
 from bisect import bisect_left, bisect_right
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,7 +34,7 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self._frame_last_rendered_index = -1
         self._frame_last_emitted_position_ms = -1
         self._frame_playing = False
-        self._frame_image_cache: dict[int, QImage] = {}
+        self._frame_image_cache: OrderedDict[int, QImage] = OrderedDict()
         self._frame_clock = QElapsedTimer()
 
         self.frame_timer = QTimer(controller)
@@ -54,7 +55,7 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self._frame_last_rendered_index = -1
         self._frame_last_emitted_position_ms = -1
         self._frame_playing = False
-        self._frame_image_cache = {}
+        self._frame_image_cache = OrderedDict()
 
         self.controller.durationChanged.emit(self._clip.duration_ms)
         self._set_frame_position(0, emit_position=True, snap_to_frame=True)
@@ -91,13 +92,18 @@ class BaseRasterMediaBackend(BaseMediaBackend):
     def stop(self):
         if self.frame_timer.isActive():
             self.frame_timer.stop()
+        if self._clip is not None and hasattr(self._clip.frame_source, "close"):
+            try:
+                self._clip.frame_source.close()
+            except Exception:
+                pass
         self._clip = None
         self._frame_position_ms = 0
         self._frame_anchor_position_ms = 0
         self._frame_last_rendered_index = -1
         self._frame_last_emitted_position_ms = -1
         self._frame_playing = False
-        self._frame_image_cache = {}
+        self._frame_image_cache = OrderedDict()
         super().stop()
 
     def set_position(self, position_ms: int):
@@ -173,6 +179,7 @@ class BaseRasterMediaBackend(BaseMediaBackend):
     def _frame_image_for_index(self, frame_index: int) -> QImage:
         cached = self._frame_image_cache.get(frame_index)
         if cached is not None:
+            self._frame_image_cache.move_to_end(frame_index)
             return cached
 
         if self._clip is None or not (0 <= frame_index < self._clip.frame_count):
@@ -180,6 +187,9 @@ class BaseRasterMediaBackend(BaseMediaBackend):
 
         image = self.render_frame_image(frame_index, self._clip.frame_source[frame_index])
         self._frame_image_cache[frame_index] = image
+        cache_limit = int(getattr(self.controller, "_RASTER_FRAME_CACHE_LIMIT", 128) or 128)
+        while len(self._frame_image_cache) > max(1, cache_limit):
+            self._frame_image_cache.popitem(last=False)
         return image
 
     def _set_frame_position(self, position_ms: int, *, emit_position: bool, snap_to_frame: bool = False):

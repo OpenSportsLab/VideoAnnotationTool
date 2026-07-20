@@ -6,6 +6,7 @@ from PyQt6.QtMultimedia import QMediaPlayer
 
 from controllers.media import (
     FramesNpyMediaBackend,
+    PlayerJointsH5MediaBackend,
     TrackingParquetMediaBackend,
     VideoMediaBackend,
 )
@@ -25,6 +26,11 @@ try:
 except Exception:  # pragma: no cover - exercised via runtime guard
     pyarrow = None
 
+try:
+    import h5py
+except Exception:  # pragma: no cover - exercised via runtime guard
+    h5py = None
+
 
 class MediaController(QObject):
     """
@@ -34,6 +40,7 @@ class MediaController(QObject):
     - Qt multimedia video playback for standard video files.
     - Timer-driven NumPy frame-stack playback for `frames_npy` inputs.
     - Timer-driven pitch rendering for `tracking_parquet` inputs.
+    - Timer-driven skeleton rendering for `player_joints_h5` inputs.
     """
 
     playbackStateChanged = pyqtSignal(bool)
@@ -86,6 +93,8 @@ class MediaController(QObject):
         ".m4a",
         ".npy",
         ".parquet",
+        ".h5",
+        ".hdf5",
     }
     _NON_VIDEO_MIME_PREFIXES = ("image/", "text/", "audio/")
     _NON_VIDEO_MIME_TYPES = {
@@ -104,10 +113,12 @@ class MediaController(QObject):
     _FRAME_DEFAULT_FPS = 2.0
     _FRAME_TIMER_INTERVAL_MS = 30
     _TIMESTAMP_MAX_STEP_MS = 60000.0
+    _RASTER_FRAME_CACHE_LIMIT = 128
 
     _BACKEND_VIDEO = "video"
     _BACKEND_FRAMES_NPY = "frames_npy"
     _BACKEND_TRACKING_PARQUET = "tracking_parquet"
+    _BACKEND_PLAYER_JOINTS_H5 = "player_joints_h5"
 
     _TRACKING_IMAGE_WIDTH = 960
     _TRACKING_IMAGE_HEIGHT = 640
@@ -133,6 +144,7 @@ class MediaController(QObject):
             self._BACKEND_VIDEO: VideoMediaBackend(self),
             self._BACKEND_FRAMES_NPY: FramesNpyMediaBackend(self),
             self._BACKEND_TRACKING_PARQUET: TrackingParquetMediaBackend(self),
+            self._BACKEND_PLAYER_JOINTS_H5: PlayerJointsH5MediaBackend(self),
         }
 
         self.player.errorOccurred.connect(self._handle_player_error)
@@ -170,6 +182,8 @@ class MediaController(QObject):
             return self._BACKEND_FRAMES_NPY
         if extension == ".parquet":
             return self._BACKEND_TRACKING_PARQUET
+        if extension in {".h5", ".hdf5"}:
+            return self._BACKEND_PLAYER_JOINTS_H5
         if extension in self._NON_VIDEO_EXTENSIONS:
             return "unknown"
         return self._BACKEND_VIDEO
@@ -210,6 +224,7 @@ class MediaController(QObject):
             self._BACKEND_VIDEO,
             self._BACKEND_FRAMES_NPY,
             self._BACKEND_TRACKING_PARQUET,
+            self._BACKEND_PLAYER_JOINTS_H5,
         }
 
     def _source_key(self, source: dict) -> tuple[str, str]:
@@ -300,6 +315,18 @@ class MediaController(QObject):
             ),
         )
 
+    def _trigger_player_joints_h5_load_error(self, title: str, summary: str, error_details: str):
+        self._trigger_error_dialog(
+            error_details,
+            title=title,
+            text=f"<b>{summary}</b>",
+            informative_text=(
+                "Expected an HDF5 file with flat equal-length datasets, a "
+                "`timestamp_utc` column, and joint coordinate columns named "
+                "`<joint>_x`, `<joint>_y`, and optionally `<joint>_z`."
+            ),
+        )
+
     def _get_numpy_module(self):
         return np
 
@@ -308,6 +335,9 @@ class MediaController(QObject):
 
     def _get_pyarrow_module(self):
         return pyarrow
+
+    def _get_h5py_module(self):
+        return h5py
 
     def _handle_player_error(self, error: QMediaPlayer.Error, error_string: str):
         if self._active_backend is None:

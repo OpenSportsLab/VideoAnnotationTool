@@ -1069,6 +1069,8 @@ class DatasetExplorerController(QObject):
             return "frames_npy"
         if extension.lower() == ".parquet":
             return "tracking_parquet"
+        if extension.lower() in {".h5", ".hdf5"}:
+            return "player_joints_h5"
         return "video"
 
     @staticmethod
@@ -1913,10 +1915,10 @@ class DatasetExplorerController(QObject):
     # Sample add/remove/clear
     # ------------------------------------------------------------------
     def _sample_file_filter(self) -> str:
-        return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp *.npy *.parquet);;All Files (*)"
+        return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp *.npy *.parquet *.h5 *.hdf5);;All Files (*)"
 
     def _supported_media_extensions(self):
-        return (".mp4", ".avi", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp", ".npy", ".parquet")
+        return (".mp4", ".avi", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp", ".npy", ".parquet", ".h5", ".hdf5")
 
     def _is_supported_media_file(self, path: str) -> bool:
         _, extension = os.path.splitext(str(path))

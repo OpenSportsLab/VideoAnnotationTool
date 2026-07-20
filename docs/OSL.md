@@ -136,6 +136,7 @@ Supported input types:
 | `video` | `clips/clip_0001.mp4` | Default when type is missing and the extension is not special. |
 | `frames_npy` | `frames/clip_0001.npy` | Uses `fps` for playback timing. The legacy alias `frame_npy` is normalized to `frames_npy`. |
 | `tracking_parquet` | `tracking/clip_0001.parquet` | Uses parquet timestamps when available. Optional `fps` is a fallback. |
+| `player_joints_h5` | `tracking/live_joints.h5` | Uses absolute UTC values from `timestamp_utc` for playback timing and renders a top-down skeleton preview. |
 
 Input paths can be relative or absolute when loading. On save, input paths are
 rewritten relative to the saved JSON file location when possible.
