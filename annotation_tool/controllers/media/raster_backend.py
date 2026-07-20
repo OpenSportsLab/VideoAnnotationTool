@@ -114,9 +114,11 @@ class BaseRasterMediaBackend(BaseMediaBackend):
             self._frame_clock.restart()
 
     def set_playback_rate(self, rate: float):
+        anchor_position_ms = self.current_position_ms() if self._frame_playing else self._frame_position_ms
         super().set_playback_rate(rate)
         if self._frame_playing:
-            self._frame_anchor_position_ms = self.current_position_ms()
+            self._frame_anchor_position_ms = anchor_position_ms
+            self._frame_position_ms = anchor_position_ms
             self._frame_clock.restart()
 
     def current_position_ms(self) -> int:

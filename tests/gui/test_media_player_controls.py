@@ -496,6 +496,23 @@ def test_player_joints_h5_controller_play_pause_seek_and_rate(media_panel_and_co
 
 
 @pytest.mark.gui
+def test_player_joints_h5_rate_change_keeps_current_position_anchor(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+
+    controller.load_and_play({"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)})
+
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+    qtbot.waitUntil(lambda: controller.current_position_ms() >= 300, timeout=1500)
+
+    before_rate_change = controller.current_position_ms()
+    controller.set_playback_rate(4.0)
+    after_rate_change = controller.current_position_ms()
+
+    assert after_rate_change >= before_rate_change
+    assert after_rate_change - before_rate_change <= 80
+
+
+@pytest.mark.gui
 def test_player_joints_h5_load_keeps_h5_datasets_lazy_and_closes_on_stop(
     media_panel_and_controller,
     qtbot,
