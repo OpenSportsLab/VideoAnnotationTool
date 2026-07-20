@@ -50,8 +50,8 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
   - `{ "type": "tracking_parquet", "path": "...", "fps": 2.0 }`
     `fps` is optional fallback timing used only when parquet timestamps are unusable.
     V1 supports the PFF/PFF-compatible tracking schema and renders a pitch-only preview.
-  - `{ "type": "player_joints_h5", "path": "..." }`
-    Uses absolute UTC timestamps from `timestamp_utc` for playback timing and renders a top-down skeleton preview.
+  - `{ "type": "player_joints_h5", "path": "...", "ball_path": "..." }`
+    Uses absolute UTC timestamps from `timestamp_utc` for playback timing and renders a 3D stickman preview. `ball_path` is optional and overlays ball XYZ from a separate H5 file.
 - Localization event: `{ "head": str, "label": str, "position_ms": int }`
 - Dense event: `{ "position_ms": int, "lang": str, "text": str }`
 - Caption list (Description): `[ { "lang": str, "text": str, ...optional } ]`

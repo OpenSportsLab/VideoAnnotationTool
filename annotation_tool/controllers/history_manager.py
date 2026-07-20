@@ -882,6 +882,25 @@ class HistoryManager(QObject):
         if removed_selected and self.tree_model.rowCount() == 0:
             self.model._reset_panels_after_removed_path(removed_path)
 
+    def execute_set_ball_h5_association(self, sample_id: str, input_path: str, ball_path: str):
+        if not sample_id or not input_path:
+            return
+
+        before_json = self.model.snapshot_dataset_json()
+        changed = self.model._set_ball_h5_association(sample_id, input_path, ball_path)
+        if not changed:
+            return
+
+        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
+            return
+
+        self.model.populate_tree()
+        self.saveStateRefreshRequested.emit()
+        if ball_path:
+            self.statusMessageRequested.emit("Ball H5", "Ball H5 associated.", 1500)
+        else:
+            self.statusMessageRequested.emit("Ball H5", "Ball H5 association removed.", 1500)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as _datetime
 import math
 import os
+from bisect import bisect_right
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
@@ -20,28 +21,74 @@ class _H5FrameGroup:
     stop_row: int
 
 
+class _H5BallFrameSource:
+    def __init__(self, h5_file, datasets: dict, timestamp_rows: list[tuple[_datetime.datetime, int]], tolerance_ms: int, backend):
+        self._h5_file = h5_file
+        self._datasets = datasets
+        self._timestamp_rows = timestamp_rows
+        self._timestamps = [timestamp for timestamp, _row_index in timestamp_rows]
+        self._tolerance = _datetime.timedelta(milliseconds=max(1, int(tolerance_ms)))
+        self._backend = backend
+
+    def ball_for_timestamp(self, timestamp: _datetime.datetime):
+        row_lookup_index = bisect_right(self._timestamps, timestamp) - 1
+        if row_lookup_index < 0:
+            return None
+        ball_timestamp, row_index = self._timestamp_rows[row_lookup_index]
+        if timestamp - ball_timestamp > self._tolerance:
+            return None
+        x = self._backend._coerce_valid_ball_float(self._datasets["x"][row_index])
+        y = self._backend._coerce_valid_ball_float(self._datasets["y"][row_index])
+        z = self._backend._coerce_valid_ball_float(self._datasets["z"][row_index])
+        if x is None or y is None or z is None:
+            return None
+        return {"x": x, "y": y, "z": z, "timestamp_utc": ball_timestamp}
+
+    def close(self):
+        try:
+            self._h5_file.close()
+        except Exception:
+            pass
+
+
 class _H5PlayerJointsFrameSource:
-    def __init__(self, h5_file, datasets: dict, joint_names: list[str], frame_groups: list[_H5FrameGroup], backend):
+    def __init__(
+        self,
+        h5_file,
+        datasets: dict,
+        joint_names: list[str],
+        frame_groups: list[_H5FrameGroup],
+        backend,
+        ball_source: _H5BallFrameSource | None = None,
+    ):
         self._h5_file = h5_file
         self._datasets = datasets
         self._joint_names = joint_names
         self._frame_groups = frame_groups
         self._backend = backend
+        self._ball_source = ball_source
 
     def __len__(self):
         return len(self._frame_groups)
 
     def __getitem__(self, frame_index: int) -> dict:
         group = self._frame_groups[frame_index]
-        return self._backend._frame_payload_for_row_range(
+        payload = self._backend._frame_payload_for_row_range(
             self._datasets,
             self._joint_names,
             group.start_row,
             group.stop_row,
             group.timestamp,
         )
+        if self._ball_source is not None:
+            ball = self._ball_source.ball_for_timestamp(group.timestamp)
+            if ball is not None:
+                payload["ball"] = ball
+        return payload
 
     def close(self):
+        if self._ball_source is not None:
+            self._ball_source.close()
         try:
             self._h5_file.close()
         except Exception:
@@ -61,6 +108,9 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
     _GOAL_DEPTH = 2.0
     _JOINT_MARKER_RADIUS_MIN = 1.0
     _JOINT_MARKER_RADIUS_SCALE = 0.18
+    _BALL_MARKER_RADIUS_MIN = 3.0
+    _BALL_MARKER_RADIUS_SCALE = 0.24
+    _BALL_TIMING_TOLERANCE_FACTOR = 1.5
     _SKELETON_EDGES = (
         ("l_ear", "l_eye"),
         ("l_eye", "nose"),
@@ -170,7 +220,15 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
         ]
         hold_ms = self._median_frame_delta_ms(time_axis_ms)
         duration_ms = time_axis_ms[-1] + hold_ms if time_axis_ms else 0
-        frame_source = _H5PlayerJointsFrameSource(h5_file, datasets, joint_names, frame_groups, self)
+        ball_source = self._open_ball_source(source.get("ball_path"), h5py_module, hold_ms)
+        frame_source = _H5PlayerJointsFrameSource(
+            h5_file,
+            datasets,
+            joint_names,
+            frame_groups,
+            self,
+            ball_source,
+        )
         return RasterClip(
             frame_source=frame_source,
             frame_count=len(frame_groups),
@@ -194,6 +252,7 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
         self._draw_joint_scene_ground(painter, layout)
         for person in sorted(list(frame_payload.get("people", [])), key=self._person_scene_depth):
             self._draw_person_skeleton(painter, person, layout)
+        self._draw_ball(painter, frame_payload.get("ball"), layout)
         self._draw_h5_overlay(painter, frame_index, frame_payload)
         painter.end()
         return image
@@ -222,6 +281,78 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
         if next(iter(unique_lengths), 0) <= 0:
             return "Datasets contain no rows."
         return ""
+
+    def _validate_ball_datasets(self, datasets: dict) -> str:
+        required_columns = (self._TIME_COLUMN, "x", "y", "z")
+        missing_columns = [column for column in required_columns if column not in datasets]
+        if missing_columns:
+            return f"Missing required ball H5 columns: {missing_columns}"
+
+        lengths = {name: int(datasets[name].shape[0]) for name in required_columns}
+        unique_lengths = set(lengths.values())
+        if len(unique_lengths) != 1:
+            return f"Expected equal-length ball H5 datasets but received lengths: {lengths}"
+        if next(iter(unique_lengths), 0) <= 0:
+            return "Ball H5 datasets contain no rows."
+        return ""
+
+    def _open_ball_source(self, ball_path: str | None, h5py_module, hold_ms: int):
+        if not ball_path:
+            return None
+        if not os.path.isfile(ball_path):
+            self._log_ball_overlay_warning("Ball H5 file not found", ball_path)
+            return None
+
+        ball_file = None
+        try:
+            ball_file = h5py_module.File(ball_path, "r")
+            datasets = self._read_flat_datasets(ball_file)
+            validation_error = self._validate_ball_datasets(datasets)
+            if validation_error:
+                self._log_ball_overlay_warning("Unsupported ball H5 schema", validation_error)
+                ball_file.close()
+                return None
+            timestamp_rows, timing_error = self._scan_ball_timestamp_rows(datasets[self._TIME_COLUMN])
+            if timing_error:
+                self._log_ball_overlay_warning("Unsupported ball H5 timing", timing_error)
+                ball_file.close()
+                return None
+            if not timestamp_rows:
+                self._log_ball_overlay_warning("Ball H5 contains no usable timestamps", ball_path)
+                ball_file.close()
+                return None
+            tolerance_ms = max(1, int(round(float(hold_ms) * self._BALL_TIMING_TOLERANCE_FACTOR)))
+            return _H5BallFrameSource(ball_file, datasets, timestamp_rows, tolerance_ms, self)
+        except Exception as exc:
+            if ball_file is not None:
+                try:
+                    ball_file.close()
+                except Exception:
+                    pass
+            self._log_ball_overlay_warning("Unable to read ball H5 file", str(exc))
+            return None
+
+    def _scan_ball_timestamp_rows(self, timestamp_dataset):
+        timestamp_rows = []
+        row_count = int(timestamp_dataset.shape[0])
+        for chunk_start in range(0, row_count, self._TIMESTAMP_CHUNK_ROWS):
+            chunk_stop = min(row_count, chunk_start + self._TIMESTAMP_CHUNK_ROWS)
+            try:
+                values = timestamp_dataset[chunk_start:chunk_stop]
+            except Exception as exc:
+                return [], f"Unable to read `{self._TIME_COLUMN}` values: {exc}"
+
+            for offset, value in enumerate(values):
+                row_index = chunk_start + offset
+                timestamp = self._parse_utc_timestamp(value)
+                if timestamp is not None:
+                    timestamp_rows.append((timestamp, row_index))
+            self._process_pending_ui_events()
+        return sorted(timestamp_rows, key=lambda item: item[0]), ""
+
+    @staticmethod
+    def _log_ball_overlay_warning(summary: str, details: str):
+        print(f"Skipping ball H5 overlay: {summary}. {details}")
 
     def _detect_joint_names(self, datasets: dict) -> list[str]:
         names = []
@@ -614,6 +745,29 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
         painter.setPen(fill_color.lighter(180))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
+    def _draw_ball(self, painter: QPainter, ball: dict | None, layout: dict):
+        if not isinstance(ball, dict):
+            return
+        x = self._coerce_valid_ball_float(ball.get("x"))
+        y = self._coerce_valid_ball_float(ball.get("y"))
+        z = self._coerce_valid_ball_float(ball.get("z"))
+        if x is None or y is None or z is None:
+            return
+
+        canvas_x, canvas_y = self._project_joint_scene_point(x, y, z, layout)
+        radius = max(
+            self._BALL_MARKER_RADIUS_MIN,
+            float(layout.get("scale", 0.0)) * self._BALL_MARKER_RADIUS_SCALE,
+        )
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 90))
+        painter.drawEllipse(QRectF(canvas_x - radius + 1.5, canvas_y - radius + 1.5, radius * 2, radius * 2))
+        outline_pen = QPen(QColor("#20242A"))
+        outline_pen.setWidthF(max(1.0, radius * 0.24))
+        painter.setPen(outline_pen)
+        painter.setBrush(QColor("#F8F8F2"))
+        painter.drawEllipse(QRectF(canvas_x - radius, canvas_y - radius, radius * 2, radius * 2))
+
     def _draw_h5_overlay(self, painter: QPainter, frame_index: int, frame_payload: dict):
         timestamp = frame_payload.get("timestamp_utc")
         timestamp_text = timestamp.isoformat(sep=" ") if hasattr(timestamp, "isoformat") else ""
@@ -719,5 +873,14 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
         except Exception:
             return None
         if not math.isfinite(number):
+            return None
+        return number
+
+    @classmethod
+    def _coerce_valid_ball_float(cls, value):
+        number = cls._coerce_finite_float(value)
+        if number is None:
+            return None
+        if number == -1.0:
             return None
         return number

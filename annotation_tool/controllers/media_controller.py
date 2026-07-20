@@ -205,6 +205,10 @@ class MediaController(QObject):
             "path": os.path.normpath(path),
             "type": source_type,
         }
+        if source_type == self._BACKEND_PLAYER_JOINTS_H5:
+            ball_path = str(raw_source.get("ball_path") or "").strip()
+            if ball_path:
+                normalized["ball_path"] = os.path.normpath(ball_path)
         if source_type in {self._BACKEND_FRAMES_NPY, self._BACKEND_TRACKING_PARQUET}:
             normalized["fps"] = self._coerce_source_fps(
                 raw_source.get("fps"),
@@ -227,9 +231,15 @@ class MediaController(QObject):
             self._BACKEND_PLAYER_JOINTS_H5,
         }
 
-    def _source_key(self, source: dict) -> tuple[str, str]:
+    def _source_key(self, source: dict) -> tuple[str, ...]:
         if not isinstance(source, dict):
             return ("", "")
+        if source.get("type") == self._BACKEND_PLAYER_JOINTS_H5:
+            return (
+                self._fs_path_key(source.get("path")),
+                str(source.get("type") or ""),
+                self._fs_path_key(source.get("ball_path")),
+            )
         return (
             self._fs_path_key(source.get("path")),
             str(source.get("type") or ""),

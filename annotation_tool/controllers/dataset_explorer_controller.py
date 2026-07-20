@@ -248,6 +248,7 @@ class DatasetExplorerController(QObject):
     addSamplesRequested = pyqtSignal(list)
     clearWorkspaceRequested = pyqtSignal()
     removeItemMutationRequested = pyqtSignal(str, str)
+    ballH5AssociationMutationRequested = pyqtSignal(str, str, str)
     settingsChanged = pyqtSignal(object)
 
     SETTINGS_ORG = "OpenSportsLab"
@@ -407,6 +408,10 @@ class DatasetExplorerController(QObject):
         self.panel.addDataRequested.connect(self.handle_add_sample)
         self.panel.clear_btn.clicked.connect(self.handle_clear_workspace)
         self.panel.removeItemRequested.connect(self.handle_remove_item)
+        if hasattr(self.panel, "associateBallH5Requested"):
+            self.panel.associateBallH5Requested.connect(self.handle_associate_ball_h5)
+        if hasattr(self.panel, "clearBallH5Requested"):
+            self.panel.clearBallH5Requested.connect(self.handle_clear_ball_h5_association)
         self.panel.filter_combo.currentIndexChanged.connect(self.handle_filter_change)
         if hasattr(self.panel, "confidenceSortToggled"):
             self.panel.confidenceSortToggled.connect(self._on_confidence_sort_toggled)
@@ -690,6 +695,33 @@ class DatasetExplorerController(QObject):
 
         sample_removed = self._remove_sample_by_id(sample_id)
         return sample_removed, sample_removed
+
+    def _set_ball_h5_association(self, sample_id: str, input_path: str, ball_path: str) -> bool:
+        sample = self.get_sample(sample_id)
+        if not isinstance(sample, dict):
+            return False
+
+        target_key = self._fs_path_key(input_path)
+        if not target_key:
+            return False
+
+        for input_item in sample.get("inputs", []):
+            if not isinstance(input_item, dict):
+                continue
+            input_type = self._canonical_input_type(input_item.get("type"), input_item.get("path"))
+            if input_type != "player_joints_h5":
+                continue
+            resolved_path = self._resolve_media_path(input_item.get("path"))
+            if self._fs_path_key(resolved_path) != target_key:
+                continue
+
+            clean_ball_path = str(ball_path or "").strip()
+            if clean_ball_path:
+                input_item["ball_path"] = self._raw_path_for_new_input(clean_ball_path)
+            else:
+                input_item.pop("ball_path", None)
+            return True
+        return False
 
     def _top_level_index_for_sample(self, sample_id: str) -> QModelIndex:
         entry = self.sample_id_to_entry.get(sample_id)
@@ -1283,6 +1315,10 @@ class DatasetExplorerController(QObject):
             "path": resolved_path,
             "type": source_type,
         }
+        if source_type == "player_joints_h5":
+            resolved_ball_path = self._resolve_media_path(input_item.get("ball_path"))
+            if resolved_ball_path:
+                media_source["ball_path"] = resolved_ball_path
         if source_type in {"frames_npy", "tracking_parquet"}:
             media_source["fps"] = self._coerce_frames_fps(input_item.get("fps"), 2.0)
         else:
@@ -1464,6 +1500,7 @@ class DatasetExplorerController(QObject):
                     name=entry["name"],
                     path=entry["path"],
                     source_files=entry.get("source_files"),
+                    media_sources=entry.get("media_sources"),
                     data_id=entry["data_id"],
                     confidence_score=self._average_smart_confidence_for_sample(entry.get("sample_ref")),
                 )
@@ -1917,6 +1954,9 @@ class DatasetExplorerController(QObject):
     def _sample_file_filter(self) -> str:
         return "Media Files (*.mp4 *.avi *.mov *.mkv *.jpg *.jpeg *.png *.bmp *.npy *.parquet *.h5 *.hdf5);;All Files (*)"
 
+    def _ball_h5_file_filter(self) -> str:
+        return "H5 Files (*.h5 *.hdf5);;All Files (*)"
+
     def _supported_media_extensions(self):
         return (".mp4", ".avi", ".mov", ".mkv", ".jpg", ".jpeg", ".png", ".bmp", ".npy", ".parquet", ".h5", ".hdf5")
 
@@ -2053,7 +2093,68 @@ class DatasetExplorerController(QObject):
             seen_paths.add(selected_key)
             source_groups.append([selected_path])
 
-        return source_groups
+        return self._auto_pair_ball_h5_source_groups(source_groups)
+
+    def _auto_pair_ball_h5_source_groups(self, source_groups: list[list[str]]) -> list[list[str]]:
+        groups = [list(group) for group in source_groups or [] if group]
+        groups = [self._auto_pair_ball_h5_sources_in_group(group) for group in groups]
+
+        singleton_indexes_by_dir = {}
+        for index, group in enumerate(groups):
+            if len(group) != 1:
+                continue
+            path = str(group[0])
+            if not self._is_h5_path(path):
+                continue
+            parent_key = self._fs_path_key(os.path.dirname(path))
+            singleton_indexes_by_dir.setdefault(parent_key, []).append(index)
+
+        paired_group_indexes = set()
+        replacement_groups = {}
+        for indexes in singleton_indexes_by_dir.values():
+            joint_indexes = [index for index in indexes if self._looks_like_joint_h5(groups[index][0])]
+            ball_indexes = [index for index in indexes if self._looks_like_ball_h5(groups[index][0])]
+            if len(joint_indexes) != 1 or len(ball_indexes) != 1:
+                continue
+            joint_index = joint_indexes[0]
+            ball_index = ball_indexes[0]
+            replacement_groups[joint_index] = [groups[joint_index][0], groups[ball_index][0]]
+            paired_group_indexes.add(ball_index)
+
+        paired_groups = []
+        for index, group in enumerate(groups):
+            if index in paired_group_indexes:
+                continue
+            paired_groups.append(replacement_groups.get(index, group))
+        return paired_groups
+
+    def _auto_pair_ball_h5_sources_in_group(self, source_group: list[str]) -> list[str]:
+        group = list(source_group or [])
+        if len(group) < 2:
+            return group
+
+        joint_paths = [path for path in group if self._looks_like_joint_h5(path)]
+        ball_paths = [path for path in group if self._looks_like_ball_h5(path)]
+        if len(joint_paths) != 1 or len(ball_paths) != 1:
+            return group
+        joint_path = joint_paths[0]
+        ball_path = ball_paths[0]
+        if self._fs_path_key(os.path.dirname(joint_path)) != self._fs_path_key(os.path.dirname(ball_path)):
+            return group
+        reordered = [joint_path, ball_path]
+        reordered.extend(path for path in group if path not in {joint_path, ball_path})
+        return reordered
+
+    @staticmethod
+    def _is_h5_path(path: str) -> bool:
+        return os.path.splitext(str(path or ""))[1].lower() in {".h5", ".hdf5"}
+
+    def _looks_like_ball_h5(self, path: str) -> bool:
+        return self._is_h5_path(path) and "ball" in os.path.basename(str(path)).lower()
+
+    def _looks_like_joint_h5(self, path: str) -> bool:
+        name = os.path.basename(str(path)).lower()
+        return self._is_h5_path(path) and ("joint" in name or "joints" in name)
 
     def _group_selected_files(self, files):
         grouped = {}
@@ -2106,9 +2207,22 @@ class DatasetExplorerController(QObject):
             input_payload["fps"] = 2.0
         return input_payload
 
+    def _new_input_payloads_for_source_group(self, source_group) -> list[dict]:
+        group = self._auto_pair_ball_h5_sources_in_group([str(path) for path in source_group or [] if path])
+        if len(group) >= 2 and self._looks_like_joint_h5(group[0]) and self._looks_like_ball_h5(group[1]):
+            input_payload = self._new_input_payload_for_source(group[0])
+            if input_payload.get("type") == "player_joints_h5":
+                input_payload["ball_path"] = self._raw_path_for_new_input(group[1])
+                return [input_payload] + [self._new_input_payload_for_source(path) for path in group[2:]]
+        return [self._new_input_payload_for_source(source_path) for source_path in group]
+
     def _build_new_sample(self, source_group):
-        sample_id = self._make_unique_sample_id(self._sample_id_from_group(source_group))
-        inputs = [self._new_input_payload_for_source(source_path) for source_path in source_group]
+        inputs = self._new_input_payloads_for_source_group(source_group)
+        if len(source_group or []) > 1 and len(inputs) == 1 and inputs[0].get("ball_path"):
+            sample_id = os.path.splitext(os.path.basename(str(inputs[0].get("path") or "")))[0] or self._sample_id_from_group(source_group)
+        else:
+            sample_id = self._sample_id_from_group(source_group)
+        sample_id = self._make_unique_sample_id(sample_id)
         return {
             "id": sample_id,
             "metadata": {},
@@ -2174,6 +2288,69 @@ class DatasetExplorerController(QObject):
             input_path = index.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
         self.removeItemMutationRequested.emit(str(sample_id), input_path)
 
+    def handle_associate_ball_h5(self, index: QModelIndex):
+        target = self._joint_h5_target_from_index(index)
+        if target is None:
+            self.statusMessageRequested.emit(
+                "Ball H5",
+                "Select a player joints H5 input before associating a ball file.",
+                2000,
+            )
+            return
+
+        _sample_id, input_path = target
+        start_dir = self.current_working_directory or self.project_root or ""
+        if input_path:
+            start_dir = os.path.dirname(str(input_path)) or start_dir
+        ball_path, _ = QFileDialog.getOpenFileName(
+            self.panel,
+            "Select Ball H5",
+            start_dir,
+            self._ball_h5_file_filter(),
+        )
+        if not ball_path:
+            return
+        self.ballH5AssociationMutationRequested.emit(target[0], target[1], str(ball_path))
+
+    def handle_clear_ball_h5_association(self, index: QModelIndex):
+        target = self._joint_h5_target_from_index(index)
+        if target is None:
+            return
+        self.ballH5AssociationMutationRequested.emit(target[0], target[1], "")
+
+    def _joint_h5_target_from_index(self, index: QModelIndex):
+        if not index.isValid():
+            return None
+        action_idx = self._get_action_index(index)
+        if not action_idx.isValid():
+            return None
+        sample_id = action_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
+        if not sample_id:
+            return None
+
+        if index.parent().isValid():
+            input_path = index.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
+            input_type = index.data(getattr(self.tree_model, "InputTypeRole", 0x0103)) or ""
+            if input_path and input_type == "player_joints_h5":
+                return str(sample_id), str(input_path)
+            return None
+
+        sample = self.get_sample(str(sample_id))
+        if not isinstance(sample, dict):
+            return None
+        targets = []
+        for input_item in sample.get("inputs", []):
+            if not isinstance(input_item, dict):
+                continue
+            if self._canonical_input_type(input_item.get("type"), input_item.get("path")) != "player_joints_h5":
+                continue
+            resolved_path = self._resolve_media_path(input_item.get("path"))
+            if resolved_path:
+                targets.append(resolved_path)
+        if len(targets) == 1:
+            return str(sample_id), targets[0]
+        return None
+
     def _reset_panels_after_removed_path(self, _removed_path: str):
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
@@ -2212,6 +2389,13 @@ class DatasetExplorerController(QObject):
                         new_input["path"] = os.path.relpath(abs_path, base_dir).replace("\\", "/")
                     except Exception:
                         new_input["path"] = abs_path
+                if new_input.get("ball_path"):
+                    abs_ball_path = self._resolve_media_path(new_input.get("ball_path"))
+                    if abs_ball_path:
+                        try:
+                            new_input["ball_path"] = os.path.relpath(abs_ball_path, base_dir).replace("\\", "/")
+                        except Exception:
+                            new_input["ball_path"] = abs_ball_path
                 new_inputs.append(new_input)
             sample["inputs"] = new_inputs
 

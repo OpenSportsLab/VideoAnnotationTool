@@ -36,6 +36,8 @@ class DatasetExplorerTreeModel(QStandardItemModel):
     FilePathRole = Qt.ItemDataRole.UserRole
     DataIdRole = Qt.ItemDataRole.UserRole + 1
     SortRole = Qt.ItemDataRole.UserRole + 2
+    InputTypeRole = Qt.ItemDataRole.UserRole + 3
+    BallPathRole = Qt.ItemDataRole.UserRole + 4
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -50,6 +52,7 @@ class DatasetExplorerTreeModel(QStandardItemModel):
         name: str,
         path: str,
         source_files: list = None,
+        media_sources: list = None,
         icon=None,
         data_id: str = None,
         confidence_score: float = None,
@@ -65,13 +68,24 @@ class DatasetExplorerTreeModel(QStandardItemModel):
             item.setIcon(icon)
 
         if source_files:
-            for src in source_files:
+            media_sources = list(media_sources or [])
+            for index, src in enumerate(source_files):
+                media_source = media_sources[index] if index < len(media_sources) and isinstance(media_sources[index], dict) else {}
+                ball_path = str(media_source.get("ball_path") or "")
                 child_name = os.path.basename(src) or str(src)
+                if ball_path:
+                    child_name = f"{child_name}  (ball: {os.path.basename(ball_path) or ball_path})"
                 child = QStandardItem(child_name)
                 child.setEditable(False)
                 child.setData(src, self.FilePathRole)
                 child.setData(data_id, self.DataIdRole)
+                child.setData(str(media_source.get("type") or ""), self.InputTypeRole)
+                child.setData(ball_path, self.BallPathRole)
                 child.setData(_natural_sort_text(child_name), self.SortRole)
+                tooltip = str(src)
+                if ball_path:
+                    tooltip = f"{tooltip}\nBall H5: {ball_path}"
+                child.setToolTip(tooltip)
                 item.appendRow(child)
 
         self.appendRow(item)
@@ -91,6 +105,8 @@ class DatasetExplorerPanel(QWidget):
     """
 
     removeItemRequested = pyqtSignal(QModelIndex)
+    associateBallH5Requested = pyqtSignal(QModelIndex)
+    clearBallH5Requested = pyqtSignal(QModelIndex)
     addDataRequested = pyqtSignal()
     sampleNavigateRequested = pyqtSignal(int)
     headerDraftChanged = pyqtSignal(dict)
@@ -211,11 +227,43 @@ class DatasetExplorerPanel(QWidget):
             return
 
         menu = QMenu(self.tree)
+        ball_target_index = self._ball_h5_target_index(index)
+        if ball_target_index.isValid():
+            associate_action = menu.addAction("Associate Ball H5...")
+            current_ball_path = ball_target_index.data(self.tree_model.BallPathRole) or ""
+            clear_ball_action = menu.addAction("Remove Ball H5 Association")
+            clear_ball_action.setEnabled(bool(current_ball_path))
+            menu.addSeparator()
+        else:
+            associate_action = None
+            clear_ball_action = None
         remove_label = "Remove Input" if index.parent().isValid() else "Remove Sample"
         remove_action = menu.addAction(remove_label)
         selected = menu.exec(self.tree.mapToGlobal(pos))
-        if selected == remove_action:
+        if associate_action is not None and selected == associate_action:
+            self.associateBallH5Requested.emit(ball_target_index)
+        elif clear_ball_action is not None and selected == clear_ball_action:
+            self.clearBallH5Requested.emit(ball_target_index)
+        elif selected == remove_action:
             self.removeItemRequested.emit(index)
+
+    def _ball_h5_target_index(self, index: QModelIndex) -> QModelIndex:
+        if not index.isValid():
+            return QModelIndex()
+        if index.parent().isValid():
+            input_type = index.data(self.tree_model.InputTypeRole)
+            if input_type == "player_joints_h5":
+                return index
+            return QModelIndex()
+
+        joint_child_indexes = []
+        for row in range(self.tree_model.rowCount(index)):
+            child = self.tree_model.index(row, 0, index)
+            if child.isValid() and child.data(self.tree_model.InputTypeRole) == "player_joints_h5":
+                joint_child_indexes.append(child)
+        if len(joint_child_indexes) == 1:
+            return joint_child_indexes[0]
+        return QModelIndex()
 
     # ------------------------------------------------------------------
     # Header Inspector API
