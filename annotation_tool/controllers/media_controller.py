@@ -6,6 +6,7 @@ from PyQt6.QtMultimedia import QMediaPlayer
 
 from controllers.media import (
     FramesNpyMediaBackend,
+    PlayerCentroidsH5MediaBackend,
     PlayerJointsH5MediaBackend,
     TrackingParquetMediaBackend,
     VideoMediaBackend,
@@ -41,6 +42,7 @@ class MediaController(QObject):
     - Timer-driven NumPy frame-stack playback for `frames_npy` inputs.
     - Timer-driven pitch rendering for `tracking_parquet` inputs.
     - Timer-driven skeleton rendering for `player_joints_h5` inputs.
+    - Timer-driven centroid rendering for `player_centroids_h5` inputs.
     """
 
     playbackStateChanged = pyqtSignal(bool)
@@ -119,6 +121,7 @@ class MediaController(QObject):
     _BACKEND_FRAMES_NPY = "frames_npy"
     _BACKEND_TRACKING_PARQUET = "tracking_parquet"
     _BACKEND_PLAYER_JOINTS_H5 = "player_joints_h5"
+    _BACKEND_PLAYER_CENTROIDS_H5 = "player_centroids_h5"
 
     _TRACKING_IMAGE_WIDTH = 960
     _TRACKING_IMAGE_HEIGHT = 640
@@ -145,6 +148,7 @@ class MediaController(QObject):
             self._BACKEND_FRAMES_NPY: FramesNpyMediaBackend(self),
             self._BACKEND_TRACKING_PARQUET: TrackingParquetMediaBackend(self),
             self._BACKEND_PLAYER_JOINTS_H5: PlayerJointsH5MediaBackend(self),
+            self._BACKEND_PLAYER_CENTROIDS_H5: PlayerCentroidsH5MediaBackend(self),
         }
 
         self.player.errorOccurred.connect(self._handle_player_error)
@@ -205,7 +209,7 @@ class MediaController(QObject):
             "path": os.path.normpath(path),
             "type": source_type,
         }
-        if source_type == self._BACKEND_PLAYER_JOINTS_H5:
+        if source_type in {self._BACKEND_PLAYER_JOINTS_H5, self._BACKEND_PLAYER_CENTROIDS_H5}:
             ball_path = str(raw_source.get("ball_path") or "").strip()
             if ball_path:
                 normalized["ball_path"] = os.path.normpath(ball_path)
@@ -229,12 +233,13 @@ class MediaController(QObject):
             self._BACKEND_FRAMES_NPY,
             self._BACKEND_TRACKING_PARQUET,
             self._BACKEND_PLAYER_JOINTS_H5,
+            self._BACKEND_PLAYER_CENTROIDS_H5,
         }
 
     def _source_key(self, source: dict) -> tuple[str, ...]:
         if not isinstance(source, dict):
             return ("", "")
-        if source.get("type") == self._BACKEND_PLAYER_JOINTS_H5:
+        if source.get("type") in {self._BACKEND_PLAYER_JOINTS_H5, self._BACKEND_PLAYER_CENTROIDS_H5}:
             return (
                 self._fs_path_key(source.get("path")),
                 str(source.get("type") or ""),
@@ -334,6 +339,17 @@ class MediaController(QObject):
                 "Expected an HDF5 file with flat equal-length datasets, a "
                 "`timestamp_utc` column, and joint coordinate columns named "
                 "`<joint>_x`, `<joint>_y`, and optionally `<joint>_z`."
+            ),
+        )
+
+    def _trigger_player_centroids_h5_load_error(self, title: str, summary: str, error_details: str):
+        self._trigger_error_dialog(
+            error_details,
+            title=title,
+            text=f"<b>{summary}</b>",
+            informative_text=(
+                "Expected an HDF5 file with flat equal-length datasets, a "
+                "`timestamp_utc` column, and player centroid columns `x` and `y`."
             ),
         )
 

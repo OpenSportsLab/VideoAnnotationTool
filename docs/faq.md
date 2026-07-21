@@ -4,8 +4,8 @@
 
 The Add Data picker supports common video/image extensions (`.mp4`, `.avi`, `.mov`, `.mkv`, `.jpg`, `.jpeg`, `.png`, `.bmp`) plus `.npy`, `.parquet`, `.h5`, and `.hdf5` data inputs.
 
-Video files use native video playback. `.npy`, `.parquet`, and `player_joints_h5`
-inputs use specialized raster preview renderers.
+Video files use native video playback. `.npy`, `.parquet`, `player_joints_h5`,
+and `player_centroids_h5` inputs use specialized raster preview renderers.
 
 ## Why did a sample ID change to `__2`?
 

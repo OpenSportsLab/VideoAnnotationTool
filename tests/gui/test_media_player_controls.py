@@ -30,6 +30,7 @@ PLAYER_JOINTS_H5_PATH = (
     / "test_data"
     / "live_joints_sirus_mini_test.h5"
 )
+PLAYER_CENTROIDS_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_centroids.h5"
 BALL_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_ball.h5"
 
 
@@ -53,6 +54,20 @@ def _write_ball_h5(path: Path, timestamps: list[bytes], x_values, y_values=None,
         h5_file.create_dataset("x", data=np.array(x_values, dtype=float))
         h5_file.create_dataset("y", data=np.array(y_values, dtype=float))
         h5_file.create_dataset("z", data=np.array(z_values, dtype=float))
+
+
+def _write_minimal_player_centroids_h5(path: Path, timestamps: list[bytes], x_values=None, y_values=None):
+    row_count = len(timestamps)
+    if x_values is None:
+        x_values = np.linspace(0.0, 1.0, row_count)
+    if y_values is None:
+        y_values = np.linspace(0.0, 1.0, row_count)
+    with h5py.File(path, "w") as h5_file:
+        h5_file.create_dataset("timestamp_utc", data=np.array(timestamps))
+        h5_file.create_dataset("x", data=np.array(x_values, dtype=float))
+        h5_file.create_dataset("y", data=np.array(y_values, dtype=float))
+        h5_file.create_dataset("is_home", data=np.array([1 if idx % 2 == 0 else 0 for idx in range(row_count)]))
+        h5_file.create_dataset("jersey_number", data=np.array([str(idx + 1).encode("utf-8") for idx in range(row_count)]))
 
 
 @pytest.fixture
@@ -887,3 +902,229 @@ def test_player_joints_h5_inconsistent_lengths_reports_clear_error(
     assert errors
     assert errors[-1][0]["title"] == "Unsupported H5 Schema"
     assert "equal-length" in errors[-1][1]
+
+
+@pytest.mark.gui
+def test_player_centroids_h5_controller_load_play_pause_seek_and_rate(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+
+    durations = []
+    states = []
+    controller.durationChanged.connect(durations.append)
+    controller.playbackStateChanged.connect(states.append)
+
+    controller.load_and_play({"type": "player_centroids_h5", "path": str(PLAYER_CENTROIDS_H5_PATH)})
+
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=6000)
+    qtbot.waitUntil(lambda: controller.current_position_ms() > 0, timeout=1500)
+
+    assert panel.frame_widget.isVisible() is True
+    assert panel.video_widget.isVisible() is False
+    assert durations and durations[-1] > 0
+    assert states and states[-1] is True
+
+    first_position = controller.current_position_ms()
+    controller.set_playback_rate(4.0)
+    after_rate_change = controller.current_position_ms()
+    assert after_rate_change - first_position <= 80
+    qtbot.wait(150)
+    assert controller.current_position_ms() > after_rate_change
+
+    controller.pause()
+    paused_position = controller.current_position_ms()
+    qtbot.wait(150)
+    assert abs(controller.current_position_ms() - paused_position) <= 40
+
+    controller.set_position(1500)
+    qtbot.wait(30)
+    assert 1400 <= controller.current_position_ms() <= 1600
+
+
+@pytest.mark.gui
+def test_player_centroids_h5_keeps_h5_datasets_lazy_and_closes_on_stop(
+    media_panel_and_controller,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    h5_path = tmp_path / "centroids.h5"
+    _write_minimal_player_centroids_h5(
+        h5_path,
+        [
+            b"2026-01-01 00:00:00.000000",
+            b"2026-01-01 00:00:00.040000",
+        ],
+    )
+
+    controller.load_and_play({"type": "player_centroids_h5", "path": str(h5_path)}, auto_play=False)
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    frame_source = controller._active_backend._clip.frame_source
+    assert isinstance(frame_source._datasets["x"], h5py.Dataset)
+    assert frame_source._h5_file.id.valid == 1
+    assert frame_source[0]["players"][0]["x"] == pytest.approx(0.0)
+
+    controller.stop()
+
+    assert frame_source._h5_file.id.valid == 0
+
+
+@pytest.mark.gui
+def test_player_centroids_h5_ball_overlay_loads_aligns_and_closes(
+    media_panel_and_controller,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    centroids_path = tmp_path / "centroids.h5"
+    ball_path = tmp_path / "ball.h5"
+    _write_minimal_player_centroids_h5(
+        centroids_path,
+        [
+            b"2026-01-01 00:00:00.000000",
+            b"2026-01-01 00:00:00.040000",
+        ],
+    )
+    _write_ball_h5(
+        ball_path,
+        [
+            b"2026-01-01 00:00:00.000000",
+            b"2026-01-01 00:00:00.020000",
+        ],
+        [4.0, 5.0],
+    )
+
+    controller.load_and_play(
+        {"type": "player_centroids_h5", "path": str(centroids_path), "ball_path": str(ball_path)},
+        auto_play=False,
+    )
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    frame_source = controller._active_backend._clip.frame_source
+    ball_source = frame_source._ball_source
+    assert ball_source is not None
+    assert isinstance(ball_source._datasets["x"], h5py.Dataset)
+    assert frame_source[1]["ball"]["x"] == pytest.approx(5.0)
+
+    controller.stop()
+
+    assert ball_source._h5_file.id.valid == 0
+
+
+@pytest.mark.gui
+def test_player_centroids_h5_malformed_rows_render_without_failing(
+    media_panel_and_controller,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    errors = []
+    h5_path = tmp_path / "bad_rows_centroids.h5"
+    _write_minimal_player_centroids_h5(
+        h5_path,
+        [
+            b"2026-01-01 00:00:00.000000",
+            b"2026-01-01 00:00:00.000000",
+        ],
+        x_values=[0.0, -1.0],
+        y_values=[0.0, np.nan],
+    )
+    monkeypatch.setattr(
+        controller,
+        "_trigger_error_dialog",
+        lambda error_details, **kwargs: errors.append((kwargs, error_details)),
+    )
+
+    controller.load_and_play({"type": "player_centroids_h5", "path": str(h5_path)}, auto_play=False)
+    qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    frame_source = controller._active_backend._clip.frame_source
+    assert len(frame_source[0]["players"]) == 1
+    assert errors == []
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("datasets", "expected_snippet"),
+    [
+        ({"x": [0.0], "y": [0.0]}, "timestamp_utc"),
+        ({"timestamp_utc": [b"2026-01-01 00:00:00.000000"], "x": [0.0]}, "Missing required centroid"),
+        (
+            {
+                "timestamp_utc": [b"2026-01-01 00:00:00.000000"],
+                "x": [0.0, 1.0],
+                "y": [0.0],
+            },
+            "equal-length",
+        ),
+    ],
+)
+def test_player_centroids_h5_invalid_schema_reports_clear_error(
+    media_panel_and_controller,
+    monkeypatch,
+    tmp_path,
+    datasets,
+    expected_snippet,
+):
+    _panel, controller = media_panel_and_controller
+    errors = []
+    h5_path = tmp_path / "invalid_centroids.h5"
+    with h5py.File(h5_path, "w") as h5_file:
+        for key, values in datasets.items():
+            h5_file.create_dataset(key, data=np.array(values))
+    monkeypatch.setattr(
+        controller,
+        "_trigger_error_dialog",
+        lambda error_details, **kwargs: errors.append((kwargs, error_details)),
+    )
+
+    controller.load_and_play({"type": "player_centroids_h5", "path": str(h5_path)})
+
+    assert errors
+    assert errors[-1][0]["title"] == "Unsupported H5 Schema"
+    assert expected_snippet in errors[-1][1]
+
+
+@pytest.mark.gui
+def test_player_centroids_h5_missing_dependency_reports_clear_error(
+    media_panel_and_controller,
+    monkeypatch,
+):
+    _panel, controller = media_panel_and_controller
+    errors = []
+
+    monkeypatch.setattr("controllers.media_controller.h5py", None)
+    monkeypatch.setattr(
+        controller,
+        "_trigger_error_dialog",
+        lambda error_details, **kwargs: errors.append((kwargs, error_details)),
+    )
+
+    controller.load_and_play({"type": "player_centroids_h5", "path": str(PLAYER_CENTROIDS_H5_PATH)})
+
+    assert errors
+    assert errors[-1][0]["title"] == "H5 Dependency Missing"
+    assert "h5py must be installed" in errors[-1][1]
+
+
+@pytest.mark.gui
+def test_player_centroids_h5_missing_file_reports_clear_error(
+    media_panel_and_controller,
+    monkeypatch,
+    tmp_path,
+):
+    _panel, controller = media_panel_and_controller
+    errors = []
+    missing_path = tmp_path / "missing_centroids.h5"
+    monkeypatch.setattr(
+        controller,
+        "_trigger_error_dialog",
+        lambda error_details, **kwargs: errors.append((kwargs, error_details)),
+    )
+
+    controller.load_and_play({"type": "player_centroids_h5", "path": str(missing_path)})
+
+    assert errors
+    assert errors[-1][0]["title"] == "Media Load Error"
+    assert str(missing_path) in errors[-1][1]

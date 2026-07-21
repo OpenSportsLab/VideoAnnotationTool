@@ -41,6 +41,7 @@ PLAYER_JOINTS_H5_PATH = (
     / "test_data"
     / "live_joints_sirus_mini_test.h5"
 )
+PLAYER_CENTROIDS_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_centroids.h5"
 BALL_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_ball.h5"
 
 
@@ -226,6 +227,28 @@ def test_add_data_accepts_h5_and_creates_player_joints_sample(window, monkeypatc
 
 
 @pytest.mark.gui
+def test_add_data_accepts_centroids_h5_and_creates_player_centroids_sample(window, monkeypatch, qtbot):
+    window.dataset_explorer_controller.create_new_project("classification")
+    assert window.dataset_explorer_controller.json_loaded is True
+
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(PLAYER_CENTROIDS_H5_PATH)],
+    )
+
+    window.dataset_explorer_controller.handle_add_sample()
+    qtbot.wait(50)
+
+    assert window.tree_model.rowCount() == 1
+    sample = window.dataset_explorer_controller.get_sample("live_centroids")
+    assert sample is not None
+    assert sample["inputs"][0]["type"] == "player_centroids_h5"
+    assert "fps" not in sample["inputs"][0]
+    assert "player_centroids_h5" in window.dataset_explorer_controller.modalities
+
+
+@pytest.mark.gui
 def test_add_data_auto_pairs_obvious_joint_and_ball_h5(window, monkeypatch, qtbot):
     window.dataset_explorer_controller.create_new_project("classification")
     assert window.dataset_explorer_controller.json_loaded is True
@@ -245,6 +268,29 @@ def test_add_data_auto_pairs_obvious_joint_and_ball_h5(window, monkeypatch, qtbo
     assert len(sample["inputs"]) == 1
     assert sample["inputs"][0]["type"] == "player_joints_h5"
     assert sample["inputs"][0]["path"] == str(PLAYER_JOINTS_H5_PATH)
+    assert sample["inputs"][0]["ball_path"] == str(BALL_H5_PATH)
+
+
+@pytest.mark.gui
+def test_add_data_auto_pairs_obvious_centroid_and_ball_h5(window, monkeypatch, qtbot):
+    window.dataset_explorer_controller.create_new_project("classification")
+    assert window.dataset_explorer_controller.json_loaded is True
+
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "_pick_files_or_folders_for_add_data",
+        lambda _start_dir: [str(PLAYER_CENTROIDS_H5_PATH), str(BALL_H5_PATH)],
+    )
+
+    window.dataset_explorer_controller.handle_add_sample()
+    qtbot.wait(50)
+
+    assert window.tree_model.rowCount() == 1
+    sample = window.dataset_explorer_controller.get_sample("live_centroids")
+    assert sample is not None
+    assert len(sample["inputs"]) == 1
+    assert sample["inputs"][0]["type"] == "player_centroids_h5"
+    assert sample["inputs"][0]["path"] == str(PLAYER_CENTROIDS_H5_PATH)
     assert sample["inputs"][0]["ball_path"] == str(BALL_H5_PATH)
 
 
@@ -497,6 +543,60 @@ def test_player_joints_h5_dataset_selection_routes_canonical_media_source(
     assert "fps" not in routed_source
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["player_joints_h5"]
     assert window.dataset_explorer_controller.current_selected_input_path == str(PLAYER_JOINTS_H5_PATH)
+
+
+@pytest.mark.gui
+def test_player_centroids_h5_dataset_selection_routes_canonical_media_source(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    rel_h5_path = os.path.relpath(PLAYER_CENTROIDS_H5_PATH, start=tmp_path).replace("\\", "/")
+    rel_ball_path = os.path.relpath(BALL_H5_PATH, start=tmp_path).replace("\\", "/")
+    project_json_path = tmp_path / "player_centroids_h5_project.json"
+    payload = {
+        "version": "2.0",
+        "date": "2026-07-21",
+        "task": "action_classification",
+        "dataset_name": "player_centroids_h5_project",
+        "modalities": ["player_centroids_h5"],
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "data": [
+            {
+                "id": "centroids_clip",
+                "inputs": [{"path": rel_h5_path, "ball_path": rel_ball_path, "type": "player_centroids_h5"}],
+                "labels": {"action": {"label": "pass"}},
+            }
+        ],
+    }
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    media_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "load_and_play",
+        lambda source, auto_play=True: media_calls.append(source),
+    )
+
+    window.dataset_explorer_controller.import_annotations()
+    first_index = window.tree_model.index(0, 0)
+    window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
+    qtbot.wait(50)
+
+    routed_source = media_calls[-1]
+    assert routed_source["type"] == "player_centroids_h5"
+    assert routed_source["path"] == str(PLAYER_CENTROIDS_H5_PATH)
+    assert routed_source["ball_path"] == str(BALL_H5_PATH)
+    assert "fps" not in routed_source
+    assert window.dataset_explorer_controller.dataset_json["modalities"] == ["player_centroids_h5"]
+    assert window.dataset_explorer_controller.current_selected_input_path == str(PLAYER_CENTROIDS_H5_PATH)
 
 
 @pytest.mark.gui

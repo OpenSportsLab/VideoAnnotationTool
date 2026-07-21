@@ -52,6 +52,8 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
     V1 supports the PFF/PFF-compatible tracking schema and renders a pitch-only preview.
   - `{ "type": "player_joints_h5", "path": "...", "ball_path": "..." }`
     Uses absolute UTC timestamps from `timestamp_utc` for playback timing and renders a 3D stickman preview. `ball_path` is optional and overlays ball XYZ from a separate H5 file.
+  - `{ "type": "player_centroids_h5", "path": "...", "ball_path": "..." }`
+    Uses absolute UTC timestamps from `timestamp_utc` for playback timing and renders a top-down player centroid preview. `ball_path` is optional.
 - Localization event: `{ "head": str, "label": str, "position_ms": int }`
 - Dense event: `{ "position_ms": int, "lang": str, "text": str }`
 - Caption list (Description): `[ { "lang": str, "text": str, ...optional } ]`
