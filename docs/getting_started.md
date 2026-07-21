@@ -38,6 +38,26 @@ Selected files become separate samples. Selected folders are treated as
 multi-input samples for multi-view workflows. The app stores each input under
 `data[].inputs[]` and infers the input type from the file extension when needed.
 
+### Import H5 Player Tracking
+
+You can add `.h5`/`.hdf5` tracking files through the same **Add Data** button:
+
+- Joint files with columns such as `<joint>_x`, `<joint>_y`, and `<joint>_z`
+  are loaded as `player_joints_h5` and displayed as 3D stickmen.
+- Centroid files with `timestamp_utc`, `x`, and `y` are loaded as
+  `player_centroids_h5` and displayed from a top-down field view.
+- Ball H5 files can be selected together with an obvious joint/centroid file, or
+  associated later by right-clicking the H5 input in the Dataset Explorer and
+  choosing **Associate Ball H5...**.
+
+The regular media controls still apply: play, pause, seek, mute, and playback
+rate. Timing comes from absolute `timestamp_utc` values, so H5 inputs do not use
+an `fps` field.
+
+![Player joints H5 preview](assets/player_joints_h5.png)
+
+![Player centroids H5 preview](assets/player_centroid_h5.png)
+
 ## 4. Annotate
 
 Select a sample in the Dataset Explorer, then use the right-side annotation tabs:

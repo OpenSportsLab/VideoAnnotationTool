@@ -709,7 +709,7 @@ class DatasetExplorerController(QObject):
             if not isinstance(input_item, dict):
                 continue
             input_type = self._canonical_input_type(input_item.get("type"), input_item.get("path"))
-            if input_type != "player_joints_h5":
+            if input_type not in {"player_joints_h5", "player_centroids_h5"}:
                 continue
             resolved_path = self._resolve_media_path(input_item.get("path"))
             if self._fs_path_key(resolved_path) != target_key:
@@ -1105,6 +1105,37 @@ class DatasetExplorerController(QObject):
             return "player_joints_h5"
         return "video"
 
+    def _input_type_for_new_source(self, source_path: str) -> str:
+        input_type = self._canonical_input_type(None, source_path)
+        if input_type != "player_joints_h5":
+            return input_type
+        if self._looks_like_ball_h5(source_path):
+            return input_type
+        return self._infer_player_h5_type_from_schema(source_path) or input_type
+
+    def _infer_player_h5_type_from_schema(self, source_path: str):
+        if not self._is_h5_path(source_path) or not os.path.isfile(source_path):
+            return None
+        try:
+            import h5py
+        except Exception:
+            return None
+        try:
+            with h5py.File(source_path, "r") as h5_file:
+                flat_keys = {
+                    str(key)
+                    for key in h5_file.keys()
+                    if hasattr(h5_file[key], "shape") and len(h5_file[key].shape) == 1
+                }
+        except Exception:
+            return None
+
+        if any(key.endswith("_x") and f"{key[:-2]}_y" in flat_keys for key in flat_keys):
+            return "player_joints_h5"
+        if {"timestamp_utc", "x", "y"}.issubset(flat_keys):
+            return "player_centroids_h5"
+        return None
+
     @staticmethod
     def _coerce_frames_fps(value, default: float = 2.0) -> float:
         try:
@@ -1315,7 +1346,7 @@ class DatasetExplorerController(QObject):
             "path": resolved_path,
             "type": source_type,
         }
-        if source_type == "player_joints_h5":
+        if source_type in {"player_joints_h5", "player_centroids_h5"}:
             resolved_ball_path = self._resolve_media_path(input_item.get("ball_path"))
             if resolved_ball_path:
                 media_source["ball_path"] = resolved_ball_path
@@ -2112,7 +2143,7 @@ class DatasetExplorerController(QObject):
         paired_group_indexes = set()
         replacement_groups = {}
         for indexes in singleton_indexes_by_dir.values():
-            joint_indexes = [index for index in indexes if self._looks_like_joint_h5(groups[index][0])]
+            joint_indexes = [index for index in indexes if self._looks_like_player_h5(groups[index][0])]
             ball_indexes = [index for index in indexes if self._looks_like_ball_h5(groups[index][0])]
             if len(joint_indexes) != 1 or len(ball_indexes) != 1:
                 continue
@@ -2133,7 +2164,7 @@ class DatasetExplorerController(QObject):
         if len(group) < 2:
             return group
 
-        joint_paths = [path for path in group if self._looks_like_joint_h5(path)]
+        joint_paths = [path for path in group if self._looks_like_player_h5(path)]
         ball_paths = [path for path in group if self._looks_like_ball_h5(path)]
         if len(joint_paths) != 1 or len(ball_paths) != 1:
             return group
@@ -2155,6 +2186,13 @@ class DatasetExplorerController(QObject):
     def _looks_like_joint_h5(self, path: str) -> bool:
         name = os.path.basename(str(path)).lower()
         return self._is_h5_path(path) and ("joint" in name or "joints" in name)
+
+    def _looks_like_centroid_h5(self, path: str) -> bool:
+        name = os.path.basename(str(path)).lower()
+        return self._is_h5_path(path) and ("centroid" in name or "centroids" in name)
+
+    def _looks_like_player_h5(self, path: str) -> bool:
+        return self._looks_like_joint_h5(path) or self._looks_like_centroid_h5(path)
 
     def _group_selected_files(self, files):
         grouped = {}
@@ -2200,7 +2238,7 @@ class DatasetExplorerController(QObject):
 
     def _new_input_payload_for_source(self, source_path: str) -> dict:
         input_payload = {
-            "type": self._canonical_input_type(None, source_path),
+            "type": self._input_type_for_new_source(source_path),
             "path": self._raw_path_for_new_input(source_path),
         }
         if input_payload["type"] in {"frames_npy", "tracking_parquet"}:
@@ -2209,9 +2247,9 @@ class DatasetExplorerController(QObject):
 
     def _new_input_payloads_for_source_group(self, source_group) -> list[dict]:
         group = self._auto_pair_ball_h5_sources_in_group([str(path) for path in source_group or [] if path])
-        if len(group) >= 2 and self._looks_like_joint_h5(group[0]) and self._looks_like_ball_h5(group[1]):
+        if len(group) >= 2 and self._looks_like_player_h5(group[0]) and self._looks_like_ball_h5(group[1]):
             input_payload = self._new_input_payload_for_source(group[0])
-            if input_payload.get("type") == "player_joints_h5":
+            if input_payload.get("type") in {"player_joints_h5", "player_centroids_h5"}:
                 input_payload["ball_path"] = self._raw_path_for_new_input(group[1])
                 return [input_payload] + [self._new_input_payload_for_source(path) for path in group[2:]]
         return [self._new_input_payload_for_source(source_path) for source_path in group]
@@ -2331,7 +2369,7 @@ class DatasetExplorerController(QObject):
         if index.parent().isValid():
             input_path = index.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
             input_type = index.data(getattr(self.tree_model, "InputTypeRole", 0x0103)) or ""
-            if input_path and input_type == "player_joints_h5":
+            if input_path and input_type in {"player_joints_h5", "player_centroids_h5"}:
                 return str(sample_id), str(input_path)
             return None
 
@@ -2342,7 +2380,7 @@ class DatasetExplorerController(QObject):
         for input_item in sample.get("inputs", []):
             if not isinstance(input_item, dict):
                 continue
-            if self._canonical_input_type(input_item.get("type"), input_item.get("path")) != "player_joints_h5":
+            if self._canonical_input_type(input_item.get("type"), input_item.get("path")) not in {"player_joints_h5", "player_centroids_h5"}:
                 continue
             resolved_path = self._resolve_media_path(input_item.get("path"))
             if resolved_path:

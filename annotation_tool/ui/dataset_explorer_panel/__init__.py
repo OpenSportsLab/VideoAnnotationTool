@@ -252,14 +252,14 @@ class DatasetExplorerPanel(QWidget):
             return QModelIndex()
         if index.parent().isValid():
             input_type = index.data(self.tree_model.InputTypeRole)
-            if input_type == "player_joints_h5":
+            if input_type in {"player_joints_h5", "player_centroids_h5"}:
                 return index
             return QModelIndex()
 
         joint_child_indexes = []
         for row in range(self.tree_model.rowCount(index)):
             child = self.tree_model.index(row, 0, index)
-            if child.isValid() and child.data(self.tree_model.InputTypeRole) == "player_joints_h5":
+            if child.isValid() and child.data(self.tree_model.InputTypeRole) in {"player_joints_h5", "player_centroids_h5"}:
                 joint_child_indexes.append(child)
         if len(joint_child_indexes) == 1:
             return joint_child_indexes[0]

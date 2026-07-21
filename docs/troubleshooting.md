@@ -69,6 +69,6 @@ ffmpeg -i input.mp4 -vcodec libx264 -acodec aac output.mp4
 If the selected input is not playable media for the current backend, the row can
 stay selected while playback does not start. For example, `frames_npy` and
 `tracking_parquet` inputs use specialized renderers, and unsupported text or
-metadata files are not played as video. `player_joints_h5` inputs require a
-valid `timestamp_utc` column because playback timing is derived from absolute
-UTC timestamps.
+metadata files are not played as video. `player_joints_h5` and
+`player_centroids_h5` inputs require a valid `timestamp_utc` column because
+playback timing is derived from absolute UTC timestamps.

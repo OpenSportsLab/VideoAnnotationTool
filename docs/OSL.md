@@ -137,12 +137,24 @@ Supported input types:
 | `frames_npy` | `frames/clip_0001.npy` | Uses `fps` for playback timing. The legacy alias `frame_npy` is normalized to `frames_npy`. |
 | `tracking_parquet` | `tracking/clip_0001.parquet` | Uses parquet timestamps when available. Optional `fps` is a fallback. |
 | `player_joints_h5` | `tracking/live_joints.h5` | Uses absolute UTC values from `timestamp_utc` for playback timing and renders a 3D stickman preview. Optional `ball_path` overlays ball XYZ from a separate H5 file. |
+| `player_centroids_h5` | `tracking/live_centroids.h5` | Uses absolute UTC values from `timestamp_utc` for playback timing and renders top-down player centroids. Optional `ball_path` overlays ball XYZ from a separate H5 file. |
 
 Input paths, including optional `ball_path` overlays, can be relative or absolute
 when loading. On save, paths are rewritten relative to the saved JSON file
 location when possible.
 
-Optional ball overlay for player-joint H5 inputs:
+Optional ball overlay for player H5 inputs:
+
+```json
+{
+  "type": "player_centroids_h5",
+  "path": "tracking/live_centroids.h5",
+  "ball_path": "tracking/live_ball.h5"
+}
+```
+
+Player-joint H5 inputs use UTC timing from `timestamp_utc`, support the same
+media controls as video inputs, and render 3D stickmen:
 
 ```json
 {
@@ -151,6 +163,21 @@ Optional ball overlay for player-joint H5 inputs:
   "ball_path": "tracking/live_ball.h5"
 }
 ```
+
+![Player joints H5 preview](assets/player_joints_h5.png)
+
+Player-centroid H5 inputs use UTC timing from `timestamp_utc`, support the same
+media controls, and render a top-down field view:
+
+```json
+{
+  "type": "player_centroids_h5",
+  "path": "tracking/live_centroids.h5",
+  "ball_path": "tracking/live_ball.h5"
+}
+```
+
+![Player centroids H5 preview](assets/player_centroid_h5.png)
 
 Multi-view samples use more than one input:
 
