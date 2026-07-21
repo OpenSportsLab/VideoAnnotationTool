@@ -153,6 +153,32 @@ Optional ball overlay for player H5 inputs:
 }
 ```
 
+Player-joint H5 inputs use UTC timing from `timestamp_utc`, support the same
+media controls as video inputs, and render 3D stickmen:
+
+```json
+{
+  "type": "player_joints_h5",
+  "path": "tracking/live_joints.h5",
+  "ball_path": "tracking/live_ball.h5"
+}
+```
+
+![Player joints H5 preview](assets/player_joints_h5.png)
+
+Player-centroid H5 inputs use UTC timing from `timestamp_utc`, support the same
+media controls, and render a top-down field view:
+
+```json
+{
+  "type": "player_centroids_h5",
+  "path": "tracking/live_centroids.h5",
+  "ball_path": "tracking/live_ball.h5"
+}
+```
+
+![Player centroids H5 preview](assets/player_centroid_h5.png)
+
 Multi-view samples use more than one input:
 
 ```json
