@@ -36,6 +36,8 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self._frame_playing = False
         self._frame_image_cache: OrderedDict[int, QImage] = OrderedDict()
         self._frame_clock = QElapsedTimer()
+        self._load_generation = 0
+        self._render_generation = 0
 
         self.frame_timer = QTimer(controller)
         self.frame_timer.setInterval(self.controller._FRAME_TIMER_INTERVAL_MS)
@@ -43,13 +45,23 @@ class BaseRasterMediaBackend(BaseMediaBackend):
 
     def load_source(self, source: dict, auto_play: bool) -> bool:
         self.stop()
+        self._load_generation += 1
+        generation = self._load_generation
         clip = self.build_clip(source)
         if clip is None:
+            return False
+        if generation != self._load_generation:
+            if hasattr(clip.frame_source, "close"):
+                try:
+                    clip.frame_source.close()
+                except Exception:
+                    pass
             return False
 
         self._current_source = source
         self._playback_rate = 1.0
         self._clip = clip
+        self._render_generation = generation
         self._frame_position_ms = 0
         self._frame_anchor_position_ms = 0
         self._frame_last_rendered_index = -1
@@ -90,6 +102,8 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self.controller.playbackStateChanged.emit(False)
 
     def stop(self):
+        self._load_generation += 1
+        self._render_generation = self._load_generation
         if self.frame_timer.isActive():
             self.frame_timer.stop()
         if self._clip is not None and hasattr(self._clip.frame_source, "close"):
@@ -179,6 +193,7 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         )
 
     def _frame_image_for_index(self, frame_index: int) -> QImage:
+        generation = self._render_generation
         cached = self._frame_image_cache.get(frame_index)
         if cached is not None:
             self._frame_image_cache.move_to_end(frame_index)
@@ -188,6 +203,8 @@ class BaseRasterMediaBackend(BaseMediaBackend):
             return QImage()
 
         image = self.render_frame_image(frame_index, self._clip.frame_source[frame_index])
+        if generation != self._render_generation or self._clip is None:
+            return QImage()
         self._frame_image_cache[frame_index] = image
         cache_limit = int(getattr(self.controller, "_RASTER_FRAME_CACHE_LIMIT", 128) or 128)
         while len(self._frame_image_cache) > max(1, cache_limit):
@@ -207,7 +224,9 @@ class BaseRasterMediaBackend(BaseMediaBackend):
 
         frame_index = self._frame_index_for_position(clamped)
         if frame_index != self._frame_last_rendered_index:
-            self.controller._show_frame_image(self._frame_image_for_index(frame_index))
+            image = self._frame_image_for_index(frame_index)
+            if not image.isNull() and self._clip is not None:
+                self.controller._show_frame_image(image)
             self._frame_last_rendered_index = frame_index
 
         if emit_position and clamped != self._frame_last_emitted_position_ms:
