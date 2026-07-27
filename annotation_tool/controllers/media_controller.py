@@ -1062,13 +1062,16 @@ class MediaController(QObject):
 
     def stop(self):
         if self._sync_record is not None:
-            self.pause()
-            self.set_position(0)
-            return
+            self.cancel_sync_mode()
         if self._group_active:
             self._stop_group(clear_state=True)
             return
         self._single.stop()
+
+    def reset_viewers(self):
+        self.stop()
+        if self.media_panel is not None and hasattr(self.media_panel, "reset_viewers"):
+            self.media_panel.reset_viewers()
 
     def _stop_group(self, *, clear_state: bool):
         if self._sync_record is not None:

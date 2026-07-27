@@ -231,6 +231,7 @@ class DatasetExplorerController(QObject):
     classificationActionListChanged = pyqtSignal(list)
     mediaRouteRequested = pyqtSignal(object, str, bool)
     mediaStopRequested = pyqtSignal()
+    mediaResetRequested = pyqtSignal()
     statusMessageRequested = pyqtSignal(str, str, int)
     saveStateRefreshRequested = pyqtSignal()
     schemaRefreshRequested = pyqtSignal()
@@ -969,6 +970,11 @@ class DatasetExplorerController(QObject):
         if not self.check_and_close_current_project():
             return
 
+        # Keep project close self-contained: the confirmation helper may be
+        # bypassed by callers/tests, but the viewer must always be cleared
+        # before the dataset state is discarded.
+        self.mediaStopRequested.emit()
+        self.mediaResetRequested.emit()
         self.resetEditorsRequested.emit()
         self.reset(full_reset=True)
         self.panel.clear_header_rows()
@@ -983,6 +989,7 @@ class DatasetExplorerController(QObject):
             return True
         if not self.is_data_dirty:
             self.mediaStopRequested.emit()
+            self.mediaResetRequested.emit()
             return True
 
         action = self._prompt_unsaved_close_action()
@@ -998,6 +1005,7 @@ class DatasetExplorerController(QObject):
             return False
 
         self.mediaStopRequested.emit()
+        self.mediaResetRequested.emit()
         return True
 
     def _prompt_unsaved_close_action(self) -> str:

@@ -342,6 +342,7 @@ class VideoAnnotationWindow(QMainWindow):
             self._handle_input_utc_start_mutation
         )
         self.dataset_explorer_controller.mediaStopRequested.connect(lambda: self.media_controller.stop())
+        self.dataset_explorer_controller.mediaResetRequested.connect(self.media_controller.reset_viewers)
         self.dataset_explorer_controller.statusMessageRequested.connect(self.show_temp_msg)
         self.dataset_explorer_controller.saveStateRefreshRequested.connect(self.update_save_export_button_state)
         self.dataset_explorer_controller.schemaRefreshRequested.connect(self._refresh_schema_panels)

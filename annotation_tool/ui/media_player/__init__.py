@@ -361,6 +361,17 @@ class MediaCenterPanel(QWidget):
         self._sync_primary_aliases()
         return list(self._viewer_panes)
 
+    def reset_viewers(self):
+        self.configure_viewers([{"path": "", "type": "media"}], "")
+        pane = self._viewer_panes[0]
+        pane.source_key = ""
+        pane.title_label.setText("Media")
+        pane.set_timing_status("Relative")
+        pane.set_sync_available(False)
+        pane.set_syncing(False)
+        self.clear_preview()
+        self._sync_primary_aliases()
+
     def focus_viewer(self, focused_path: str):
         focused_key = os.path.normcase(os.path.normpath(focused_path)) if focused_path else ""
         for pane in self._viewer_panes:
@@ -499,11 +510,9 @@ class MediaCenterPanel(QWidget):
         self.frame_widget.show()
 
     def clear_preview(self):
-        self.frame_widget.clear_frame()
-        self.frame_widget.hide()
-        self.video_widget.show()
-        self.video_widget.update()
-        self.video_widget.repaint()
+        for pane in self._viewer_panes:
+            pane.clear_preview()
+            pane.video_widget.repaint()
 
     def set_frame_image(self, image):
         if image is None or image.isNull():

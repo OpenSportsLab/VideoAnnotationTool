@@ -111,6 +111,30 @@ def test_close_project_returns_to_welcome(window, monkeypatch):
 
 
 @pytest.mark.gui
+def test_close_project_clears_media_viewer_preview(window, monkeypatch, qtbot):
+    window.dataset_explorer_controller.create_new_project("classification")
+    window.media_controller.route_media_group(
+        [
+            {"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)},
+            {"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)},
+        ],
+        str(PLAYER_JOINTS_H5_PATH),
+        False,
+    )
+    qtbot.waitUntil(lambda: window.center_panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    window.dataset_explorer_controller.close_project()
+
+    assert len(window.center_panel._viewer_panes) == 1
+    assert window.center_panel._viewer_panes[0].source_key == ""
+    assert all(
+        pane.frame_widget.pixmap() is None or pane.frame_widget.pixmap().isNull()
+        for pane in window.center_panel._viewer_panes
+    )
+
+
+@pytest.mark.gui
 # Workflow: Dataset Explorer Prev/Next Sample buttons should move current top-level dataset selection.
 def test_dataset_explorer_prev_next_sample_buttons_navigate_rows(
     window,
