@@ -1,9 +1,10 @@
 import mimetypes
 import os
 import datetime as _datetime
+from bisect import bisect_left, bisect_right
 
 from PyQt6.QtCore import QElapsedTimer, QMimeDatabase, QObject, QTimer, QUrl, pyqtSignal
-from PyQt6.QtMultimedia import QMediaPlayer
+from PyQt6.QtMultimedia import QMediaMetaData, QMediaPlayer
 
 from controllers.media import (
     FramesNpyMediaBackend,
@@ -12,6 +13,7 @@ from controllers.media import (
     TrackingParquetMediaBackend,
     VideoMediaBackend,
 )
+from utils import parse_utc_datetime
 
 try:
     import numpy as np
@@ -629,6 +631,7 @@ class MediaController(QObject):
     muteStateChanged = pyqtSignal(bool)
     positionChanged = pyqtSignal(int)
     durationChanged = pyqtSignal(int)
+    inputUtcStartMutationRequested = pyqtSignal(str, str)
 
     @property
     def _RASTER_FRAME_CACHE_LIMIT(self):
@@ -640,21 +643,7 @@ class MediaController(QObject):
 
     @staticmethod
     def _parse_utc_time_start(value):
-        if isinstance(value, _datetime.datetime):
-            parsed = value
-        else:
-            text = str(value or "").strip()
-            if not text:
-                return None
-            if text.endswith("Z"):
-                text = f"{text[:-1]}+00:00"
-            try:
-                parsed = _datetime.datetime.fromisoformat(text)
-            except (TypeError, ValueError):
-                return None
-        if parsed.tzinfo is not None:
-            parsed = parsed.astimezone(_datetime.timezone.utc).replace(tzinfo=None)
-        return parsed
+        return parse_utc_datetime(value)
 
     def __init__(self, player: QMediaPlayer, media_panel=None):
         super().__init__()
@@ -674,10 +663,19 @@ class MediaController(QObject):
         self._pending_group_autoplay = False
         self._globally_muted = False
         self._feed_muted = {}
+        self._sync_record = None
+        self._sync_anchor_utc = None
+        self._sync_original_global_position = 0
+        self._sync_original_local_position = 0
+        self._sync_was_playing = False
+        self._pending_restore_anchor_utc = None
         self._clock = QElapsedTimer()
         self._master_timer = QTimer(self)
         self._master_timer.setInterval(30)
         self._master_timer.timeout.connect(self._advance_group)
+        self._sync_poll_timer = QTimer(self)
+        self._sync_poll_timer.setInterval(30)
+        self._sync_poll_timer.timeout.connect(self._poll_sync_session)
         self._drift_tick = 0
 
         self._single.positionChanged.connect(
@@ -698,9 +696,18 @@ class MediaController(QObject):
                 media_panel.paneFocusRequested.connect(self.focus_source)
             if hasattr(media_panel, "paneMuteToggleRequested"):
                 media_panel.paneMuteToggleRequested.connect(self.toggle_feed_mute)
+            if hasattr(media_panel, "paneSyncRequested"):
+                media_panel.paneSyncRequested.connect(self.enter_sync_mode)
+            if hasattr(media_panel, "syncFrameStepRequested"):
+                media_panel.syncFrameStepRequested.connect(self.step_sync_frame)
+            if hasattr(media_panel, "syncApplyRequested"):
+                media_panel.syncApplyRequested.connect(self.apply_sync_mode)
+            if hasattr(media_panel, "syncCancelRequested"):
+                media_panel.syncCancelRequested.connect(self.cancel_sync_mode)
 
     def _handle_media_panel_destroyed(self):
         self._master_timer.stop()
+        self._sync_poll_timer.stop()
         self._group_playing = False
         self._pending_group_autoplay = False
         self._sessions = []
@@ -724,6 +731,8 @@ class MediaController(QObject):
         self._single.load_and_play(source, auto_play=auto_play)
 
     def route_media_group(self, sources, focused_path: str = "", ensure_playback: bool = False):
+        if self._sync_record is not None:
+            self.cancel_sync_mode()
         normalized = []
         for source in list(sources or []):
             item = self._single._normalize_media_source(source)
@@ -735,6 +744,15 @@ class MediaController(QObject):
 
         group_key = tuple(self._single._source_key(source) for source in normalized)
         if self._group_active and group_key == self._group_key:
+            restore_anchor = self._pending_restore_anchor_utc
+            if isinstance(restore_anchor, _datetime.datetime) and isinstance(
+                self._global_origin_utc, _datetime.datetime
+            ):
+                self._pending_restore_anchor_utc = None
+                restore_ms = int(
+                    round((restore_anchor - self._global_origin_utc).total_seconds() * 1000.0)
+                )
+                self.set_position(restore_ms)
             self.focus_source(focused_path or normalized[0]["path"])
             if ensure_playback and not self.is_playing():
                 if self._all_sessions_ready():
@@ -785,7 +803,13 @@ class MediaController(QObject):
                 pane.show_status("Unable to load this input")
 
         self._recalculate_group_timeline()
-        self.set_position(0)
+        restore_anchor = self._pending_restore_anchor_utc
+        self._pending_restore_anchor_utc = None
+        if isinstance(restore_anchor, _datetime.datetime) and isinstance(self._global_origin_utc, _datetime.datetime):
+            restore_ms = int(round((restore_anchor - self._global_origin_utc).total_seconds() * 1000.0))
+            self.set_position(restore_ms)
+        else:
+            self.set_position(0)
         if ensure_playback and self._all_sessions_ready():
             self._pending_group_autoplay = False
             self.play()
@@ -881,10 +905,13 @@ class MediaController(QObject):
         self._group_duration_ms = duration
         if self.media_panel is not None and hasattr(self.media_panel, "set_utc_origin"):
             self.media_panel.set_utc_origin(self._global_origin_utc)
+        self._update_sync_availability()
         if changed:
             self.durationChanged.emit(duration)
 
     def focus_source(self, path: str):
+        if self._sync_record is not None:
+            return
         self._focused_path = str(path or "")
         if self.media_panel is not None and hasattr(self.media_panel, "focus_viewer"):
             self.media_panel.focus_viewer(self._focused_path)
@@ -933,6 +960,8 @@ class MediaController(QObject):
         return self._single.current_source_path()
 
     def current_position_ms(self) -> int:
+        if self._sync_record is not None:
+            return self._sync_record["controller"].current_position_ms()
         if not self._group_active:
             return self._single.current_position_ms()
         if self._group_playing and self._clock.isValid():
@@ -941,12 +970,20 @@ class MediaController(QObject):
         return max(0, int(self._group_position_ms))
 
     def is_playing(self) -> bool:
+        if self._sync_record is not None:
+            return self._sync_record["controller"].is_playing()
         return self._group_playing if self._group_active else self._single.is_playing()
 
     def toggle_play_pause(self):
         self.pause() if self.is_playing() else self.play()
 
     def play(self):
+        if self._sync_record is not None:
+            self._sync_record["controller"].play()
+            self._sync_was_playing = True
+            self._sync_poll_timer.start()
+            self.playbackStateChanged.emit(True)
+            return
         if not self._group_active:
             self._single.play()
             return
@@ -962,6 +999,13 @@ class MediaController(QObject):
         self.playbackStateChanged.emit(True)
 
     def pause(self):
+        if self._sync_record is not None:
+            session = self._sync_record["controller"]
+            session.pause()
+            self._sync_was_playing = False
+            self.playbackStateChanged.emit(False)
+            self._emit_sync_position()
+            return
         if not self._group_active:
             self._single.pause()
             return
@@ -978,12 +1022,18 @@ class MediaController(QObject):
         self.playbackStateChanged.emit(False)
 
     def stop(self):
+        if self._sync_record is not None:
+            self.pause()
+            self.set_position(0)
+            return
         if self._group_active:
             self._stop_group(clear_state=True)
             return
         self._single.stop()
 
     def _stop_group(self, *, clear_state: bool):
+        if self._sync_record is not None:
+            self.cancel_sync_mode()
         if self._master_timer.isActive():
             self._master_timer.stop()
         for record in self._sessions:
@@ -1010,6 +1060,12 @@ class MediaController(QObject):
             self.playbackStateChanged.emit(False)
 
     def set_position(self, position):
+        if self._sync_record is not None:
+            duration = int(self._sync_record["duration_ms"])
+            target = max(0, min(int(position), duration))
+            self._sync_record["controller"].set_position(target)
+            self._emit_sync_position()
+            return
         if not self._group_active:
             self._single.set_position(position)
             return
@@ -1031,6 +1087,9 @@ class MediaController(QObject):
             safe_rate = 1.0
         if safe_rate <= 0:
             safe_rate = 1.0
+        if self._sync_record is not None:
+            self._sync_record["controller"].set_playback_rate(safe_rate)
+            return
         if not self._group_active:
             self._single.set_playback_rate(safe_rate)
             return
@@ -1050,6 +1109,200 @@ class MediaController(QObject):
             session = record["controller"]
             if session is not None:
                 session.set_looping(enable)
+
+    def _update_sync_availability(self):
+        if self.media_panel is None or not hasattr(self.media_panel, "set_sync_availability"):
+            return
+        playable_count = sum(1 for record in self._sessions if record["valid"])
+        has_utc_reference = isinstance(self._global_origin_utc, _datetime.datetime)
+        availability = {}
+        for record in self._sessions:
+            if not record["valid"]:
+                availability[str(record["source"].get("path") or "")] = (
+                    False,
+                    "This input is not playable.",
+                )
+            elif playable_count < 2:
+                availability[str(record["source"].get("path") or "")] = (
+                    False,
+                    "Synchronization requires at least two playable inputs.",
+                )
+            elif not has_utc_reference:
+                availability[str(record["source"].get("path") or "")] = (
+                    False,
+                    "Synchronization requires an absolute UTC reference.",
+                )
+            else:
+                availability[str(record["source"].get("path") or "")] = (True, "")
+        self.media_panel.set_sync_availability(availability)
+
+    def enter_sync_mode(self, path: str):
+        if not self._group_active or self._sync_record is not None:
+            return
+        valid_records = [record for record in self._sessions if record["valid"]]
+        if len(valid_records) < 2 or not isinstance(self._global_origin_utc, _datetime.datetime):
+            return
+        target_key = self._single._fs_path_key(path)
+        record = next(
+            (
+                item
+                for item in valid_records
+                if self._single._fs_path_key(item["source"].get("path")) == target_key
+            ),
+            None,
+        )
+        if record is None:
+            return
+
+        global_position = self.current_position_ms()
+        if self._group_playing:
+            self.pause()
+            global_position = self._group_position_ms
+        for item in valid_records:
+            item["controller"].pause()
+
+        self._sync_anchor_utc = self._global_origin_utc + _datetime.timedelta(
+            milliseconds=global_position
+        )
+        self._sync_original_global_position = global_position
+        local_position = max(
+            0,
+            min(global_position - int(record["offset_ms"]), int(record["duration_ms"])),
+        )
+        self._sync_original_local_position = local_position
+        self._sync_record = record
+        self._sync_was_playing = False
+        record["controller"].set_position(local_position)
+        self._sync_poll_timer.start()
+
+        if self.media_panel is not None:
+            self.media_panel.set_sync_mode(True, str(record["source"].get("path") or ""))
+            self.media_panel.set_utc_origin(None)
+        self.durationChanged.emit(int(record["duration_ms"]))
+        self.positionChanged.emit(local_position)
+        self.playbackStateChanged.emit(False)
+        self._update_sync_status(local_position)
+
+    def cancel_sync_mode(self):
+        if self._sync_record is None:
+            return
+        self._sync_record["controller"].pause()
+        self._sync_record["controller"].set_position(self._sync_original_local_position)
+        self._finish_sync_mode_ui()
+        self._group_position_ms = self._sync_original_global_position
+        self._anchor_position_ms = self._group_position_ms
+        self._render_group_position(self._group_position_ms, force_video_seek=True)
+        self.durationChanged.emit(self._group_duration_ms)
+        self.positionChanged.emit(self._group_position_ms)
+        self.playbackStateChanged.emit(False)
+
+    def apply_sync_mode(self):
+        if self._sync_record is None or not isinstance(self._sync_anchor_utc, _datetime.datetime):
+            return
+        record = self._sync_record
+        local_position = record["controller"].current_position_ms()
+        proposed = self._sync_anchor_utc - _datetime.timedelta(milliseconds=local_position)
+        utc_text = proposed.strftime("%Y-%m-%d %H:%M:%S.%f")
+        input_path = str(record["source"].get("path") or "")
+        anchor = self._sync_anchor_utc
+        original_global_position = self._sync_original_global_position
+        self._finish_sync_mode_ui()
+        self._group_position_ms = original_global_position
+        self._anchor_position_ms = original_global_position
+        self._render_group_position(original_global_position, force_video_seek=True)
+        self.durationChanged.emit(self._group_duration_ms)
+        self.positionChanged.emit(original_global_position)
+        self.playbackStateChanged.emit(False)
+        self._pending_restore_anchor_utc = anchor
+        self.inputUtcStartMutationRequested.emit(input_path, utc_text)
+
+    def _finish_sync_mode_ui(self):
+        self._sync_poll_timer.stop()
+        self._sync_record = None
+        self._sync_anchor_utc = None
+        self._sync_was_playing = False
+        if self.media_panel is not None:
+            self.media_panel.set_sync_mode(False)
+            self.media_panel.set_utc_origin(self._global_origin_utc)
+
+    def step_sync_frame(self, direction: int):
+        if self._sync_record is None or int(direction) == 0:
+            return
+        self.pause()
+        record = self._sync_record
+        session = record["controller"]
+        backend = session._active_backend
+        position = session.current_position_ms()
+        clip = getattr(backend, "_clip", None)
+        axis = list(getattr(clip, "time_axis_ms", []) or [])
+        if axis:
+            if direction > 0:
+                index = min(len(axis) - 1, bisect_right(axis, position))
+            else:
+                index = max(0, bisect_left(axis, position) - 1)
+            target = int(axis[index])
+        else:
+            fps = self._video_frame_rate(record)
+            step_ms = max(1, int(round(1000.0 / fps)))
+            target = position + (step_ms if direction > 0 else -step_ms)
+        self.set_position(target)
+
+    def step_frame(self, direction: int):
+        if self._sync_record is not None:
+            self.step_sync_frame(direction)
+        else:
+            self.seek_relative(40 * (1 if direction > 0 else -1))
+
+    @staticmethod
+    def _video_frame_rate(record) -> float:
+        try:
+            fps = float(record["source"].get("fps") or 0.0)
+        except Exception:
+            fps = 0.0
+        if fps > 0:
+            return fps
+        session = record.get("controller")
+        try:
+            metadata_fps = float(
+                session.player.metaData().value(QMediaMetaData.Key.VideoFrameRate) or 0.0
+            )
+        except Exception:
+            metadata_fps = 0.0
+        return metadata_fps if metadata_fps > 0 else 25.0
+
+    def _poll_sync_session(self):
+        if self._sync_record is None:
+            self._sync_poll_timer.stop()
+            return
+        session = self._sync_record["controller"]
+        is_playing = session.is_playing()
+        if self._sync_was_playing and not is_playing:
+            self.playbackStateChanged.emit(False)
+        self._sync_was_playing = is_playing
+        self._emit_sync_position()
+
+    def _emit_sync_position(self):
+        if self._sync_record is None:
+            return
+        position = self._sync_record["controller"].current_position_ms()
+        self.positionChanged.emit(position)
+        self._update_sync_status(position)
+
+    def _update_sync_status(self, local_position: int):
+        if (
+            self._sync_record is None
+            or not isinstance(self._sync_anchor_utc, _datetime.datetime)
+            or self.media_panel is None
+            or not hasattr(self.media_panel, "update_sync_status")
+        ):
+            return
+        proposed = self._sync_anchor_utc - _datetime.timedelta(milliseconds=int(local_position))
+        self.media_panel.update_sync_status(
+            self._sync_anchor_utc.strftime("%Y-%m-%d %H:%M:%S.%f"),
+            int(local_position),
+            int(self._sync_record["duration_ms"]),
+            proposed.strftime("%Y-%m-%d %H:%M:%S.%f"),
+        )
 
     def _advance_group(self):
         if not self._group_playing:

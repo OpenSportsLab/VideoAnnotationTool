@@ -561,6 +561,16 @@ QFrame[class="media_viewer_pane"][focused="true"] {
     border: 2px solid #00BFFF;
 }
 
+QFrame[class="media_viewer_pane"][syncing="true"] {
+    border: 3px solid #FFB000;
+}
+
+QFrame[class="media_sync_bar"] {
+    background-color: #3B321F;
+    border: 1px solid #FFB000;
+    border-radius: 4px;
+}
+
 /* --- Timeline Widget --- */
 /* Target: ui/localization/media_player/timeline.py */
 

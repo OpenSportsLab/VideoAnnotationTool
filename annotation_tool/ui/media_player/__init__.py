@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -110,10 +111,13 @@ class MediaViewerPane(QFrame):
 
     focusRequested = pyqtSignal(str)
     muteToggleRequested = pyqtSignal(str)
+    syncRequested = pyqtSignal(str)
 
     def __init__(self, source_key: str = "", parent=None):
         super().__init__(parent)
         self.source_key = str(source_key or "")
+        self._sync_available = False
+        self._sync_unavailable_reason = "Synchronization is unavailable."
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setProperty("class", "media_viewer_pane")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -178,6 +182,15 @@ class MediaViewerPane(QFrame):
         self.style().unpolish(self)
         self.style().polish(self)
 
+    def set_syncing(self, syncing: bool):
+        self.setProperty("syncing", bool(syncing))
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def set_sync_available(self, available: bool, reason: str = ""):
+        self._sync_available = bool(available)
+        self._sync_unavailable_reason = str(reason or "Synchronization is unavailable.")
+
     def set_feed_muted(self, muted: bool):
         self.btn_mute.setIcon(self._icon_muted if muted else self._icon_volume)
         self.btn_mute.setToolTip("Unmute this feed" if muted else "Mute this feed")
@@ -214,6 +227,17 @@ class MediaViewerPane(QFrame):
         self.focusRequested.emit(self.source_key)
         super().mousePressEvent(event)
 
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        action = menu.addAction("Synchronize this modality")
+        action.setEnabled(self._sync_available)
+        if not self._sync_available:
+            action.setStatusTip(self._sync_unavailable_reason)
+            action.setToolTip(self._sync_unavailable_reason)
+        if menu.exec(event.globalPos()) is action:
+            self.syncRequested.emit(self.source_key)
+
 
 class MediaCenterPanel(QWidget):
     """
@@ -229,6 +253,10 @@ class MediaCenterPanel(QWidget):
     playbackRateRequested = pyqtSignal(float)
     paneFocusRequested = pyqtSignal(str)
     paneMuteToggleRequested = pyqtSignal(str)
+    paneSyncRequested = pyqtSignal(str)
+    syncFrameStepRequested = pyqtSignal(int)
+    syncApplyRequested = pyqtSignal()
+    syncCancelRequested = pyqtSignal()
 
     # Timeline/media signals
     seekRequested = pyqtSignal(int)
@@ -248,6 +276,7 @@ class MediaCenterPanel(QWidget):
             ) from exc
 
         self._setup_media_player()
+        self._setup_sync_bar()
         self._setup_timeline()
         self._setup_controls()
 
@@ -258,6 +287,8 @@ class MediaCenterPanel(QWidget):
         self.zoom_level = 1.0
         self.auto_scroll_active = True
         self._utc_origin = None
+        self._sync_active = False
+        self._sync_timeline_text = ""
 
     def _setup_media_player(self):
         self.viewer_scroll = QScrollArea(self.video_container)
@@ -277,7 +308,30 @@ class MediaCenterPanel(QWidget):
         pane = MediaViewerPane(source_key, self.viewer_host)
         pane.focusRequested.connect(self.paneFocusRequested)
         pane.muteToggleRequested.connect(self.paneMuteToggleRequested)
+        pane.syncRequested.connect(self.paneSyncRequested)
         return pane
+
+    def _setup_sync_bar(self):
+        self.sync_bar = QFrame(self)
+        self.sync_bar.setProperty("class", "media_sync_bar")
+        layout = QHBoxLayout(self.sync_bar)
+        layout.setContentsMargins(6, 4, 6, 4)
+        self.sync_status_label = QLabel("Synchronization mode", self.sync_bar)
+        self.btn_sync_prev_frame = QPushButton("◀ Frame", self.sync_bar)
+        self.btn_sync_next_frame = QPushButton("Frame ▶", self.sync_bar)
+        self.btn_sync_apply = QPushButton("Apply", self.sync_bar)
+        self.btn_sync_cancel = QPushButton("Cancel", self.sync_bar)
+        layout.addWidget(self.sync_status_label, 1)
+        layout.addWidget(self.btn_sync_prev_frame)
+        layout.addWidget(self.btn_sync_next_frame)
+        layout.addWidget(self.btn_sync_apply)
+        layout.addWidget(self.btn_sync_cancel)
+        self.btn_sync_prev_frame.clicked.connect(lambda: self.syncFrameStepRequested.emit(-1))
+        self.btn_sync_next_frame.clicked.connect(lambda: self.syncFrameStepRequested.emit(1))
+        self.btn_sync_apply.clicked.connect(self.syncApplyRequested)
+        self.btn_sync_cancel.clicked.connect(self.syncCancelRequested)
+        self.sync_bar.hide()
+        self.mainLayout.insertWidget(1, self.sync_bar)
 
     def _sync_primary_aliases(self):
         pane = self._viewer_panes[0]
@@ -313,6 +367,36 @@ class MediaCenterPanel(QWidget):
             pane.set_focused(
                 bool(focused_key and os.path.normcase(os.path.normpath(pane.source_key)) == focused_key)
             )
+
+    def set_sync_availability(self, availability: dict[str, tuple[bool, str]]):
+        for pane in self._viewer_panes:
+            available, reason = availability.get(pane.source_key, (False, "Synchronization is unavailable."))
+            pane.set_sync_available(available, reason)
+
+    def set_sync_mode(self, active: bool, selected_path: str = ""):
+        self._sync_active = bool(active)
+        if not active:
+            self._sync_timeline_text = ""
+        self.sync_bar.setVisible(bool(active))
+        selected_key = os.path.normcase(os.path.normpath(selected_path)) if selected_path else ""
+        for pane in self._viewer_panes:
+            pane_key = os.path.normcase(os.path.normpath(pane.source_key)) if pane.source_key else ""
+            pane.set_syncing(bool(active and pane_key == selected_key))
+
+    def update_sync_status(self, anchor_text: str, local_ms: int, duration_ms: int, proposed_text: str):
+        text = (
+            f"Anchor {anchor_text} UTC  ·  Local {self._format_ms(local_ms)} / "
+            f"{self._format_ms(duration_ms)}  ·  Proposed start {proposed_text} UTC"
+        )
+        self._sync_timeline_text = text
+        self.sync_status_label.setText(text)
+        self.time_label.setText(text)
+
+    @staticmethod
+    def _format_ms(ms: int):
+        value = max(0, int(ms))
+        seconds = value // 1000
+        return f"{seconds // 60:02}:{seconds % 60:02}.{value % 1000:03}"
 
     def set_utc_origin(self, origin):
         self._utc_origin = origin
@@ -543,6 +627,9 @@ class MediaCenterPanel(QWidget):
             m = s // 60
             return f"{m:02}:{s % 60:02}.{ms % 1000:03}"
 
+        if self._sync_active and self._sync_timeline_text:
+            self.time_label.setText(self._sync_timeline_text)
+            return
         label = f"{fmt(current_ms)} / {fmt(self.duration)}"
         if isinstance(self._utc_origin, _datetime.datetime):
             current_utc = self._utc_origin + _datetime.timedelta(milliseconds=max(0, int(current_ms)))

@@ -1435,3 +1435,144 @@ def test_invalid_explicit_utc_time_start_forces_relative_warning(
     assert invalid_record["offset_ms"] == 0
     assert panel._viewer_panes[1].timing_label.text() == "Relative ⚠ invalid UTC_time_start"
     assert "aligned as relative" in panel._viewer_panes[1].timing_label.toolTip()
+
+
+@pytest.mark.gui
+def test_sync_mode_freezes_group_and_controls_only_selected_h5(
+    media_panel_and_controller,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    first_path = tmp_path / "sync_first.h5"
+    second_path = tmp_path / "sync_second.h5"
+    timestamps = [
+        b"2026-01-01 12:00:00.000000",
+        b"2026-01-01 12:00:00.100000",
+        b"2026-01-01 12:00:00.250000",
+        b"2026-01-01 12:00:00.400000",
+    ]
+    _write_minimal_player_joints_h5(first_path, timestamps)
+    _write_minimal_player_centroids_h5(second_path, timestamps)
+    controller.route_media_group(
+        [
+            {"type": "player_joints_h5", "path": str(first_path)},
+            {"type": "player_centroids_h5", "path": str(second_path)},
+        ],
+        str(first_path),
+        False,
+    )
+    controller.set_position(100)
+    frozen_first_position = controller._sessions[0]["controller"].current_position_ms()
+
+    controller.enter_sync_mode(str(second_path))
+
+    assert controller._sync_record is controller._sessions[1]
+    assert controller._sync_anchor_utc.isoformat(sep=" ") == "2026-01-01 12:00:00.100000"
+    assert panel.sync_bar.isVisible() is True
+    assert panel._viewer_panes[1].property("syncing") is True
+    assert controller.current_position_ms() == 100
+
+    controller.play()
+    qtbot.waitUntil(lambda: controller.current_position_ms() > 100, timeout=1000)
+    controller.pause()
+    assert controller._sessions[0]["controller"].current_position_ms() == frozen_first_position
+
+
+@pytest.mark.gui
+def test_sync_mode_frame_step_apply_and_cancel(media_panel_and_controller, tmp_path):
+    panel, controller = media_panel_and_controller
+    first_path = tmp_path / "step_first.h5"
+    second_path = tmp_path / "step_second.h5"
+    timestamps = [
+        b"2026-01-01 12:00:00.000000",
+        b"2026-01-01 12:00:00.100000",
+        b"2026-01-01 12:00:00.250000",
+    ]
+    _write_minimal_player_joints_h5(first_path, timestamps)
+    _write_minimal_player_centroids_h5(second_path, timestamps)
+    sources = [
+        {"type": "player_joints_h5", "path": str(first_path)},
+        {"type": "player_centroids_h5", "path": str(second_path)},
+    ]
+    controller.route_media_group(sources, str(first_path), False)
+    controller.set_position(100)
+    controller.enter_sync_mode(str(second_path))
+
+    controller.step_sync_frame(1)
+    assert controller.current_position_ms() == 250
+    controller.step_sync_frame(-1)
+    assert controller.current_position_ms() == 100
+
+    emitted = []
+    controller.inputUtcStartMutationRequested.connect(
+        lambda path, utc_text: emitted.append((path, utc_text))
+    )
+    controller.set_position(250)
+    controller.apply_sync_mode()
+
+    assert emitted == [(str(second_path), "2026-01-01 11:59:59.850000")]
+    assert controller._sync_record is None
+    assert panel.sync_bar.isVisible() is False
+    assert controller.is_playing() is False
+
+    controller.route_media_group(sources, str(first_path), False)
+    controller.set_position(100)
+    controller.enter_sync_mode(str(second_path))
+    controller.set_position(250)
+    controller.focus_source(str(first_path))
+    assert controller._focused_path == str(first_path)
+    controller.cancel_sync_mode()
+    assert controller._sync_record is None
+    assert controller.current_position_ms() == 100
+    assert len(emitted) == 1
+
+    controller.enter_sync_mode(str(second_path))
+    controller.set_position(250)
+    controller.route_media_group(sources, str(first_path), False)
+    assert controller._sync_record is None
+    assert panel.sync_bar.isVisible() is False
+    assert len(emitted) == 1
+
+
+@pytest.mark.gui
+def test_sync_availability_requires_two_playable_inputs_and_utc_reference(
+    media_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    first_frames = tmp_path / "first.npy"
+    second_frames = tmp_path / "second.npy"
+    np.save(first_frames, np.zeros((2, 4, 4, 3), dtype=np.uint8))
+    np.save(second_frames, np.zeros((2, 4, 4, 3), dtype=np.uint8))
+
+    controller.route_media_group(
+        [{"type": "frames_npy", "path": str(first_frames), "fps": 25.0}],
+        str(first_frames),
+        False,
+    )
+    assert panel._viewer_panes[0]._sync_available is False
+    assert "at least two" in panel._viewer_panes[0]._sync_unavailable_reason
+
+    controller.route_media_group(
+        [
+            {"type": "frames_npy", "path": str(first_frames), "fps": 25.0},
+            {"type": "frames_npy", "path": str(second_frames), "fps": 25.0},
+        ],
+        str(first_frames),
+        False,
+    )
+    assert all(pane._sync_available is False for pane in panel._viewer_panes)
+    assert "absolute UTC" in panel._viewer_panes[0]._sync_unavailable_reason
+
+    utc_sources = [
+        {
+            "type": "frames_npy",
+            "path": str(first_frames),
+            "fps": 25.0,
+            "UTC_time_start": "2026-01-01 12:00:00",
+        },
+        {"type": "frames_npy", "path": str(second_frames), "fps": 25.0},
+    ]
+    controller.route_media_group(utc_sources, str(first_frames), False)
+    assert all(pane._sync_available is True for pane in panel._viewer_panes)

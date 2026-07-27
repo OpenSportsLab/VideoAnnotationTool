@@ -901,6 +901,24 @@ class HistoryManager(QObject):
         else:
             self.statusMessageRequested.emit("Ball H5", "Ball H5 association removed.", 1500)
 
+    def execute_input_utc_start_update(self, sample_id: str, input_path: str, utc_text: str) -> bool:
+        if not sample_id or not input_path:
+            return False
+        before_json = self.model.snapshot_dataset_json()
+        if not self.model._set_input_utc_time_start(sample_id, input_path, utc_text):
+            return False
+        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
+            return False
+        self.model.populate_tree()
+        self.model._restore_tree_selection(sample_id, input_path)
+        self.saveStateRefreshRequested.emit()
+        self.statusMessageRequested.emit(
+            "Synchronized",
+            "Input UTC start time updated.",
+            1800,
+        )
+        return True
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

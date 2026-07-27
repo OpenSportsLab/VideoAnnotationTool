@@ -269,6 +269,15 @@ class VideoAnnotationWindow(QMainWindow):
         else:
             self.close()
 
+    def _handle_input_utc_start_mutation(self, input_path: str, utc_text: str):
+        sample_id = self.dataset_explorer_controller.current_selected_sample_id
+        if not sample_id:
+            return
+        self.history_manager.execute_input_utc_start_update(sample_id, input_path, utc_text)
+        sources = self.dataset_explorer_controller.get_media_sources_by_id(sample_id)
+        if sources:
+            self.media_controller.route_media_group(sources, input_path, False)
+
     def connect_signals(self) -> None:
         """Connect UI signals to controller actions."""
 
@@ -318,6 +327,9 @@ class VideoAnnotationWindow(QMainWindow):
                 focused_path,
                 ensure_playback,
             )
+        )
+        self.media_controller.inputUtcStartMutationRequested.connect(
+            self._handle_input_utc_start_mutation
         )
         self.dataset_explorer_controller.mediaStopRequested.connect(lambda: self.media_controller.stop())
         self.dataset_explorer_controller.statusMessageRequested.connect(self.show_temp_msg)
@@ -650,10 +662,10 @@ class VideoAnnotationWindow(QMainWindow):
             self.media_controller.toggle_play_pause
         )
         QShortcut(QKeySequence(Qt.Key.Key_Left), self).activated.connect(
-            lambda: self.media_controller.seek_relative(-40)
+            lambda: self.media_controller.step_frame(-1)
         )
         QShortcut(QKeySequence(Qt.Key.Key_Right), self).activated.connect(
-            lambda: self.media_controller.seek_relative(40)
+            lambda: self.media_controller.step_frame(1)
         )
         QShortcut(QKeySequence("Ctrl+Left"), self).activated.connect(
             lambda: self.media_controller.seek_relative(-1000)

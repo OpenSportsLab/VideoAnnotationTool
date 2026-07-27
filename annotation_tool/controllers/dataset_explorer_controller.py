@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 
 from controllers.command_types import CmdType
 from ui.dialogs import UnsavedChangesDialog
-from utils import natural_sort_key
+from utils import natural_sort_key, parse_utc_datetime
 
 
 def _safe_int(value, default=0):
@@ -727,6 +727,27 @@ class DatasetExplorerController(QObject):
                 input_item["ball_path"] = self._raw_path_for_new_input(clean_ball_path)
             else:
                 input_item.pop("ball_path", None)
+            return True
+        return False
+
+    def _set_input_utc_time_start(self, sample_id: str, input_path: str, utc_text: str) -> bool:
+        sample = self.get_sample(sample_id)
+        target_key = self._fs_path_key(input_path)
+        parsed_new = parse_utc_datetime(utc_text)
+        if not isinstance(sample, dict) or not target_key or parsed_new is None:
+            return False
+        for input_item in sample.get("inputs", []):
+            if not isinstance(input_item, dict):
+                continue
+            resolved_path = self._resolve_media_path(input_item.get("path"))
+            if self._fs_path_key(resolved_path) != target_key:
+                continue
+            old_present = "UTC_time_start" in input_item
+            parsed_old = parse_utc_datetime(input_item.get("UTC_time_start")) if old_present else None
+            if old_present and parsed_old == parsed_new:
+                return False
+            input_item["UTC_time_start"] = parsed_new.strftime("%Y-%m-%d %H:%M:%S.%f")
+            self._rebuild_runtime_index()
             return True
         return False
 
