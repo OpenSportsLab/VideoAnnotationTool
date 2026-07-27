@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 
 from controllers.command_types import CmdType
 from ui.dialogs import UnsavedChangesDialog
-from utils import natural_sort_key
+from utils import natural_sort_key, parse_utc_datetime
 
 
 def _safe_int(value, default=0):
@@ -229,8 +229,9 @@ class DatasetExplorerController(QObject):
     qaQuestionCatalogChanged = pyqtSignal(list)
     schemaContextChanged = pyqtSignal(dict)
     classificationActionListChanged = pyqtSignal(list)
-    mediaRouteRequested = pyqtSignal(object, bool)
+    mediaRouteRequested = pyqtSignal(object, str, bool)
     mediaStopRequested = pyqtSignal()
+    mediaResetRequested = pyqtSignal()
     statusMessageRequested = pyqtSignal(str, str, int)
     saveStateRefreshRequested = pyqtSignal()
     schemaRefreshRequested = pyqtSignal()
@@ -565,6 +566,13 @@ class DatasetExplorerController(QObject):
 
         return copy.deepcopy(media_sources[0])
 
+    def get_media_sources_by_id(self, data_id: str):
+        """Return every resolved input source for synchronized sample playback."""
+        entry = self.action_id_to_item.get(data_id)
+        if not entry:
+            return []
+        return copy.deepcopy(list(entry.get("media_sources", [])))
+
     def get_data_id_by_path(self, path: str):
         sample = self.get_sample_by_path(path)
         if isinstance(sample, dict):
@@ -720,6 +728,43 @@ class DatasetExplorerController(QObject):
                 input_item["ball_path"] = self._raw_path_for_new_input(clean_ball_path)
             else:
                 input_item.pop("ball_path", None)
+            return True
+        return False
+
+    def _set_input_utc_time_start(
+        self,
+        sample_id: str,
+        input_path: str,
+        utc_text: str,
+        annotation_shift_ms: int = 0,
+    ) -> bool:
+        sample = self.get_sample(sample_id)
+        target_key = self._fs_path_key(input_path)
+        parsed_new = parse_utc_datetime(utc_text)
+        if not isinstance(sample, dict) or not target_key or parsed_new is None:
+            return False
+        for input_item in sample.get("inputs", []):
+            if not isinstance(input_item, dict):
+                continue
+            resolved_path = self._resolve_media_path(input_item.get("path"))
+            if self._fs_path_key(resolved_path) != target_key:
+                continue
+            old_present = "UTC_time_start" in input_item
+            parsed_old = parse_utc_datetime(input_item.get("UTC_time_start")) if old_present else None
+            if old_present and parsed_old == parsed_new:
+                return False
+            input_item["UTC_time_start"] = parsed_new.strftime("%Y-%m-%d %H:%M:%S.%f")
+            shift_ms = int(annotation_shift_ms)
+            if shift_ms:
+                for field_name in ("events", "dense_captions"):
+                    for annotation in sample.get(field_name, []):
+                        if not isinstance(annotation, dict) or "position_ms" not in annotation:
+                            continue
+                        try:
+                            annotation["position_ms"] = int(annotation["position_ms"]) + shift_ms
+                        except (TypeError, ValueError):
+                            continue
+            self._rebuild_runtime_index()
             return True
         return False
 
@@ -893,7 +938,7 @@ class DatasetExplorerController(QObject):
         self.workspaceViewRequested.emit()
         self._refresh_header_panel()
         self._refresh_schema_panels()
-        self.populate_tree()
+        self.populate_tree(select_first=False)
         self._reconcile_tab_with_current_selection()
         self.saveStateRefreshRequested.emit()
         self.statusMessageRequested.emit(
@@ -925,6 +970,11 @@ class DatasetExplorerController(QObject):
         if not self.check_and_close_current_project():
             return
 
+        # Keep project close self-contained: the confirmation helper may be
+        # bypassed by callers/tests, but the viewer must always be cleared
+        # before the dataset state is discarded.
+        self.mediaStopRequested.emit()
+        self.mediaResetRequested.emit()
         self.resetEditorsRequested.emit()
         self.reset(full_reset=True)
         self.panel.clear_header_rows()
@@ -939,6 +989,7 @@ class DatasetExplorerController(QObject):
             return True
         if not self.is_data_dirty:
             self.mediaStopRequested.emit()
+            self.mediaResetRequested.emit()
             return True
 
         action = self._prompt_unsaved_close_action()
@@ -954,6 +1005,7 @@ class DatasetExplorerController(QObject):
             return False
 
         self.mediaStopRequested.emit()
+        self.mediaResetRequested.emit()
         return True
 
     def _prompt_unsaved_close_action(self) -> str:
@@ -1346,6 +1398,8 @@ class DatasetExplorerController(QObject):
             "path": resolved_path,
             "type": source_type,
         }
+        if "UTC_time_start" in input_item:
+            media_source["UTC_time_start"] = input_item.get("UTC_time_start")
         if source_type in {"player_joints_h5", "player_centroids_h5"}:
             resolved_ball_path = self._resolve_media_path(input_item.get("ball_path"))
             if resolved_ball_path:
@@ -1512,7 +1566,7 @@ class DatasetExplorerController(QObject):
     # ------------------------------------------------------------------
     # Tree population and selection
     # ------------------------------------------------------------------
-    def populate_tree(self):
+    def populate_tree(self, select_first: bool = True):
         self._is_populating_tree = True
         self._rebuild_runtime_index()
         preferred_sample_id = self.current_selected_sample_id
@@ -1540,11 +1594,14 @@ class DatasetExplorerController(QObject):
         finally:
             self._suspend_tree_item_changed = False
 
-        self.handle_filter_change(self.panel.filter_combo.currentIndex())
+        self.handle_filter_change(
+            self.panel.filter_combo.currentIndex(),
+            selection_fallback="first_visible" if select_first else "clear_selection",
+        )
 
         if self.tree_model.rowCount() > 0:
             restored = self._restore_tree_selection(preferred_sample_id, preferred_input_path)
-            if not restored:
+            if not restored and select_first:
                 first_index = self.tree_model.index(0, 0)
                 if first_index.isValid():
                     self.panel.tree.setCurrentIndex(first_index)
@@ -1811,11 +1868,12 @@ class DatasetExplorerController(QObject):
         ensure_playback: bool = False,
     ):
         preferred_path = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
-        media_source = self.get_media_source_by_id(sample_id, preferred_path)
-        if not media_source:
+        media_sources = self.get_media_sources_by_id(sample_id)
+        if not media_sources:
             return
 
-        primary_path = str(media_source.get("path") or "")
+        media_source = self.get_media_source_by_id(sample_id, preferred_path)
+        primary_path = str((media_source or {}).get("path") or "")
         if not primary_path:
             return
         self.current_selected_input_path = primary_path
@@ -1824,7 +1882,7 @@ class DatasetExplorerController(QObject):
             and self._fs_path_key(self._last_routed_media_path) == self._fs_path_key(primary_path)
         ):
             return
-        self.mediaRouteRequested.emit(media_source, ensure_playback)
+        self.mediaRouteRequested.emit(media_sources, primary_path, ensure_playback)
         self._last_routed_media_path = primary_path
 
     def handle_active_mode_changed(self, mode_idx: int = None):

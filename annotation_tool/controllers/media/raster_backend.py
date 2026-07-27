@@ -5,9 +5,17 @@ import statistics
 from bisect import bisect_left, bisect_right
 from collections import OrderedDict
 from dataclasses import dataclass
+import datetime as _datetime
 from typing import Any
 
-from PyQt6.QtCore import QElapsedTimer, QTimer
+from PyQt6.QtCore import (
+    QObject,
+    QRunnable,
+    QElapsedTimer,
+    QThreadPool,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QImage
 
 from .base import BaseMediaBackend
@@ -21,6 +29,34 @@ class RasterClip:
     hold_ms: int
     duration_ms: int
     fallback_fps: float
+    origin_utc: _datetime.datetime | None = None
+
+
+class _RasterRenderSignals(QObject):
+    finished = pyqtSignal(int, int, int, object)
+
+
+class _RasterRenderTask(QRunnable):
+    def __init__(self, backend, request_id: int, generation: int, frame_index: int, clip):
+        super().__init__()
+        self.backend = backend
+        self.request_id = request_id
+        self.generation = generation
+        self.frame_index = frame_index
+        self.clip = clip
+
+    def run(self):
+        try:
+            payload = self.clip.frame_source[self.frame_index]
+            image = self.backend.render_frame_image(self.frame_index, payload)
+        except Exception:
+            image = QImage()
+        self.backend._render_signals.finished.emit(
+            self.request_id,
+            self.generation,
+            self.frame_index,
+            image,
+        )
 
 
 class BaseRasterMediaBackend(BaseMediaBackend):
@@ -38,6 +74,13 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self._frame_clock = QElapsedTimer()
         self._load_generation = 0
         self._render_generation = 0
+        self._deferred_request_id = 0
+        self._deferred_render_in_flight = False
+        self._deferred_pending_index = None
+        self._render_signals = _RasterRenderSignals(controller)
+        self._render_signals.finished.connect(self._on_deferred_frame_ready)
+        self._render_pool = QThreadPool(controller)
+        self._render_pool.setMaxThreadCount(1)
 
         self.frame_timer = QTimer(controller)
         self.frame_timer.setInterval(self.controller._FRAME_TIMER_INTERVAL_MS)
@@ -104,6 +147,7 @@ class BaseRasterMediaBackend(BaseMediaBackend):
     def stop(self):
         self._load_generation += 1
         self._render_generation = self._load_generation
+        self._cancel_deferred_render()
         if self.frame_timer.isActive():
             self.frame_timer.stop()
         if self._clip is not None and hasattr(self._clip.frame_source, "close"):
@@ -121,11 +165,32 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         super().stop()
 
     def set_position(self, position_ms: int):
+        self._cancel_deferred_render()
         target = max(0, int(position_ms))
         self._set_frame_position(target, emit_position=True, snap_to_frame=True)
         if self._frame_playing:
             self._frame_anchor_position_ms = self._frame_position_ms
             self._frame_clock.restart()
+
+    def set_position_deferred(self, position_ms: int):
+        """Update playback position while rendering an uncached frame off the GUI thread."""
+        if self._clip is None:
+            return
+        clamped = max(0, min(int(position_ms), self._clip.duration_ms))
+        self._frame_position_ms = clamped
+        frame_index = self._frame_index_for_position(clamped)
+        if frame_index != self._frame_last_rendered_index:
+            self._frame_last_rendered_index = frame_index
+            cached = self._frame_image_cache.get(frame_index)
+            if cached is not None:
+                self._frame_image_cache.move_to_end(frame_index)
+                self.controller._show_frame_image(cached)
+            else:
+                self._deferred_pending_index = frame_index
+                self._start_deferred_render()
+        if clamped != self._frame_last_emitted_position_ms:
+            self.controller.positionChanged.emit(clamped)
+            self._frame_last_emitted_position_ms = clamped
 
     def set_playback_rate(self, rate: float):
         anchor_position_ms = self.current_position_ms() if self._frame_playing else self._frame_position_ms
@@ -205,11 +270,57 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         image = self.render_frame_image(frame_index, self._clip.frame_source[frame_index])
         if generation != self._render_generation or self._clip is None:
             return QImage()
+        self._cache_frame_image(frame_index, image)
+        return image
+
+    def _cache_frame_image(self, frame_index: int, image: QImage):
         self._frame_image_cache[frame_index] = image
         cache_limit = int(getattr(self.controller, "_RASTER_FRAME_CACHE_LIMIT", 128) or 128)
         while len(self._frame_image_cache) > max(1, cache_limit):
             self._frame_image_cache.popitem(last=False)
-        return image
+
+    def _start_deferred_render(self):
+        if (
+            self._deferred_render_in_flight
+            or self._deferred_pending_index is None
+            or self._clip is None
+        ):
+            return
+        frame_index = self._deferred_pending_index
+        self._deferred_pending_index = None
+        self._deferred_render_in_flight = True
+        self._render_pool.start(
+            _RasterRenderTask(
+                self,
+                self._deferred_request_id,
+                self._render_generation,
+                frame_index,
+                self._clip,
+            )
+        )
+
+    def _on_deferred_frame_ready(
+        self,
+        request_id: int,
+        generation: int,
+        frame_index: int,
+        image: QImage,
+    ):
+        if request_id != self._deferred_request_id:
+            return
+        self._deferred_render_in_flight = False
+        if generation == self._render_generation and self._clip is not None and not image.isNull():
+            self._cache_frame_image(frame_index, image)
+            if frame_index == self._frame_last_rendered_index:
+                self.controller._show_frame_image(image)
+        self._start_deferred_render()
+
+    def _cancel_deferred_render(self):
+        self._deferred_request_id += 1
+        self._deferred_pending_index = None
+        if self._deferred_render_in_flight:
+            self._render_pool.waitForDone()
+            self._deferred_render_in_flight = False
 
     def _set_frame_position(self, position_ms: int, *, emit_position: bool, snap_to_frame: bool = False):
         if self._clip is None:

@@ -111,6 +111,30 @@ def test_close_project_returns_to_welcome(window, monkeypatch):
 
 
 @pytest.mark.gui
+def test_close_project_clears_media_viewer_preview(window, monkeypatch, qtbot):
+    window.dataset_explorer_controller.create_new_project("classification")
+    window.media_controller.route_media_group(
+        [
+            {"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)},
+            {"type": "player_joints_h5", "path": str(PLAYER_JOINTS_H5_PATH)},
+        ],
+        str(PLAYER_JOINTS_H5_PATH),
+        False,
+    )
+    qtbot.waitUntil(lambda: window.center_panel.frame_widget.pixmap() is not None, timeout=1500)
+
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    window.dataset_explorer_controller.close_project()
+
+    assert len(window.center_panel._viewer_panes) == 1
+    assert window.center_panel._viewer_panes[0].source_key == ""
+    assert all(
+        pane.frame_widget.pixmap() is None or pane.frame_widget.pixmap().isNull()
+        for pane in window.center_panel._viewer_panes
+    )
+
+
+@pytest.mark.gui
 # Workflow: Dataset Explorer Prev/Next Sample buttons should move current top-level dataset selection.
 def test_dataset_explorer_prev_next_sample_buttons_navigate_rows(
     window,
@@ -366,8 +390,10 @@ def test_dataset_selection_emits_data_id_and_routes_media(
     window.dataset_explorer_controller.dataSelected.connect(lambda data_id: emitted_ids.append(data_id))
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda file_path, auto_play=True: media_calls.append(file_path),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: media_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     window.dataset_explorer_controller.import_annotations()
@@ -381,8 +407,9 @@ def test_dataset_selection_emits_data_id_and_routes_media(
     assert selected_data_id == selected_entry.get("data_id")
 
     assert media_calls
-    assert media_calls[-1] == selected_entry.get("path")
-    assert selected_data_id != media_calls[-1]
+    assert media_calls[-1][1] == selected_entry.get("path")
+    assert media_calls[-1][0][0]["path"] == selected_entry.get("path")
+    assert selected_data_id != media_calls[-1][1]
 
 
 @pytest.mark.gui
@@ -419,8 +446,10 @@ def test_frames_npy_dataset_selection_routes_canonical_media_source(
     media_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda source, auto_play=True: media_calls.append(source),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: media_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     window.dataset_explorer_controller.import_annotations()
@@ -429,13 +458,41 @@ def test_frames_npy_dataset_selection_routes_canonical_media_source(
     qtbot.wait(50)
 
     assert media_calls
-    routed_source = media_calls[-1]
+    routed_source = media_calls[-1][0][0]
     assert isinstance(routed_source, dict)
     assert routed_source["type"] == "frames_npy"
     assert routed_source["path"] == str(FRAME_STACK_PATH)
     assert routed_source["fps"] == pytest.approx(2.0)
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["frames_npy"]
     assert window.dataset_explorer_controller.current_selected_input_path == str(FRAME_STACK_PATH)
+
+
+@pytest.mark.gui
+def test_dataset_media_sources_preserve_input_utc_time_start(window, tmp_path):
+    controller = window.dataset_explorer_controller
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "modalities": ["video"],
+        "labels": {},
+        "data": [
+            {
+                "id": "wc22_clip",
+                "inputs": [
+                    {
+                        "type": "video",
+                        "path": "133041/M64-1.mp4",
+                        "UTC_time_start": "2022-12-03 13:27:59.461000",
+                    }
+                ],
+            }
+        ],
+    }
+
+    controller._rebuild_runtime_index()
+    source = controller.get_media_sources_by_id("wc22_clip")[0]
+
+    assert source["path"] == str(tmp_path / "133041" / "M64-1.mp4")
+    assert source["UTC_time_start"] == "2022-12-03 13:27:59.461000"
 
 
 @pytest.mark.gui
@@ -472,8 +529,10 @@ def test_tracking_parquet_dataset_selection_routes_canonical_media_source(
     media_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda source, auto_play=True: media_calls.append(source),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: media_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     window.dataset_explorer_controller.import_annotations()
@@ -482,7 +541,7 @@ def test_tracking_parquet_dataset_selection_routes_canonical_media_source(
     qtbot.wait(50)
 
     assert media_calls
-    routed_source = media_calls[-1]
+    routed_source = media_calls[-1][0][0]
     assert isinstance(routed_source, dict)
     assert routed_source["type"] == "tracking_parquet"
     assert routed_source["path"] == str(TRACKING_PARQUET_PATH)
@@ -527,8 +586,10 @@ def test_player_joints_h5_dataset_selection_routes_canonical_media_source(
     media_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda source, auto_play=True: media_calls.append(source),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: media_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     window.dataset_explorer_controller.import_annotations()
@@ -536,7 +597,7 @@ def test_player_joints_h5_dataset_selection_routes_canonical_media_source(
     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
     qtbot.wait(50)
 
-    routed_source = media_calls[-1]
+    routed_source = media_calls[-1][0][0]
     assert routed_source["type"] == "player_joints_h5"
     assert routed_source["path"] == str(PLAYER_JOINTS_H5_PATH)
     assert routed_source["ball_path"] == str(BALL_H5_PATH)
@@ -581,8 +642,10 @@ def test_player_centroids_h5_dataset_selection_routes_canonical_media_source(
     media_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda source, auto_play=True: media_calls.append(source),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: media_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     window.dataset_explorer_controller.import_annotations()
@@ -590,7 +653,7 @@ def test_player_centroids_h5_dataset_selection_routes_canonical_media_source(
     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
     qtbot.wait(50)
 
-    routed_source = media_calls[-1]
+    routed_source = media_calls[-1][0][0]
     assert routed_source["type"] == "player_centroids_h5"
     assert routed_source["path"] == str(PLAYER_CENTROIDS_H5_PATH)
     assert routed_source["ball_path"] == str(BALL_H5_PATH)
@@ -684,8 +747,10 @@ def test_mixed_video_and_tracking_selection_routes_selected_input(
     media_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda source, auto_play=True: media_calls.append(source),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: media_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     window.dataset_explorer_controller.import_annotations()
@@ -700,10 +765,12 @@ def test_mixed_video_and_tracking_selection_routes_selected_input(
     qtbot.wait(50)
 
     assert len(media_calls) >= 2
-    assert media_calls[0] == str(source_video)
-    assert isinstance(media_calls[-1], dict)
-    assert media_calls[-1]["type"] == "tracking_parquet"
-    assert media_calls[-1]["path"] == str(TRACKING_PARQUET_PATH)
+    assert [source["path"] for source in media_calls[0][0]] == [
+        str(source_video),
+        str(TRACKING_PARQUET_PATH),
+    ]
+    assert media_calls[-1][1] == str(TRACKING_PARQUET_PATH)
+    assert media_calls[-1][0][1]["type"] == "tracking_parquet"
 
 
 @pytest.mark.gui
@@ -754,8 +821,10 @@ def test_classification_multiview_selection_routes_views_and_data_id(
     window.dataset_explorer_controller.dataSelected.connect(lambda data_id: emitted_ids.append(data_id))
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda file_path, auto_play=True: media_calls.append(file_path),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: media_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     window.dataset_explorer_controller.import_annotations()
@@ -767,6 +836,7 @@ def test_classification_multiview_selection_routes_views_and_data_id(
 
     assert emitted_ids[-1] == window.dataset_explorer_controller.action_item_data[0].get("data_id")
     assert media_calls
+    assert len(media_calls[-1][0]) == 2
 
 
 @pytest.mark.gui
@@ -809,11 +879,17 @@ def test_filter_with_no_visible_samples_clears_media_and_annotation(
 
     emitted_ids = []
     stop_calls = {"count": 0}
+    original_stop = window.media_controller.stop
+
+    def record_stop():
+        stop_calls["count"] += 1
+        original_stop()
+
     window.dataset_explorer_controller.dataSelected.connect(lambda data_id: emitted_ids.append(data_id))
     monkeypatch.setattr(
         window.media_controller,
         "stop",
-        lambda: stop_calls.__setitem__("count", stop_calls["count"] + 1),
+        record_stop,
     )
 
     window.dataset_explorer_controller.import_annotations()

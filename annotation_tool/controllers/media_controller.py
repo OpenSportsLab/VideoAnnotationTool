@@ -1,8 +1,10 @@
 import mimetypes
 import os
+import datetime as _datetime
+from bisect import bisect_left, bisect_right
 
-from PyQt6.QtCore import QMimeDatabase, QObject, QUrl, pyqtSignal
-from PyQt6.QtMultimedia import QMediaPlayer
+from PyQt6.QtCore import QElapsedTimer, QMimeDatabase, QObject, QTimer, QUrl, pyqtSignal
+from PyQt6.QtMultimedia import QMediaMetaData, QMediaPlayer
 
 from controllers.media import (
     FramesNpyMediaBackend,
@@ -11,6 +13,7 @@ from controllers.media import (
     TrackingParquetMediaBackend,
     VideoMediaBackend,
 )
+from utils import parse_utc_datetime
 
 try:
     import numpy as np
@@ -33,7 +36,7 @@ except Exception:  # pragma: no cover - exercised via runtime guard
     h5py = None
 
 
-class MediaController(QObject):
+class _SingleMediaController(QObject):
     """
     Public playback facade for media routing and runtime state.
 
@@ -134,11 +137,12 @@ class MediaController(QObject):
     _TRACKING_AWAY_COLOR = "#0066CC"
     _TRACKING_BALL_COLOR = "#800080"
 
-    def __init__(self, player: QMediaPlayer, media_panel=None):
+    def __init__(self, player: QMediaPlayer, media_panel=None, error_handler=None):
         super().__init__()
         self.player = player
         self.media_panel = media_panel
         self.video_widget = getattr(media_panel, "video_widget", None)
+        self._error_handler = error_handler
 
         self._current_backend = None
         self._current_source = None
@@ -209,6 +213,8 @@ class MediaController(QObject):
             "path": os.path.normpath(path),
             "type": source_type,
         }
+        if "UTC_time_start" in raw_source:
+            normalized["UTC_time_start"] = raw_source.get("UTC_time_start")
         if source_type in {self._BACKEND_PLAYER_JOINTS_H5, self._BACKEND_PLAYER_CENTROIDS_H5}:
             ball_path = str(raw_source.get("ball_path") or "").strip()
             if ball_path:
@@ -239,15 +245,21 @@ class MediaController(QObject):
     def _source_key(self, source: dict) -> tuple[str, ...]:
         if not isinstance(source, dict):
             return ("", "")
+        utc_start_key = (
+            "UTC_time_start",
+            str(source.get("UTC_time_start")),
+        ) if "UTC_time_start" in source else ("UTC_time_start_absent", "")
         if source.get("type") in {self._BACKEND_PLAYER_JOINTS_H5, self._BACKEND_PLAYER_CENTROIDS_H5}:
             return (
                 self._fs_path_key(source.get("path")),
                 str(source.get("type") or ""),
                 self._fs_path_key(source.get("ball_path")),
+                *utc_start_key,
             )
         return (
             self._fs_path_key(source.get("path")),
             str(source.get("type") or ""),
+            *utc_start_key,
         )
 
     def _fallback_current_source(self):
@@ -283,6 +295,9 @@ class MediaController(QObject):
         informative_text: str = "",
     ):
         self.stop()
+        if self._error_handler is not None:
+            self._error_handler(title, text, error_details)
+            return
 
         try:
             from ui.dialogs import MediaErrorDialog
@@ -445,6 +460,11 @@ class MediaController(QObject):
             return self._active_backend.is_playing()
         return self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
 
+    def timeline_origin_utc(self):
+        clip = getattr(self._active_backend, "_clip", None)
+        origin = getattr(clip, "origin_utc", None)
+        return origin if isinstance(origin, _datetime.datetime) else None
+
     def route_media_selection(self, target_source, ensure_playback: bool = False):
         normalized_source = self._normalize_media_source(target_source)
         if not normalized_source or not self._is_supported_media_source(normalized_source):
@@ -527,6 +547,14 @@ class MediaController(QObject):
             return
         self.player.setPosition(max(0, int(position)))
 
+    def set_position_deferred(self, position):
+        if self._active_backend is not None and hasattr(
+            self._active_backend, "set_position_deferred"
+        ):
+            self._active_backend.set_position_deferred(max(0, int(position)))
+            return
+        self.set_position(position)
+
     def set_playback_rate(self, rate: float):
         if self._active_backend is not None:
             self._active_backend.set_playback_rate(rate)
@@ -602,3 +630,791 @@ class MediaController(QObject):
             return False
 
         return True
+
+
+class MediaController(QObject):
+    """Sample-level playback coordinator for one or more synchronized inputs."""
+
+    # QMediaPlayer's reported position commonly trails the wall clock by more
+    # than a frame while its audio/video pipeline is healthy. Seeking to correct
+    # that small delay flushes the decoder, which is especially disruptive for
+    # long-GOP H.264 video and its audio buffer.
+    _VIDEO_DRIFT_CHECK_INTERVAL_MS = 1000
+    _VIDEO_DRIFT_TOLERANCE_MS = 50
+
+    playbackStateChanged = pyqtSignal(bool)
+    muteStateChanged = pyqtSignal(bool)
+    positionChanged = pyqtSignal(int)
+    durationChanged = pyqtSignal(int)
+    inputUtcStartMutationRequested = pyqtSignal(str, str, int)
+
+    @property
+    def _RASTER_FRAME_CACHE_LIMIT(self):
+        return self._single._RASTER_FRAME_CACHE_LIMIT
+
+    @_RASTER_FRAME_CACHE_LIMIT.setter
+    def _RASTER_FRAME_CACHE_LIMIT(self, value):
+        self._single._RASTER_FRAME_CACHE_LIMIT = value
+
+    @staticmethod
+    def _parse_utc_time_start(value):
+        return parse_utc_datetime(value)
+
+    def __init__(self, player: QMediaPlayer, media_panel=None):
+        super().__init__()
+        self.player = player
+        self.media_panel = media_panel
+        self._single = _SingleMediaController(player, media_panel)
+        self._group_active = False
+        self._sessions = []
+        self._group_key = ()
+        self._focused_path = ""
+        self._global_origin_utc = None
+        self._group_duration_ms = 0
+        self._group_position_ms = 0
+        self._anchor_position_ms = 0
+        self._playback_rate = 1.0
+        self._group_playing = False
+        self._pending_group_autoplay = False
+        self._globally_muted = False
+        self._feed_muted = {}
+        self._sync_record = None
+        self._sync_anchor_utc = None
+        self._sync_original_global_position = 0
+        self._sync_original_local_position = 0
+        self._sync_was_playing = False
+        self._pending_restore_anchor_utc = None
+        self._clock = QElapsedTimer()
+        self._master_timer = QTimer(self)
+        self._master_timer.setInterval(30)
+        self._master_timer.timeout.connect(self._advance_group)
+        self._sync_poll_timer = QTimer(self)
+        self._sync_poll_timer.setInterval(30)
+        self._sync_poll_timer.timeout.connect(self._poll_sync_session)
+        self._drift_tick = 0
+        self._video_drift_check_ticks = max(
+            1,
+            round(self._VIDEO_DRIFT_CHECK_INTERVAL_MS / self._master_timer.interval()),
+        )
+
+        self._single.positionChanged.connect(
+            lambda value: self.positionChanged.emit(value) if not self._group_active else None
+        )
+        self._single.durationChanged.connect(
+            lambda value: self.durationChanged.emit(value) if not self._group_active else None
+        )
+        self._single.playbackStateChanged.connect(
+            lambda value: self.playbackStateChanged.emit(value) if not self._group_active else None
+        )
+        self._single.muteStateChanged.connect(
+            lambda value: self.muteStateChanged.emit(value) if not self._group_active else None
+        )
+        if media_panel is not None:
+            media_panel.destroyed.connect(self._handle_media_panel_destroyed)
+            if hasattr(media_panel, "paneFocusRequested"):
+                media_panel.paneFocusRequested.connect(self.focus_source)
+            if hasattr(media_panel, "paneMuteToggleRequested"):
+                media_panel.paneMuteToggleRequested.connect(self.toggle_feed_mute)
+            if hasattr(media_panel, "paneSyncRequested"):
+                media_panel.paneSyncRequested.connect(self.enter_sync_mode)
+            if hasattr(media_panel, "syncFrameStepRequested"):
+                media_panel.syncFrameStepRequested.connect(self.step_sync_frame)
+            if hasattr(media_panel, "syncApplyRequested"):
+                media_panel.syncApplyRequested.connect(self.apply_sync_mode)
+            if hasattr(media_panel, "syncCancelRequested"):
+                media_panel.syncCancelRequested.connect(self.cancel_sync_mode)
+
+    def _handle_media_panel_destroyed(self):
+        self._master_timer.stop()
+        self._sync_poll_timer.stop()
+        self._group_playing = False
+        self._pending_group_autoplay = False
+        self._sessions = []
+
+    def __getattr__(self, name):
+        single = self.__dict__.get("_single")
+        if single is not None:
+            return getattr(single, name)
+        raise AttributeError(name)
+
+    def load_and_play(self, source, auto_play: bool = True):
+        """Load one source directly; retained as the canonical single-source API."""
+        if self._group_active:
+            self._stop_group(clear_state=True)
+        self._single.media_panel = self.media_panel
+        self._single.video_widget = getattr(self.media_panel, "video_widget", None)
+        self._single._error_handler = None
+        error_override = self.__dict__.get("_trigger_error_dialog")
+        if error_override is not None:
+            self._single._trigger_error_dialog = error_override
+        self._single.load_and_play(source, auto_play=auto_play)
+
+    def route_media_group(self, sources, focused_path: str = "", ensure_playback: bool = False):
+        if self._sync_record is not None:
+            self.cancel_sync_mode()
+        normalized = []
+        for source in list(sources or []):
+            item = self._single._normalize_media_source(source)
+            if item is not None:
+                normalized.append(item)
+        if not normalized:
+            self.stop()
+            return
+
+        group_key = tuple(self._single._source_key(source) for source in normalized)
+        if self._group_active and group_key == self._group_key:
+            restore_anchor = self._pending_restore_anchor_utc
+            if isinstance(restore_anchor, _datetime.datetime) and isinstance(
+                self._global_origin_utc, _datetime.datetime
+            ):
+                self._pending_restore_anchor_utc = None
+                restore_ms = int(
+                    round((restore_anchor - self._global_origin_utc).total_seconds() * 1000.0)
+                )
+                self.set_position(restore_ms)
+            self.focus_source(focused_path or normalized[0]["path"])
+            if ensure_playback and not self.is_playing():
+                if self._all_sessions_ready():
+                    self.play()
+                else:
+                    self._pending_group_autoplay = True
+            return
+
+        self._stop_group(clear_state=True)
+        self._single.stop()
+        self._group_active = True
+        self._pending_group_autoplay = bool(ensure_playback)
+        self._group_key = group_key
+        self._focused_path = focused_path or normalized[0]["path"]
+        panes = (
+            self.media_panel.configure_viewers(normalized, self._focused_path)
+            if self.media_panel is not None and hasattr(self.media_panel, "configure_viewers")
+            else [self.media_panel]
+        )
+
+        for index, source in enumerate(normalized):
+            pane = panes[index] if index < len(panes) else self.media_panel
+            if not self._single._is_supported_media_source(source):
+                if pane is not None and hasattr(pane, "show_status"):
+                    pane.show_status(f"Unsupported media type: {source.get('type', 'unknown')}")
+                self._sessions.append(self._session_record(source, pane, None))
+                continue
+
+            if index == 0:
+                session = self._single
+                session.media_panel = pane
+                session.video_widget = getattr(pane, "video_widget", None)
+            else:
+                session = _SingleMediaController(pane.player, pane)
+            record = self._session_record(source, pane, session)
+            self._sessions.append(record)
+            session._error_handler = self._pane_error_handler(pane, record)
+            session.durationChanged.connect(lambda value, rec=record: self._on_session_duration(rec, value))
+            session.load_and_play(source, auto_play=False)
+            record["valid"] = session._active_backend is not None
+            if record["utc_start_present"]:
+                record["origin_utc"] = self._parse_utc_time_start(source.get("UTC_time_start"))
+                record["utc_start_invalid"] = record["origin_utc"] is None
+            else:
+                record["origin_utc"] = session.timeline_origin_utc()
+            record["duration_ms"] = self._session_duration(session)
+            if not record["valid"] and pane is not None and hasattr(pane, "show_status"):
+                pane.show_status("Unable to load this input")
+
+        self._recalculate_group_timeline()
+        restore_anchor = self._pending_restore_anchor_utc
+        self._pending_restore_anchor_utc = None
+        if isinstance(restore_anchor, _datetime.datetime) and isinstance(self._global_origin_utc, _datetime.datetime):
+            restore_ms = int(round((restore_anchor - self._global_origin_utc).total_seconds() * 1000.0))
+            self.set_position(restore_ms)
+        else:
+            self.set_position(0)
+        if ensure_playback and self._all_sessions_ready():
+            self._pending_group_autoplay = False
+            self.play()
+
+    def route_media_selection(self, source, ensure_playback: bool = False):
+        self.route_media_group([source], str(source.get("path") if isinstance(source, dict) else source), ensure_playback)
+
+    def _session_record(self, source, pane, session):
+        return {
+            "source": source,
+            "pane": pane,
+            "controller": session,
+            "origin_utc": None,
+            "offset_ms": 0,
+            "duration_ms": 0,
+            "valid": False,
+            "utc_start_present": "UTC_time_start" in source,
+            "utc_start_invalid": False,
+        }
+
+    def _pane_error_handler(self, pane, record):
+        def handle(_title, summary, details):
+            record["valid"] = False
+            record["duration_ms"] = 0
+            if pane is not None and hasattr(pane, "show_status"):
+                pane.show_status(f"{summary}\n{details}")
+            if self._group_active:
+                self._recalculate_group_timeline()
+                if self._pending_group_autoplay and self._all_sessions_ready():
+                    self._pending_group_autoplay = False
+                    self.play()
+        return handle
+
+    @staticmethod
+    def _session_duration(session):
+        if session is None or session._active_backend is None:
+            return 0
+        return max(0, int(session._active_backend.duration_ms()))
+
+    def _on_session_duration(self, record, duration):
+        record["duration_ms"] = max(0, int(duration))
+        if self._group_active:
+            self._recalculate_group_timeline()
+            if self._pending_group_autoplay and self._all_sessions_ready():
+                self._pending_group_autoplay = False
+                self.play()
+
+    def _all_sessions_ready(self):
+        valid_records = [record for record in self._sessions if record["valid"]]
+        if not valid_records:
+            return False
+        for record in valid_records:
+            session = record["controller"]
+            if session is not None and session._current_backend == session._BACKEND_VIDEO:
+                if record["duration_ms"] <= 0:
+                    return False
+        return True
+
+    def _recalculate_group_timeline(self):
+        utc_origins = [
+            record["origin_utc"]
+            for record in self._sessions
+            if record["valid"] and isinstance(record["origin_utc"], _datetime.datetime)
+        ]
+        self._global_origin_utc = min(utc_origins) if utc_origins else None
+        duration = 0
+        for record in self._sessions:
+            origin = record["origin_utc"]
+            if self._global_origin_utc is not None and isinstance(origin, _datetime.datetime):
+                record["offset_ms"] = max(
+                    0,
+                    int(round((origin - self._global_origin_utc).total_seconds() * 1000.0)),
+                )
+                timing = f"UTC +{record['offset_ms'] / 1000.0:.3f}s"
+            else:
+                record["offset_ms"] = 0
+                timing = (
+                    "Relative ⚠ invalid UTC_time_start"
+                    if record["utc_start_invalid"]
+                    else "Relative"
+                )
+            pane = record["pane"]
+            if pane is not None and hasattr(pane, "set_timing_status"):
+                tooltip = (
+                    "UTC_time_start could not be parsed; this input is aligned as relative media."
+                    if record["utc_start_invalid"]
+                    else ""
+                )
+                pane.set_timing_status(timing, tooltip)
+            if record["valid"]:
+                duration = max(duration, record["offset_ms"] + record["duration_ms"])
+        changed = duration != self._group_duration_ms
+        self._group_duration_ms = duration
+        if self.media_panel is not None and hasattr(self.media_panel, "set_utc_origin"):
+            self.media_panel.set_utc_origin(self._global_origin_utc)
+        self._update_sync_availability()
+        if changed:
+            self.durationChanged.emit(duration)
+
+    def focus_source(self, path: str):
+        if self._sync_record is not None:
+            return
+        self._focused_path = str(path or "")
+        if self.media_panel is not None and hasattr(self.media_panel, "focus_viewer"):
+            self.media_panel.focus_viewer(self._focused_path)
+
+    def toggle_feed_mute(self, path: str):
+        key = self._single._fs_path_key(path)
+        self._feed_muted[key] = not bool(self._feed_muted.get(key, False))
+        self._apply_audio_state()
+
+    def _apply_audio_state(self):
+        records = self._sessions if self._group_active else []
+        if not records:
+            output = self._single.player.audioOutput()
+            if output is not None:
+                output.setMuted(self._globally_muted)
+            return
+        for record in records:
+            session = record["controller"]
+            pane = record["pane"]
+            if session is None:
+                continue
+            feed_muted = bool(self._feed_muted.get(self._single._fs_path_key(record["source"].get("path")), False))
+            output = session.player.audioOutput()
+            if output is not None:
+                output.setMuted(self._globally_muted or feed_muted)
+            if pane is not None and hasattr(pane, "set_feed_muted"):
+                pane.set_feed_muted(feed_muted)
+
+    def is_muted(self) -> bool:
+        return bool(self._globally_muted)
+
+    def set_muted(self, is_muted: bool):
+        target = bool(is_muted)
+        if target == self._globally_muted:
+            return
+        self._globally_muted = target
+        self._apply_audio_state()
+        self.muteStateChanged.emit(target)
+
+    def toggle_mute(self):
+        self.set_muted(not self.is_muted())
+
+    def current_source_path(self) -> str:
+        if self._group_active:
+            return self._focused_path or str(self._sessions[0]["source"].get("path") or "")
+        return self._single.current_source_path()
+
+    def current_position_ms(self) -> int:
+        if self._sync_record is not None:
+            return self._sync_record["controller"].current_position_ms()
+        if not self._group_active:
+            return self._single.current_position_ms()
+        video_clock = self._playing_video_clock_record()
+        if self._group_playing and video_clock is not None:
+            value = (
+                video_clock["controller"].current_position_ms()
+                + int(video_clock["offset_ms"])
+            )
+            return max(0, min(value, self._group_duration_ms))
+        if self._group_playing and self._clock.isValid():
+            value = self._anchor_position_ms + int(self._clock.elapsed() * self._playback_rate)
+            return max(0, min(value, self._group_duration_ms))
+        return max(0, int(self._group_position_ms))
+
+    def _playing_video_clock_record(self):
+        """Return the first running video, which is the group's native A/V clock."""
+        for record in self._sessions:
+            session = record.get("controller")
+            if (
+                record.get("valid")
+                and session is not None
+                and session._current_backend == session._BACKEND_VIDEO
+                and session.is_playing()
+            ):
+                return record
+        return None
+
+    def is_playing(self) -> bool:
+        if self._sync_record is not None:
+            return self._sync_record["controller"].is_playing()
+        return self._group_playing if self._group_active else self._single.is_playing()
+
+    def toggle_play_pause(self):
+        self.pause() if self.is_playing() else self.play()
+
+    def play(self):
+        if self._sync_record is not None:
+            self._sync_record["controller"].play()
+            self._sync_was_playing = True
+            self._sync_poll_timer.start()
+            self.playbackStateChanged.emit(True)
+            return
+        if not self._group_active:
+            self._single.play()
+            return
+        if self._group_duration_ms <= 0:
+            return
+        if self._group_position_ms >= self._group_duration_ms:
+            self._group_position_ms = 0
+        self._anchor_position_ms = self._group_position_ms
+        self._clock.restart()
+        self._group_playing = True
+        self._start_video_sessions()
+        self._master_timer.start()
+        self.playbackStateChanged.emit(True)
+
+    def pause(self):
+        if self._sync_record is not None:
+            session = self._sync_record["controller"]
+            session.pause()
+            self._sync_was_playing = False
+            self.playbackStateChanged.emit(False)
+            self._emit_sync_position()
+            return
+        if not self._group_active:
+            self._single.pause()
+            return
+        if not self._group_playing:
+            return
+        self._group_position_ms = self.current_position_ms()
+        self._group_playing = False
+        self._pending_group_autoplay = False
+        self._master_timer.stop()
+        for record in self._sessions:
+            session = record["controller"]
+            if session is not None and session._current_backend == session._BACKEND_VIDEO:
+                session.pause()
+        self.playbackStateChanged.emit(False)
+
+    def stop(self):
+        if self._sync_record is not None:
+            self.cancel_sync_mode()
+        if self._group_active:
+            self._stop_group(clear_state=True)
+            return
+        self._single.stop()
+
+    def reset_viewers(self):
+        self.stop()
+        if self.media_panel is not None and hasattr(self.media_panel, "reset_viewers"):
+            self.media_panel.reset_viewers()
+
+    def _stop_group(self, *, clear_state: bool):
+        if self._sync_record is not None:
+            self.cancel_sync_mode()
+        if self._master_timer.isActive():
+            self._master_timer.stop()
+        for record in self._sessions:
+            session = record.get("controller")
+            if session is not None:
+                session.stop()
+                if session is not self._single:
+                    session.deleteLater()
+        had_group = self._group_active
+        self._sessions = []
+        self._group_active = False
+        self._group_playing = False
+        self._group_position_ms = 0
+        self._anchor_position_ms = 0
+        self._group_duration_ms = 0
+        self._global_origin_utc = None
+        if clear_state:
+            self._group_key = ()
+        if self.media_panel is not None and hasattr(self.media_panel, "set_utc_origin"):
+            self.media_panel.set_utc_origin(None)
+        if had_group:
+            self.positionChanged.emit(0)
+            self.durationChanged.emit(0)
+            self.playbackStateChanged.emit(False)
+
+    def set_position(self, position):
+        if self._sync_record is not None:
+            duration = int(self._sync_record["duration_ms"])
+            target = max(0, min(int(position), duration))
+            self._sync_record["controller"].set_position(target)
+            self._emit_sync_position()
+            return
+        if not self._group_active:
+            self._single.set_position(position)
+            return
+        target = max(0, min(int(position), self._group_duration_ms))
+        self._group_position_ms = target
+        self._anchor_position_ms = target
+        if self._group_playing:
+            self._clock.restart()
+        self._render_group_position(target, force_video_seek=True)
+        self.positionChanged.emit(target)
+
+    def seek_relative(self, delta_ms: int):
+        self.set_position(self.current_position_ms() + int(delta_ms))
+
+    def set_playback_rate(self, rate: float):
+        try:
+            safe_rate = float(rate)
+        except Exception:
+            safe_rate = 1.0
+        if safe_rate <= 0:
+            safe_rate = 1.0
+        if self._sync_record is not None:
+            self._sync_record["controller"].set_playback_rate(safe_rate)
+            return
+        if not self._group_active:
+            self._single.set_playback_rate(safe_rate)
+            return
+        self._group_position_ms = self.current_position_ms()
+        self._anchor_position_ms = self._group_position_ms
+        self._playback_rate = safe_rate
+        if self._group_playing:
+            self._clock.restart()
+        for record in self._sessions:
+            session = record["controller"]
+            if session is not None:
+                session.set_playback_rate(safe_rate)
+
+    def set_looping(self, enable: bool):
+        records = self._sessions if self._group_active else [{"controller": self._single}]
+        for record in records:
+            session = record["controller"]
+            if session is not None:
+                session.set_looping(enable)
+
+    def _update_sync_availability(self):
+        if self.media_panel is None or not hasattr(self.media_panel, "set_sync_availability"):
+            return
+        playable_count = sum(1 for record in self._sessions if record["valid"])
+        has_utc_reference = isinstance(self._global_origin_utc, _datetime.datetime)
+        availability = {}
+        for record in self._sessions:
+            if not record["valid"]:
+                availability[str(record["source"].get("path") or "")] = (
+                    False,
+                    "This input is not playable.",
+                )
+            elif playable_count < 2:
+                availability[str(record["source"].get("path") or "")] = (
+                    False,
+                    "Synchronization requires at least two playable inputs.",
+                )
+            elif not has_utc_reference:
+                availability[str(record["source"].get("path") or "")] = (
+                    False,
+                    "Synchronization requires an absolute UTC reference.",
+                )
+            else:
+                availability[str(record["source"].get("path") or "")] = (True, "")
+        self.media_panel.set_sync_availability(availability)
+
+    def enter_sync_mode(self, path: str):
+        if not self._group_active or self._sync_record is not None:
+            return
+        valid_records = [record for record in self._sessions if record["valid"]]
+        if len(valid_records) < 2 or not isinstance(self._global_origin_utc, _datetime.datetime):
+            return
+        target_key = self._single._fs_path_key(path)
+        record = next(
+            (
+                item
+                for item in valid_records
+                if self._single._fs_path_key(item["source"].get("path")) == target_key
+            ),
+            None,
+        )
+        if record is None:
+            return
+
+        global_position = self.current_position_ms()
+        if self._group_playing:
+            self.pause()
+            global_position = self._group_position_ms
+        for item in valid_records:
+            item["controller"].pause()
+
+        self._sync_anchor_utc = self._global_origin_utc + _datetime.timedelta(
+            milliseconds=global_position
+        )
+        self._sync_original_global_position = global_position
+        local_position = max(
+            0,
+            min(global_position - int(record["offset_ms"]), int(record["duration_ms"])),
+        )
+        self._sync_original_local_position = local_position
+        self._sync_record = record
+        self._sync_was_playing = False
+        record["controller"].set_position(local_position)
+        self._sync_poll_timer.start()
+
+        if self.media_panel is not None:
+            self.media_panel.set_sync_mode(True, str(record["source"].get("path") or ""))
+            self.media_panel.set_utc_origin(None)
+        self.durationChanged.emit(int(record["duration_ms"]))
+        self.positionChanged.emit(local_position)
+        self.playbackStateChanged.emit(False)
+        self._update_sync_status(local_position)
+
+    def cancel_sync_mode(self):
+        if self._sync_record is None:
+            return
+        self._sync_record["controller"].pause()
+        self._sync_record["controller"].set_position(self._sync_original_local_position)
+        self._finish_sync_mode_ui()
+        self._group_position_ms = self._sync_original_global_position
+        self._anchor_position_ms = self._group_position_ms
+        self._render_group_position(self._group_position_ms, force_video_seek=True)
+        self.durationChanged.emit(self._group_duration_ms)
+        self.positionChanged.emit(self._group_position_ms)
+        self.playbackStateChanged.emit(False)
+
+    def apply_sync_mode(self):
+        if self._sync_record is None or not isinstance(self._sync_anchor_utc, _datetime.datetime):
+            return
+        record = self._sync_record
+        local_position = record["controller"].current_position_ms()
+        proposed = self._sync_anchor_utc - _datetime.timedelta(milliseconds=local_position)
+        proposed_origins = []
+        for item in self._sessions:
+            origin = proposed if item is record else item["origin_utc"]
+            if item["valid"] and isinstance(origin, _datetime.datetime):
+                proposed_origins.append(origin)
+        new_global_origin = min(proposed_origins) if proposed_origins else self._global_origin_utc
+        annotation_shift_ms = int(
+            round((self._global_origin_utc - new_global_origin).total_seconds() * 1000.0)
+        )
+        utc_text = proposed.strftime("%Y-%m-%d %H:%M:%S.%f")
+        input_path = str(record["source"].get("path") or "")
+        anchor = self._sync_anchor_utc
+        original_global_position = self._sync_original_global_position
+        self._finish_sync_mode_ui()
+        self._group_position_ms = original_global_position
+        self._anchor_position_ms = original_global_position
+        self._render_group_position(original_global_position, force_video_seek=True)
+        self.durationChanged.emit(self._group_duration_ms)
+        self.positionChanged.emit(original_global_position)
+        self.playbackStateChanged.emit(False)
+        self._pending_restore_anchor_utc = anchor
+        self.inputUtcStartMutationRequested.emit(input_path, utc_text, annotation_shift_ms)
+
+    def _finish_sync_mode_ui(self):
+        self._sync_poll_timer.stop()
+        self._sync_record = None
+        self._sync_anchor_utc = None
+        self._sync_was_playing = False
+        if self.media_panel is not None:
+            self.media_panel.set_sync_mode(False)
+            self.media_panel.set_utc_origin(self._global_origin_utc)
+
+    def step_sync_frame(self, direction: int):
+        if self._sync_record is None or int(direction) == 0:
+            return
+        self.pause()
+        record = self._sync_record
+        session = record["controller"]
+        backend = session._active_backend
+        position = session.current_position_ms()
+        clip = getattr(backend, "_clip", None)
+        axis = list(getattr(clip, "time_axis_ms", []) or [])
+        if axis:
+            if direction > 0:
+                index = min(len(axis) - 1, bisect_right(axis, position))
+            else:
+                index = max(0, bisect_left(axis, position) - 1)
+            target = int(axis[index])
+        else:
+            fps = self._video_frame_rate(record)
+            step_ms = max(1, int(round(1000.0 / fps)))
+            target = position + (step_ms if direction > 0 else -step_ms)
+        self.set_position(target)
+
+    def step_frame(self, direction: int):
+        if self._sync_record is not None:
+            self.step_sync_frame(direction)
+        else:
+            self.seek_relative(40 * (1 if direction > 0 else -1))
+
+    @staticmethod
+    def _video_frame_rate(record) -> float:
+        try:
+            fps = float(record["source"].get("fps") or 0.0)
+        except Exception:
+            fps = 0.0
+        if fps > 0:
+            return fps
+        session = record.get("controller")
+        try:
+            metadata_fps = float(
+                session.player.metaData().value(QMediaMetaData.Key.VideoFrameRate) or 0.0
+            )
+        except Exception:
+            metadata_fps = 0.0
+        return metadata_fps if metadata_fps > 0 else 25.0
+
+    def _poll_sync_session(self):
+        if self._sync_record is None:
+            self._sync_poll_timer.stop()
+            return
+        session = self._sync_record["controller"]
+        is_playing = session.is_playing()
+        if self._sync_was_playing and not is_playing:
+            self.playbackStateChanged.emit(False)
+        self._sync_was_playing = is_playing
+        self._emit_sync_position()
+
+    def _emit_sync_position(self):
+        if self._sync_record is None:
+            return
+        position = self._sync_record["controller"].current_position_ms()
+        self.positionChanged.emit(position)
+        self._update_sync_status(position)
+
+    def _update_sync_status(self, local_position: int):
+        if (
+            self._sync_record is None
+            or not isinstance(self._sync_anchor_utc, _datetime.datetime)
+            or self.media_panel is None
+            or not hasattr(self.media_panel, "update_sync_status")
+        ):
+            return
+        proposed = self._sync_anchor_utc - _datetime.timedelta(milliseconds=int(local_position))
+        self.media_panel.update_sync_status(
+            self._sync_anchor_utc.strftime("%Y-%m-%d %H:%M:%S.%f"),
+            int(local_position),
+            int(self._sync_record["duration_ms"]),
+            proposed.strftime("%Y-%m-%d %H:%M:%S.%f"),
+        )
+
+    def _advance_group(self):
+        if not self._group_playing:
+            return
+        position = self.current_position_ms()
+        if position >= self._group_duration_ms:
+            self._group_position_ms = self._group_duration_ms
+            self._render_group_position(self._group_position_ms, force_video_seek=True)
+            self._group_playing = False
+            self._master_timer.stop()
+            self.playbackStateChanged.emit(False)
+            self.positionChanged.emit(self._group_position_ms)
+            return
+        self._group_position_ms = position
+        self._drift_tick = (self._drift_tick + 1) % self._video_drift_check_ticks
+        self._render_group_position(
+            position,
+            force_video_seek=self._drift_tick == 0,
+        )
+        self.positionChanged.emit(position)
+
+    def _render_group_position(
+        self,
+        global_position: int,
+        *,
+        force_video_seek: bool,
+    ):
+        video_clock = self._playing_video_clock_record()
+        for record in self._sessions:
+            if not record["valid"]:
+                continue
+            local = int(global_position) - int(record["offset_ms"])
+            pane = record["pane"]
+            session = record["controller"]
+            if local < 0 or local > record["duration_ms"]:
+                if session._current_backend == session._BACKEND_VIDEO:
+                    session.pause()
+                if pane is not None and hasattr(pane, "show_status"):
+                    pane.show_status("Not available at this UTC time")
+                continue
+            if session._current_backend == session._BACKEND_VIDEO:
+                if pane is not None and hasattr(pane, "show_video_surface"):
+                    pane.show_video_surface()
+                drift = abs(session.current_position_ms() - local)
+                fps = float(record["source"].get("fps") or 0.0)
+                frame_ms = int(round(1000.0 / fps)) if fps > 0 else 0
+                threshold = max(self._VIDEO_DRIFT_TOLERANCE_MS, frame_ms)
+                if record is not video_clock and force_video_seek and drift > threshold:
+                    session.set_position(local)
+                if self._group_playing and not session.is_playing():
+                    session.play()
+            else:
+                session.set_position_deferred(local)
+
+    def _start_video_sessions(self):
+        for record in self._sessions:
+            session = record["controller"]
+            if not record["valid"] or session is None:
+                continue
+            local = self._group_position_ms - record["offset_ms"]
+            if session._current_backend == session._BACKEND_VIDEO and 0 <= local <= record["duration_ms"]:
+                session.set_position(local)
+                session.play()
+        self._apply_audio_state()

@@ -1,3 +1,4 @@
+import datetime as _datetime
 import os
 
 from PyQt6 import uic
@@ -5,7 +6,21 @@ from PyQt6.QtCore import Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
-from PyQt6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QSlider, QStyle, QStyleOptionSlider, QWidget
+from PyQt6.QtWidgets import (
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSlider,
+    QStyle,
+    QStyleOptionSlider,
+    QVBoxLayout,
+    QWidget,
+)
 
 from utils import resource_path
 
@@ -91,6 +106,139 @@ class FramePreviewLabel(QLabel):
         super().setPixmap(scaled)
 
 
+class MediaViewerPane(QFrame):
+    """One independently rendered media surface inside the synchronized grid."""
+
+    focusRequested = pyqtSignal(str)
+    muteToggleRequested = pyqtSignal(str)
+    syncRequested = pyqtSignal(str)
+
+    def __init__(self, source_key: str = "", parent=None):
+        super().__init__(parent)
+        self.source_key = str(source_key or "")
+        self._sync_available = False
+        self._sync_unavailable_reason = "Synchronization is unavailable."
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setProperty("class", "media_viewer_pane")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setMinimumSize(280, 180)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(3)
+        header = QHBoxLayout()
+        self.title_label = QLabel("Media")
+        self.timing_label = QLabel("Relative")
+        self.timing_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.btn_mute = QPushButton("", self)
+        self.btn_mute.setFixedSize(24, 24)
+        self._icon_volume = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume)
+        self._icon_muted = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolumeMuted)
+        self.btn_mute.setIcon(self._icon_volume)
+        self.btn_mute.setToolTip("Mute this feed")
+        self.btn_mute.clicked.connect(lambda: self.muteToggleRequested.emit(self.source_key))
+        header.addWidget(self.title_label, 1)
+        header.addWidget(self.timing_label)
+        header.addWidget(self.btn_mute)
+        layout.addLayout(header)
+
+        self.surface = QWidget(self)
+        self.surface_layout = QVBoxLayout(self.surface)
+        self.surface_layout.setContentsMargins(0, 0, 0, 0)
+        self.video_widget = QVideoWidget(self.surface)
+        self.video_widget.setProperty("class", "video_preview_widget")
+        self.frame_widget = FramePreviewLabel(self.surface)
+        self.frame_widget.setProperty("class", "video_preview_widget")
+        self.status_label = QLabel("", self.surface)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setWordWrap(True)
+        self.status_label.hide()
+        for widget in (self.video_widget, self.frame_widget, self.status_label):
+            widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            self.surface_layout.addWidget(widget)
+        self.frame_widget.hide()
+        layout.addWidget(self.surface, 1)
+
+        self.player = QMediaPlayer(self)
+        self.audio = QAudioOutput(self)
+        self.audio.setVolume(1.0)
+        self.player.setAudioOutput(self.audio)
+        self.player.setVideoOutput(self.video_widget)
+
+    def configure(self, source: dict, *, focused: bool = False):
+        path = str(source.get("path") or "")
+        source_type = str(source.get("type") or "unknown")
+        self.source_key = path
+        self.title_label.setText(f"{source_type} · {os.path.basename(path) or path}")
+        self.set_focused(focused)
+        self.show_status("Loading…")
+
+    def set_timing_status(self, text: str, tooltip: str = ""):
+        self.timing_label.setText(str(text or "Relative"))
+        self.timing_label.setToolTip(str(tooltip or ""))
+
+    def set_focused(self, focused: bool):
+        self.setProperty("focused", bool(focused))
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def set_syncing(self, syncing: bool):
+        self.setProperty("syncing", bool(syncing))
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def set_sync_available(self, available: bool, reason: str = ""):
+        self._sync_available = bool(available)
+        self._sync_unavailable_reason = str(reason or "Synchronization is unavailable.")
+
+    def set_feed_muted(self, muted: bool):
+        self.btn_mute.setIcon(self._icon_muted if muted else self._icon_volume)
+        self.btn_mute.setToolTip("Unmute this feed" if muted else "Mute this feed")
+
+    def show_status(self, text: str):
+        self.video_widget.hide()
+        self.frame_widget.hide()
+        self.status_label.setText(str(text or ""))
+        self.status_label.show()
+
+    def show_video_surface(self):
+        self.status_label.hide()
+        self.frame_widget.hide()
+        self.video_widget.show()
+
+    def show_frame_surface(self):
+        self.status_label.hide()
+        self.video_widget.hide()
+        self.frame_widget.show()
+
+    def clear_preview(self):
+        self.frame_widget.clear_frame()
+        self.show_video_surface()
+        self.video_widget.update()
+
+    def set_frame_image(self, image):
+        if image is None or image.isNull():
+            self.clear_preview()
+            return
+        self.frame_widget.set_frame_pixmap(QPixmap.fromImage(image))
+        self.show_frame_surface()
+
+    def mousePressEvent(self, event):
+        self.focusRequested.emit(self.source_key)
+        super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        action = menu.addAction("Synchronize this modality")
+        action.setEnabled(self._sync_available)
+        if not self._sync_available:
+            action.setStatusTip(self._sync_unavailable_reason)
+            action.setToolTip(self._sync_unavailable_reason)
+        if menu.exec(event.globalPos()) is action:
+            self.syncRequested.emit(self.source_key)
+
+
 class MediaCenterPanel(QWidget):
     """
     Unified center panel for all annotation modes.
@@ -103,6 +251,12 @@ class MediaCenterPanel(QWidget):
     playPauseRequested = pyqtSignal()
     muteToggleRequested = pyqtSignal()
     playbackRateRequested = pyqtSignal(float)
+    paneFocusRequested = pyqtSignal(str)
+    paneMuteToggleRequested = pyqtSignal(str)
+    paneSyncRequested = pyqtSignal(str)
+    syncFrameStepRequested = pyqtSignal(int)
+    syncApplyRequested = pyqtSignal()
+    syncCancelRequested = pyqtSignal()
 
     # Timeline/media signals
     seekRequested = pyqtSignal(int)
@@ -122,6 +276,7 @@ class MediaCenterPanel(QWidget):
             ) from exc
 
         self._setup_media_player()
+        self._setup_sync_bar()
         self._setup_timeline()
         self._setup_controls()
 
@@ -131,24 +286,131 @@ class MediaCenterPanel(QWidget):
         self.user_is_scrolling = False
         self.zoom_level = 1.0
         self.auto_scroll_active = True
+        self._utc_origin = None
+        self._sync_active = False
+        self._sync_timeline_text = ""
 
     def _setup_media_player(self):
-        self.video_widget = QVideoWidget(self.video_container)
-        self.video_widget.setProperty("class", "video_preview_widget")
-        self.video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.videoLayout.addWidget(self.video_widget)
+        self.viewer_scroll = QScrollArea(self.video_container)
+        self.viewer_scroll.setWidgetResizable(True)
+        self.viewer_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.viewer_host = QWidget(self.viewer_scroll)
+        self.viewer_grid = QGridLayout(self.viewer_host)
+        self.viewer_grid.setContentsMargins(0, 0, 0, 0)
+        self.viewer_grid.setSpacing(5)
+        self.viewer_scroll.setWidget(self.viewer_host)
+        self.videoLayout.addWidget(self.viewer_scroll)
+        self._viewer_panes = [self._create_viewer_pane("")]
+        self.viewer_grid.addWidget(self._viewer_panes[0], 0, 0)
+        self._sync_primary_aliases()
 
-        self.frame_widget = FramePreviewLabel(self.video_container)
-        self.frame_widget.setProperty("class", "video_preview_widget")
-        self.frame_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.frame_widget.hide()
-        self.videoLayout.addWidget(self.frame_widget)
+    def _create_viewer_pane(self, source_key: str):
+        pane = MediaViewerPane(source_key, self.viewer_host)
+        pane.focusRequested.connect(self.paneFocusRequested)
+        pane.muteToggleRequested.connect(self.paneMuteToggleRequested)
+        pane.syncRequested.connect(self.paneSyncRequested)
+        return pane
 
-        self.player = QMediaPlayer(self)
-        self.audio = QAudioOutput(self)
-        self.audio.setVolume(1.0)
-        self.player.setAudioOutput(self.audio)
-        self.player.setVideoOutput(self.video_widget)
+    def _setup_sync_bar(self):
+        self.sync_bar = QFrame(self)
+        self.sync_bar.setProperty("class", "media_sync_bar")
+        layout = QHBoxLayout(self.sync_bar)
+        layout.setContentsMargins(6, 4, 6, 4)
+        self.sync_status_label = QLabel("Synchronization mode", self.sync_bar)
+        self.btn_sync_prev_frame = QPushButton("◀ Frame", self.sync_bar)
+        self.btn_sync_next_frame = QPushButton("Frame ▶", self.sync_bar)
+        self.btn_sync_apply = QPushButton("Apply", self.sync_bar)
+        self.btn_sync_cancel = QPushButton("Cancel", self.sync_bar)
+        layout.addWidget(self.sync_status_label, 1)
+        layout.addWidget(self.btn_sync_prev_frame)
+        layout.addWidget(self.btn_sync_next_frame)
+        layout.addWidget(self.btn_sync_apply)
+        layout.addWidget(self.btn_sync_cancel)
+        self.btn_sync_prev_frame.clicked.connect(lambda: self.syncFrameStepRequested.emit(-1))
+        self.btn_sync_next_frame.clicked.connect(lambda: self.syncFrameStepRequested.emit(1))
+        self.btn_sync_apply.clicked.connect(self.syncApplyRequested)
+        self.btn_sync_cancel.clicked.connect(self.syncCancelRequested)
+        self.sync_bar.hide()
+        self.mainLayout.insertWidget(1, self.sync_bar)
+
+    def _sync_primary_aliases(self):
+        pane = self._viewer_panes[0]
+        self.video_widget = pane.video_widget
+        self.frame_widget = pane.frame_widget
+        self.player = pane.player
+        self.audio = pane.audio
+
+    def configure_viewers(self, sources: list[dict], focused_path: str = ""):
+        sources = list(sources or []) or [{"path": "", "type": "media"}]
+        while len(self._viewer_panes) < len(sources):
+            self._viewer_panes.append(self._create_viewer_pane(""))
+        while len(self._viewer_panes) > len(sources):
+            pane = self._viewer_panes.pop()
+            self.viewer_grid.removeWidget(pane)
+            pane.player.stop()
+            pane.deleteLater()
+
+        focused_key = os.path.normcase(os.path.normpath(focused_path)) if focused_path else ""
+        for index, (pane, source) in enumerate(zip(self._viewer_panes, sources)):
+            path = str(source.get("path") or "")
+            is_focused = bool(focused_key and os.path.normcase(os.path.normpath(path)) == focused_key)
+            if not focused_key:
+                is_focused = index == 0
+            pane.configure(source, focused=is_focused)
+            self.viewer_grid.addWidget(pane, index // 2, index % 2)
+        self._sync_primary_aliases()
+        return list(self._viewer_panes)
+
+    def reset_viewers(self):
+        self.configure_viewers([{"path": "", "type": "media"}], "")
+        pane = self._viewer_panes[0]
+        pane.source_key = ""
+        pane.title_label.setText("Media")
+        pane.set_timing_status("Relative")
+        pane.set_sync_available(False)
+        pane.set_syncing(False)
+        self.clear_preview()
+        self._sync_primary_aliases()
+
+    def focus_viewer(self, focused_path: str):
+        focused_key = os.path.normcase(os.path.normpath(focused_path)) if focused_path else ""
+        for pane in self._viewer_panes:
+            pane.set_focused(
+                bool(focused_key and os.path.normcase(os.path.normpath(pane.source_key)) == focused_key)
+            )
+
+    def set_sync_availability(self, availability: dict[str, tuple[bool, str]]):
+        for pane in self._viewer_panes:
+            available, reason = availability.get(pane.source_key, (False, "Synchronization is unavailable."))
+            pane.set_sync_available(available, reason)
+
+    def set_sync_mode(self, active: bool, selected_path: str = ""):
+        self._sync_active = bool(active)
+        if not active:
+            self._sync_timeline_text = ""
+        self.sync_bar.setVisible(bool(active))
+        selected_key = os.path.normcase(os.path.normpath(selected_path)) if selected_path else ""
+        for pane in self._viewer_panes:
+            pane_key = os.path.normcase(os.path.normpath(pane.source_key)) if pane.source_key else ""
+            pane.set_syncing(bool(active and pane_key == selected_key))
+
+    def update_sync_status(self, anchor_text: str, local_ms: int, duration_ms: int, proposed_text: str):
+        text = (
+            f"Anchor {anchor_text} UTC  ·  Local {self._format_ms(local_ms)} / "
+            f"{self._format_ms(duration_ms)}  ·  Proposed start {proposed_text} UTC"
+        )
+        self._sync_timeline_text = text
+        self.sync_status_label.setText(text)
+        self.time_label.setText(text)
+
+    @staticmethod
+    def _format_ms(ms: int):
+        value = max(0, int(ms))
+        seconds = value // 1000
+        return f"{seconds // 60:02}:{seconds % 60:02}.{value % 1000:03}"
+
+    def set_utc_origin(self, origin):
+        self._utc_origin = origin
 
     def _setup_timeline(self):
         self.scroll_area: QScrollArea
@@ -248,11 +510,9 @@ class MediaCenterPanel(QWidget):
         self.frame_widget.show()
 
     def clear_preview(self):
-        self.frame_widget.clear_frame()
-        self.frame_widget.hide()
-        self.video_widget.show()
-        self.video_widget.update()
-        self.video_widget.repaint()
+        for pane in self._viewer_panes:
+            pane.clear_preview()
+            pane.video_widget.repaint()
 
     def set_frame_image(self, image):
         if image is None or image.isNull():
@@ -376,7 +636,14 @@ class MediaCenterPanel(QWidget):
             m = s // 60
             return f"{m:02}:{s % 60:02}.{ms % 1000:03}"
 
-        self.time_label.setText(f"{fmt(current_ms)} / {fmt(self.duration)}")
+        if self._sync_active and self._sync_timeline_text:
+            self.time_label.setText(self._sync_timeline_text)
+            return
+        label = f"{fmt(current_ms)} / {fmt(self.duration)}"
+        if isinstance(self._utc_origin, _datetime.datetime):
+            current_utc = self._utc_origin + _datetime.timedelta(milliseconds=max(0, int(current_ms)))
+            label = f"{label}  ·  {current_utc.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} UTC"
+        self.time_label.setText(label)
 
     def _on_slider_pressed(self):
         self.is_dragging = True

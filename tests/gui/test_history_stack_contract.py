@@ -704,3 +704,71 @@ def test_history_contract_empty_stack_undo_redo_is_noop(window, monkeypatch, qtb
 
     _assert_non_mutating_action_keeps_history_unchanged(window, qtbot, window.history_manager.perform_undo)
     _assert_non_mutating_action_keeps_history_unchanged(window, qtbot, window.history_manager.perform_redo)
+
+
+@pytest.mark.gui
+def test_input_utc_start_update_is_one_undoable_semantic_mutation(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+
+    model = window.dataset_explorer_controller
+    sample_id = model.current_selected_sample_id
+    source = model.get_media_sources_by_id(sample_id)[0]
+    input_path = source["path"]
+    model.get_sample(sample_id)["dense_captions"] = [
+        {"position_ms": 1500, "lang": "en", "text": "Absolute-time caption"}
+    ]
+    model._rebuild_runtime_index()
+
+    before_json = _json_snapshot(window)
+    assert window.history_manager.execute_input_utc_start_update(
+        sample_id,
+        input_path,
+        "2022-12-03T15:27:59.461000+02:00",
+    )
+    after_json = _json_snapshot(window)
+    assert after_json != before_json
+    assert after_json["data"][0]["inputs"][0]["UTC_time_start"] == (
+        "2022-12-03 13:27:59.461000"
+    )
+    assert _stack_sizes(window) == (1, 0)
+
+    # An equivalent instant, expressed differently, is a semantic no-op.
+    assert not window.history_manager.execute_input_utc_start_update(
+        sample_id,
+        input_path,
+        "2022-12-03 13:27:59.461Z",
+        999,
+    )
+    assert _json_snapshot(window) == after_json
+    assert _stack_sizes(window) == (1, 0)
+
+    window.history_manager.perform_undo()
+    qtbot.wait(50)
+    assert _json_snapshot(window) == before_json
+    assert _stack_sizes(window) == (0, 1)
+
+    # A new synchronization after undo clears the previous redo branch.
+    assert window.history_manager.execute_input_utc_start_update(
+        sample_id,
+        input_path,
+        "2022-12-03 13:28:01.000000",
+        250,
+    )
+    replacement_json = _json_snapshot(window)
+    assert replacement_json["data"][0]["events"][0]["position_ms"] == 1250
+    assert replacement_json["data"][0]["dense_captions"][0]["position_ms"] == 1750
+    assert _stack_sizes(window) == (1, 0)
+
+    window.history_manager.perform_undo()
+    qtbot.wait(50)
+    assert _json_snapshot(window) == before_json
+    window.history_manager.perform_redo()
+    qtbot.wait(50)
+    assert _json_snapshot(window) == replacement_json

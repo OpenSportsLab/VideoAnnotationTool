@@ -1,6 +1,7 @@
 import sys
 import os
 import re
+import datetime as _datetime
 from PyQt6.QtCore import Qt, QPointF
 from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QIcon
 
@@ -13,6 +14,25 @@ SUPPORTED_EXTENSIONS = (
 
 DEFAULT_TASK_NAME = "N/A (Please Import JSON)"
 SINGLE_VIDEO_PREFIX = "Annotation_"
+
+
+def parse_utc_datetime(value):
+    """Parse an ISO-compatible UTC value into a naive UTC datetime."""
+    if isinstance(value, _datetime.datetime):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = _datetime.datetime.fromisoformat(text)
+        except (TypeError, ValueError):
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(_datetime.timezone.utc).replace(tzinfo=None)
+    return parsed
 
 # --- Helper Functions ---
 def resource_path(relative_path):

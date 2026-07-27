@@ -109,6 +109,18 @@ def _recent_file_button_text(window, row: int = 0) -> str:
 
 
 @pytest.mark.gui
+def test_loading_project_does_not_select_or_route_first_sample(window, monkeypatch, qtbot, synthetic_project_json):
+    project_json_path = synthetic_project_json("classification", item_count=2)
+
+    _open_project(window, monkeypatch, project_json_path)
+    qtbot.wait(50)
+
+    assert window.dataset_explorer_panel.tree.currentIndex() == QModelIndex()
+    assert window.dataset_explorer_controller.current_selected_sample_id == ""
+    assert window.dataset_explorer_controller.current_selected_input_path is None
+
+
+@pytest.mark.gui
 def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     window,
     monkeypatch,
@@ -246,7 +258,7 @@ def test_selection_switches_to_first_available_tab_when_current_is_not_supported
     project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     _open_project(window, monkeypatch, project_json_path)
-    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["classification"]
 
     second_index = window.tree_model.index(1, 0)
     assert second_index.isValid()
@@ -273,8 +285,10 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
     play_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda file_path, auto_play=True: play_calls.append(file_path),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: play_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     parent_index = _select_top_row(window, qtbot, 0)
@@ -298,7 +312,8 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
     assert window.dataset_explorer_controller.current_selected_sample_id == parent_sample_id
     assert window.dataset_explorer_controller.current_selected_input_path == child_path
     assert window.get_current_action_path() == parent_action_path
-    assert play_calls[-1] == child_path
+    assert play_calls[-1][1] == child_path
+    assert {source["path"] for source in play_calls[-1][0]} == {first_child_path, child_path}
     assert len(window.dataset_explorer_controller.action_item_data) == 1
 
     calls_before_first_child = len(play_calls)
@@ -306,7 +321,8 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
     qtbot.wait(50)
 
     assert len(play_calls) == calls_before_first_child + 1
-    assert play_calls[-1] == first_child_path
+    assert play_calls[-1][1] == first_child_path
+    assert play_calls[-1][2] is True
     assert window.dataset_explorer_controller.current_selected_input_path == first_child_path
 
 
@@ -343,11 +359,13 @@ def test_selecting_non_video_input_keeps_selection_without_requesting_playback(
     play_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda file_path, auto_play=True: play_calls.append(file_path),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: play_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
-    parent_index = _select_top_row(window, qtbot, 0)
+    parent_index = window.tree_model.index(0, 0)
     child_index = window.tree_model.index(0, 0, parent_index)
     assert child_index.isValid()
     selected_path = child_index.data(window.tree_model.FilePathRole)
@@ -358,7 +376,9 @@ def test_selecting_non_video_input_keeps_selection_without_requesting_playback(
 
     assert window.dataset_explorer_controller.current_selected_sample_id == "text_only"
     assert window.dataset_explorer_controller.current_selected_input_path == selected_path
-    assert play_calls == []
+    assert len(play_calls) == 1
+    assert play_calls[0][1] == selected_path
+    assert play_calls[0][0][0]["type"] == "text"
 
 
 @pytest.mark.gui
@@ -379,8 +399,10 @@ def test_selecting_parent_while_stopped_restarts_playback_for_same_source(
     play_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda file_path, auto_play=True: play_calls.append(file_path),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: play_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
     monkeypatch.setattr(
         window.center_panel.player,
@@ -398,7 +420,8 @@ def test_selecting_parent_while_stopped_restarts_playback_for_same_source(
     qtbot.wait(50)
 
     assert play_calls
-    assert play_calls[-1] == parent_path
+    assert play_calls[-1][1] == parent_path
+    assert play_calls[-1][2] is True
 
 
 @pytest.mark.gui
@@ -1375,9 +1398,10 @@ def test_save_as_rewrites_paths_autosaves_description_and_promotes_new_recent(
 ):
     project_json_path = synthetic_project_json("description")
     _open_project(window, monkeypatch, project_json_path)
-    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["classification"]
 
     _select_top_row(window, qtbot, 0)
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     final_text = "Description saved through Save As."
     window.description_panel.caption_edit.setPlainText(final_text)
 
