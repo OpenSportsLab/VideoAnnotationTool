@@ -112,12 +112,15 @@ class MediaViewerPane(QFrame):
     focusRequested = pyqtSignal(str)
     muteToggleRequested = pyqtSignal(str)
     syncRequested = pyqtSignal(str)
+    goToStartRequested = pyqtSignal(str)
 
     def __init__(self, source_key: str = "", parent=None):
         super().__init__(parent)
         self.source_key = str(source_key or "")
         self._sync_available = False
         self._sync_unavailable_reason = "Synchronization is unavailable."
+        self._navigation_available = False
+        self._sync_mode_active = False
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setProperty("class", "media_viewer_pane")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -191,6 +194,12 @@ class MediaViewerPane(QFrame):
         self._sync_available = bool(available)
         self._sync_unavailable_reason = str(reason or "Synchronization is unavailable.")
 
+    def set_navigation_available(self, available: bool):
+        self._navigation_available = bool(available)
+
+    def set_sync_mode_active(self, active: bool):
+        self._sync_mode_active = bool(active)
+
     def set_feed_muted(self, muted: bool):
         self.btn_mute.setIcon(self._icon_muted if muted else self._icon_volume)
         self.btn_mute.setToolTip("Unmute this feed" if muted else "Mute this feed")
@@ -230,12 +239,26 @@ class MediaViewerPane(QFrame):
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         menu.setToolTipsVisible(True)
+        go_to_start_action = menu.addAction("Go to start")
+        go_to_start_action.setEnabled(
+            self._navigation_available and not self._sync_mode_active
+        )
+        if not self._navigation_available:
+            go_to_start_action.setToolTip("This input is not playable.")
+        elif self._sync_mode_active:
+            go_to_start_action.setToolTip(
+                "Finish synchronization before navigating the shared timeline."
+            )
+        menu.addSeparator()
         action = menu.addAction("Synchronize this modality")
         action.setEnabled(self._sync_available)
         if not self._sync_available:
             action.setStatusTip(self._sync_unavailable_reason)
             action.setToolTip(self._sync_unavailable_reason)
-        if menu.exec(event.globalPos()) is action:
+        selected_action = menu.exec(event.globalPos())
+        if selected_action is go_to_start_action:
+            self.goToStartRequested.emit(self.source_key)
+        elif selected_action is action:
             self.syncRequested.emit(self.source_key)
 
 
@@ -254,6 +277,7 @@ class MediaCenterPanel(QWidget):
     paneFocusRequested = pyqtSignal(str)
     paneMuteToggleRequested = pyqtSignal(str)
     paneSyncRequested = pyqtSignal(str)
+    paneGoToStartRequested = pyqtSignal(str)
     syncFrameStepRequested = pyqtSignal(int)
     syncApplyRequested = pyqtSignal()
     syncCancelRequested = pyqtSignal()
@@ -309,6 +333,7 @@ class MediaCenterPanel(QWidget):
         pane.focusRequested.connect(self.paneFocusRequested)
         pane.muteToggleRequested.connect(self.paneMuteToggleRequested)
         pane.syncRequested.connect(self.paneSyncRequested)
+        pane.goToStartRequested.connect(self.paneGoToStartRequested)
         return pane
 
     def _setup_sync_bar(self):
@@ -384,6 +409,10 @@ class MediaCenterPanel(QWidget):
             available, reason = availability.get(pane.source_key, (False, "Synchronization is unavailable."))
             pane.set_sync_available(available, reason)
 
+    def set_navigation_availability(self, availability: dict[str, bool]):
+        for pane in self._viewer_panes:
+            pane.set_navigation_available(bool(availability.get(pane.source_key, False)))
+
     def set_sync_mode(self, active: bool, selected_path: str = ""):
         self._sync_active = bool(active)
         if not active:
@@ -393,6 +422,7 @@ class MediaCenterPanel(QWidget):
         for pane in self._viewer_panes:
             pane_key = os.path.normcase(os.path.normpath(pane.source_key)) if pane.source_key else ""
             pane.set_syncing(bool(active and pane_key == selected_key))
+            pane.set_sync_mode_active(active)
 
     def update_sync_status(self, anchor_text: str, local_ms: int, duration_ms: int, proposed_text: str):
         text = (

@@ -717,6 +717,8 @@ class MediaController(QObject):
                 media_panel.paneMuteToggleRequested.connect(self.toggle_feed_mute)
             if hasattr(media_panel, "paneSyncRequested"):
                 media_panel.paneSyncRequested.connect(self.enter_sync_mode)
+            if hasattr(media_panel, "paneGoToStartRequested"):
+                media_panel.paneGoToStartRequested.connect(self.go_to_source_start)
             if hasattr(media_panel, "syncFrameStepRequested"):
                 media_panel.syncFrameStepRequested.connect(self.step_sync_frame)
             if hasattr(media_panel, "syncApplyRequested"):
@@ -1158,25 +1160,47 @@ class MediaController(QObject):
         playable_count = sum(1 for record in self._sessions if record["valid"])
         has_utc_reference = isinstance(self._global_origin_utc, _datetime.datetime)
         availability = {}
+        navigation_availability = {}
         for record in self._sessions:
+            source_path = str(record["source"].get("path") or "")
+            navigation_availability[source_path] = bool(record["valid"])
             if not record["valid"]:
-                availability[str(record["source"].get("path") or "")] = (
+                availability[source_path] = (
                     False,
                     "This input is not playable.",
                 )
             elif playable_count < 2:
-                availability[str(record["source"].get("path") or "")] = (
+                availability[source_path] = (
                     False,
                     "Synchronization requires at least two playable inputs.",
                 )
             elif not has_utc_reference:
-                availability[str(record["source"].get("path") or "")] = (
+                availability[source_path] = (
                     False,
                     "Synchronization requires an absolute UTC reference.",
                 )
             else:
-                availability[str(record["source"].get("path") or "")] = (True, "")
+                availability[source_path] = (True, "")
         self.media_panel.set_sync_availability(availability)
+        if hasattr(self.media_panel, "set_navigation_availability"):
+            self.media_panel.set_navigation_availability(navigation_availability)
+
+    def go_to_source_start(self, path: str):
+        if not self._group_active or self._sync_record is not None:
+            return
+        target_key = self._single._fs_path_key(path)
+        record = next(
+            (
+                item
+                for item in self._sessions
+                if item["valid"]
+                and self._single._fs_path_key(item["source"].get("path")) == target_key
+            ),
+            None,
+        )
+        if record is None:
+            return
+        self.set_position(int(record["offset_ms"]))
 
     def enter_sync_mode(self, path: str):
         if not self._group_active or self._sync_record is not None:

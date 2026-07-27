@@ -1580,6 +1580,39 @@ def test_sync_mode_freezes_group_and_controls_only_selected_h5(
 
 
 @pytest.mark.gui
+def test_viewer_go_to_start_seeks_shared_clock_to_modality_utc_origin(
+    media_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    first_path = tmp_path / "go_start_first.h5"
+    second_path = tmp_path / "go_start_second.h5"
+    _write_minimal_player_joints_h5(
+        first_path,
+        [b"2026-01-01 12:00:00.000000", b"2026-01-01 12:00:01.000000"],
+    )
+    _write_minimal_player_centroids_h5(
+        second_path,
+        [b"2026-01-01 12:00:00.250000", b"2026-01-01 12:00:01.250000"],
+    )
+    controller.route_media_group(
+        [
+            {"type": "player_joints_h5", "path": str(first_path)},
+            {"type": "player_centroids_h5", "path": str(second_path)},
+        ],
+        str(first_path),
+        False,
+    )
+
+    assert all(pane._navigation_available for pane in panel._viewer_panes)
+    panel._viewer_panes[1].goToStartRequested.emit(str(second_path))
+    assert controller.current_position_ms() == 250
+
+    panel._viewer_panes[0].goToStartRequested.emit(str(first_path))
+    assert controller.current_position_ms() == 0
+
+
+@pytest.mark.gui
 def test_sync_mode_frame_step_apply_and_cancel(media_panel_and_controller, tmp_path):
     panel, controller = media_panel_and_controller
     first_path = tmp_path / "step_first.h5"
