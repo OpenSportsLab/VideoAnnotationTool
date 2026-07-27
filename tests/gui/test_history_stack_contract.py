@@ -721,6 +721,10 @@ def test_input_utc_start_update_is_one_undoable_semantic_mutation(
     sample_id = model.current_selected_sample_id
     source = model.get_media_sources_by_id(sample_id)[0]
     input_path = source["path"]
+    model.get_sample(sample_id)["dense_captions"] = [
+        {"position_ms": 1500, "lang": "en", "text": "Absolute-time caption"}
+    ]
+    model._rebuild_runtime_index()
 
     before_json = _json_snapshot(window)
     assert window.history_manager.execute_input_utc_start_update(
@@ -740,6 +744,7 @@ def test_input_utc_start_update_is_one_undoable_semantic_mutation(
         sample_id,
         input_path,
         "2022-12-03 13:27:59.461Z",
+        999,
     )
     assert _json_snapshot(window) == after_json
     assert _stack_sizes(window) == (1, 0)
@@ -754,8 +759,11 @@ def test_input_utc_start_update_is_one_undoable_semantic_mutation(
         sample_id,
         input_path,
         "2022-12-03 13:28:01.000000",
+        250,
     )
     replacement_json = _json_snapshot(window)
+    assert replacement_json["data"][0]["events"][0]["position_ms"] == 1250
+    assert replacement_json["data"][0]["dense_captions"][0]["position_ms"] == 1750
     assert _stack_sizes(window) == (1, 0)
 
     window.history_manager.perform_undo()

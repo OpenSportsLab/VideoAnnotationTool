@@ -1606,12 +1606,12 @@ def test_sync_mode_frame_step_apply_and_cancel(media_panel_and_controller, tmp_p
 
     emitted = []
     controller.inputUtcStartMutationRequested.connect(
-        lambda path, utc_text: emitted.append((path, utc_text))
+        lambda path, utc_text, shift_ms: emitted.append((path, utc_text, shift_ms))
     )
     controller.set_position(250)
     controller.apply_sync_mode()
 
-    assert emitted == [(str(second_path), "2026-01-01 11:59:59.850000")]
+    assert emitted == [(str(second_path), "2026-01-01 11:59:59.850000", 150)]
     assert controller._sync_record is None
     assert panel.sync_bar.isVisible() is False
     assert controller.is_playing() is False
@@ -1676,3 +1676,41 @@ def test_sync_availability_requires_two_playable_inputs_and_utc_reference(
     ]
     controller.route_media_group(utc_sources, str(first_frames), False)
     assert all(pane._sync_available is True for pane in panel._viewer_panes)
+
+
+@pytest.mark.gui
+def test_sync_apply_reports_negative_annotation_shift_when_union_origin_moves_later(
+    media_panel_and_controller,
+    tmp_path,
+):
+    _panel, controller = media_panel_and_controller
+    utc_frames = tmp_path / "utc_frames.npy"
+    relative_frames = tmp_path / "relative_frames.npy"
+    np.save(utc_frames, np.zeros((3, 4, 4, 3), dtype=np.uint8))
+    np.save(relative_frames, np.zeros((3, 4, 4, 3), dtype=np.uint8))
+    controller.route_media_group(
+        [
+            {
+                "type": "frames_npy",
+                "path": str(utc_frames),
+                "fps": 10.0,
+                "UTC_time_start": "2026-01-01 12:00:00.000000",
+            },
+            {"type": "frames_npy", "path": str(relative_frames), "fps": 10.0},
+        ],
+        str(utc_frames),
+        False,
+    )
+    controller.set_position(100)
+    controller.enter_sync_mode(str(utc_frames))
+    controller.set_position(0)
+
+    emitted = []
+    controller.inputUtcStartMutationRequested.connect(
+        lambda path, utc_text, shift_ms: emitted.append((path, utc_text, shift_ms))
+    )
+    controller.apply_sync_mode()
+
+    assert emitted == [
+        (str(utc_frames), "2026-01-01 12:00:00.100000", -100),
+    ]

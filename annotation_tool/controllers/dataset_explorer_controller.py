@@ -730,7 +730,13 @@ class DatasetExplorerController(QObject):
             return True
         return False
 
-    def _set_input_utc_time_start(self, sample_id: str, input_path: str, utc_text: str) -> bool:
+    def _set_input_utc_time_start(
+        self,
+        sample_id: str,
+        input_path: str,
+        utc_text: str,
+        annotation_shift_ms: int = 0,
+    ) -> bool:
         sample = self.get_sample(sample_id)
         target_key = self._fs_path_key(input_path)
         parsed_new = parse_utc_datetime(utc_text)
@@ -747,6 +753,16 @@ class DatasetExplorerController(QObject):
             if old_present and parsed_old == parsed_new:
                 return False
             input_item["UTC_time_start"] = parsed_new.strftime("%Y-%m-%d %H:%M:%S.%f")
+            shift_ms = int(annotation_shift_ms)
+            if shift_ms:
+                for field_name in ("events", "dense_captions"):
+                    for annotation in sample.get(field_name, []):
+                        if not isinstance(annotation, dict) or "position_ms" not in annotation:
+                            continue
+                        try:
+                            annotation["position_ms"] = int(annotation["position_ms"]) + shift_ms
+                        except (TypeError, ValueError):
+                            continue
             self._rebuild_runtime_index()
             return True
         return False

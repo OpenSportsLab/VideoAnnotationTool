@@ -269,11 +269,21 @@ class VideoAnnotationWindow(QMainWindow):
         else:
             self.close()
 
-    def _handle_input_utc_start_mutation(self, input_path: str, utc_text: str):
+    def _handle_input_utc_start_mutation(
+        self,
+        input_path: str,
+        utc_text: str,
+        annotation_shift_ms: int,
+    ):
         sample_id = self.dataset_explorer_controller.current_selected_sample_id
         if not sample_id:
             return
-        self.history_manager.execute_input_utc_start_update(sample_id, input_path, utc_text)
+        self.history_manager.execute_input_utc_start_update(
+            sample_id,
+            input_path,
+            utc_text,
+            annotation_shift_ms,
+        )
         sources = self.dataset_explorer_controller.get_media_sources_by_id(sample_id)
         if sources:
             self.media_controller.route_media_group(sources, input_path, False)

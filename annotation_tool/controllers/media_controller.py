@@ -646,7 +646,7 @@ class MediaController(QObject):
     muteStateChanged = pyqtSignal(bool)
     positionChanged = pyqtSignal(int)
     durationChanged = pyqtSignal(int)
-    inputUtcStartMutationRequested = pyqtSignal(str, str)
+    inputUtcStartMutationRequested = pyqtSignal(str, str, int)
 
     @property
     def _RASTER_FRAME_CACHE_LIMIT(self):
@@ -1241,6 +1241,15 @@ class MediaController(QObject):
         record = self._sync_record
         local_position = record["controller"].current_position_ms()
         proposed = self._sync_anchor_utc - _datetime.timedelta(milliseconds=local_position)
+        proposed_origins = []
+        for item in self._sessions:
+            origin = proposed if item is record else item["origin_utc"]
+            if item["valid"] and isinstance(origin, _datetime.datetime):
+                proposed_origins.append(origin)
+        new_global_origin = min(proposed_origins) if proposed_origins else self._global_origin_utc
+        annotation_shift_ms = int(
+            round((self._global_origin_utc - new_global_origin).total_seconds() * 1000.0)
+        )
         utc_text = proposed.strftime("%Y-%m-%d %H:%M:%S.%f")
         input_path = str(record["source"].get("path") or "")
         anchor = self._sync_anchor_utc
@@ -1253,7 +1262,7 @@ class MediaController(QObject):
         self.positionChanged.emit(original_global_position)
         self.playbackStateChanged.emit(False)
         self._pending_restore_anchor_utc = anchor
-        self.inputUtcStartMutationRequested.emit(input_path, utc_text)
+        self.inputUtcStartMutationRequested.emit(input_path, utc_text, annotation_shift_ms)
 
     def _finish_sync_mode_ui(self):
         self._sync_poll_timer.stop()
