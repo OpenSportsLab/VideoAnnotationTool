@@ -538,8 +538,11 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
         }
 
     def _scene_basis(self, x: float, y: float, z: float):
-        u = (x - y) * 0.70710678118
-        v = ((x + y) * 0.35355339059) - (max(0.0, self._coerce_finite_float(z) or 0.0) * self._SCENE_Z_SCALE)
+        # The H5 field-width axis follows the same direction as the centroid
+        # and video modalities. Reflect Y when projecting into the 3D view so
+        # positive field-width coordinates remain on the corresponding side.
+        u = (x + y) * 0.70710678118
+        v = ((x - y) * 0.35355339059) - (max(0.0, self._coerce_finite_float(z) or 0.0) * self._SCENE_Z_SCALE)
         return u, v
 
     def _project_joint_scene_point(self, x: float, y: float, z: float, layout: dict):

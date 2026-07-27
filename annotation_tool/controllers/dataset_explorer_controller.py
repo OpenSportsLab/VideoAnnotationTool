@@ -921,7 +921,7 @@ class DatasetExplorerController(QObject):
         self.workspaceViewRequested.emit()
         self._refresh_header_panel()
         self._refresh_schema_panels()
-        self.populate_tree()
+        self.populate_tree(select_first=False)
         self._reconcile_tab_with_current_selection()
         self.saveStateRefreshRequested.emit()
         self.statusMessageRequested.emit(
@@ -1542,7 +1542,7 @@ class DatasetExplorerController(QObject):
     # ------------------------------------------------------------------
     # Tree population and selection
     # ------------------------------------------------------------------
-    def populate_tree(self):
+    def populate_tree(self, select_first: bool = True):
         self._is_populating_tree = True
         self._rebuild_runtime_index()
         preferred_sample_id = self.current_selected_sample_id
@@ -1570,11 +1570,14 @@ class DatasetExplorerController(QObject):
         finally:
             self._suspend_tree_item_changed = False
 
-        self.handle_filter_change(self.panel.filter_combo.currentIndex())
+        self.handle_filter_change(
+            self.panel.filter_combo.currentIndex(),
+            selection_fallback="first_visible" if select_first else "clear_selection",
+        )
 
         if self.tree_model.rowCount() > 0:
             restored = self._restore_tree_selection(preferred_sample_id, preferred_input_path)
-            if not restored:
+            if not restored and select_first:
                 first_index = self.tree_model.index(0, 0)
                 if first_index.isValid():
                     self.panel.tree.setCurrentIndex(first_index)

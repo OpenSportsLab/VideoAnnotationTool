@@ -109,6 +109,18 @@ def _recent_file_button_text(window, row: int = 0) -> str:
 
 
 @pytest.mark.gui
+def test_loading_project_does_not_select_or_route_first_sample(window, monkeypatch, qtbot, synthetic_project_json):
+    project_json_path = synthetic_project_json("classification", item_count=2)
+
+    _open_project(window, monkeypatch, project_json_path)
+    qtbot.wait(50)
+
+    assert window.dataset_explorer_panel.tree.currentIndex() == QModelIndex()
+    assert window.dataset_explorer_controller.current_selected_sample_id == ""
+    assert window.dataset_explorer_controller.current_selected_input_path is None
+
+
+@pytest.mark.gui
 def test_mixed_dataset_switch_tabs_save_reopen_preserves_all_annotation_blocks(
     window,
     monkeypatch,
@@ -246,7 +258,7 @@ def test_selection_switches_to_first_available_tab_when_current_is_not_supported
     project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     _open_project(window, monkeypatch, project_json_path)
-    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["classification"]
 
     second_index = window.tree_model.index(1, 0)
     assert second_index.isValid()
@@ -353,7 +365,7 @@ def test_selecting_non_video_input_keeps_selection_without_requesting_playback(
         ),
     )
 
-    parent_index = _select_top_row(window, qtbot, 0)
+    parent_index = window.tree_model.index(0, 0)
     child_index = window.tree_model.index(0, 0, parent_index)
     assert child_index.isValid()
     selected_path = child_index.data(window.tree_model.FilePathRole)
@@ -1386,9 +1398,10 @@ def test_save_as_rewrites_paths_autosaves_description_and_promotes_new_recent(
 ):
     project_json_path = synthetic_project_json("description")
     _open_project(window, monkeypatch, project_json_path)
-    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["classification"]
 
     _select_top_row(window, qtbot, 0)
+    assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     final_text = "Description saved through Save As."
     window.description_panel.caption_edit.setPlainText(final_text)
 

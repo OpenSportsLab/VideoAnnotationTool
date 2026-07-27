@@ -547,6 +547,14 @@ class _SingleMediaController(QObject):
             return
         self.player.setPosition(max(0, int(position)))
 
+    def set_position_deferred(self, position):
+        if self._active_backend is not None and hasattr(
+            self._active_backend, "set_position_deferred"
+        ):
+            self._active_backend.set_position_deferred(max(0, int(position)))
+            return
+        self.set_position(position)
+
     def set_playback_rate(self, rate: float):
         if self._active_backend is not None:
             self._active_backend.set_playback_rate(rate)
@@ -627,6 +635,13 @@ class _SingleMediaController(QObject):
 class MediaController(QObject):
     """Sample-level playback coordinator for one or more synchronized inputs."""
 
+    # QMediaPlayer's reported position commonly trails the wall clock by more
+    # than a frame while its audio/video pipeline is healthy. Seeking to correct
+    # that small delay flushes the decoder, which is especially disruptive for
+    # long-GOP H.264 video and its audio buffer.
+    _VIDEO_DRIFT_CHECK_INTERVAL_MS = 1000
+    _VIDEO_DRIFT_TOLERANCE_MS = 50
+
     playbackStateChanged = pyqtSignal(bool)
     muteStateChanged = pyqtSignal(bool)
     positionChanged = pyqtSignal(int)
@@ -677,6 +692,10 @@ class MediaController(QObject):
         self._sync_poll_timer.setInterval(30)
         self._sync_poll_timer.timeout.connect(self._poll_sync_session)
         self._drift_tick = 0
+        self._video_drift_check_ticks = max(
+            1,
+            round(self._VIDEO_DRIFT_CHECK_INTERVAL_MS / self._master_timer.interval()),
+        )
 
         self._single.positionChanged.connect(
             lambda value: self.positionChanged.emit(value) if not self._group_active else None
@@ -964,10 +983,30 @@ class MediaController(QObject):
             return self._sync_record["controller"].current_position_ms()
         if not self._group_active:
             return self._single.current_position_ms()
+        video_clock = self._playing_video_clock_record()
+        if self._group_playing and video_clock is not None:
+            value = (
+                video_clock["controller"].current_position_ms()
+                + int(video_clock["offset_ms"])
+            )
+            return max(0, min(value, self._group_duration_ms))
         if self._group_playing and self._clock.isValid():
             value = self._anchor_position_ms + int(self._clock.elapsed() * self._playback_rate)
             return max(0, min(value, self._group_duration_ms))
         return max(0, int(self._group_position_ms))
+
+    def _playing_video_clock_record(self):
+        """Return the first running video, which is the group's native A/V clock."""
+        for record in self._sessions:
+            session = record.get("controller")
+            if (
+                record.get("valid")
+                and session is not None
+                and session._current_backend == session._BACKEND_VIDEO
+                and session.is_playing()
+            ):
+                return record
+        return None
 
     def is_playing(self) -> bool:
         if self._sync_record is not None:
@@ -1317,11 +1356,20 @@ class MediaController(QObject):
             self.positionChanged.emit(self._group_position_ms)
             return
         self._group_position_ms = position
-        self._drift_tick = (self._drift_tick + 1) % 8
-        self._render_group_position(position, force_video_seek=self._drift_tick == 0)
+        self._drift_tick = (self._drift_tick + 1) % self._video_drift_check_ticks
+        self._render_group_position(
+            position,
+            force_video_seek=self._drift_tick == 0,
+        )
         self.positionChanged.emit(position)
 
-    def _render_group_position(self, global_position: int, *, force_video_seek: bool):
+    def _render_group_position(
+        self,
+        global_position: int,
+        *,
+        force_video_seek: bool,
+    ):
+        video_clock = self._playing_video_clock_record()
         for record in self._sessions:
             if not record["valid"]:
                 continue
@@ -1339,13 +1387,14 @@ class MediaController(QObject):
                     pane.show_video_surface()
                 drift = abs(session.current_position_ms() - local)
                 fps = float(record["source"].get("fps") or 0.0)
-                threshold = max(50, int(round(1000.0 / fps)) if fps > 0 else 50)
-                if force_video_seek and drift > threshold:
+                frame_ms = int(round(1000.0 / fps)) if fps > 0 else 0
+                threshold = max(self._VIDEO_DRIFT_TOLERANCE_MS, frame_ms)
+                if record is not video_clock and force_video_seek and drift > threshold:
                     session.set_position(local)
                 if self._group_playing and not session.is_playing():
                     session.play()
             else:
-                session.set_position(local)
+                session.set_position_deferred(local)
 
     def _start_video_sessions(self):
         for record in self._sessions:

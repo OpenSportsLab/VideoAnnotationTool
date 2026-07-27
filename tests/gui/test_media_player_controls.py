@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import h5py
@@ -740,13 +741,22 @@ def test_player_joints_h5_3d_projection_uses_depth_and_z_height(media_panel_and_
         controller._TRACKING_IMAGE_HEIGHT,
     )
     origin_x, origin_y = backend._project_joint_scene_point(0.0, 0.0, 0.0, layout)
-    depth_x, depth_y = backend._project_joint_scene_point(10.0, 10.0, 0.0, layout)
+    x_axis_x, x_axis_y = backend._project_joint_scene_point(10.0, 0.0, 0.0, layout)
+    positive_y_x, positive_y_y = backend._project_joint_scene_point(0.0, 10.0, 0.0, layout)
+    negative_y_x, negative_y_y = backend._project_joint_scene_point(0.0, -10.0, 0.0, layout)
+    diagonal_x, diagonal_y = backend._project_joint_scene_point(10.0, 10.0, 0.0, layout)
     elevated_x, elevated_y = backend._project_joint_scene_point(0.0, 0.0, 1.5, layout)
     _origin_u, origin_v = backend._scene_basis(0.0, 0.0, 0.0)
     _elevated_u, elevated_v = backend._scene_basis(0.0, 0.0, 1.5)
 
-    assert depth_x == pytest.approx(origin_x)
-    assert depth_y > origin_y
+    assert x_axis_x > origin_x
+    assert x_axis_y > origin_y
+    assert positive_y_x > origin_x
+    assert positive_y_y < origin_y
+    assert negative_y_x < origin_x
+    assert negative_y_y > origin_y
+    assert diagonal_x > origin_x
+    assert diagonal_y == pytest.approx(origin_y)
     assert elevated_x == pytest.approx(origin_x)
     assert elevated_y < origin_y
     assert origin_v - elevated_v == pytest.approx(1.5 * backend._SCENE_Z_SCALE)
@@ -1276,9 +1286,99 @@ def test_grouped_videos_autoplay_from_shared_clock(media_panel_and_controller, q
     assert all(record["controller"].is_playing() for record in controller._sessions)
 
     controller.set_position(1000)
+
+    def grouped_video_positions():
+        return [record["controller"].current_position_ms() for record in controller._sessions]
+
     qtbot.wait(300)
-    positions = [record["controller"].current_position_ms() for record in controller._sessions]
+    qtbot.waitUntil(
+        lambda: max(grouped_video_positions()) - min(grouped_video_positions()) <= 250,
+        timeout=2500,
+    )
+    positions = grouped_video_positions()
     assert max(positions) - min(positions) <= 250
+
+
+@pytest.mark.gui
+def test_group_clock_does_not_seek_video_for_normal_position_reporting_lag(
+    media_panel_and_controller,
+    monkeypatch,
+    qtbot,
+):
+    _panel, controller = media_panel_and_controller
+    video_path = Path(__file__).resolve().parents[1] / "data" / "test_video_1.mp4"
+    source = {"type": "video", "path": str(video_path), "fps": 50.0}
+
+    controller.route_media_group([source], source["path"], False)
+    qtbot.waitUntil(lambda: controller._sessions[0]["duration_ms"] > 0, timeout=5000)
+    session = controller._sessions[0]["controller"]
+    target = 2000
+    seek_calls = []
+    reported_position = target - controller._VIDEO_DRIFT_TOLERANCE_MS
+    monkeypatch.setattr(session, "current_position_ms", lambda: reported_position)
+    monkeypatch.setattr(session, "set_position", seek_calls.append)
+
+    controller._render_group_position(target, force_video_seek=True)
+    assert seek_calls == []
+
+    reported_position -= 1
+    controller._render_group_position(target, force_video_seek=True)
+    assert seek_calls == [target]
+
+
+@pytest.mark.gui
+def test_running_video_is_group_clock_and_is_never_drift_seeked(
+    media_panel_and_controller,
+    monkeypatch,
+    qtbot,
+):
+    _panel, controller = media_panel_and_controller
+    video_path = Path(__file__).resolve().parents[1] / "data" / "test_video_1.mp4"
+    source = {"type": "video", "path": str(video_path)}
+
+    controller.route_media_group([source], source["path"], False)
+    qtbot.waitUntil(lambda: controller._sessions[0]["duration_ms"] > 0, timeout=5000)
+    record = controller._sessions[0]
+    session = record["controller"]
+    seek_calls = []
+    monkeypatch.setattr(session, "is_playing", lambda: True)
+    monkeypatch.setattr(session, "current_position_ms", lambda: 1234)
+    monkeypatch.setattr(session, "set_position", seek_calls.append)
+    controller._group_playing = True
+
+    assert controller.current_position_ms() == 1234 + record["offset_ms"]
+    controller._render_group_position(4000, force_video_seek=True)
+    assert seek_calls == []
+
+
+@pytest.mark.gui
+def test_deferred_raster_render_does_not_block_gui_thread(
+    media_panel_and_controller,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    _panel, controller = media_panel_and_controller
+    frames_path = tmp_path / "deferred_frames.npy"
+    np.save(frames_path, np.zeros((3, 8, 8, 3), dtype=np.uint8))
+    controller.load_and_play(
+        {"type": "frames_npy", "path": str(frames_path), "fps": 2.0},
+        auto_play=False,
+    )
+    backend = controller._active_backend
+    original_render = backend.render_frame_image
+
+    def slow_render(frame_index, payload):
+        time.sleep(0.2)
+        return original_render(frame_index, payload)
+
+    monkeypatch.setattr(backend, "render_frame_image", slow_render)
+    started = time.perf_counter()
+    backend.set_position_deferred(500)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.05
+    qtbot.waitUntil(lambda: 1 in backend._frame_image_cache, timeout=1500)
 
 
 @pytest.mark.gui
