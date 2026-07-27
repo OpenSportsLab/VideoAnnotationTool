@@ -8,7 +8,6 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPolygonF
-from PyQt6.QtWidgets import QApplication
 
 from .raster_backend import RasterClip
 from .tracking_parquet_backend import TrackingParquetMediaBackend
@@ -347,7 +346,6 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
                 timestamp = self._parse_utc_timestamp(value)
                 if timestamp is not None:
                     timestamp_rows.append((timestamp, row_index))
-            self._process_pending_ui_events()
         return sorted(timestamp_rows, key=lambda item: item[0]), ""
 
     @staticmethod
@@ -405,7 +403,6 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
                 if active_timestamp is None:
                     return [], f"Invalid `{self._TIME_COLUMN}` value at row {row_index}: {text!r}"
                 active_start = row_index
-            self._process_pending_ui_events()
 
         if active_text is not None and active_timestamp is not None:
             frame_groups.append(
@@ -417,12 +414,6 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
             )
 
         return sorted(frame_groups, key=lambda group: group.timestamp), ""
-
-    @staticmethod
-    def _process_pending_ui_events():
-        app = QApplication.instance()
-        if app is not None:
-            app.processEvents()
 
     def _frame_payload_for_row_range(
         self,

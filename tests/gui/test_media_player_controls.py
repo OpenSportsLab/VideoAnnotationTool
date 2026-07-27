@@ -5,8 +5,10 @@ import numpy as np
 import pandas as pd
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage
 
 from controllers.media_controller import MediaController
+from controllers.media.raster_backend import BaseRasterMediaBackend, RasterClip
 from ui.media_player import MediaCenterPanel
 
 
@@ -172,6 +174,35 @@ def test_mute_state_is_restored_and_persisted_via_qsettings(window, qtbot):
         assert saved.strip().lower() in {"0", "false", "no", "off"}
     else:
         assert bool(saved) is False
+
+
+@pytest.mark.gui
+def test_raster_backend_does_not_show_frame_after_reentrant_stop(media_panel_and_controller, monkeypatch):
+    _panel, controller = media_panel_and_controller
+    shown_images = []
+
+    class ReentrantStopRasterBackend(BaseRasterMediaBackend):
+        def build_clip(self, _source):
+            return RasterClip(
+                frame_source=[{"frame": 1}],
+                frame_count=1,
+                time_axis_ms=[0],
+                hold_ms=40,
+                duration_ms=40,
+                fallback_fps=0.0,
+            )
+
+        def render_frame_image(self, _frame_index, _frame_payload):
+            self.stop()
+            image = QImage(4, 4, QImage.Format.Format_ARGB32)
+            image.fill(0xFFFFFFFF)
+            return image
+
+    backend = ReentrantStopRasterBackend(controller)
+    monkeypatch.setattr(controller, "_show_frame_image", shown_images.append)
+
+    assert backend.load_source({"type": "test_raster", "path": "synthetic"}, auto_play=False) is True
+    assert shown_images == []
 
 
 @pytest.mark.gui
