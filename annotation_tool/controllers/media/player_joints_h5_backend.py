@@ -235,6 +235,7 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
             hold_ms=hold_ms,
             duration_ms=duration_ms,
             fallback_fps=0.0,
+            origin_utc=origin,
         )
 
     def render_frame_image(self, frame_index: int, frame_payload) -> QImage:

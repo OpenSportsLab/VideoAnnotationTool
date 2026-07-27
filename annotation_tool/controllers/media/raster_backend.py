@@ -5,6 +5,7 @@ import statistics
 from bisect import bisect_left, bisect_right
 from collections import OrderedDict
 from dataclasses import dataclass
+import datetime as _datetime
 from typing import Any
 
 from PyQt6.QtCore import QElapsedTimer, QTimer
@@ -21,6 +22,7 @@ class RasterClip:
     hold_ms: int
     duration_ms: int
     fallback_fps: float
+    origin_utc: _datetime.datetime | None = None
 
 
 class BaseRasterMediaBackend(BaseMediaBackend):

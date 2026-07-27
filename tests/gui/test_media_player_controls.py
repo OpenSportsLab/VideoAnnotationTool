@@ -1159,3 +1159,279 @@ def test_player_centroids_h5_missing_file_reports_clear_error(
     assert errors
     assert errors[-1][0]["title"] == "Media Load Error"
     assert str(missing_path) in errors[-1][1]
+@pytest.mark.gui
+def test_grouped_h5_playback_uses_utc_union_and_multiple_panes(
+    media_panel_and_controller,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    controller.positionChanged.connect(panel.on_media_position_changed)
+    controller.durationChanged.connect(panel.on_media_duration_changed)
+    joints_path = tmp_path / "group_joints.h5"
+    centroids_path = tmp_path / "group_centroids.h5"
+    _write_minimal_player_joints_h5(
+        joints_path,
+        [
+            b"2026-01-01 00:00:00.000000",
+            b"2026-01-01 00:00:01.000000",
+            b"2026-01-01 00:00:02.000000",
+        ],
+    )
+    _write_minimal_player_centroids_h5(
+        centroids_path,
+        [
+            b"2026-01-01 00:00:01.000000",
+            b"2026-01-01 00:00:02.000000",
+        ],
+    )
+
+    controller.route_media_group(
+        [
+            {"type": "player_joints_h5", "path": str(joints_path)},
+            {"type": "player_centroids_h5", "path": str(centroids_path)},
+        ],
+        str(joints_path),
+        False,
+    )
+
+    assert len(panel._viewer_panes) == 2
+    assert controller._global_origin_utc.isoformat(sep=" ") == "2026-01-01 00:00:00"
+    assert controller._group_duration_ms == 3000
+    assert controller._sessions[0]["offset_ms"] == 0
+    assert controller._sessions[1]["offset_ms"] == 1000
+    assert panel._viewer_panes[0].timing_label.text() == "UTC +0.000s"
+    assert panel._viewer_panes[1].timing_label.text() == "UTC +1.000s"
+    assert "Not available" in panel._viewer_panes[1].status_label.text()
+
+    controller.set_position(1500)
+    qtbot.wait(20)
+    assert panel._viewer_panes[0].frame_widget.pixmap() is not None
+    assert panel._viewer_panes[1].frame_widget.pixmap() is not None
+    assert "2026-01-01 00:00:01.500 UTC" in panel.time_label.text()
+
+    controller.play()
+    qtbot.waitUntil(lambda: controller.current_position_ms() > 1500, timeout=1000)
+    controller.pause()
+    shared_positions = [
+        record["controller"].current_position_ms() + record["offset_ms"]
+        for record in controller._sessions
+    ]
+    assert max(shared_positions) - min(shared_positions) <= 1000
+    assert controller.is_playing() is False
+
+
+@pytest.mark.gui
+def test_grouped_relative_source_aligns_to_union_start_and_feed_mute(
+    media_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    joints_path = tmp_path / "relative_joints.h5"
+    frames_path = tmp_path / "relative_frames.npy"
+    _write_minimal_player_joints_h5(
+        joints_path,
+        [b"2026-01-01 12:00:00.000000", b"2026-01-01 12:00:00.040000"],
+    )
+    np.save(frames_path, np.zeros((2, 4, 4, 3), dtype=np.uint8))
+
+    controller.route_media_group(
+        [
+            {"type": "player_joints_h5", "path": str(joints_path)},
+            {"type": "frames_npy", "path": str(frames_path), "fps": 25.0},
+        ],
+        str(frames_path),
+        False,
+    )
+
+    assert controller._sessions[1]["offset_ms"] == 0
+    assert panel._viewer_panes[1].timing_label.text() == "Relative"
+    assert panel._viewer_panes[1].property("focused") is True
+
+    controller.toggle_feed_mute(str(frames_path))
+    assert panel._viewer_panes[1].btn_mute.toolTip() == "Unmute this feed"
+    assert controller._sessions[1]["controller"].player.audioOutput().isMuted() is True
+    controller.set_muted(True)
+    controller.toggle_feed_mute(str(frames_path))
+    assert controller._sessions[1]["controller"].player.audioOutput().isMuted() is True
+    controller.set_muted(False)
+    assert controller._sessions[1]["controller"].player.audioOutput().isMuted() is False
+
+
+@pytest.mark.gui
+def test_grouped_videos_autoplay_from_shared_clock(media_panel_and_controller, qtbot):
+    panel, controller = media_panel_and_controller
+    video_root = Path(__file__).resolve().parents[1] / "data"
+    sources = [
+        {"type": "video", "path": str(video_root / "test_video_1.mp4")},
+        {"type": "video", "path": str(video_root / "test_video_2.mp4")},
+    ]
+
+    controller.route_media_group(sources, sources[0]["path"], True)
+
+    qtbot.waitUntil(lambda: controller._group_duration_ms > 0, timeout=5000)
+    qtbot.waitUntil(controller.is_playing, timeout=5000)
+    qtbot.waitUntil(lambda: controller.current_position_ms() > 0, timeout=5000)
+    assert len(panel._viewer_panes) == 2
+    assert all(record["controller"].is_playing() for record in controller._sessions)
+
+    controller.set_position(1000)
+    qtbot.wait(300)
+    positions = [record["controller"].current_position_ms() for record in controller._sessions]
+    assert max(positions) - min(positions) <= 250
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("2022-12-03 13:27:59.461000", "2022-12-03 13:27:59.461000"),
+        ("2022-12-03T13:27:59", "2022-12-03 13:27:59"),
+        ("2022-12-03T13:27:59Z", "2022-12-03 13:27:59"),
+        ("2022-12-03T16:27:59+03:00", "2022-12-03 13:27:59"),
+        ("invalid", None),
+        ("", None),
+    ],
+)
+def test_utc_time_start_parser_normalizes_supported_formats(
+    media_panel_and_controller,
+    value,
+    expected,
+):
+    _panel, controller = media_panel_and_controller
+    parsed = controller._parse_utc_time_start(value)
+    assert (parsed.isoformat(sep=" ") if parsed is not None else None) == expected
+
+
+@pytest.mark.gui
+def test_utc_time_start_is_preserved_and_changes_source_identity(media_panel_and_controller):
+    _panel, controller = media_panel_and_controller
+    first = controller._normalize_media_source(
+        {
+            "type": "video",
+            "path": "/tmp/example.mp4",
+            "UTC_time_start": "2022-12-03 13:27:59.461000",
+        }
+    )
+    second = dict(first, UTC_time_start="2022-12-03 13:28:00.461000")
+
+    assert first["UTC_time_start"] == "2022-12-03 13:27:59.461000"
+    assert controller._source_key(first) != controller._source_key(second)
+    assert controller._source_key(first) != controller._source_key(
+        {"type": "video", "path": "/tmp/example.mp4"}
+    )
+
+
+@pytest.mark.gui
+def test_changing_utc_time_start_reloads_and_realigns_group(media_panel_and_controller, tmp_path):
+    _panel, controller = media_panel_and_controller
+    frames_path = tmp_path / "identity_frames.npy"
+    np.save(frames_path, np.zeros((2, 4, 4, 3), dtype=np.uint8))
+    first = {
+        "type": "frames_npy",
+        "path": str(frames_path),
+        "fps": 25.0,
+        "UTC_time_start": "2026-01-01 12:00:00",
+    }
+    second = dict(first, UTC_time_start="2026-01-01 12:00:05")
+
+    controller.route_media_group([first], str(frames_path), False)
+    first_group_key = controller._group_key
+    first_origin = controller._sessions[0]["origin_utc"]
+    controller.route_media_group([second], str(frames_path), False)
+
+    assert controller._group_key != first_group_key
+    assert controller._sessions[0]["origin_utc"] != first_origin
+    assert controller._sessions[0]["origin_utc"].isoformat(sep=" ") == "2026-01-01 12:00:05"
+
+
+@pytest.mark.gui
+def test_explicit_utc_time_start_overrides_h5_origin(media_panel_and_controller, tmp_path):
+    panel, controller = media_panel_and_controller
+    h5_path = tmp_path / "override_origin.h5"
+    _write_minimal_player_joints_h5(
+        h5_path,
+        [b"2026-01-01 12:00:00.000000", b"2026-01-01 12:00:00.040000"],
+    )
+
+    controller.route_media_group(
+        [
+            {
+                "type": "player_joints_h5",
+                "path": str(h5_path),
+                "UTC_time_start": "2026-01-01 11:59:58.500000",
+            }
+        ],
+        str(h5_path),
+        False,
+    )
+
+    assert controller._sessions[0]["origin_utc"].isoformat(sep=" ") == "2026-01-01 11:59:58.500000"
+    assert controller._global_origin_utc == controller._sessions[0]["origin_utc"]
+    assert panel._viewer_panes[0].timing_label.text() == "UTC +0.000s"
+
+
+@pytest.mark.gui
+def test_video_utc_time_start_aligns_with_timestamped_h5(
+    media_panel_and_controller,
+    qtbot,
+    tmp_path,
+):
+    _panel, controller = media_panel_and_controller
+    h5_path = tmp_path / "aligned_joints.h5"
+    _write_minimal_player_joints_h5(
+        h5_path,
+        [b"2022-12-03 13:28:00.000000", b"2022-12-03 13:28:00.040000"],
+    )
+    video_path = Path(__file__).resolve().parents[1] / "data" / "test_video_1.mp4"
+
+    controller.route_media_group(
+        [
+            {
+                "type": "video",
+                "path": str(video_path),
+                "UTC_time_start": "2022-12-03 13:27:59.461000",
+            },
+            {"type": "player_joints_h5", "path": str(h5_path)},
+        ],
+        str(video_path),
+        False,
+    )
+
+    qtbot.waitUntil(lambda: controller._sessions[0]["duration_ms"] > 0, timeout=5000)
+    assert controller._global_origin_utc.isoformat(sep=" ") == "2022-12-03 13:27:59.461000"
+    assert controller._sessions[0]["offset_ms"] == 0
+    assert controller._sessions[1]["offset_ms"] == 539
+
+
+@pytest.mark.gui
+def test_invalid_explicit_utc_time_start_forces_relative_warning(
+    media_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    valid_path = tmp_path / "valid_origin.h5"
+    invalid_path = tmp_path / "invalid_override.h5"
+    timestamps = [b"2026-01-01 12:00:00.000000", b"2026-01-01 12:00:00.040000"]
+    _write_minimal_player_joints_h5(valid_path, timestamps)
+    _write_minimal_player_centroids_h5(invalid_path, timestamps)
+
+    controller.route_media_group(
+        [
+            {"type": "player_joints_h5", "path": str(valid_path)},
+            {
+                "type": "player_centroids_h5",
+                "path": str(invalid_path),
+                "UTC_time_start": "not-a-time",
+            },
+        ],
+        str(invalid_path),
+        False,
+    )
+
+    invalid_record = controller._sessions[1]
+    assert invalid_record["origin_utc"] is None
+    assert invalid_record["utc_start_invalid"] is True
+    assert invalid_record["offset_ms"] == 0
+    assert panel._viewer_panes[1].timing_label.text() == "Relative ⚠ invalid UTC_time_start"
+    assert "aligned as relative" in panel._viewer_panes[1].timing_label.toolTip()

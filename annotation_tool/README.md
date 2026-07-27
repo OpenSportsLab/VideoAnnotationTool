@@ -45,6 +45,7 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
   - Classification smart prediction marker: `labels[head].confidence_score` (optional float)
 - Input item:
   - `{ "type": "video", "path": "..." }`
+    Optional `UTC_time_start` sets the modality's absolute UTC origin at local playback position `00:00.000`. It accepts ISO-compatible timestamps such as `2022-12-03 13:27:59.461000`, `T` separators, `Z`, and explicit offsets.
   - `{ "type": "frames_npy", "path": "...", "fps": 2.0 }`
   - Read-time alias: `{ "type": "frame_npy", ... }` is normalized to `frames_npy`
   - `{ "type": "tracking_parquet", "path": "...", "fps": 2.0 }`
@@ -54,6 +55,14 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
     Uses absolute UTC timestamps from `timestamp_utc` for playback timing and renders a 3D stickman preview. `ball_path` is optional and overlays ball XYZ from a separate H5 file.
   - `{ "type": "player_centroids_h5", "path": "...", "ball_path": "..." }`
     Uses absolute UTC timestamps from `timestamp_utc` for playback timing and renders a top-down player centroid preview. `ball_path` is optional.
+
+### Synchronized multi-input playback
+
+Selecting a sample loads every supported item in its `inputs` list into an adaptive two-column viewer grid. The shared playback controls drive all panes; selecting an input child or clicking a pane changes focus without unloading the other inputs.
+
+For H5 joints and centroid inputs, the earliest usable `timestamp_utc` is normally the pane's absolute origin. An input-level `UTC_time_start` is authoritative for every modality and overrides backend timing when present. Naive values are interpreted as UTC and timezone-aware values are normalized to UTC. A malformed explicit value intentionally falls back to relative alignment and displays a warning instead of using backend UTC. The sample timeline covers the full union of all UTC ranges, and panes show an unavailable message before their origin or after their end. Inputs without an absolute UTC origin align local `00:00` to the shared timeline start and are labeled `Relative`. When UTC is available, the timeline displays both elapsed time and current UTC.
+
+Audio from all audio-capable panes may play together. Each pane has its own mute control, while the timeline mute button temporarily mutes every pane without discarding the individual feed choices.
 - Localization event: `{ "head": str, "label": str, "position_ms": int }`
 - Dense event: `{ "position_ms": int, "lang": str, "text": str }`
 - Caption list (Description): `[ { "lang": str, "text": str, ...optional } ]`

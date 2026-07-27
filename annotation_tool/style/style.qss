@@ -551,6 +551,16 @@ QWidget[class="video_preview_widget"] {
     background-color: black;
 }
 
+QFrame[class="media_viewer_pane"] {
+    background-color: #242424;
+    border: 1px solid #555;
+    border-radius: 4px;
+}
+
+QFrame[class="media_viewer_pane"][focused="true"] {
+    border: 2px solid #00BFFF;
+}
+
 /* --- Timeline Widget --- */
 /* Target: ui/localization/media_player/timeline.py */
 

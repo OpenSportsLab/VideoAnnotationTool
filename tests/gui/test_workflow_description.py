@@ -45,8 +45,10 @@ def test_description_selection_loads_media_and_refreshes_editor(
     load_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda file_path, auto_play=True: load_calls.append(file_path),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: load_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     # Force a real selection transition: invalid -> first item.
@@ -55,7 +57,7 @@ def test_description_selection_loads_media_and_refreshes_editor(
     qtbot.wait(50)
 
     assert len(load_calls) == 1
-    assert Path(load_calls[0]).name == "test_video_1.mp4"
+    assert Path(load_calls[0][1]).name == "test_video_1.mp4"
     assert window.description_panel.caption_edit.toPlainText().strip() == "A short test caption."
 
 
@@ -119,8 +121,10 @@ def test_description_multiview_parent_selection_loads_first_child_media(
     load_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda file_path, auto_play=True: load_calls.append(file_path),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: load_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     window.dataset_explorer_controller.import_annotations()
@@ -136,7 +140,11 @@ def test_description_multiview_parent_selection_loads_first_child_media(
     qtbot.wait(50)
 
     assert load_calls
-    assert Path(load_calls[-1]).resolve() == view_a.resolve()
+    assert Path(load_calls[-1][1]).resolve() == view_a.resolve()
+    assert {Path(source["path"]).resolve() for source in load_calls[-1][0]} == {
+        view_a.resolve(),
+        view_b.resolve(),
+    }
     assert window.description_panel.caption_edit.toPlainText().strip() == "Scene-level caption."
 
 

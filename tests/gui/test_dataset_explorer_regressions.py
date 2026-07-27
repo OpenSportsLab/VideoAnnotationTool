@@ -273,8 +273,10 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
     play_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda file_path, auto_play=True: play_calls.append(file_path),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: play_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     parent_index = _select_top_row(window, qtbot, 0)
@@ -298,7 +300,8 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
     assert window.dataset_explorer_controller.current_selected_sample_id == parent_sample_id
     assert window.dataset_explorer_controller.current_selected_input_path == child_path
     assert window.get_current_action_path() == parent_action_path
-    assert play_calls[-1] == child_path
+    assert play_calls[-1][1] == child_path
+    assert {source["path"] for source in play_calls[-1][0]} == {first_child_path, child_path}
     assert len(window.dataset_explorer_controller.action_item_data) == 1
 
     calls_before_first_child = len(play_calls)
@@ -306,7 +309,8 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
     qtbot.wait(50)
 
     assert len(play_calls) == calls_before_first_child + 1
-    assert play_calls[-1] == first_child_path
+    assert play_calls[-1][1] == first_child_path
+    assert play_calls[-1][2] is True
     assert window.dataset_explorer_controller.current_selected_input_path == first_child_path
 
 
@@ -343,8 +347,10 @@ def test_selecting_non_video_input_keeps_selection_without_requesting_playback(
     play_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda file_path, auto_play=True: play_calls.append(file_path),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: play_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
 
     parent_index = _select_top_row(window, qtbot, 0)
@@ -358,7 +364,9 @@ def test_selecting_non_video_input_keeps_selection_without_requesting_playback(
 
     assert window.dataset_explorer_controller.current_selected_sample_id == "text_only"
     assert window.dataset_explorer_controller.current_selected_input_path == selected_path
-    assert play_calls == []
+    assert len(play_calls) == 1
+    assert play_calls[0][1] == selected_path
+    assert play_calls[0][0][0]["type"] == "text"
 
 
 @pytest.mark.gui
@@ -379,8 +387,10 @@ def test_selecting_parent_while_stopped_restarts_playback_for_same_source(
     play_calls = []
     monkeypatch.setattr(
         window.media_controller,
-        "load_and_play",
-        lambda file_path, auto_play=True: play_calls.append(file_path),
+        "route_media_group",
+        lambda sources, focused_path, ensure_playback=False: play_calls.append(
+            (sources, focused_path, ensure_playback)
+        ),
     )
     monkeypatch.setattr(
         window.center_panel.player,
@@ -398,7 +408,8 @@ def test_selecting_parent_while_stopped_restarts_playback_for_same_source(
     qtbot.wait(50)
 
     assert play_calls
-    assert play_calls[-1] == parent_path
+    assert play_calls[-1][1] == parent_path
+    assert play_calls[-1][2] is True
 
 
 @pytest.mark.gui

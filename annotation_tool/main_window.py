@@ -313,7 +313,11 @@ class VideoAnnotationWindow(QMainWindow):
             self.localization_editor_controller.on_schema_context_changed
         )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
-            lambda media_source, ensure_playback: self.media_controller.route_media_selection(media_source, ensure_playback)
+            lambda sources, focused_path, ensure_playback: self.media_controller.route_media_group(
+                sources,
+                focused_path,
+                ensure_playback,
+            )
         )
         self.dataset_explorer_controller.mediaStopRequested.connect(lambda: self.media_controller.stop())
         self.dataset_explorer_controller.statusMessageRequested.connect(self.show_temp_msg)

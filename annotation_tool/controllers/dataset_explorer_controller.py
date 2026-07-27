@@ -229,7 +229,7 @@ class DatasetExplorerController(QObject):
     qaQuestionCatalogChanged = pyqtSignal(list)
     schemaContextChanged = pyqtSignal(dict)
     classificationActionListChanged = pyqtSignal(list)
-    mediaRouteRequested = pyqtSignal(object, bool)
+    mediaRouteRequested = pyqtSignal(object, str, bool)
     mediaStopRequested = pyqtSignal()
     statusMessageRequested = pyqtSignal(str, str, int)
     saveStateRefreshRequested = pyqtSignal()
@@ -564,6 +564,13 @@ class DatasetExplorerController(QObject):
                     return copy.deepcopy(media_source)
 
         return copy.deepcopy(media_sources[0])
+
+    def get_media_sources_by_id(self, data_id: str):
+        """Return every resolved input source for synchronized sample playback."""
+        entry = self.action_id_to_item.get(data_id)
+        if not entry:
+            return []
+        return copy.deepcopy(list(entry.get("media_sources", [])))
 
     def get_data_id_by_path(self, path: str):
         sample = self.get_sample_by_path(path)
@@ -1346,6 +1353,8 @@ class DatasetExplorerController(QObject):
             "path": resolved_path,
             "type": source_type,
         }
+        if "UTC_time_start" in input_item:
+            media_source["UTC_time_start"] = input_item.get("UTC_time_start")
         if source_type in {"player_joints_h5", "player_centroids_h5"}:
             resolved_ball_path = self._resolve_media_path(input_item.get("ball_path"))
             if resolved_ball_path:
@@ -1811,11 +1820,12 @@ class DatasetExplorerController(QObject):
         ensure_playback: bool = False,
     ):
         preferred_path = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
-        media_source = self.get_media_source_by_id(sample_id, preferred_path)
-        if not media_source:
+        media_sources = self.get_media_sources_by_id(sample_id)
+        if not media_sources:
             return
 
-        primary_path = str(media_source.get("path") or "")
+        media_source = self.get_media_source_by_id(sample_id, preferred_path)
+        primary_path = str((media_source or {}).get("path") or "")
         if not primary_path:
             return
         self.current_selected_input_path = primary_path
@@ -1824,7 +1834,7 @@ class DatasetExplorerController(QObject):
             and self._fs_path_key(self._last_routed_media_path) == self._fs_path_key(primary_path)
         ):
             return
-        self.mediaRouteRequested.emit(media_source, ensure_playback)
+        self.mediaRouteRequested.emit(media_sources, primary_path, ensure_playback)
         self._last_routed_media_path = primary_path
 
     def handle_active_mode_changed(self, mode_idx: int = None):
