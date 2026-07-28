@@ -1,16 +1,19 @@
 # Media Player UI
 
 ## Role
-Provides the central video/timeline panel used across all annotation modes.
+Provides the central grouped media/timeline panel used across all annotation modes.
 
 ## Architecture Context
 - `MediaCenterPanel` loads static controls from `media_center_panel.ui`.
-- It hosts `QMediaPlayer`, `QAudioOutput`, `QVideoWidget`, and a frame-preview surface for rendering.
+- `MediaCenterPanel` dynamically creates one `MediaViewerPane` per sample input.
+- Each pane owns its `QMediaPlayer`, `QAudioOutput`, `QVideoWidget`, and raster-preview surface.
 - Playback business policy (routing/restart guards/backend selection/error dialogs) remains in `MediaController`.
 
 ## Public Surface
 ### Main Classes
 - `MediaCenterPanel`
+- `MediaViewerPane`
+- `ViewerLayoutMode`: `SINGLE`, `MOSAIC`, or `TABS` presentation mode.
 - `AnnotationSlider`
 - `FramePreviewLabel`
 
@@ -20,6 +23,16 @@ Provides the central video/timeline panel used across all annotation modes.
 - `playPauseRequested()`
 - `muteToggleRequested()`
 - `playbackRateRequested(float)`
+- `paneFocusRequested(str)`
+- `paneMuteToggleRequested(str)`
+- `paneSyncRequested(str)`
+- `paneGoToStartRequested(str)`
+- `paneGoToEndRequested(str)`
+- `paneUtcStartSetRequested(str, str)`
+- `paneUtcStartRemoveRequested(str)`
+- `syncFrameStepRequested(int)`
+- `syncApplyRequested()`
+- `syncCancelRequested()`
 
 ### Timeline/Media Signals
 - `seekRequested(int)`
@@ -28,22 +41,50 @@ Provides the central video/timeline panel used across all annotation modes.
 - `stateChanged(object)`
 
 ### Public Methods
-- `load_video(path)`
-- `play()`, `pause()`, `stop()`, `toggle_play_pause()`
-- `set_position(ms)`, `set_playback_rate(rate)`
+- `configure_viewers(sources, focused_path)`: rebuild the adaptive viewer grid.
+- `focus_viewer(path)`: change pane focus without reloading playback.
+- `set_viewer_layout(mode)`: reparent existing panes into the single, mosaic,
+  or tab host without recreating media sessions.
+- `viewer_layout()`: return the active `ViewerLayoutMode`.
+- `set_sync_availability(mapping)`: configure context-menu eligibility/reasons.
+- `set_navigation_availability(mapping)`: enable boundary navigation for playable panes.
+- `set_sync_mode(active, selected_path)`: show/hide the synchronization bar and pane state.
+- `update_sync_status(anchor, local_ms, duration_ms, proposed)`: update synchronization labels.
 - `set_mute_button_state(is_muted)`
 - `set_duration(ms)`, `set_markers(markers)`
-- `show_video_surface()`, `show_frame_surface()`, `clear_preview()`, `set_frame_image(image)`
 
 ## Key Functions and Responsibilities
-- `_setup_media_player()`: initializes player/audio/video widget wiring.
+- `_setup_media_player()`: initializes the scrollable viewer host/grid.
+- `_setup_sync_bar()`: initializes frame-step, Apply, and Cancel controls.
+- `_create_viewer_pane()`: creates a pane and forwards its intent signals.
 - `_setup_timeline()`: initializes slider/scroll/zoom behavior.
 - `_setup_controls()`: maps buttons to emitted control signals.
+- `MediaViewerPane.contextMenuEvent(...)`: presents navigation, synchronization, and manual UTC-start intents.
 - `AnnotationSlider.paintEvent(...)`: draws marker lines on timeline.
 
 ## Business Rules
 - UI emits control intents; controller decides route/playback policy.
+- Timeline, relative-seek, and annotation-navigation intents are authoritative
+  group seeks and must remain stable while playback is active.
+- `focus_viewer(path)` changes only pane contour state; it must not seek or alter
+  playback state. In single and tab layouts, a non-empty focus also selects the
+  matching visible pane.
+- An empty focus path clears every pane contour. Loading from a parent sample
+  row preserves the group's pre-selection playing/paused state and retains the
+  currently displayed pane.
+- Layout changes keep `MediaViewerPane` and controller session identities
+  stable. Hidden panes remain loaded and synchronized.
+- A user-selected modality tab emits `paneFocusRequested(path)` but does not
+  route media or change Dataset Explorer selection.
+- Synchronization pins single/tab presentation to the syncing modality and
+  temporarily disables modality-tab switching.
 - Marker rendering is view-only and mode-agnostic.
+- Context-menu actions never seek or mutate data directly.
+- Go to start/end is disabled for unplayable inputs and during synchronization mode.
+- Synchronization eligibility and explanatory tooltips come from `MediaController`.
+- Viewer UTC actions are dynamic: Set when no explicit override exists, or Correct/Remove when it does.
+- Set/correct treats the entered value as modality-local `00:00.000`; remove
+  requires confirmation and removes only the explicit override.
 
 ## Conventions
 - Keep widget logic and presentation in this module.
@@ -61,11 +102,12 @@ Provides the central video/timeline panel used across all annotation modes.
 - Mode workflow tests that assert playback/marker behavior.
 
 ## Developer Knowledge
-- `MediaCenterPanel` owns widget/player primitives, but route/restart logic belongs in `MediaController`.
+- `MediaCenterPanel` and its panes own widget/player primitives, but group clock,
+  route/restart, UTC, and synchronization logic belong in `MediaController`.
 - The panel stays backend-agnostic: internal backends push either Qt video output or raster images into the same preview area.
-- The preview surface is backend-agnostic: Qt video output for `video`, raster frame rendering for `frames_npy`, and pitch rendering for `tracking_parquet`.
+- Pane preview surfaces support Qt video, NPY frames, tracking pitches, and H5 joints/centroids.
 - Marker payload contract:
   list of dicts with at least `start_ms`, optional `color`.
 - Marker color is supplied by the owning mode controller; the media player should render it without imposing mode-specific defaults.
-- Keep control signal names stable (`playPauseRequested`, `muteToggleRequested`, etc.) to avoid wiring regressions.
+- Keep control and pane intent signal names stable; cross-module wiring belongs in `MainWindow.connect_signals()` or `MediaController` construction.
 - Timeline zoom/scroll behavior is subtle; validate follow-playhead behavior after changes.

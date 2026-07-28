@@ -25,6 +25,7 @@ nav:
   - Getting Started: getting_started.md
   - User Guide:
       - GUI Overview: gui_overview.md
+      - Synchronized Playback: synchronized_playback.md
       - Annotating: annotating.md
       - Editing: editing.md
       - Saving and Loading: saving_loading.md

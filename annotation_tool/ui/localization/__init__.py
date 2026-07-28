@@ -29,7 +29,13 @@ from colors import (
     normalize_hex_color,
 )
 from ui.dialogs import BusyStatusDialog
-from utils import resource_path
+from utils import (
+    annotation_utc_datetime,
+    format_annotation_utc_display,
+    format_utc_datetime,
+    parse_utc_datetime,
+    resource_path,
+)
 
 
 def _format_mmss_msec(ms: int) -> str:
@@ -81,6 +87,7 @@ class _LocalizationTableModel(QAbstractTableModel):
         self._data = annotations or []
         self._headers = ["Time", "Head", "Label", "Confidence"]
         self._schema = {}
+        self._timeline_origin_utc = None
 
     def rowCount(self, parent=None):
         return len(self._data)
@@ -109,6 +116,15 @@ class _LocalizationTableModel(QAbstractTableModel):
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             if col == 0:
+                utc_display = format_annotation_utc_display(
+                    item, self._timeline_origin_utc
+                )
+                if utc_display is not None:
+                    if role == Qt.ItemDataRole.EditRole:
+                        return format_utc_datetime(
+                            annotation_utc_datetime(item, self._timeline_origin_utc)
+                        )
+                    return utc_display
                 return _format_mmss_msec(item.get("position_ms", 0))
             if col == 1:
                 return item.get("head", "").replace("_", " ")
@@ -145,7 +161,23 @@ class _LocalizationTableModel(QAbstractTableModel):
         value_str = str(value).strip()
 
         if col == 0:
-            new_item["position_ms"] = _parse_time_to_ms(value_str, old_item.get("position_ms", 0))
+            existing_utc = annotation_utc_datetime(
+                old_item, self._timeline_origin_utc
+            )
+            entered_utc = parse_utc_datetime(value_str)
+            if existing_utc is not None or entered_utc is not None:
+                if entered_utc is None:
+                    return False
+                new_item["timestamp_utc"] = format_utc_datetime(entered_utc)
+                origin = parse_utc_datetime(self._timeline_origin_utc)
+                if origin is not None:
+                    new_item["position_ms"] = int(
+                        round((entered_utc - origin).total_seconds() * 1000.0)
+                    )
+            else:
+                new_item["position_ms"] = _parse_time_to_ms(
+                    value_str, old_item.get("position_ms", 0)
+                )
         elif col == 1:
             new_item["head"] = value_str
         elif col == 2:
@@ -174,6 +206,16 @@ class _LocalizationTableModel(QAbstractTableModel):
         self.beginResetModel()
         self._data = annotations
         self.endResetModel()
+
+    def set_timeline_origin(self, origin_utc):
+        self._timeline_origin_utc = parse_utc_datetime(origin_utc)
+        if self.rowCount() > 0:
+            index = self.index(0, 0)
+            self.dataChanged.emit(
+                index,
+                self.index(self.rowCount() - 1, 0),
+                [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole],
+            )
 
     def set_schema(self, schema):
         self._schema = dict(schema or {})
@@ -230,7 +272,10 @@ class _TableAdapter(QObject):
         self.model = _LocalizationTableModel()
         self.model.itemChanged.connect(self.annotationModified.emit)
         self.table.setModel(self.model)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        for column in range(1, self.model.columnCount()):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
 
         selection_model = self.table.selectionModel()
         if selection_model:
@@ -261,6 +306,9 @@ class _TableAdapter(QObject):
 
     def set_data(self, annotations):
         self.model.set_annotations(annotations)
+
+    def set_timeline_origin(self, origin_utc):
+        self.model.set_timeline_origin(origin_utc)
 
     def set_schema(self, schema):
         self.current_schema = schema
@@ -806,6 +854,9 @@ class LocalizationAnnotationPanel(QWidget):
         )
         self._inference_loading_dialog.cancelRequested.connect(self.inferenceCancelRequested.emit)
         self._inference_loading_dialog.hide()
+
+    def set_timeline_origin(self, origin_utc):
+        self.table.set_timeline_origin(origin_utc)
 
     def show_inference_loading(self, is_loading: bool):
         is_loading = bool(is_loading)

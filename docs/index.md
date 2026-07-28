@@ -15,6 +15,8 @@ The Video Annotation Tool is a PyQt6 desktop application for loading, editing, a
   - Dense Description (`dense_captions`)
   - Question/Answer (`answers`)
 - Use global undo/redo for tracked edits.
+- Preserve absolute Localization and Dense Description times while modalities
+  are added, removed, filtered, or resynchronized.
 - Download from and upload to Hugging Face from the **Data** menu.
 
 ## Quick Links
@@ -22,6 +24,7 @@ The Video Annotation Tool is a PyQt6 desktop application for loading, editing, a
 - [Installation](installation.md)
 - [Getting Started](getting_started.md)
 - [GUI Overview](gui_overview.md)
+- [Synchronized Multi-Modality Playback](synchronized_playback.md)
 - [Batch Tools](batch_tools.md)
 - [OSL JSON Format](OSL.md)
 - [FAQ](faq.md)

@@ -10,6 +10,13 @@ from controllers.localization.label_color_settings import (
     rename_saved_label_color,
     set_saved_label_color,
 )
+from utils import (
+    annotation_at_position,
+    annotation_position_ms,
+    normalize_temporal_annotations_for_write,
+    parse_utc_datetime,
+    temporal_annotation_identity,
+)
 
 
 class HistoryManager(QObject):
@@ -48,6 +55,41 @@ class HistoryManager(QObject):
         self._get_dense_current_video_path = dense_current_video_path_provider
         self._get_current_filter_index = current_filter_index_provider
         self._is_undoing_redoing = False
+        self._timeline_origins = {}
+
+    def on_timeline_origin_changed(self, sample_id: str, origin_utc):
+        sample_key = str(sample_id or "")
+        if not sample_key:
+            return
+        origin = parse_utc_datetime(origin_utc)
+        if origin is None:
+            self._timeline_origins.pop(sample_key, None)
+        else:
+            self._timeline_origins[sample_key] = origin
+
+    def _prepare_temporal_event(self, sample_id: str, event: dict):
+        position_ms = annotation_position_ms(event, None)
+        origin = self._timeline_origins.get(str(sample_id or ""))
+        if origin is None:
+            prepared = copy.deepcopy(event)
+            prepared["position_ms"] = position_ms
+            return prepared
+        return annotation_at_position(
+            event,
+            position_ms,
+            origin,
+        )
+
+    def _promote_sample_temporal_annotations(self, sample_id: str):
+        origin = self._timeline_origins.get(str(sample_id or ""))
+        sample = self.model.get_sample(sample_id)
+        if origin is None or not isinstance(sample, dict):
+            return
+        for field_name in ("events", "dense_captions"):
+            if isinstance(sample.get(field_name), list):
+                sample[field_name] = normalize_temporal_annotations_for_write(
+                    sample[field_name], origin
+                )
 
     # ------------------------------------------------------------------
     # Public undo/redo
@@ -353,7 +395,10 @@ class HistoryManager(QObject):
         if create_event:
             touched_path = self._path_for_sample(sample_id) or ""
             if touched_path:
-                new_event = {"head": head, "label": label_name, "position_ms": int(event_position_ms)}
+                new_event = self._prepare_temporal_event(
+                    sample_id,
+                    {"head": head, "label": label_name, "position_ms": int(event_position_ms)},
+                )
                 if touched_path not in self.model.localization_events:
                     self.model.localization_events[touched_path] = []
                 self.model.localization_events[touched_path].append(new_event)
@@ -457,7 +502,7 @@ class HistoryManager(QObject):
         if not video_path:
             return
 
-        event_copy = copy.deepcopy(new_event)
+        event_copy = self._prepare_temporal_event(sample_id, new_event)
         self.model.push_undo(CmdType.LOC_EVENT_ADD, video_path=video_path, event=copy.deepcopy(event_copy))
         if video_path not in self.model.localization_events:
             self.model.localization_events[video_path] = []
@@ -480,15 +525,16 @@ class HistoryManager(QObject):
         if index < 0:
             return
 
+        prepared_new_event = self._prepare_temporal_event(sample_id, new_event)
         self.model.push_undo(
             CmdType.LOC_EVENT_MOD,
             video_path=video_path,
-            old_event=copy.deepcopy(old_event),
-            new_event=copy.deepcopy(new_event),
+            old_event=copy.deepcopy(events[index]),
+            new_event=copy.deepcopy(prepared_new_event),
         )
 
-        new_head = new_event.get("head")
-        new_label = new_event.get("label")
+        new_head = prepared_new_event.get("head")
+        new_label = prepared_new_event.get("label")
         schema_changed = False
 
         if new_head and new_head not in self.model.label_definitions:
@@ -500,7 +546,7 @@ class HistoryManager(QObject):
                 labels_list.append(new_label)
                 schema_changed = True
 
-        events[index] = copy.deepcopy(new_event)
+        events[index] = copy.deepcopy(prepared_new_event)
         self._sort_events_by_time(events)
         self._emit_post_mutation(
             touched_paths=[video_path],
@@ -515,16 +561,17 @@ class HistoryManager(QObject):
             return
 
         events = self.model.localization_events.get(video_path, [])
-        if event_index < 0 or event_index >= len(events):
+        matched_index = self._find_loc_event_index(events, _item_data)
+        if matched_index < 0:
             return
 
         self.model.push_undo(
             CmdType.LOC_EVENT_DEL,
             video_path=video_path,
-            event=copy.deepcopy(events[event_index]),
-            event_index=event_index,
+            event=copy.deepcopy(events[matched_index]),
+            event_index=matched_index,
         )
-        events.pop(event_index)
+        events.pop(matched_index)
         self._sort_events_by_time(events)
         self._emit_post_mutation(touched_paths=[video_path])
 
@@ -533,7 +580,11 @@ class HistoryManager(QObject):
         if not video_path:
             return
 
-        normalized = [copy.deepcopy(evt) for evt in list(events or []) if isinstance(evt, dict)]
+        normalized = [
+            self._prepare_temporal_event(sample_id, evt)
+            for evt in list(events or [])
+            if isinstance(evt, dict)
+        ]
         self._sort_events_by_time(normalized)
 
         before_json = self.model.snapshot_dataset_json()
@@ -613,7 +664,7 @@ class HistoryManager(QObject):
         if not video_path:
             return
 
-        event_copy = copy.deepcopy(new_event)
+        event_copy = self._prepare_temporal_event(sample_id, new_event)
         self.model.push_undo(
             CmdType.DENSE_EVENT_ADD,
             video_path=video_path,
@@ -636,18 +687,18 @@ class HistoryManager(QObject):
             return
 
         events = self.model.dense_description_events.get(video_path, [])
-        try:
-            idx = events.index(old_event)
-        except ValueError:
+        idx = self._find_dense_event_index(events, old_event)
+        if idx < 0:
             return
 
+        prepared_new_event = self._prepare_temporal_event(sample_id, new_event)
         self.model.push_undo(
             CmdType.DENSE_EVENT_MOD,
             video_path=video_path,
-            old_event=copy.deepcopy(old_event),
-            new_event=copy.deepcopy(new_event),
+            old_event=copy.deepcopy(events[idx]),
+            new_event=copy.deepcopy(prepared_new_event),
         )
-        events[idx] = copy.deepcopy(new_event)
+        events[idx] = copy.deepcopy(prepared_new_event)
         self._sort_events_by_time(events)
 
         self._emit_post_mutation(
@@ -662,16 +713,17 @@ class HistoryManager(QObject):
             return
 
         events = self.model.dense_description_events.get(video_path, [])
-        if event_index < 0 or event_index >= len(events):
+        matched_index = self._find_dense_event_index(events, item_data)
+        if matched_index < 0:
             return
 
         self.model.push_undo(
             CmdType.DENSE_EVENT_DEL,
             video_path=video_path,
-            event=copy.deepcopy(item_data),
-            event_index=event_index,
+            event=copy.deepcopy(events[matched_index]),
+            event_index=matched_index,
         )
-        events.pop(event_index)
+        events.pop(matched_index)
         self._sort_events_by_time(events)
         self._emit_post_mutation(touched_paths=[video_path])
 
@@ -848,6 +900,17 @@ class HistoryManager(QObject):
         if not removed:
             return
 
+        if input_path and not sample_removed:
+            self._promote_sample_temporal_annotations(sample_id)
+            sample = self.model.get_sample(sample_id)
+            if isinstance(sample, dict):
+                new_origin = self.model._timeline_origin_for_sample(sample)
+                for field_name in ("events", "dense_captions"):
+                    if isinstance(sample.get(field_name), list):
+                        sample[field_name] = normalize_temporal_annotations_for_write(
+                            sample[field_name], new_origin
+                        )
+
         if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
             return
         removed_selected = (
@@ -906,7 +969,7 @@ class HistoryManager(QObject):
         sample_id: str,
         input_path: str,
         utc_text: str,
-        annotation_shift_ms: int = 0,
+        previous_timeline_origin_utc=None,
     ) -> bool:
         if not sample_id or not input_path:
             return False
@@ -915,7 +978,7 @@ class HistoryManager(QObject):
             sample_id,
             input_path,
             utc_text,
-            annotation_shift_ms,
+            previous_timeline_origin_utc,
         ):
             return False
         if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
@@ -926,6 +989,33 @@ class HistoryManager(QObject):
         self.statusMessageRequested.emit(
             "Synchronized",
             "Input UTC start time updated.",
+            1800,
+        )
+        return True
+
+    def execute_input_utc_start_removal(
+        self,
+        sample_id: str,
+        input_path: str,
+        previous_timeline_origin_utc=None,
+    ) -> bool:
+        if not sample_id or not input_path:
+            return False
+        before_json = self.model.snapshot_dataset_json()
+        if not self.model._remove_input_utc_time_start(
+            sample_id,
+            input_path,
+            previous_timeline_origin_utc,
+        ):
+            return False
+        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
+            return False
+        self.model.populate_tree()
+        self.model._restore_tree_selection(sample_id, input_path)
+        self.saveStateRefreshRequested.emit()
+        self.statusMessageRequested.emit(
+            "UTC Removed",
+            "Explicit input UTC start time removed.",
             1800,
         )
         return True
@@ -1032,15 +1122,21 @@ class HistoryManager(QObject):
         except ValueError:
             pass
 
-        target_head = event.get("head")
-        target_label = event.get("label")
-        target_pos = event.get("position_ms")
+        target_identity = temporal_annotation_identity(event, ("head", "label"))
         for idx, candidate in enumerate(events):
-            if (
-                candidate.get("head") == target_head
-                and candidate.get("label") == target_label
-                and candidate.get("position_ms") == target_pos
-            ):
+            if temporal_annotation_identity(candidate, ("head", "label")) == target_identity:
+                return idx
+        return -1
+
+    @staticmethod
+    def _find_dense_event_index(events, event):
+        try:
+            return events.index(event)
+        except ValueError:
+            pass
+        target_identity = temporal_annotation_identity(event, ("lang", "text"))
+        for idx, candidate in enumerate(events):
+            if temporal_annotation_identity(candidate, ("lang", "text")) == target_identity:
                 return idx
         return -1
 

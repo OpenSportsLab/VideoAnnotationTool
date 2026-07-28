@@ -31,7 +31,7 @@ from controllers.welcome_controller import WelcomeController
 # [NEW] Direct UI Imports
 from ui.welcome_widget import WelcomeWidget
 from ui.dataset_explorer_panel import DatasetExplorerPanel
-from ui.media_player import MediaCenterPanel
+from ui.media_player import MediaCenterPanel, ViewerLayoutMode
 from ui.classification import ClassificationAnnotationPanel
 from ui.localization import LocalizationAnnotationPanel
 from ui.description import DescriptionAnnotationPanel
@@ -48,6 +48,9 @@ class VideoAnnotationWindow(QMainWindow):
     Now directly implements the UI setup to avoid overcomplicated nesting.
     """
     _MUTE_SETTING_KEY = "media/muted"
+    _VIEWER_LAYOUT_SETTING_KEY = "view/viewer_layout"
+    _DATA_DOCK_VISIBLE_SETTING_KEY = "view/dataset_explorer_visible"
+    _EDITOR_DOCK_VISIBLE_SETTING_KEY = "view/annotation_editor_visible"
 
     def __init__(self) -> None:
         super().__init__()
@@ -163,6 +166,10 @@ class VideoAnnotationWindow(QMainWindow):
         self._last_hf_download_payload: dict | None = None
         self._last_hf_upload_payload: dict | None = None
         self._last_restored_mute_state: bool | None = None
+        self._workspace_visible = False
+        self._updating_view_state = False
+        self._data_dock_preferred_visible = True
+        self._editor_dock_preferred_visible = True
 
         # Coalesce repeated status-triggered filter refreshes to avoid UI stalls
         # during rapid annotation mutations.
@@ -187,16 +194,20 @@ class VideoAnnotationWindow(QMainWindow):
     # ---------------------------------------------------------------------
     def show_welcome_view(self):
         """Switch to the Welcome Screen (Index 0 in central stack)."""
+        self._workspace_visible = False
         self.center_stack.setCurrentIndex(0)
         self.set_project_ui_enabled(False)
         self._set_side_docks_visible(False)
+        self._set_dock_view_actions_enabled(False)
         if hasattr(self, "welcome_controller"):
             self.welcome_controller.refresh_recent_projects()
 
     def show_workspace(self):
         """Switch to the Media Player (Index 1 in central stack)."""
+        self._workspace_visible = True
         self.center_stack.setCurrentIndex(1)
-        self._set_side_docks_visible(True)
+        self._set_dock_view_actions_enabled(True)
+        self._apply_side_dock_preferences()
         self.set_project_ui_enabled(True)
 
     def show_classification_view(self):
@@ -257,8 +268,12 @@ class VideoAnnotationWindow(QMainWindow):
 
     def _set_side_docks_visible(self, visible: bool):
         """Show or hide side dock widgets (dataset explorer + annotation editor)."""
-        self.data_dock.setVisible(visible)
-        self.editor_dock.setVisible(visible)
+        self._updating_view_state = True
+        try:
+            self.data_dock.setVisible(visible)
+            self.editor_dock.setVisible(visible)
+        finally:
+            self._updating_view_state = False
 
     # Welcome screen
     def _safe_import_annotations(self): self.dataset_explorer_controller.import_annotations()
@@ -273,7 +288,6 @@ class VideoAnnotationWindow(QMainWindow):
         self,
         input_path: str,
         utc_text: str,
-        annotation_shift_ms: int,
     ):
         sample_id = self.dataset_explorer_controller.current_selected_sample_id
         if not sample_id:
@@ -282,10 +296,45 @@ class VideoAnnotationWindow(QMainWindow):
             sample_id,
             input_path,
             utc_text,
-            annotation_shift_ms,
+            self.media_controller.timeline_origin_utc(),
         )
         sources = self.dataset_explorer_controller.get_media_sources_by_id(sample_id)
         if sources:
+            self.media_controller.set_sample_context(sample_id)
+            self.media_controller.route_media_group(sources, input_path, False)
+
+    def _handle_media_route(self, sources, focused_path: str, ensure_playback: bool):
+        self.media_controller.set_sample_context(
+            self.dataset_explorer_controller.current_selected_sample_id
+        )
+        self.media_controller.route_media_group(sources, focused_path, ensure_playback)
+        if not focused_path:
+            self.media_controller.focus_source("")
+
+    def _handle_media_selection_route(self, sources, focused_path: str):
+        preserve_playing = self.media_controller.is_playing()
+        self.media_controller.set_sample_context(
+            self.dataset_explorer_controller.current_selected_sample_id
+        )
+        self.media_controller.route_media_group(sources, focused_path, preserve_playing)
+        if not focused_path:
+            self.media_controller.focus_source("")
+
+    def _handle_media_focus(self, focused_path: str):
+        self.media_controller.focus_source(focused_path)
+
+    def _handle_input_utc_start_removal(self, input_path: str):
+        sample_id = self.dataset_explorer_controller.current_selected_sample_id
+        if not sample_id:
+            return
+        self.history_manager.execute_input_utc_start_removal(
+            sample_id,
+            input_path,
+            self.media_controller.timeline_origin_utc(),
+        )
+        sources = self.dataset_explorer_controller.get_media_sources_by_id(sample_id)
+        if sources:
+            self.media_controller.set_sample_context(sample_id)
             self.media_controller.route_media_group(sources, input_path, False)
 
     def connect_signals(self) -> None:
@@ -332,14 +381,28 @@ class VideoAnnotationWindow(QMainWindow):
             self.localization_editor_controller.on_schema_context_changed
         )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
-            lambda sources, focused_path, ensure_playback: self.media_controller.route_media_group(
-                sources,
-                focused_path,
-                ensure_playback,
-            )
+            self._handle_media_route
+        )
+        self.dataset_explorer_controller.mediaSelectionRouteRequested.connect(
+            self._handle_media_selection_route
+        )
+        self.dataset_explorer_controller.mediaFocusRequested.connect(
+            self._handle_media_focus
+        )
+        self.media_controller.timelineOriginChanged.connect(
+            self.history_manager.on_timeline_origin_changed
+        )
+        self.media_controller.timelineOriginChanged.connect(
+            self.localization_editor_controller.on_timeline_origin_changed
+        )
+        self.media_controller.timelineOriginChanged.connect(
+            self.dense_editor_controller.on_timeline_origin_changed
         )
         self.media_controller.inputUtcStartMutationRequested.connect(
             self._handle_input_utc_start_mutation
+        )
+        self.media_controller.inputUtcStartRemovalRequested.connect(
+            self._handle_input_utc_start_removal
         )
         self.dataset_explorer_controller.mediaStopRequested.connect(lambda: self.media_controller.stop())
         self.dataset_explorer_controller.mediaResetRequested.connect(self.media_controller.reset_viewers)
@@ -386,6 +449,9 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.dataset_explorer_controller.settingsChanged.connect(
             lambda _settings: self._restore_mute_state_from_settings()
+        )
+        self.dataset_explorer_controller.settingsChanged.connect(
+            lambda _settings: self._restore_view_state_from_settings()
         )
         self.dataset_explorer_controller.settingsChanged.connect(
             self.localization_editor_controller.set_settings
@@ -582,7 +648,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.hf_transfer_controller.uploadCancelled.connect(self._on_hf_upload_cancelled)
 
     def _setup_menu_bar(self) -> None:
-        from PyQt6.QtGui import QAction
+        from PyQt6.QtGui import QAction, QActionGroup
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("&File")
 
@@ -640,6 +706,51 @@ class VideoAnnotationWindow(QMainWindow):
         self.action_redo.triggered.connect(self.history_manager.perform_redo)
         edit_menu.addAction(self.action_redo)
 
+        view_menu = menu_bar.addMenu("&View")
+
+        self.action_show_dataset_explorer = QAction("Dataset Explorer", self)
+        self.action_show_dataset_explorer.setCheckable(True)
+        self.action_show_dataset_explorer.toggled.connect(
+            lambda visible: self._set_dock_preference("data", visible)
+        )
+        view_menu.addAction(self.action_show_dataset_explorer)
+
+        self.action_show_annotation_editor = QAction("Annotation Editor", self)
+        self.action_show_annotation_editor.setCheckable(True)
+        self.action_show_annotation_editor.toggled.connect(
+            lambda visible: self._set_dock_preference("editor", visible)
+        )
+        view_menu.addAction(self.action_show_annotation_editor)
+
+        view_menu.addSeparator()
+        layout_menu = view_menu.addMenu("Viewer Layout")
+        self.viewer_layout_action_group = QActionGroup(self)
+        self.viewer_layout_action_group.setExclusive(True)
+        self.viewer_layout_actions = {}
+        for label, mode in (
+            ("Single Modality", ViewerLayoutMode.SINGLE),
+            ("Mosaic", ViewerLayoutMode.MOSAIC),
+            ("Modality Tabs", ViewerLayoutMode.TABS),
+        ):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setData(mode.value)
+            action.triggered.connect(
+                lambda checked, selected_mode=mode: self._set_viewer_layout(selected_mode)
+                if checked else None
+            )
+            self.viewer_layout_action_group.addAction(action)
+            self.viewer_layout_actions[mode] = action
+            layout_menu.addAction(action)
+
+        self.data_dock.visibilityChanged.connect(
+            lambda visible: self._on_dock_visibility_changed("data", visible)
+        )
+        self.editor_dock.visibilityChanged.connect(
+            lambda visible: self._on_dock_visibility_changed("editor", visible)
+        )
+        self._restore_view_state_from_settings()
+
         help_menu = menu_bar.addMenu("&Help")
 
         self.action_shortcuts = QAction("Shortcuts", self)
@@ -649,6 +760,116 @@ class VideoAnnotationWindow(QMainWindow):
         self.action_info = QAction("Info", self)
         self.action_info.triggered.connect(self._show_info_popup)
         help_menu.addAction(self.action_info)
+
+    @staticmethod
+    def _setting_bool(value, default: bool) -> bool:
+        if value is None:
+            return bool(default)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+            return bool(default)
+        return bool(value)
+
+    def _restore_view_state_from_settings(self) -> None:
+        if not hasattr(self, "viewer_layout_actions"):
+            return
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is None:
+            return
+
+        self._data_dock_preferred_visible = self._setting_bool(
+            settings.value(self._DATA_DOCK_VISIBLE_SETTING_KEY, True), True
+        )
+        self._editor_dock_preferred_visible = self._setting_bool(
+            settings.value(self._EDITOR_DOCK_VISIBLE_SETTING_KEY, True), True
+        )
+        raw_mode = str(
+            settings.value(
+                self._VIEWER_LAYOUT_SETTING_KEY,
+                ViewerLayoutMode.MOSAIC.value,
+            )
+            or ""
+        )
+        try:
+            mode = ViewerLayoutMode(raw_mode)
+        except ValueError:
+            mode = ViewerLayoutMode.MOSAIC
+
+        self._updating_view_state = True
+        try:
+            self.action_show_dataset_explorer.setChecked(self._data_dock_preferred_visible)
+            self.action_show_annotation_editor.setChecked(self._editor_dock_preferred_visible)
+            self.viewer_layout_actions[mode].setChecked(True)
+            self.center_panel.set_viewer_layout(mode)
+            if self._workspace_visible:
+                self.data_dock.setVisible(self._data_dock_preferred_visible)
+                self.editor_dock.setVisible(self._editor_dock_preferred_visible)
+        finally:
+            self._updating_view_state = False
+
+    def _set_viewer_layout(self, mode: ViewerLayoutMode) -> None:
+        self.center_panel.set_viewer_layout(mode)
+        if self._updating_view_state:
+            return
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is not None:
+            settings.setValue(self._VIEWER_LAYOUT_SETTING_KEY, mode.value)
+            settings.sync()
+
+    def _set_dock_preference(self, dock_name: str, visible: bool) -> None:
+        target = bool(visible)
+        if dock_name == "data":
+            self._data_dock_preferred_visible = target
+            setting_key = self._DATA_DOCK_VISIBLE_SETTING_KEY
+            dock = self.data_dock
+        else:
+            self._editor_dock_preferred_visible = target
+            setting_key = self._EDITOR_DOCK_VISIBLE_SETTING_KEY
+            dock = self.editor_dock
+        if self._updating_view_state:
+            return
+        if self._workspace_visible:
+            self._updating_view_state = True
+            try:
+                dock.setVisible(target)
+            finally:
+                self._updating_view_state = False
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is not None:
+            settings.setValue(setting_key, target)
+            settings.sync()
+
+    def _on_dock_visibility_changed(self, dock_name: str, visible: bool) -> None:
+        if self._updating_view_state or not self._workspace_visible:
+            return
+        action = (
+            self.action_show_dataset_explorer
+            if dock_name == "data"
+            else self.action_show_annotation_editor
+        )
+        self._updating_view_state = True
+        try:
+            action.setChecked(bool(visible))
+        finally:
+            self._updating_view_state = False
+        self._set_dock_preference(dock_name, visible)
+
+    def _apply_side_dock_preferences(self) -> None:
+        self._updating_view_state = True
+        try:
+            self.data_dock.setVisible(self._data_dock_preferred_visible)
+            self.editor_dock.setVisible(self._editor_dock_preferred_visible)
+        finally:
+            self._updating_view_state = False
+
+    def _set_dock_view_actions_enabled(self, enabled: bool) -> None:
+        if hasattr(self, "action_show_dataset_explorer"):
+            self.action_show_dataset_explorer.setEnabled(enabled)
+            self.action_show_annotation_editor.setEnabled(enabled)
 
     def _setup_shortcuts(self) -> None:
         """Register common keyboard shortcuts."""
@@ -776,6 +997,7 @@ class VideoAnnotationWindow(QMainWindow):
                 return
             self._close_hf_busy_dialog()
             self.media_controller.stop()
+            self._workspace_visible = False
             event.accept()
         else:
             event.ignore()

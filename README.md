@@ -9,6 +9,8 @@ A **PyQt6-based GUI** for analyzing and annotating **[OSL format](https://opensp
 
 - Open and visualize OSL-style data and annotations.
 - Annotate and edit events/actions with a user-friendly GUI.
+- Keep Localization and Dense Description times stable across multi-modality
+  changes with authoritative UTC timestamps and projected timeline positions.
 - Manage labels/categories and export results for downstream tasks.
 - Easy to extend with additional viewers, overlays, and tools.
 
@@ -48,6 +50,10 @@ From the repository root, launch the app with:
 python annotation_tool/main.py
 ```
 A window will open where you can load your data and start working.
+
+For the temporal JSON contract and multi-input UTC workflow, see the
+[OSL JSON format](https://opensportslab.github.io/VideoAnnotationTool/OSL/) and
+[synchronized playback guide](https://opensportslab.github.io/VideoAnnotationTool/synchronized_playback/).
 
 
 ---

@@ -1,5 +1,6 @@
 import datetime as _datetime
 import os
+from enum import Enum
 
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal
@@ -12,17 +13,27 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
+    QMessageBox,
+    QInputDialog,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSlider,
+    QStackedWidget,
     QStyle,
     QStyleOptionSlider,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from utils import resource_path
+from utils import format_utc_datetime, parse_utc_datetime, resource_path
+
+
+class ViewerLayoutMode(str, Enum):
+    SINGLE = "single"
+    MOSAIC = "mosaic"
+    TABS = "tabs"
 
 
 class AnnotationSlider(QSlider):
@@ -112,12 +123,20 @@ class MediaViewerPane(QFrame):
     focusRequested = pyqtSignal(str)
     muteToggleRequested = pyqtSignal(str)
     syncRequested = pyqtSignal(str)
+    goToStartRequested = pyqtSignal(str)
+    goToEndRequested = pyqtSignal(str)
+    utcStartSetRequested = pyqtSignal(str, str)
+    utcStartRemoveRequested = pyqtSignal(str)
 
     def __init__(self, source_key: str = "", parent=None):
         super().__init__(parent)
         self.source_key = str(source_key or "")
         self._sync_available = False
         self._sync_unavailable_reason = "Synchronization is unavailable."
+        self._navigation_available = False
+        self._sync_mode_active = False
+        self._explicit_utc_present = False
+        self._explicit_utc_text = ""
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setProperty("class", "media_viewer_pane")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -169,6 +188,8 @@ class MediaViewerPane(QFrame):
         path = str(source.get("path") or "")
         source_type = str(source.get("type") or "unknown")
         self.source_key = path
+        self._explicit_utc_present = "UTC_time_start" in source
+        self._explicit_utc_text = str(source.get("UTC_time_start") or "")
         self.title_label.setText(f"{source_type} · {os.path.basename(path) or path}")
         self.set_focused(focused)
         self.show_status("Loading…")
@@ -190,6 +211,12 @@ class MediaViewerPane(QFrame):
     def set_sync_available(self, available: bool, reason: str = ""):
         self._sync_available = bool(available)
         self._sync_unavailable_reason = str(reason or "Synchronization is unavailable.")
+
+    def set_navigation_available(self, available: bool):
+        self._navigation_available = bool(available)
+
+    def set_sync_mode_active(self, active: bool):
+        self._sync_mode_active = bool(active)
 
     def set_feed_muted(self, muted: bool):
         self.btn_mute.setIcon(self._icon_muted if muted else self._icon_volume)
@@ -230,13 +257,85 @@ class MediaViewerPane(QFrame):
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         menu.setToolTipsVisible(True)
+        go_to_start_action = menu.addAction("Go to start")
+        go_to_start_action.setEnabled(
+            self._navigation_available and not self._sync_mode_active
+        )
+        go_to_end_action = menu.addAction("Go to end")
+        go_to_end_action.setEnabled(
+            self._navigation_available and not self._sync_mode_active
+        )
+        if not self._navigation_available:
+            go_to_start_action.setToolTip("This input is not playable.")
+            go_to_end_action.setToolTip("This input is not playable.")
+        elif self._sync_mode_active:
+            navigation_tooltip = "Finish synchronization before navigating the shared timeline."
+            go_to_start_action.setToolTip(navigation_tooltip)
+            go_to_end_action.setToolTip(navigation_tooltip)
+        menu.addSeparator()
         action = menu.addAction("Synchronize this modality")
         action.setEnabled(self._sync_available)
         if not self._sync_available:
             action.setStatusTip(self._sync_unavailable_reason)
             action.setToolTip(self._sync_unavailable_reason)
-        if menu.exec(event.globalPos()) is action:
+        menu.addSeparator()
+        set_utc_action = None
+        correct_utc_action = None
+        remove_utc_action = None
+        if self._explicit_utc_present:
+            correct_utc_action = menu.addAction("Correct UTC start…")
+            remove_utc_action = menu.addAction("Remove UTC start")
+            correct_utc_action.setEnabled(not self._sync_mode_active)
+            remove_utc_action.setEnabled(not self._sync_mode_active)
+        else:
+            set_utc_action = menu.addAction("Set UTC start…")
+            set_utc_action.setEnabled(bool(self.source_key) and not self._sync_mode_active)
+        selected_action = menu.exec(event.globalPos())
+        if selected_action is go_to_start_action:
+            self.goToStartRequested.emit(self.source_key)
+        elif selected_action is go_to_end_action:
+            self.goToEndRequested.emit(self.source_key)
+        elif selected_action is action:
             self.syncRequested.emit(self.source_key)
+        elif (
+            set_utc_action is not None and selected_action is set_utc_action
+        ) or (
+            correct_utc_action is not None and selected_action is correct_utc_action
+        ):
+            self._prompt_utc_start()
+        elif remove_utc_action is not None and selected_action is remove_utc_action:
+            self._confirm_remove_utc_start()
+
+    def _prompt_utc_start(self):
+        initial = format_utc_datetime(self._explicit_utc_text) or self._explicit_utc_text
+        value, accepted = QInputDialog.getText(
+            self,
+            "UTC Start Time",
+            "UTC time at modality position 00:00.000:",
+            text=initial,
+        )
+        if not accepted:
+            return
+        normalized = format_utc_datetime(value)
+        if normalized is None:
+            QMessageBox.warning(
+                self,
+                "Invalid UTC Time",
+                "Enter an ISO-compatible timestamp, optionally with Z or a timezone offset.",
+            )
+            return
+        self.utcStartSetRequested.emit(self.source_key, normalized)
+
+    def _confirm_remove_utc_start(self):
+        answer = QMessageBox.question(
+            self,
+            "Remove UTC Start",
+            "Remove the explicit UTC start time for this modality?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.utcStartRemoveRequested.emit(self.source_key)
 
 
 class MediaCenterPanel(QWidget):
@@ -254,6 +353,10 @@ class MediaCenterPanel(QWidget):
     paneFocusRequested = pyqtSignal(str)
     paneMuteToggleRequested = pyqtSignal(str)
     paneSyncRequested = pyqtSignal(str)
+    paneGoToStartRequested = pyqtSignal(str)
+    paneGoToEndRequested = pyqtSignal(str)
+    paneUtcStartSetRequested = pyqtSignal(str, str)
+    paneUtcStartRemoveRequested = pyqtSignal(str)
     syncFrameStepRequested = pyqtSignal(int)
     syncApplyRequested = pyqtSignal()
     syncCancelRequested = pyqtSignal()
@@ -291,6 +394,14 @@ class MediaCenterPanel(QWidget):
         self._sync_timeline_text = ""
 
     def _setup_media_player(self):
+        self._viewer_layout = ViewerLayoutMode.MOSAIC
+        self._focused_path = ""
+        self._displayed_path = ""
+        self._sync_selected_path = ""
+        self._rebuilding_viewer_layout = False
+
+        self.viewer_layout_stack = QStackedWidget(self.video_container)
+
         self.viewer_scroll = QScrollArea(self.video_container)
         self.viewer_scroll.setWidgetResizable(True)
         self.viewer_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -299,7 +410,16 @@ class MediaCenterPanel(QWidget):
         self.viewer_grid.setContentsMargins(0, 0, 0, 0)
         self.viewer_grid.setSpacing(5)
         self.viewer_scroll.setWidget(self.viewer_host)
-        self.videoLayout.addWidget(self.viewer_scroll)
+
+        self.single_view_stack = QStackedWidget(self.video_container)
+        self.viewer_tabs = QTabWidget(self.video_container)
+        self.viewer_tabs.setDocumentMode(True)
+        self.viewer_tabs.currentChanged.connect(self._on_viewer_tab_changed)
+
+        self.viewer_layout_stack.addWidget(self.viewer_scroll)
+        self.viewer_layout_stack.addWidget(self.single_view_stack)
+        self.viewer_layout_stack.addWidget(self.viewer_tabs)
+        self.videoLayout.addWidget(self.viewer_layout_stack)
         self._viewer_panes = [self._create_viewer_pane("")]
         self.viewer_grid.addWidget(self._viewer_panes[0], 0, 0)
         self._sync_primary_aliases()
@@ -309,6 +429,10 @@ class MediaCenterPanel(QWidget):
         pane.focusRequested.connect(self.paneFocusRequested)
         pane.muteToggleRequested.connect(self.paneMuteToggleRequested)
         pane.syncRequested.connect(self.paneSyncRequested)
+        pane.goToStartRequested.connect(self.paneGoToStartRequested)
+        pane.goToEndRequested.connect(self.paneGoToEndRequested)
+        pane.utcStartSetRequested.connect(self.paneUtcStartSetRequested)
+        pane.utcStartRemoveRequested.connect(self.paneUtcStartRemoveRequested)
         return pane
 
     def _setup_sync_bar(self):
@@ -342,11 +466,12 @@ class MediaCenterPanel(QWidget):
 
     def configure_viewers(self, sources: list[dict], focused_path: str = ""):
         sources = list(sources or []) or [{"path": "", "type": "media"}]
+        previous_keys = [pane.source_key for pane in self._viewer_panes]
         while len(self._viewer_panes) < len(sources):
             self._viewer_panes.append(self._create_viewer_pane(""))
         while len(self._viewer_panes) > len(sources):
             pane = self._viewer_panes.pop()
-            self.viewer_grid.removeWidget(pane)
+            self._detach_viewer_pane(pane)
             pane.player.stop()
             pane.deleteLater()
 
@@ -357,7 +482,12 @@ class MediaCenterPanel(QWidget):
             if not focused_key:
                 is_focused = index == 0
             pane.configure(source, focused=is_focused)
-            self.viewer_grid.addWidget(pane, index // 2, index % 2)
+
+        current_keys = [pane.source_key for pane in self._viewer_panes]
+        if current_keys != previous_keys:
+            self._displayed_path = str(focused_path or current_keys[0] or "")
+        self._focused_path = str(focused_path or "")
+        self._arrange_viewers()
         self._sync_primary_aliases()
         return list(self._viewer_panes)
 
@@ -366,6 +496,8 @@ class MediaCenterPanel(QWidget):
         pane = self._viewer_panes[0]
         pane.source_key = ""
         pane.title_label.setText("Media")
+        if self.viewer_tabs.count():
+            self.viewer_tabs.setTabText(0, "Media")
         pane.set_timing_status("Relative")
         pane.set_sync_available(False)
         pane.set_syncing(False)
@@ -378,21 +510,131 @@ class MediaCenterPanel(QWidget):
             pane.set_focused(
                 bool(focused_key and os.path.normcase(os.path.normpath(pane.source_key)) == focused_key)
             )
+        self._focused_path = str(focused_path or "")
+        if focused_key and self._pane_index_for_path(focused_path) >= 0:
+            self._displayed_path = str(focused_path)
+            self._select_displayed_pane()
+
+    def viewer_layout(self) -> ViewerLayoutMode:
+        return self._viewer_layout
+
+    def set_viewer_layout(self, mode: ViewerLayoutMode | str):
+        try:
+            normalized = mode if isinstance(mode, ViewerLayoutMode) else ViewerLayoutMode(str(mode))
+        except ValueError:
+            normalized = ViewerLayoutMode.MOSAIC
+        if normalized == self._viewer_layout:
+            self._select_displayed_pane()
+            return
+        self._viewer_layout = normalized
+        self._arrange_viewers()
+
+    def _detach_viewer_pane(self, pane: MediaViewerPane):
+        self.viewer_grid.removeWidget(pane)
+        self.single_view_stack.removeWidget(pane)
+        tab_index = self.viewer_tabs.indexOf(pane)
+        if tab_index >= 0:
+            signals_were_blocked = self.viewer_tabs.blockSignals(True)
+            try:
+                self.viewer_tabs.removeTab(tab_index)
+            finally:
+                self.viewer_tabs.blockSignals(signals_were_blocked)
+
+    def _arrange_viewers(self):
+        self._rebuilding_viewer_layout = True
+        try:
+            for pane in self._viewer_panes:
+                self._detach_viewer_pane(pane)
+
+            if self._viewer_layout == ViewerLayoutMode.MOSAIC:
+                for index, pane in enumerate(self._viewer_panes):
+                    self.viewer_grid.addWidget(pane, index // 2, index % 2)
+                self.viewer_layout_stack.setCurrentWidget(self.viewer_scroll)
+                # QStackedWidget/QTabWidget explicitly hide panes that are not
+                # current. Reparenting them into a plain grid does not clear
+                # that state, so make every mosaic pane visible again.
+                for pane in self._viewer_panes:
+                    pane.show()
+            elif self._viewer_layout == ViewerLayoutMode.SINGLE:
+                for pane in self._viewer_panes:
+                    self.single_view_stack.addWidget(pane)
+                self.viewer_layout_stack.setCurrentWidget(self.single_view_stack)
+            else:
+                for pane in self._viewer_panes:
+                    self.viewer_tabs.addTab(pane, pane.title_label.text())
+                self.viewer_layout_stack.setCurrentWidget(self.viewer_tabs)
+            self._select_displayed_pane()
+        finally:
+            self._rebuilding_viewer_layout = False
+
+    def _pane_index_for_path(self, path: str) -> int:
+        key = os.path.normcase(os.path.normpath(path)) if path else ""
+        for index, pane in enumerate(self._viewer_panes):
+            pane_key = os.path.normcase(os.path.normpath(pane.source_key)) if pane.source_key else ""
+            if key and pane_key == key:
+                return index
+        return -1
+
+    def _visible_pane_index(self) -> int:
+        preferred_path = self._sync_selected_path or self._displayed_path or self._focused_path
+        index = self._pane_index_for_path(preferred_path)
+        return index if index >= 0 else 0
+
+    def _select_displayed_pane(self):
+        if not self._viewer_panes:
+            return
+        index = self._visible_pane_index()
+        self._displayed_path = self._viewer_panes[index].source_key
+        if self.single_view_stack.count():
+            self.single_view_stack.setCurrentWidget(self._viewer_panes[index])
+        if self.viewer_tabs.count():
+            signals_were_blocked = self.viewer_tabs.blockSignals(True)
+            try:
+                self.viewer_tabs.setCurrentIndex(index)
+            finally:
+                self.viewer_tabs.blockSignals(signals_were_blocked)
+
+    def _on_viewer_tab_changed(self, index: int):
+        if self._rebuilding_viewer_layout or self._viewer_layout != ViewerLayoutMode.TABS:
+            return
+        if self._sync_selected_path:
+            self._rebuilding_viewer_layout = True
+            try:
+                self._select_displayed_pane()
+            finally:
+                self._rebuilding_viewer_layout = False
+            return
+        if not 0 <= index < len(self._viewer_panes):
+            return
+        path = self._viewer_panes[index].source_key
+        self._displayed_path = path
+        self.focus_viewer(path)
+        self.paneFocusRequested.emit(path)
 
     def set_sync_availability(self, availability: dict[str, tuple[bool, str]]):
         for pane in self._viewer_panes:
             available, reason = availability.get(pane.source_key, (False, "Synchronization is unavailable."))
             pane.set_sync_available(available, reason)
 
+    def set_navigation_availability(self, availability: dict[str, bool]):
+        for pane in self._viewer_panes:
+            pane.set_navigation_available(bool(availability.get(pane.source_key, False)))
+
     def set_sync_mode(self, active: bool, selected_path: str = ""):
         self._sync_active = bool(active)
+        self._sync_selected_path = str(selected_path or "") if active else ""
         if not active:
             self._sync_timeline_text = ""
         self.sync_bar.setVisible(bool(active))
+        self.viewer_tabs.tabBar().setEnabled(not active)
         selected_key = os.path.normcase(os.path.normpath(selected_path)) if selected_path else ""
         for pane in self._viewer_panes:
             pane_key = os.path.normcase(os.path.normpath(pane.source_key)) if pane.source_key else ""
             pane.set_syncing(bool(active and pane_key == selected_key))
+            pane.set_sync_mode_active(active)
+        if active and selected_path:
+            self._displayed_path = str(selected_path)
+            self._select_displayed_pane()
 
     def update_sync_status(self, anchor_text: str, local_ms: int, duration_ms: int, proposed_text: str):
         text = (

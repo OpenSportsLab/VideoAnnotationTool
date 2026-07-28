@@ -3,6 +3,8 @@ Focused Dataset Explorer controller and panel tests using minimal fixtures.
 """
 
 import pytest
+import h5py
+import numpy as np
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtWidgets import QDialog, QMessageBox
 
@@ -31,6 +33,148 @@ def _known_row(panel, key: str) -> int:
         if key_item and key_item.text() == key:
             return row
     raise AssertionError(f"Missing known header row: {key}")
+
+
+def test_write_promotes_and_reprojects_absolute_temporal_annotations(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    _panel, controller = explorer_panel_and_controller
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "version": "2.0",
+        "labels": {},
+        "data": [
+            {
+                "id": "sample-1",
+                "inputs": [
+                    {
+                        "type": "video",
+                        "path": "clip.mp4",
+                        "UTC_time_start": "2026-01-01T12:00:00Z",
+                    }
+                ],
+                "events": [
+                    {"head": "action", "label": "pass", "position_ms": 1000},
+                    {
+                        "head": "action",
+                        "label": "shot",
+                        "position_ms": 9999,
+                        "timestamp_utc": "2026-01-01T14:00:02.500000+02:00",
+                    },
+                    {
+                        "head": "action",
+                        "label": "bad",
+                        "position_ms": 3000,
+                        "timestamp_utc": "not-a-time",
+                    },
+                ],
+                "dense_captions": [
+                    {"position_ms": 1500, "lang": "en", "text": "caption"}
+                ],
+            }
+        ],
+    }
+
+    written = controller._dataset_json_for_write(str(tmp_path / "saved.json"))
+    sample = written["data"][0]
+
+    assert sample["events"][0]["timestamp_utc"] == "2026-01-01 12:00:01.000000"
+    assert sample["events"][1]["timestamp_utc"] == "2026-01-01 12:00:02.500000"
+    assert sample["events"][1]["position_ms"] == 2500
+    assert sample["events"][2] == {
+        "head": "action",
+        "label": "bad",
+        "position_ms": 3000,
+        "timestamp_utc": "not-a-time",
+    }
+    assert sample["dense_captions"][0]["timestamp_utc"] == (
+        "2026-01-01 12:00:01.500000"
+    )
+
+
+def test_write_uses_backend_h5_timestamp_as_a_genuine_origin(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    _panel, controller = explorer_panel_and_controller
+    h5_path = tmp_path / "tracking.h5"
+    with h5py.File(h5_path, "w") as h5_file:
+        h5_file.create_dataset(
+            "timestamp_utc",
+            data=np.asarray([b"2026-01-01 12:00:00.500000"]),
+        )
+
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "version": "2.0",
+        "labels": {},
+        "data": [
+            {
+                "id": "sample-h5",
+                "inputs": [
+                    {"type": "player_joints_h5", "path": str(h5_path)}
+                ],
+                "events": [
+                    {"head": "action", "label": "pass", "position_ms": 750}
+                ],
+            }
+        ],
+    }
+
+    written = controller._dataset_json_for_write(str(tmp_path / "saved.json"))
+    assert written["data"][0]["events"][0]["timestamp_utc"] == (
+        "2026-01-01 12:00:01.250000"
+    )
+
+
+def test_removing_h5_utc_override_restores_backend_origin(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    _panel, controller = explorer_panel_and_controller
+    h5_path = tmp_path / "tracking.h5"
+    with h5py.File(h5_path, "w") as h5_file:
+        h5_file.create_dataset(
+            "timestamp_utc",
+            data=np.asarray([b"2026-01-01 12:00:00.500000"]),
+        )
+    controller.current_working_directory = str(tmp_path)
+    controller.dataset_json = {
+        "version": "2.0",
+        "labels": {},
+        "data": [
+            {
+                "id": "sample-h5",
+                "inputs": [
+                    {
+                        "type": "player_joints_h5",
+                        "path": str(h5_path),
+                        "UTC_time_start": "2026-01-01 11:59:59.000000",
+                    }
+                ],
+                "events": [
+                    {
+                        "head": "action",
+                        "label": "pass",
+                        "position_ms": 2500,
+                        "timestamp_utc": "2026-01-01 12:00:01.500000",
+                    }
+                ],
+            }
+        ],
+    }
+    controller._rebuild_runtime_index()
+
+    assert controller._remove_input_utc_time_start(
+        "sample-h5",
+        str(h5_path),
+        "2026-01-01 11:59:59.000000",
+    )
+    sample = controller.get_sample("sample-h5")
+    assert "UTC_time_start" not in sample["inputs"][0]
+    assert sample["events"][0]["timestamp_utc"] == "2026-01-01 12:00:01.500000"
+    assert sample["events"][0]["position_ms"] == 1000
 
 
 def _unknown_row(panel, key: str) -> int:

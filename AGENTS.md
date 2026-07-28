@@ -57,7 +57,9 @@ Default signal flow:
 - Tab switch with same selection/path must not restart media.
 - Undo/redo should prefer lightweight refresh over full rebuild when possible.
 - If filter hides selected row: clear selection (do not auto-select first visible).
-- Explicit user sample/input selection should ensure playback when needed.
+- Explicit tree selection preserves playback state: changing samples carries
+  playing/paused state forward, selecting an input in the active sample changes
+  only viewer focus, and selecting the active sample clears input focus.
 
 ## UX Decisions to Preserve
 - No single-view vs multi-view creation prompt.
@@ -78,6 +80,13 @@ Default signal flow:
 ## Testing Discipline
 For architecture, mutation, playback, or workflow changes, update/run relevant suites in the folder `tests/gui`. Always run relevant tests before considering work complete.
 
+## Documentation Discipline
+Every new feature or feature change must update the documentation before the work is considered complete:
+- Update user-facing documentation with the feature's behavior, workflow, and any visible UI or data-format changes.
+- Update developer-facing documentation with the feature's architecture, contracts, signals/APIs, persistence behavior, and important implementation constraints.
+- Keep JSON/schema documentation and examples synchronized whenever persisted fields or precedence rules change.
+- Remove or revise stale documentation that conflicts with the implemented behavior.
+
 ## PR/Agent Checklist
 1. Controller boundaries preserved?
 2. History 1-or-0 push rule preserved?
@@ -87,5 +96,5 @@ For architecture, mutation, playback, or workflow changes, update/run relevant s
 6. Logic kept simple?
 7. Unused functions removed?
 8. Redundant logic removed and canonical path retained?
-9. README/docs updated if public contract changed?
+9. User and developer documentation updated for every feature or feature change, including JSON/schema docs when applicable?
 10. Relevant regression tests added/updated and run?

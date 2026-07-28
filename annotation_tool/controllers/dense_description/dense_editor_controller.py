@@ -3,6 +3,7 @@ import copy
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
+from utils import annotation_at_position, parse_utc_datetime, project_temporal_annotations
 
 
 class DenseEditorController(QObject):
@@ -27,6 +28,8 @@ class DenseEditorController(QObject):
         self.dense_panel = dense_panel
         self._last_media_position_ms = 0
         self._active_mode_index = 0
+        self._timeline_origin_utc = None
+        self._timeline_origins = {}
 
         self.current_sample_id = ""
         self.current_video_path = None
@@ -55,12 +58,35 @@ class DenseEditorController(QObject):
     def on_media_position_changed(self, ms: int):
         self._last_media_position_ms = max(0, int(ms))
 
+    def on_timeline_origin_changed(self, sample_id: str, origin_utc):
+        sample_key = str(sample_id or "")
+        origin = parse_utc_datetime(origin_utc)
+        if sample_key:
+            if origin is None:
+                self._timeline_origins.pop(sample_key, None)
+            else:
+                self._timeline_origins[sample_key] = origin
+        if sample_key != self.current_sample_id:
+            return
+        self._timeline_origin_utc = origin
+        self.dense_panel.set_timeline_origin(origin)
+        self._set_snapshot_dense_events(
+            project_temporal_annotations(
+                self._current_sample_snapshot.get("dense_captions", []),
+                self._timeline_origin_utc,
+            )
+        )
+        self._refresh_events_display(update_markers=self._is_active_mode())
+
     def reset_ui(self):
         self.dense_panel.set_events([])
         self.dense_panel.set_dense_enabled(False)
         self.current_sample_id = ""
         self.current_video_path = None
         self._current_sample_snapshot = {}
+        self._timeline_origin_utc = None
+        self._timeline_origins.clear()
+        self.dense_panel.set_timeline_origin(None)
 
     def submit_current_annotation(self):
         self._on_add_event_requested()
@@ -85,8 +111,26 @@ class DenseEditorController(QObject):
 
         self.current_sample_id = sample_id
         self.current_video_path = path
+        self._timeline_origin_utc = self._timeline_origins.get(sample_id)
+        self.dense_panel.set_timeline_origin(self._timeline_origin_utc)
         self._current_sample_snapshot = copy.deepcopy(sample)
-        self._set_snapshot_dense_events(self._current_sample_snapshot.get("dense_captions", []))
+        self._set_snapshot_dense_events(
+            project_temporal_annotations(
+                self._current_sample_snapshot.get("dense_captions", []),
+                self._timeline_origin_utc,
+            )
+        )
+        if self._is_active_mode() and any(
+            "timestamp_utc" in event
+            and parse_utc_datetime(event.get("timestamp_utc")) is None
+            for event in self._current_sample_snapshot.get("dense_captions", [])
+            if isinstance(event, dict)
+        ):
+            self.statusMessageRequested.emit(
+                "Invalid UTC timestamp",
+                "A dense annotation has an invalid timestamp_utc; position_ms is being used.",
+                3500,
+            )
         self.dense_panel.set_dense_enabled(True)
         self._refresh_events_display(update_markers=self._is_active_mode())
 
@@ -118,7 +162,11 @@ class DenseEditorController(QObject):
             return
 
         pos_ms = max(0, int(self._last_media_position_ms))
-        new_event = {"position_ms": pos_ms, "lang": "en", "text": text}
+        new_event = annotation_at_position(
+            {"lang": "en", "text": text},
+            pos_ms,
+            self._timeline_origin_utc,
+        )
         self.denseEventAddRequested.emit(self.current_sample_id, copy.deepcopy(new_event))
         events = self._snapshot_dense_events()
         events.append(copy.deepcopy(new_event))
@@ -179,8 +227,7 @@ class DenseEditorController(QObject):
             return
 
         current_ms = max(0, int(self._last_media_position_ms))
-        new_event = old_event.copy()
-        new_event["position_ms"] = current_ms
+        new_event = annotation_at_position(old_event, current_ms, self._timeline_origin_utc)
         self._on_annotation_modified(old_event, new_event)
 
     def display_events_for_item(self, path: str, update_markers=None):

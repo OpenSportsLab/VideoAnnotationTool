@@ -759,11 +759,17 @@ def test_input_utc_start_update_is_one_undoable_semantic_mutation(
         sample_id,
         input_path,
         "2022-12-03 13:28:01.000000",
-        250,
+        "2022-12-03 13:27:59.461000",
     )
     replacement_json = _json_snapshot(window)
-    assert replacement_json["data"][0]["events"][0]["position_ms"] == 1250
-    assert replacement_json["data"][0]["dense_captions"][0]["position_ms"] == 1750
+    assert replacement_json["data"][0]["events"][0]["position_ms"] == -539
+    assert replacement_json["data"][0]["events"][0]["timestamp_utc"] == (
+        "2022-12-03 13:28:00.461000"
+    )
+    assert replacement_json["data"][0]["dense_captions"][0]["position_ms"] == -39
+    assert replacement_json["data"][0]["dense_captions"][0]["timestamp_utc"] == (
+        "2022-12-03 13:28:00.961000"
+    )
     assert _stack_sizes(window) == (1, 0)
 
     window.history_manager.perform_undo()
@@ -772,3 +778,83 @@ def test_input_utc_start_update_is_one_undoable_semantic_mutation(
     window.history_manager.perform_redo()
     qtbot.wait(50)
     assert _json_snapshot(window) == replacement_json
+
+
+@pytest.mark.gui
+def test_temporal_mutations_write_absolute_and_compatibility_times(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+
+    model = window.dataset_explorer_controller
+    sample_id = model.current_selected_sample_id
+    window.history_manager.on_timeline_origin_changed(
+        sample_id, "2026-01-01 12:00:00.000000"
+    )
+    new_event = {
+        "head": "ball_action",
+        "label": "shot",
+        "position_ms": 2250,
+    }
+
+    window.history_manager.execute_localization_event_add(sample_id, new_event)
+    saved_event = model.get_sample(sample_id)["events"][-1]
+    assert saved_event["position_ms"] == 2250
+    assert saved_event["timestamp_utc"] == "2026-01-01 12:00:02.250000"
+
+    moved = copy.deepcopy(saved_event)
+    moved["position_ms"] = 3250
+    window.history_manager.execute_localization_event_mod(sample_id, saved_event, moved)
+    moved_event = next(
+        event
+        for event in model.get_sample(sample_id)["events"]
+        if event.get("label") == "shot"
+    )
+    assert moved_event["timestamp_utc"] == "2026-01-01 12:00:03.250000"
+
+
+@pytest.mark.gui
+def test_explicit_input_utc_removal_is_one_undoable_absolute_time_mutation(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("localization")
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+
+    model = window.dataset_explorer_controller
+    sample_id = model.current_selected_sample_id
+    sample = model.get_sample(sample_id)
+    source = model.get_media_sources_by_id(sample_id)[0]
+    sample["inputs"][0]["UTC_time_start"] = "2026-01-01 12:00:00.000000"
+    sample["events"][0]["timestamp_utc"] = "2026-01-01 12:00:01.000000"
+    model._rebuild_runtime_index()
+    model.undo_stack.clear()
+    model.redo_stack.clear()
+
+    before_json = _json_snapshot(window)
+    assert window.history_manager.execute_input_utc_start_removal(
+        sample_id,
+        source["path"],
+        "2026-01-01 12:00:00.000000",
+    )
+    after_json = _json_snapshot(window)
+    assert "UTC_time_start" not in after_json["data"][0]["inputs"][0]
+    assert after_json["data"][0]["events"][0]["timestamp_utc"] == (
+        "2026-01-01 12:00:01.000000"
+    )
+    assert _stack_sizes(window) == (1, 0)
+
+    window.history_manager.perform_undo()
+    qtbot.wait(20)
+    assert _json_snapshot(window) == before_json
+    window.history_manager.perform_redo()
+    qtbot.wait(20)
+    assert _json_snapshot(window) == after_json

@@ -64,11 +64,19 @@ For H5 joints and centroid inputs, the earliest usable `timestamp_utc` is normal
 
 Audio from all audio-capable panes may play together. Each pane has its own mute control, while the timeline mute button temporarily mutes every pane without discarding the individual feed choices.
 
+Right-click a playable viewer and choose **Go to start** or **Go to end** to seek the shared timeline to that modality's first or final frame. For UTC-capable inputs these positions include the modality's UTC offset; relative inputs start at shared elapsed zero. Every pane follows the seek and remains synchronized.
+
+The same viewer menu provides **Set UTC start…** when no explicit override exists, or **Correct UTC start…** and **Remove UTC start** when it does. Set/correct treats the entered value as UTC at modality-local `00:00.000`. Removing an override restores backend-derived timing when available. Each effective change is undoable and preserves absolute annotation timestamps.
+
 To correct an input's alignment visually, right-click its viewer and choose **Synchronize this modality**. The action is available when the sample has at least two playable inputs and at least one valid absolute UTC origin. Synchronization pauses the group and freezes the other panes at the current UTC anchor. The normal timeline and playback controls then operate only on the selected modality; the sync bar also provides exact previous/next-frame controls. Left/Right provide the same frame stepping, while the existing relative-seek controls continue to move by one or five seconds.
 
-Choose **Apply** when the selected frame matches the frozen panes. The tool stores `UTC_time_start = anchor UTC - selected local time` with six fractional digits, reroutes the group to that same absolute anchor, and creates one undoable dataset edit. If the earliest modality origin changes, localization events and dense captions are shifted by the opposite timeline-origin delta so their absolute UTC times remain unchanged. Applying an equivalent UTC value is a no-op. **Cancel**, changing samples/projects, or closing the project exits the mode without changing the dataset. Both Apply and Cancel leave playback paused.
-- Localization event: `{ "head": str, "label": str, "position_ms": int }`
-- Dense event: `{ "position_ms": int, "lang": str, "text": str }`
+Choose **Apply** when the selected frame matches the frozen panes. The tool stores `UTC_time_start = anchor UTC - selected local time` with six fractional digits, reroutes the group to that same absolute anchor, and creates one undoable dataset edit. Localization events and dense captions with `timestamp_utc` keep that authoritative instant; only their projected timeline positions change when the earliest modality changes. Applying an equivalent UTC value is a no-op. **Cancel**, changing samples/projects, or closing the project exits the mode without changing the dataset. Both Apply and Cancel leave playback paused.
+- Localization event: `{ "head": str, "label": str, "position_ms": int, "timestamp_utc": str? }`
+- Dense event: `{ "position_ms": int, "timestamp_utc": str?, "lang": str, "text": str }`
+
+For temporal annotations, a valid `timestamp_utc` is authoritative and `position_ms` is a compatibility value projected relative to the resolved sample timeline origin. New or edited annotations write both fields when UTC is available. Save/export promotes legacy `position_ms` annotations when a genuine sample UTC origin can be resolved. Relative-only samples continue to use `position_ms`; malformed timestamps are preserved and fall back to it.
+
+Localization and Dense Description tables show resolvable annotations as `YYYY-MM-DD HH:MM:SS.mmm UTC`. Their Time cells accept ISO-compatible UTC edits; rows without usable UTC retain the relative `MM:SS.mmm` editor.
 - Caption list (Description): `[ { "lang": str, "text": str, ...optional } ]`
 - Q/A list: `[ { "question": str, "answers": [str, ...] } ]`
 

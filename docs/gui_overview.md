@@ -13,6 +13,12 @@ The workspace has three regions: Dataset Explorer (left), Media Center (middle),
 
 ## Workspace Layout
 
+The **View** menu controls the workspace layout. **Dataset Explorer** and
+**Annotation Editor** can be shown or hidden independently. Under **Viewer
+Layout**, choose **Single Modality**, **Mosaic**, or **Modality Tabs**. These
+choices are application preferences and are restored when the app restarts;
+they are not written to dataset JSON.
+
 ### Left: Dataset Explorer
 
 - Tree of samples (parent row) and inputs (child rows)
@@ -24,13 +30,32 @@ The workspace has three regions: Dataset Explorer (left), Media Center (middle),
   - Unknown/custom root keys (read-only)
   - Raw JSON preview
 
+Selecting a sample row preserves playback state: playing streams continue and
+paused or stopped streams do not start. A sample row has no focused modality,
+so all viewer contours are cleared. Selecting one of the active sample's input
+rows only highlights its viewer and likewise leaves playback unchanged.
+
 ### Middle: Media Center
 
-- Video preview
+- **Single Modality** shows one input at a time; selecting an input row in the
+  explorer switches the visible modality
+- **Mosaic** shows all inputs in the existing adaptive two-column grid
+- **Modality Tabs** keeps one tab per input so the visible modality can be
+  selected from the media center
 - Timeline + zoom
 - Marker overlays (mode-dependent)
 - Playback controls (seek/playback rate)
 - Mute icon button (state persists via app settings)
+- Per-viewer right-click actions for **Go to start**, **Go to end**, manual UTC
+  start management, and visual UTC synchronization
+
+See [Synchronized Multi-Modality Playback](synchronized_playback.md) for UTC
+alignment rules and the synchronization workflow.
+
+Changing the viewer layout only changes presentation. Hidden modalities remain
+loaded and synchronized, so switching layouts or tabs does not restart playback
+or move the shared timeline. During manual UTC synchronization, single and tab
+layouts stay pinned to the modality being synchronized.
 
 ### Right: Annotation Tabs
 
@@ -50,6 +75,8 @@ The workspace has three regions: Dataset Explorer (left), Media Center (middle),
 - Spot events at current playhead time
 - Head/label add/rename/delete + per-label colors
 - Event table supports edit, delete, confirm/reject smart events
+- Time shows full UTC when resolvable and relative time otherwise; media seeking
+  still uses the projected timeline position
 - Smart inference with model + time-range prompts
 
 #### Description (`DESC`)
@@ -65,7 +92,8 @@ The workspace has three regions: Dataset Explorer (left), Media Center (middle),
 
 - `Add New Description` opens a modal and inserts at current playhead time
 - Dense events are editable/deletable in the table
-- Events are kept chronological by `position_ms`
+- Time shows full UTC when resolvable and accepts ISO-compatible UTC edits
+- Events remain navigable by their projected `position_ms`
 
 #### Question/Answer (`Q/A`)
 

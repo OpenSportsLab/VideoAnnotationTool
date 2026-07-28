@@ -7,10 +7,11 @@ import pandas as pd
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage
+from PyQt6.QtWidgets import QMessageBox
 
 from controllers.media_controller import MediaController
 from controllers.media.raster_backend import BaseRasterMediaBackend, RasterClip
-from ui.media_player import MediaCenterPanel
+from ui.media_player import MediaCenterPanel, ViewerLayoutMode
 
 
 FRAME_STACK_PATH = (
@@ -1269,6 +1270,128 @@ def test_grouped_relative_source_aligns_to_union_start_and_feed_mute(
 
 
 @pytest.mark.gui
+def test_focus_source_only_changes_viewer_highlight_and_preserves_position(
+    media_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    first_path = tmp_path / "focus_first.h5"
+    second_path = tmp_path / "focus_second.h5"
+    timestamps = [b"2026-01-01 12:00:00.000000", b"2026-01-01 12:00:01.000000"]
+    _write_minimal_player_joints_h5(first_path, timestamps)
+    _write_minimal_player_centroids_h5(second_path, timestamps)
+
+    controller.route_media_group(
+        [
+            {"type": "player_joints_h5", "path": str(first_path)},
+            {"type": "player_centroids_h5", "path": str(second_path)},
+        ],
+        str(first_path),
+        False,
+    )
+    controller.set_position(750)
+    position_before_focus = controller.current_position_ms()
+    playing_before_focus = controller.is_playing()
+
+    controller.focus_source(str(second_path))
+
+    assert controller.current_position_ms() == position_before_focus
+    assert controller.is_playing() is playing_before_focus
+    assert panel._viewer_panes[0].property("focused") is False
+    assert panel._viewer_panes[1].property("focused") is True
+
+    pane_ids = [id(pane) for pane in panel._viewer_panes]
+    for mode in (ViewerLayoutMode.SINGLE, ViewerLayoutMode.TABS, ViewerLayoutMode.MOSAIC):
+        panel.set_viewer_layout(mode)
+        assert controller.current_position_ms() == position_before_focus
+        assert controller.is_playing() is playing_before_focus
+        assert [id(pane) for pane in panel._viewer_panes] == pane_ids
+
+
+@pytest.mark.gui
+def test_viewer_layouts_reuse_panes_and_focus_the_selected_modality(
+    media_panel_and_controller,
+):
+    panel, _controller = media_panel_and_controller
+    sources = [
+        {"type": "video", "path": "/tmp/camera_a.mp4"},
+        {"type": "tracking", "path": "/tmp/tracking.parquet"},
+        {"type": "text", "path": "/tmp/notes.txt"},
+    ]
+    panel.configure_viewers(sources, sources[0]["path"])
+    pane_ids = [id(pane) for pane in panel._viewer_panes]
+
+    panel.set_viewer_layout(ViewerLayoutMode.SINGLE)
+    assert panel.viewer_layout_stack.currentWidget() is panel.single_view_stack
+    assert panel.single_view_stack.currentWidget() is panel._viewer_panes[0]
+
+    panel.focus_viewer(sources[2]["path"])
+    assert panel.single_view_stack.currentWidget() is panel._viewer_panes[2]
+
+    panel.set_viewer_layout(ViewerLayoutMode.TABS)
+    assert panel.viewer_layout_stack.currentWidget() is panel.viewer_tabs
+    assert panel.viewer_tabs.count() == 3
+    assert panel.viewer_tabs.currentWidget() is panel._viewer_panes[2]
+    assert panel.viewer_tabs.tabText(1) == "tracking · tracking.parquet"
+
+    panel.set_viewer_layout(ViewerLayoutMode.MOSAIC)
+    assert panel.viewer_layout_stack.currentWidget() is panel.viewer_scroll
+    assert [id(pane) for pane in panel._viewer_panes] == pane_ids
+    assert all(pane.isVisible() for pane in panel._viewer_panes)
+
+
+@pytest.mark.gui
+def test_modality_tab_selection_emits_focus_without_reconfiguring_panes(
+    media_panel_and_controller,
+    qtbot,
+):
+    panel, _controller = media_panel_and_controller
+    sources = [
+        {"type": "video", "path": "/tmp/camera_a.mp4"},
+        {"type": "video", "path": "/tmp/camera_b.mp4"},
+    ]
+    panel.configure_viewers(sources, sources[0]["path"])
+    pane_ids = [id(pane) for pane in panel._viewer_panes]
+    focus_requests = []
+    panel.paneFocusRequested.connect(focus_requests.append)
+
+    panel.set_viewer_layout(ViewerLayoutMode.TABS)
+    panel.viewer_tabs.setCurrentIndex(1)
+    qtbot.wait(10)
+
+    assert focus_requests == [sources[1]["path"]]
+    assert panel._viewer_panes[1].property("focused") is True
+    assert [id(pane) for pane in panel._viewer_panes] == pane_ids
+
+
+@pytest.mark.gui
+def test_sync_mode_pins_single_and_tab_layouts_to_syncing_modality(
+    media_panel_and_controller,
+    qtbot,
+):
+    panel, _controller = media_panel_and_controller
+    sources = [
+        {"type": "video", "path": "/tmp/camera_a.mp4"},
+        {"type": "video", "path": "/tmp/camera_b.mp4"},
+    ]
+    panel.configure_viewers(sources, sources[0]["path"])
+    panel.set_sync_mode(True, sources[1]["path"])
+
+    panel.set_viewer_layout(ViewerLayoutMode.SINGLE)
+    assert panel.single_view_stack.currentWidget() is panel._viewer_panes[1]
+
+    panel.set_viewer_layout(ViewerLayoutMode.TABS)
+    assert panel.viewer_tabs.currentIndex() == 1
+    assert panel.viewer_tabs.tabBar().isEnabled() is False
+    panel.viewer_tabs.setCurrentIndex(0)
+    qtbot.wait(10)
+    assert panel.viewer_tabs.currentIndex() == 1
+
+    panel.set_sync_mode(False)
+    assert panel.viewer_tabs.tabBar().isEnabled() is True
+
+
+@pytest.mark.gui
 def test_grouped_videos_autoplay_from_shared_clock(media_panel_and_controller, qtbot):
     panel, controller = media_panel_and_controller
     video_root = Path(__file__).resolve().parents[1] / "data"
@@ -1327,7 +1450,7 @@ def test_group_clock_does_not_seek_video_for_normal_position_reporting_lag(
 
 
 @pytest.mark.gui
-def test_running_video_is_group_clock_and_is_never_drift_seeked(
+def test_running_video_clock_skips_drift_seek_but_accepts_explicit_seek(
     media_panel_and_controller,
     monkeypatch,
     qtbot,
@@ -1349,6 +1472,9 @@ def test_running_video_is_group_clock_and_is_never_drift_seeked(
     assert controller.current_position_ms() == 1234 + record["offset_ms"]
     controller._render_group_position(4000, force_video_seek=True)
     assert seek_calls == []
+
+    controller.set_position(4000)
+    assert seek_calls == [4000 - record["offset_ms"]]
 
 
 @pytest.mark.gui
@@ -1580,6 +1706,45 @@ def test_sync_mode_freezes_group_and_controls_only_selected_h5(
 
 
 @pytest.mark.gui
+def test_viewer_go_to_start_seeks_shared_clock_to_modality_utc_origin(
+    media_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    first_path = tmp_path / "go_start_first.h5"
+    second_path = tmp_path / "go_start_second.h5"
+    _write_minimal_player_joints_h5(
+        first_path,
+        [b"2026-01-01 12:00:00.000000", b"2026-01-01 12:00:01.000000"],
+    )
+    _write_minimal_player_centroids_h5(
+        second_path,
+        [b"2026-01-01 12:00:00.250000", b"2026-01-01 12:00:01.250000"],
+    )
+    controller.route_media_group(
+        [
+            {"type": "player_joints_h5", "path": str(first_path)},
+            {"type": "player_centroids_h5", "path": str(second_path)},
+        ],
+        str(first_path),
+        False,
+    )
+
+    assert all(pane._navigation_available for pane in panel._viewer_panes)
+    panel._viewer_panes[1].goToStartRequested.emit(str(second_path))
+    assert controller.current_position_ms() == 250
+
+    panel._viewer_panes[1].goToEndRequested.emit(str(second_path))
+    assert controller.current_position_ms() == 1250
+
+    panel._viewer_panes[0].goToStartRequested.emit(str(first_path))
+    assert controller.current_position_ms() == 0
+
+    panel._viewer_panes[0].goToEndRequested.emit(str(first_path))
+    assert controller.current_position_ms() == 1000
+
+
+@pytest.mark.gui
 def test_sync_mode_frame_step_apply_and_cancel(media_panel_and_controller, tmp_path):
     panel, controller = media_panel_and_controller
     first_path = tmp_path / "step_first.h5"
@@ -1606,12 +1771,12 @@ def test_sync_mode_frame_step_apply_and_cancel(media_panel_and_controller, tmp_p
 
     emitted = []
     controller.inputUtcStartMutationRequested.connect(
-        lambda path, utc_text, shift_ms: emitted.append((path, utc_text, shift_ms))
+        lambda path, utc_text: emitted.append((path, utc_text))
     )
     controller.set_position(250)
     controller.apply_sync_mode()
 
-    assert emitted == [(str(second_path), "2026-01-01 11:59:59.850000", 150)]
+    assert emitted == [(str(second_path), "2026-01-01 11:59:59.850000")]
     assert controller._sync_record is None
     assert panel.sync_bar.isVisible() is False
     assert controller.is_playing() is False
@@ -1679,7 +1844,7 @@ def test_sync_availability_requires_two_playable_inputs_and_utc_reference(
 
 
 @pytest.mark.gui
-def test_sync_apply_reports_negative_annotation_shift_when_union_origin_moves_later(
+def test_sync_apply_emits_only_the_new_absolute_input_origin(
     media_panel_and_controller,
     tmp_path,
 ):
@@ -1707,10 +1872,93 @@ def test_sync_apply_reports_negative_annotation_shift_when_union_origin_moves_la
 
     emitted = []
     controller.inputUtcStartMutationRequested.connect(
-        lambda path, utc_text, shift_ms: emitted.append((path, utc_text, shift_ms))
+        lambda path, utc_text: emitted.append((path, utc_text))
     )
     controller.apply_sync_mode()
 
     assert emitted == [
-        (str(utc_frames), "2026-01-01 12:00:00.100000", -100),
+        (str(utc_frames), "2026-01-01 12:00:00.100000"),
     ]
+
+
+@pytest.mark.gui
+def test_viewer_manual_utc_prompts_normalize_and_remove(
+    media_panel_and_controller,
+    monkeypatch,
+):
+    panel, _controller = media_panel_and_controller
+    pane = panel._viewer_panes[0]
+    pane.configure(
+        {
+            "type": "video",
+            "path": "/tmp/example.mp4",
+            "UTC_time_start": "2026-01-01T14:00:00+02:00",
+        }
+    )
+
+    entered_defaults = []
+    monkeypatch.setattr(
+        "ui.media_player.QInputDialog.getText",
+        lambda *args, **kwargs: (
+            entered_defaults.append(kwargs.get("text"))
+            or "2026-01-01T15:00:01.250000+03:00",
+            True,
+        ),
+    )
+    set_requests = []
+    pane.utcStartSetRequested.connect(
+        lambda path, utc: set_requests.append((path, utc))
+    )
+    pane._prompt_utc_start()
+
+    assert entered_defaults == ["2026-01-01 12:00:00.000000"]
+    assert set_requests == [
+        ("/tmp/example.mp4", "2026-01-01 12:00:01.250000")
+    ]
+
+    monkeypatch.setattr(
+        "ui.media_player.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    remove_requests = []
+    pane.utcStartRemoveRequested.connect(remove_requests.append)
+    pane._confirm_remove_utc_start()
+    assert remove_requests == ["/tmp/example.mp4"]
+
+
+@pytest.mark.gui
+def test_manual_utc_requests_pause_and_preserve_absolute_anchor(
+    media_panel_and_controller,
+    tmp_path,
+):
+    _panel, controller = media_panel_and_controller
+    frames_path = tmp_path / "frames.npy"
+    np.save(frames_path, np.zeros((5, 4, 4, 3), dtype=np.uint8))
+    controller.route_media_group(
+        [
+            {
+                "type": "frames_npy",
+                "path": str(frames_path),
+                "fps": 10.0,
+                "UTC_time_start": "2026-01-01 12:00:00.000000",
+            }
+        ],
+        str(frames_path),
+        False,
+    )
+    controller.set_position(200)
+
+    set_requests = []
+    controller.inputUtcStartMutationRequested.connect(
+        lambda path, utc: set_requests.append((path, utc))
+    )
+    controller.request_manual_utc_start(
+        str(frames_path), "2026-01-01T14:00:01+02:00"
+    )
+    assert set_requests == [
+        (str(frames_path), "2026-01-01 12:00:01.000000")
+    ]
+    assert controller._pending_restore_anchor_utc.strftime(
+        "%Y-%m-%d %H:%M:%S.%f"
+    ) == "2026-01-01 12:00:00.200000"
+    assert controller.is_playing() is False

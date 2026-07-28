@@ -38,6 +38,11 @@ Provides the left dock dataset explorer tree, header inspector tables, and explo
 ## Business Rules
 - Header draft updates are staged via signal; controller decides persistence.
 - Tree model is view data only; dataset mutation logic is external.
+- Selecting another input child in the active sample is focus-only: the
+  controller highlights its viewer without rerouting media, refreshing
+  annotation panels, or changing time.
+- Selecting a parent sample clears input focus and preserves playback state;
+  parent selection never forces autoplay.
 
 ## Conventions
 - Keep roles and signal names stable for controller use.

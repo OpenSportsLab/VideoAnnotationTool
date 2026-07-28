@@ -46,7 +46,7 @@ This is the smallest practical shape for a dataset with one video sample:
 | Root JSON is an array | The app rejects the file. | Use one root object with a `data` array. |
 | `data` is missing or not a list | The app rejects the file. | Set `data` to `[]` or a list of sample objects. |
 | Using top-level `questions` for Q/A | Legacy question banks are dropped on save. | Store Q/A in each sample's grouped `answers[]`. |
-| Dense captions use `start_ms`/`end_ms` only | The current dense editor expects point timestamps. | Use `dense_captions[].position_ms`. |
+| Dense captions use `start_ms`/`end_ms` only | The current dense editor expects point timestamps. | Use `dense_captions[].position_ms` and, when UTC is known, `timestamp_utc`. |
 | Annotation head names do not match root `labels` | Controls may not show the expected labels. | Keep `data[].labels` keys and `events[].head` values aligned with root `labels`. |
 | Relative media paths no longer point to files | Samples load but playback cannot find media. | Keep media beside the JSON or resave after correcting paths. |
 
@@ -123,7 +123,8 @@ Each sample should include `inputs`, even if the sample has only one media file.
     {
       "type": "video",
       "path": "clips/clip_0001.mp4",
-      "fps": 25.0
+      "fps": 25.0,
+      "UTC_time_start": "2022-12-03 13:27:59.461000"
     }
   ]
 }
@@ -138,6 +139,45 @@ Supported input types:
 | `tracking_parquet` | `tracking/clip_0001.parquet` | Uses parquet timestamps when available. Optional `fps` is a fallback. |
 | `player_joints_h5` | `tracking/live_joints.h5` | Uses absolute UTC values from `timestamp_utc` for playback timing and renders a 3D stickman preview. Optional `ball_path` overlays ball XYZ from a separate H5 file. |
 | `player_centroids_h5` | `tracking/live_centroids.h5` | Uses absolute UTC values from `timestamp_utc` for playback timing and renders top-down player centroids. Optional `ball_path` overlays ball XYZ from a separate H5 file. |
+
+`UTC_time_start` is optional for every input type and denotes the absolute UTC
+instant at local playback position `00:00.000`. It accepts ISO-compatible
+timestamps with a space or `T` separator, optional fractional seconds, `Z`, or
+an explicit timezone offset. Naive values are treated as UTC. A valid explicit
+value overrides backend-derived timing, including H5 `timestamp_utc`. An empty
+or malformed explicit value makes the input relative instead of falling back to
+backend timing. The original field is preserved in project JSON unless it is
+changed through synchronization or the viewer's Set/Correct/Remove UTC actions.
+
+Point annotations in `events[]` and `dense_captions[]` may contain both
+`timestamp_utc` and `position_ms`. A valid `timestamp_utc` is the authoritative
+real-world instant; `position_ms` is a backward-compatible projection relative
+to the currently resolved sample timeline origin:
+
+```text
+timestamp_utc = timeline_origin_utc + position_ms
+position_ms = timestamp_utc - timeline_origin_utc
+```
+
+Canonical annotation UTC is serialized as `YYYY-MM-DD HH:MM:SS.ffffff`. Input
+may use ISO-compatible timestamps with `T`, `Z`, or timezone offsets; aware
+values are normalized to UTC and naive values are interpreted as UTC. Samples
+may freely mix absolute and legacy relative annotations.
+
+New and edited annotations write both fields when a genuine UTC origin is
+available. Save/export promotes legacy relative annotations and recomputes
+compatibility positions where such an origin can be resolved. No synthetic UTC
+origin is generated for relative-only samples. A malformed `timestamp_utc` is
+preserved and falls back to `position_ms`; it is replaced with normalized UTC
+only when the annotation is explicitly edited. Conflicting dual fields resolve
+in favor of valid `timestamp_utc`. Absolute annotations are preserved even when
+their projected positions are negative or beyond the available media duration.
+
+In Localization and Dense Description tables, a resolvable annotation is shown
+as `YYYY-MM-DD HH:MM:SS.mmm UTC`; otherwise it is shown as relative
+`MM:SS.mmm`. Editing a UTC Time cell accepts the same ISO-compatible forms,
+normalizes `timestamp_utc`, and derives `position_ms`. Table selection, timeline
+markers, navigation, and media seeking always use the projected `position_ms`.
 
 Input paths, including optional `ball_path` overlays, can be relative or absolute
 when loading. On save, paths are rewritten relative to the saved JSON file
@@ -229,8 +269,9 @@ stays as the manual annotation.
 
 ### Localization
 
-Localization annotations live in `events`. Each event is a point timestamp in
-milliseconds.
+Localization annotations live in `events`. Each event is a point annotation.
+The first row below uses the preferred dual-field representation; the second is
+a valid legacy relative row.
 
 ```json
 {
@@ -238,7 +279,8 @@ milliseconds.
     {
       "head": "action",
       "label": "pass",
-      "position_ms": 1240
+      "position_ms": 1240,
+      "timestamp_utc": "2026-01-01 12:00:01.240000"
     },
     {
       "head": "action",
@@ -272,13 +314,15 @@ for manual description edits, but additional caption fields are preserved.
 ### Dense Description
 
 Dense description annotations live in `dense_captions`. The current dense editor
-uses point timestamps in milliseconds.
+uses point timestamps. The example intentionally mixes one preferred absolute
+row with one supported legacy relative row.
 
 ```json
 {
   "dense_captions": [
     {
       "position_ms": 1200,
+      "timestamp_utc": "2026-01-01 12:00:01.200000",
       "lang": "en",
       "text": "The midfielder receives the ball."
     },
@@ -384,19 +428,22 @@ persisted. Convert old VQA files with `tools/convert_legacy_vqa_to_grouped.py`.
         {
           "type": "video",
           "path": "clips/attack_0001.mp4",
-          "fps": 25.0
+          "fps": 25.0,
+          "UTC_time_start": "2026-01-01 12:00:00.000000"
         }
       ],
       "events": [
         {
           "head": "action",
           "label": "pass",
-          "position_ms": 1100
+          "position_ms": 1100,
+          "timestamp_utc": "2026-01-01 12:00:01.100000"
         },
         {
           "head": "action",
           "label": "shot",
-          "position_ms": 3650
+          "position_ms": 3650,
+          "timestamp_utc": "2026-01-01 12:00:03.650000"
         }
       ],
       "captions": [
@@ -408,11 +455,13 @@ persisted. Convert old VQA files with `tools/convert_legacy_vqa_to_grouped.py`.
       "dense_captions": [
         {
           "position_ms": 1100,
+          "timestamp_utc": "2026-01-01 12:00:01.100000",
           "lang": "en",
           "text": "The midfielder plays a forward pass."
         },
         {
           "position_ms": 3650,
+          "timestamp_utc": "2026-01-01 12:00:03.650000",
           "lang": "en",
           "text": "The striker shoots from inside the area."
         }
