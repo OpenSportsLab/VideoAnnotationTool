@@ -943,12 +943,65 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 
 
 @pytest.mark.gui
-def test_menu_bar_contains_file_data_edit_help_menus(window):
+def test_menu_bar_contains_file_data_edit_view_help_menus(window):
     menu_names = [action.text().replace("&", "") for action in window.menuBar().actions()]
-    assert menu_names[:4] == ["File", "Data", "Edit", "Help"]
+    assert menu_names[:5] == ["File", "Data", "Edit", "View", "Help"]
     assert hasattr(window, "action_hf_download")
     assert hasattr(window, "action_hf_upload")
     assert window.action_hf_upload.isEnabled() is False
+    assert window.viewer_layout_actions[window.center_panel.viewer_layout()].isChecked() is True
+
+
+@pytest.mark.gui
+def test_view_menu_dock_preferences_are_independent_and_survive_welcome(window, qtbot):
+    settings = window.dataset_explorer_controller.settings
+    window.show_workspace()
+    qtbot.wait(20)
+
+    assert window.data_dock.isVisible() is True
+    assert window.editor_dock.isVisible() is True
+
+    window.action_show_dataset_explorer.setChecked(False)
+    qtbot.wait(20)
+    assert window.data_dock.isVisible() is False
+    assert window.editor_dock.isVisible() is True
+    assert settings.value(window._DATA_DOCK_VISIBLE_SETTING_KEY, True) in (False, "false")
+
+    window.editor_dock.setVisible(False)
+    qtbot.wait(20)
+    assert window.action_show_annotation_editor.isChecked() is False
+
+    window.show_welcome_view()
+    window.show_workspace()
+    qtbot.wait(20)
+    assert window.data_dock.isVisible() is False
+    assert window.editor_dock.isVisible() is False
+
+
+@pytest.mark.gui
+def test_view_preferences_restore_from_qsettings(window, qtbot):
+    from ui.media_player import ViewerLayoutMode
+
+    settings = window.dataset_explorer_controller.settings
+    settings.setValue(window._DATA_DOCK_VISIBLE_SETTING_KEY, False)
+    settings.setValue(window._EDITOR_DOCK_VISIBLE_SETTING_KEY, True)
+    settings.setValue(window._VIEWER_LAYOUT_SETTING_KEY, ViewerLayoutMode.TABS.value)
+    settings.sync()
+
+    window._restore_view_state_from_settings()
+    window.show_workspace()
+    qtbot.wait(20)
+
+    assert window.data_dock.isVisible() is False
+    assert window.editor_dock.isVisible() is True
+    assert window.action_show_dataset_explorer.isChecked() is False
+    assert window.action_show_annotation_editor.isChecked() is True
+    assert window.center_panel.viewer_layout() == ViewerLayoutMode.TABS
+    assert window.viewer_layout_actions[ViewerLayoutMode.TABS].isChecked() is True
+
+    window.viewer_layout_actions[ViewerLayoutMode.SINGLE].trigger()
+    assert window.center_panel.viewer_layout() == ViewerLayoutMode.SINGLE
+    assert settings.value(window._VIEWER_LAYOUT_SETTING_KEY) == ViewerLayoutMode.SINGLE.value
 
 
 @pytest.mark.gui

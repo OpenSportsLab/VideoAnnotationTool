@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from controllers.media_controller import MediaController
 from controllers.media.raster_backend import BaseRasterMediaBackend, RasterClip
-from ui.media_player import MediaCenterPanel
+from ui.media_player import MediaCenterPanel, ViewerLayoutMode
 
 
 FRAME_STACK_PATH = (
@@ -1299,6 +1299,96 @@ def test_focus_source_only_changes_viewer_highlight_and_preserves_position(
     assert controller.is_playing() is playing_before_focus
     assert panel._viewer_panes[0].property("focused") is False
     assert panel._viewer_panes[1].property("focused") is True
+
+    pane_ids = [id(pane) for pane in panel._viewer_panes]
+    for mode in (ViewerLayoutMode.SINGLE, ViewerLayoutMode.TABS, ViewerLayoutMode.MOSAIC):
+        panel.set_viewer_layout(mode)
+        assert controller.current_position_ms() == position_before_focus
+        assert controller.is_playing() is playing_before_focus
+        assert [id(pane) for pane in panel._viewer_panes] == pane_ids
+
+
+@pytest.mark.gui
+def test_viewer_layouts_reuse_panes_and_focus_the_selected_modality(
+    media_panel_and_controller,
+):
+    panel, _controller = media_panel_and_controller
+    sources = [
+        {"type": "video", "path": "/tmp/camera_a.mp4"},
+        {"type": "tracking", "path": "/tmp/tracking.parquet"},
+        {"type": "text", "path": "/tmp/notes.txt"},
+    ]
+    panel.configure_viewers(sources, sources[0]["path"])
+    pane_ids = [id(pane) for pane in panel._viewer_panes]
+
+    panel.set_viewer_layout(ViewerLayoutMode.SINGLE)
+    assert panel.viewer_layout_stack.currentWidget() is panel.single_view_stack
+    assert panel.single_view_stack.currentWidget() is panel._viewer_panes[0]
+
+    panel.focus_viewer(sources[2]["path"])
+    assert panel.single_view_stack.currentWidget() is panel._viewer_panes[2]
+
+    panel.set_viewer_layout(ViewerLayoutMode.TABS)
+    assert panel.viewer_layout_stack.currentWidget() is panel.viewer_tabs
+    assert panel.viewer_tabs.count() == 3
+    assert panel.viewer_tabs.currentWidget() is panel._viewer_panes[2]
+    assert panel.viewer_tabs.tabText(1) == "tracking · tracking.parquet"
+
+    panel.set_viewer_layout(ViewerLayoutMode.MOSAIC)
+    assert panel.viewer_layout_stack.currentWidget() is panel.viewer_scroll
+    assert [id(pane) for pane in panel._viewer_panes] == pane_ids
+    assert all(pane.isVisible() for pane in panel._viewer_panes)
+
+
+@pytest.mark.gui
+def test_modality_tab_selection_emits_focus_without_reconfiguring_panes(
+    media_panel_and_controller,
+    qtbot,
+):
+    panel, _controller = media_panel_and_controller
+    sources = [
+        {"type": "video", "path": "/tmp/camera_a.mp4"},
+        {"type": "video", "path": "/tmp/camera_b.mp4"},
+    ]
+    panel.configure_viewers(sources, sources[0]["path"])
+    pane_ids = [id(pane) for pane in panel._viewer_panes]
+    focus_requests = []
+    panel.paneFocusRequested.connect(focus_requests.append)
+
+    panel.set_viewer_layout(ViewerLayoutMode.TABS)
+    panel.viewer_tabs.setCurrentIndex(1)
+    qtbot.wait(10)
+
+    assert focus_requests == [sources[1]["path"]]
+    assert panel._viewer_panes[1].property("focused") is True
+    assert [id(pane) for pane in panel._viewer_panes] == pane_ids
+
+
+@pytest.mark.gui
+def test_sync_mode_pins_single_and_tab_layouts_to_syncing_modality(
+    media_panel_and_controller,
+    qtbot,
+):
+    panel, _controller = media_panel_and_controller
+    sources = [
+        {"type": "video", "path": "/tmp/camera_a.mp4"},
+        {"type": "video", "path": "/tmp/camera_b.mp4"},
+    ]
+    panel.configure_viewers(sources, sources[0]["path"])
+    panel.set_sync_mode(True, sources[1]["path"])
+
+    panel.set_viewer_layout(ViewerLayoutMode.SINGLE)
+    assert panel.single_view_stack.currentWidget() is panel._viewer_panes[1]
+
+    panel.set_viewer_layout(ViewerLayoutMode.TABS)
+    assert panel.viewer_tabs.currentIndex() == 1
+    assert panel.viewer_tabs.tabBar().isEnabled() is False
+    panel.viewer_tabs.setCurrentIndex(0)
+    qtbot.wait(10)
+    assert panel.viewer_tabs.currentIndex() == 1
+
+    panel.set_sync_mode(False)
+    assert panel.viewer_tabs.tabBar().isEnabled() is True
 
 
 @pytest.mark.gui

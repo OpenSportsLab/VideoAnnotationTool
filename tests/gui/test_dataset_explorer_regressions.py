@@ -11,6 +11,7 @@ from PyQt6.QtCore import QModelIndex, Qt
 from PyQt6.QtWidgets import QMessageBox
 
 from controllers.command_types import CmdType
+from ui.media_player import ViewerLayoutMode
 
 
 MODE_TO_TAB_INDEX = {
@@ -336,6 +337,46 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
     assert len(play_calls) == calls_before_parent_focus
     assert focus_calls[-1] == ""
     assert window.dataset_explorer_controller.current_selected_input_path is None
+
+
+@pytest.mark.gui
+def test_single_and_tab_layouts_follow_focus_without_reloading_or_reselecting_tree(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("multiview")
+    _open_project(window, monkeypatch, project_json_path)
+    parent_index = _select_top_row(window, qtbot, 0)
+    second_child = window.tree_model.index(1, 0, parent_index)
+    second_path = second_child.data(window.tree_model.FilePathRole)
+
+    route_calls = []
+    monkeypatch.setattr(
+        window.media_controller,
+        "route_media_group",
+        lambda *args, **kwargs: route_calls.append((args, kwargs)),
+    )
+
+    window.center_panel.set_viewer_layout(ViewerLayoutMode.SINGLE)
+    window.dataset_explorer_panel.tree.setCurrentIndex(second_child)
+    qtbot.wait(20)
+    assert route_calls == []
+    assert window.center_panel.single_view_stack.currentWidget() is window.center_panel._viewer_panes[1]
+    assert window.dataset_explorer_controller.current_selected_input_path == second_path
+
+    window.dataset_explorer_panel.tree.setCurrentIndex(parent_index)
+    qtbot.wait(20)
+    assert window.dataset_explorer_controller.current_selected_input_path is None
+
+    window.center_panel.set_viewer_layout(ViewerLayoutMode.TABS)
+    window.center_panel.viewer_tabs.setCurrentIndex(0)
+    qtbot.wait(20)
+    assert window.dataset_explorer_panel.tree.currentIndex() == parent_index
+    assert window.dataset_explorer_controller.current_selected_input_path is None
+    assert route_calls == []
+    assert window.center_panel._viewer_panes[0].property("focused") is True
 
 
 @pytest.mark.gui

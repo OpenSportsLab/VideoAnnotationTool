@@ -13,6 +13,7 @@ Provides the central grouped media/timeline panel used across all annotation mod
 ### Main Classes
 - `MediaCenterPanel`
 - `MediaViewerPane`
+- `ViewerLayoutMode`: `SINGLE`, `MOSAIC`, or `TABS` presentation mode.
 - `AnnotationSlider`
 - `FramePreviewLabel`
 
@@ -42,6 +43,9 @@ Provides the central grouped media/timeline panel used across all annotation mod
 ### Public Methods
 - `configure_viewers(sources, focused_path)`: rebuild the adaptive viewer grid.
 - `focus_viewer(path)`: change pane focus without reloading playback.
+- `set_viewer_layout(mode)`: reparent existing panes into the single, mosaic,
+  or tab host without recreating media sessions.
+- `viewer_layout()`: return the active `ViewerLayoutMode`.
 - `set_sync_availability(mapping)`: configure context-menu eligibility/reasons.
 - `set_navigation_availability(mapping)`: enable boundary navigation for playable panes.
 - `set_sync_mode(active, selected_path)`: show/hide the synchronization bar and pane state.
@@ -63,9 +67,17 @@ Provides the central grouped media/timeline panel used across all annotation mod
 - Timeline, relative-seek, and annotation-navigation intents are authoritative
   group seeks and must remain stable while playback is active.
 - `focus_viewer(path)` changes only pane contour state; it must not seek or alter
-  playback state.
+  playback state. In single and tab layouts, a non-empty focus also selects the
+  matching visible pane.
 - An empty focus path clears every pane contour. Loading from a parent sample
-  row preserves the group's pre-selection playing/paused state.
+  row preserves the group's pre-selection playing/paused state and retains the
+  currently displayed pane.
+- Layout changes keep `MediaViewerPane` and controller session identities
+  stable. Hidden panes remain loaded and synchronized.
+- A user-selected modality tab emits `paneFocusRequested(path)` but does not
+  route media or change Dataset Explorer selection.
+- Synchronization pins single/tab presentation to the syncing modality and
+  temporarily disables modality-tab switching.
 - Marker rendering is view-only and mode-agnostic.
 - Context-menu actions never seek or mutate data directly.
 - Go to start/end is disabled for unplayable inputs and during synchronization mode.
