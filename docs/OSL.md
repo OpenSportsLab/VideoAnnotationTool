@@ -123,7 +123,8 @@ Each sample should include `inputs`, even if the sample has only one media file.
     {
       "type": "video",
       "path": "clips/clip_0001.mp4",
-      "fps": 25.0
+      "fps": 25.0,
+      "UTC_time_start": "2022-12-03 13:27:59.461000"
     }
   ]
 }
@@ -138,6 +139,20 @@ Supported input types:
 | `tracking_parquet` | `tracking/clip_0001.parquet` | Uses parquet timestamps when available. Optional `fps` is a fallback. |
 | `player_joints_h5` | `tracking/live_joints.h5` | Uses absolute UTC values from `timestamp_utc` for playback timing and renders a 3D stickman preview. Optional `ball_path` overlays ball XYZ from a separate H5 file. |
 | `player_centroids_h5` | `tracking/live_centroids.h5` | Uses absolute UTC values from `timestamp_utc` for playback timing and renders top-down player centroids. Optional `ball_path` overlays ball XYZ from a separate H5 file. |
+
+`UTC_time_start` is optional for every input type and denotes the absolute UTC
+instant at local playback position `00:00.000`. It accepts ISO-compatible
+timestamps with a space or `T` separator, optional fractional seconds, `Z`, or
+an explicit timezone offset. Naive values are treated as UTC. A valid explicit
+value overrides backend-derived timing, including H5 `timestamp_utc`. An empty
+or malformed explicit value makes the input relative instead of falling back to
+backend timing. The original field is preserved in project JSON unless it is
+changed by the synchronization workflow.
+
+Timestamped `events[].position_ms` and `dense_captions[].position_ms` are
+relative to the sample's shared timeline origin. When interactive
+synchronization changes that origin, the application shifts these positions in
+the same undoable edit to preserve their absolute UTC instants.
 
 Input paths, including optional `ball_path` overlays, can be relative or absolute
 when loading. On save, paths are rewritten relative to the saved JSON file

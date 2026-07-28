@@ -14,7 +14,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `command_types.py`: `CmdType` enum for undo/redo command types.
 - `dataset_explorer_controller.py`: dataset and explorer orchestration.
 - `history_manager.py`: mutation/undo/redo engine.
-- `media_controller.py`: media playback facade and mute routing.
+- `media_controller.py`: grouped media playback, UTC alignment, synchronization, and mute routing.
 - `media/`: internal playback backends used by `MediaController` (`video`, `frames_npy`, `tracking_parquet`).
 - `welcome_controller.py`: welcome-page routing.
 - `hf_transfer_controller.py`: threaded Hugging Face download/upload orchestration for GUI menu actions.
@@ -36,11 +36,36 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `_apply_state_change()`: command-type-specific replay for undo/redo.
 
 ### `MediaController`
-- `route_media_selection()`: selection-aware route (reload/replay guard logic) for `video`, `frames_npy`, and `tracking_parquet` sources.
-- `load_and_play()`, `toggle_play_pause()`, `stop()`, `seek_relative()`, `set_position()`, `set_playback_rate()`: playback control.
+- `route_media_group(sources, focused_path, ensure_playback)`: canonical sample-level route. One session is created per input; focusing an existing pane does not reload the group.
+- `toggle_play_pause()`, `stop()`, `seek_relative()`, `set_position()`, `set_playback_rate()`: shared-clock playback control.
+- `go_to_source_start(path)`, `go_to_source_end(path)`: seek the shared clock to a modality boundary. Timestamped backends use their first/last frame times; video end uses media duration.
+- `enter_sync_mode(path)`, `step_sync_frame(direction)`, `apply_sync_mode()`, `cancel_sync_mode()`: selected-session visual UTC synchronization lifecycle.
 - `is_muted()`, `set_muted()`, `toggle_mute()`: mute control and signaling.
+- `inputUtcStartMutationRequested(path, utc_text, annotation_shift_ms)`: requests one atomic dataset/history update after Apply.
 - Internal structure:
-  `MediaController` is the stable public facade; format-specific playback lives in `media/video_backend.py`, `media/frames_npy_backend.py`, and `media/tracking_parquet_backend.py`, with shared raster runtime in `media/raster_backend.py`.
+  `MediaController` owns the group clock and session records; format-specific playback lives under `media/`, with shared raster runtime in `media/raster_backend.py`.
+
+### UTC Synchronization Contract
+
+- Each valid session record may expose `origin_utc`. A valid input-level
+  `UTC_time_start` overrides a backend-derived origin. An invalid explicit value
+  forces relative alignment.
+- The sample origin is the earliest valid session origin; duration is the union
+  through the latest session end. Relative inputs have offset zero.
+- Sync entry freezes the group at `anchor_utc = group_origin + group_position`
+  and redirects playback commands to the selected session's local timeline.
+- Apply computes `UTC_time_start = anchor_utc - selected_local_position` and
+  serializes six fractional digits.
+- If Apply changes the sample union origin, it also computes
+  `annotation_shift_ms = old_union_origin - new_union_origin`.
+- `MainWindow.connect_signals()` routes the mutation request to
+  `HistoryManager.execute_input_utc_start_update(...)`. The explorer updates
+  `UTC_time_start`, `events[].position_ms`, and
+  `dense_captions[].position_ms`; one JSON snapshot command makes the entire
+  operation undoable. A semantically equivalent UTC value is a no-op.
+- After mutation, the sample is rerouted and sought back to the same absolute
+  anchor, paused. Project/sample changes cancel an active synchronization
+  without mutation.
 
 ### `WelcomeController`
 - `_setup_connections()`: welcome signal wiring to dataset routes.
@@ -55,6 +80,8 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - Dataset JSON mutation must preserve undo/redo correctness.
 - No-op mutation requests should not change stacks.
 - Tab changes must not repopulate tree or restart media unnecessarily.
+- Timed annotations are relative to the shared union origin; UTC alignment edits
+  must preserve their absolute UTC instants.
 
 ## Conventions
 - Keep cross-controller coupling via signals.
@@ -73,5 +100,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - Prefer signal contracts over direct controller reach-through.
 - If adding a new mutation path:
   define request signal (if needed), implement `HistoryManager.execute_*`, add undo/redo handling and tests.
+- Pane context menus emit intents only. Keep group boundary seeking and sync
+  eligibility in `MediaController`.
 - Undo/redo correctness is a business contract, not optional behavior.
 - Avoid duplicating mutation logic across explorer/mode controllers/history; use one canonical implementation.

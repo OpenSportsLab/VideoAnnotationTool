@@ -22,6 +22,7 @@ The Video Annotation Tool is a PyQt6 desktop application for loading, editing, a
 - [Installation](installation.md)
 - [Getting Started](getting_started.md)
 - [GUI Overview](gui_overview.md)
+- [Synchronized Multi-Modality Playback](synchronized_playback.md)
 - [Batch Tools](batch_tools.md)
 - [OSL JSON Format](OSL.md)
 - [FAQ](faq.md)

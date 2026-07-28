@@ -4,6 +4,12 @@ All annotation tabs work on the currently selected sample from the Dataset
 Explorer. The JSON field names below match the canonical [OSL JSON Format](OSL.md)
 page.
 
+For samples with multiple inputs, annotation timestamps are relative to the
+shared media timeline. Correcting a modality's UTC alignment automatically
+shifts localization events and dense captions when necessary so their absolute
+UTC instants do not change. See
+[Synchronized Multi-Modality Playback](synchronized_playback.md).
+
 ## Classification
 
 Use `CLS` for clip-level labels.

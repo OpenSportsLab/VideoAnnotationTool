@@ -26,11 +26,16 @@ The workspace has three regions: Dataset Explorer (left), Media Center (middle),
 
 ### Middle: Media Center
 
-- Video preview
+- One viewer for a single input, or a two-column grid for multi-input samples
 - Timeline + zoom
 - Marker overlays (mode-dependent)
 - Playback controls (seek/playback rate)
 - Mute icon button (state persists via app settings)
+- Per-viewer right-click actions for **Go to start**, **Go to end**, and visual
+  UTC synchronization
+
+See [Synchronized Multi-Modality Playback](synchronized_playback.md) for UTC
+alignment rules and the synchronization workflow.
 
 ### Right: Annotation Tabs
 

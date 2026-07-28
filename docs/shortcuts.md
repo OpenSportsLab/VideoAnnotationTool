@@ -23,3 +23,7 @@
 - `Ctrl+Right`: Seek forward 1 second
 - `Ctrl+Shift+Left`: Seek backward 5 seconds
 - `Ctrl+Shift+Right`: Seek forward 5 seconds
+
+During modality synchronization, the same controls affect only the selected
+modality. Left and Right step to the previous or next exact raster/H5 timestamp;
+video inputs use their FPS (falling back to 25 FPS).
