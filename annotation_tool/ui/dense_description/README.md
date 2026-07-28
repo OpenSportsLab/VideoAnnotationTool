@@ -40,6 +40,8 @@ Provides the Dense Description right-panel with table and add-event adapters.
   - Loads `.ui`, initializes adapters/model, configures editing behavior.
 - `set_events(annotations)`
   - Replaces displayed dense events.
+- `set_timeline_origin(origin_utc)`
+  - Enables full UTC display/editing for resolvable rows while preserving relative fallback.
 - `set_dense_enabled(enabled)`
   - Applies panel enabled/disabled state.
 - `get_selected_event()`, `select_row_by_time(...)`, `select_event(...)`
@@ -52,7 +54,9 @@ Provides the Dense Description right-panel with table and add-event adapters.
 ## Business Rules
 - Table emits edit intents; controller validates and persists changes.
 - Add-event button only emits intent.
-- Column widths are kept stable across resize events.
+- The Time column reserves enough width for full UTC timestamps across resize events.
+- UTC Time edits normalize ISO-compatible input and emit both temporal fields;
+  invalid input is a no-op. Relative rows retain the relative-time parser.
 
 ## Conventions
 - Keep widget layout in `.ui` and adapter behavior in Python.

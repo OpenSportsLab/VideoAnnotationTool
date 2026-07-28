@@ -273,7 +273,6 @@ class VideoAnnotationWindow(QMainWindow):
         self,
         input_path: str,
         utc_text: str,
-        annotation_shift_ms: int,
     ):
         sample_id = self.dataset_explorer_controller.current_selected_sample_id
         if not sample_id:
@@ -282,10 +281,31 @@ class VideoAnnotationWindow(QMainWindow):
             sample_id,
             input_path,
             utc_text,
-            annotation_shift_ms,
+            self.media_controller.timeline_origin_utc(),
         )
         sources = self.dataset_explorer_controller.get_media_sources_by_id(sample_id)
         if sources:
+            self.media_controller.set_sample_context(sample_id)
+            self.media_controller.route_media_group(sources, input_path, False)
+
+    def _handle_media_route(self, sources, focused_path: str, ensure_playback: bool):
+        self.media_controller.set_sample_context(
+            self.dataset_explorer_controller.current_selected_sample_id
+        )
+        self.media_controller.route_media_group(sources, focused_path, ensure_playback)
+
+    def _handle_input_utc_start_removal(self, input_path: str):
+        sample_id = self.dataset_explorer_controller.current_selected_sample_id
+        if not sample_id:
+            return
+        self.history_manager.execute_input_utc_start_removal(
+            sample_id,
+            input_path,
+            self.media_controller.timeline_origin_utc(),
+        )
+        sources = self.dataset_explorer_controller.get_media_sources_by_id(sample_id)
+        if sources:
+            self.media_controller.set_sample_context(sample_id)
             self.media_controller.route_media_group(sources, input_path, False)
 
     def connect_signals(self) -> None:
@@ -332,14 +352,22 @@ class VideoAnnotationWindow(QMainWindow):
             self.localization_editor_controller.on_schema_context_changed
         )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
-            lambda sources, focused_path, ensure_playback: self.media_controller.route_media_group(
-                sources,
-                focused_path,
-                ensure_playback,
-            )
+            self._handle_media_route
+        )
+        self.media_controller.timelineOriginChanged.connect(
+            self.history_manager.on_timeline_origin_changed
+        )
+        self.media_controller.timelineOriginChanged.connect(
+            self.localization_editor_controller.on_timeline_origin_changed
+        )
+        self.media_controller.timelineOriginChanged.connect(
+            self.dense_editor_controller.on_timeline_origin_changed
         )
         self.media_controller.inputUtcStartMutationRequested.connect(
             self._handle_input_utc_start_mutation
+        )
+        self.media_controller.inputUtcStartRemovalRequested.connect(
+            self._handle_input_utc_start_removal
         )
         self.dataset_explorer_controller.mediaStopRequested.connect(lambda: self.media_controller.stop())
         self.dataset_explorer_controller.mediaResetRequested.connect(self.media_controller.reset_viewers)

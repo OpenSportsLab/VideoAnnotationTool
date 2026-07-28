@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
+    QMessageBox,
+    QInputDialog,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -22,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from utils import resource_path
+from utils import format_utc_datetime, parse_utc_datetime, resource_path
 
 
 class AnnotationSlider(QSlider):
@@ -114,6 +116,8 @@ class MediaViewerPane(QFrame):
     syncRequested = pyqtSignal(str)
     goToStartRequested = pyqtSignal(str)
     goToEndRequested = pyqtSignal(str)
+    utcStartSetRequested = pyqtSignal(str, str)
+    utcStartRemoveRequested = pyqtSignal(str)
 
     def __init__(self, source_key: str = "", parent=None):
         super().__init__(parent)
@@ -122,6 +126,8 @@ class MediaViewerPane(QFrame):
         self._sync_unavailable_reason = "Synchronization is unavailable."
         self._navigation_available = False
         self._sync_mode_active = False
+        self._explicit_utc_present = False
+        self._explicit_utc_text = ""
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setProperty("class", "media_viewer_pane")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -173,6 +179,8 @@ class MediaViewerPane(QFrame):
         path = str(source.get("path") or "")
         source_type = str(source.get("type") or "unknown")
         self.source_key = path
+        self._explicit_utc_present = "UTC_time_start" in source
+        self._explicit_utc_text = str(source.get("UTC_time_start") or "")
         self.title_label.setText(f"{source_type} · {os.path.basename(path) or path}")
         self.set_focused(focused)
         self.show_status("Loading…")
@@ -261,6 +269,18 @@ class MediaViewerPane(QFrame):
         if not self._sync_available:
             action.setStatusTip(self._sync_unavailable_reason)
             action.setToolTip(self._sync_unavailable_reason)
+        menu.addSeparator()
+        set_utc_action = None
+        correct_utc_action = None
+        remove_utc_action = None
+        if self._explicit_utc_present:
+            correct_utc_action = menu.addAction("Correct UTC start…")
+            remove_utc_action = menu.addAction("Remove UTC start")
+            correct_utc_action.setEnabled(not self._sync_mode_active)
+            remove_utc_action.setEnabled(not self._sync_mode_active)
+        else:
+            set_utc_action = menu.addAction("Set UTC start…")
+            set_utc_action.setEnabled(bool(self.source_key) and not self._sync_mode_active)
         selected_action = menu.exec(event.globalPos())
         if selected_action is go_to_start_action:
             self.goToStartRequested.emit(self.source_key)
@@ -268,6 +288,45 @@ class MediaViewerPane(QFrame):
             self.goToEndRequested.emit(self.source_key)
         elif selected_action is action:
             self.syncRequested.emit(self.source_key)
+        elif (
+            set_utc_action is not None and selected_action is set_utc_action
+        ) or (
+            correct_utc_action is not None and selected_action is correct_utc_action
+        ):
+            self._prompt_utc_start()
+        elif remove_utc_action is not None and selected_action is remove_utc_action:
+            self._confirm_remove_utc_start()
+
+    def _prompt_utc_start(self):
+        initial = format_utc_datetime(self._explicit_utc_text) or self._explicit_utc_text
+        value, accepted = QInputDialog.getText(
+            self,
+            "UTC Start Time",
+            "UTC time at modality position 00:00.000:",
+            text=initial,
+        )
+        if not accepted:
+            return
+        normalized = format_utc_datetime(value)
+        if normalized is None:
+            QMessageBox.warning(
+                self,
+                "Invalid UTC Time",
+                "Enter an ISO-compatible timestamp, optionally with Z or a timezone offset.",
+            )
+            return
+        self.utcStartSetRequested.emit(self.source_key, normalized)
+
+    def _confirm_remove_utc_start(self):
+        answer = QMessageBox.question(
+            self,
+            "Remove UTC Start",
+            "Remove the explicit UTC start time for this modality?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.utcStartRemoveRequested.emit(self.source_key)
 
 
 class MediaCenterPanel(QWidget):
@@ -287,6 +346,8 @@ class MediaCenterPanel(QWidget):
     paneSyncRequested = pyqtSignal(str)
     paneGoToStartRequested = pyqtSignal(str)
     paneGoToEndRequested = pyqtSignal(str)
+    paneUtcStartSetRequested = pyqtSignal(str, str)
+    paneUtcStartRemoveRequested = pyqtSignal(str)
     syncFrameStepRequested = pyqtSignal(int)
     syncApplyRequested = pyqtSignal()
     syncCancelRequested = pyqtSignal()
@@ -344,6 +405,8 @@ class MediaCenterPanel(QWidget):
         pane.syncRequested.connect(self.paneSyncRequested)
         pane.goToStartRequested.connect(self.paneGoToStartRequested)
         pane.goToEndRequested.connect(self.paneGoToEndRequested)
+        pane.utcStartSetRequested.connect(self.paneUtcStartSetRequested)
+        pane.utcStartRemoveRequested.connect(self.paneUtcStartRemoveRequested)
         return pane
 
     def _setup_sync_bar(self):

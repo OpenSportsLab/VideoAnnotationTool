@@ -5,6 +5,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from colors import localization_label_color_hex, normalize_hex_color
+from utils import annotation_at_position, parse_utc_datetime, project_temporal_annotations
 from .label_color_settings import (
     get_saved_label_color,
     move_saved_head_colors,
@@ -68,6 +69,8 @@ class LocalizationEditorController(QObject):
         self._media_duration_ms = 0
         self._active_mode_index = 0
         self._pending_inference_head = None
+        self._timeline_origin_utc = None
+        self._timeline_origins = {}
 
         self.current_video_path = None
         self.current_sample_id = ""
@@ -92,6 +95,9 @@ class LocalizationEditorController(QObject):
         self.current_head = None
         self._current_sample_snapshot = {}
         self._pending_inference_head = None
+        self._timeline_origin_utc = None
+        self._timeline_origins.clear()
+        self.localization_panel.set_timeline_origin(None)
 
     def setup_connections(self):
         self.localization_panel.eventNavigateRequested.connect(self._navigate_annotation)
@@ -138,6 +144,31 @@ class LocalizationEditorController(QObject):
     def on_media_duration_changed(self, ms: int):
         self._media_duration_ms = max(0, int(ms))
 
+    def on_timeline_origin_changed(self, sample_id: str, origin_utc):
+        sample_key = str(sample_id or "")
+        origin = parse_utc_datetime(origin_utc)
+        if sample_key:
+            if origin is None:
+                self._timeline_origins.pop(sample_key, None)
+            else:
+                self._timeline_origins[sample_key] = origin
+        if sample_key != self.current_sample_id:
+            return
+        self._timeline_origin_utc = origin
+        self.localization_panel.set_timeline_origin(origin)
+        if isinstance(self._current_sample_snapshot, dict):
+            self._set_snapshot_events(
+                project_temporal_annotations(
+                    self._current_sample_snapshot.get("events", []),
+                    self._timeline_origin_utc,
+                )
+            )
+        if self.current_video_path:
+            self._display_events_for_item(
+                self.current_video_path,
+                update_markers=self._is_active_mode(),
+            )
+
     def on_schema_context_changed(self, schema: dict):
         self._schema_definitions = self._normalize_schema(schema)
         self._refresh_schema_ui()
@@ -177,8 +208,7 @@ class LocalizationEditorController(QObject):
         if not self.current_video_path:
             return
         current_ms = max(0, int(self._last_media_position_ms))
-        new_event = old_event.copy()
-        new_event["position_ms"] = current_ms
+        new_event = annotation_at_position(old_event, current_ms, self._timeline_origin_utc)
         self._on_annotation_modified(old_event, new_event)
 
     # --- Head Management ---
@@ -309,7 +339,13 @@ class LocalizationEditorController(QObject):
 
         if self.current_video_path:
             events = self._snapshot_events()
-            events.append({"head": head, "label": label_name, "position_ms": int(current_pos)})
+            events.append(
+                annotation_at_position(
+                    {"head": head, "label": label_name},
+                    current_pos,
+                    self._timeline_origin_utc,
+                )
+            )
             self._set_snapshot_events(events)
             self._display_events_for_item(self.current_video_path)
             self.refresh_tree_icons(self.current_video_path)
@@ -433,7 +469,11 @@ class LocalizationEditorController(QObject):
             return
 
         pos_ms = max(0, int(self._last_media_position_ms))
-        new_event = {"head": head, "label": label, "position_ms": pos_ms}
+        new_event = annotation_at_position(
+            {"head": head, "label": label},
+            pos_ms,
+            self._timeline_origin_utc,
+        )
         self.locEventAddRequested.emit(self.current_sample_id, copy.deepcopy(new_event))
 
         events = self._snapshot_events()
@@ -942,7 +982,24 @@ class LocalizationEditorController(QObject):
 
         self.current_sample_id = sample_id
         self.current_video_path = path
+        self._timeline_origin_utc = self._timeline_origins.get(sample_id)
+        self.localization_panel.set_timeline_origin(self._timeline_origin_utc)
         self._current_sample_snapshot = copy.deepcopy(sample)
+        self._current_sample_snapshot["events"] = project_temporal_annotations(
+            self._current_sample_snapshot.get("events", []),
+            self._timeline_origin_utc,
+        )
+        if self._is_active_mode() and any(
+            "timestamp_utc" in event
+            and parse_utc_datetime(event.get("timestamp_utc")) is None
+            for event in self._current_sample_snapshot.get("events", [])
+            if isinstance(event, dict)
+        ):
+            self.statusMessageRequested.emit(
+                "Invalid UTC timestamp",
+                "A localization annotation has an invalid timestamp_utc; position_ms is being used.",
+                3500,
+            )
         self.localization_panel.setEnabled(True)
 
     def _clear_selected_sample_state(self):

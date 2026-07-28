@@ -31,8 +31,8 @@ The workspace has three regions: Dataset Explorer (left), Media Center (middle),
 - Marker overlays (mode-dependent)
 - Playback controls (seek/playback rate)
 - Mute icon button (state persists via app settings)
-- Per-viewer right-click actions for **Go to start**, **Go to end**, and visual
-  UTC synchronization
+- Per-viewer right-click actions for **Go to start**, **Go to end**, manual UTC
+  start management, and visual UTC synchronization
 
 See [Synchronized Multi-Modality Playback](synchronized_playback.md) for UTC
 alignment rules and the synchronization workflow.
@@ -55,6 +55,8 @@ alignment rules and the synchronization workflow.
 - Spot events at current playhead time
 - Head/label add/rename/delete + per-label colors
 - Event table supports edit, delete, confirm/reject smart events
+- Time shows full UTC when resolvable and relative time otherwise; media seeking
+  still uses the projected timeline position
 - Smart inference with model + time-range prompts
 
 #### Description (`DESC`)
@@ -70,7 +72,8 @@ alignment rules and the synchronization workflow.
 
 - `Add New Description` opens a modal and inserts at current playhead time
 - Dense events are editable/deletable in the table
-- Events are kept chronological by `position_ms`
+- Time shows full UTC when resolvable and accepts ISO-compatible UTC edits
+- Events remain navigable by their projected `position_ms`
 
 #### Question/Answer (`Q/A`)
 

@@ -17,7 +17,12 @@ from PyQt6.QtWidgets import (
 
 from controllers.command_types import CmdType
 from ui.dialogs import UnsavedChangesDialog
-from utils import natural_sort_key, parse_utc_datetime
+from utils import (
+    format_utc_datetime,
+    natural_sort_key,
+    normalize_temporal_annotations_for_write,
+    parse_utc_datetime,
+)
 
 
 def _safe_int(value, default=0):
@@ -736,7 +741,7 @@ class DatasetExplorerController(QObject):
         sample_id: str,
         input_path: str,
         utc_text: str,
-        annotation_shift_ms: int = 0,
+        previous_timeline_origin_utc=None,
     ) -> bool:
         sample = self.get_sample(sample_id)
         target_key = self._fs_path_key(input_path)
@@ -753,17 +758,55 @@ class DatasetExplorerController(QObject):
             parsed_old = parse_utc_datetime(input_item.get("UTC_time_start")) if old_present else None
             if old_present and parsed_old == parsed_new:
                 return False
-            input_item["UTC_time_start"] = parsed_new.strftime("%Y-%m-%d %H:%M:%S.%f")
-            shift_ms = int(annotation_shift_ms)
-            if shift_ms:
+            if parse_utc_datetime(previous_timeline_origin_utc) is not None:
                 for field_name in ("events", "dense_captions"):
-                    for annotation in sample.get(field_name, []):
-                        if not isinstance(annotation, dict) or "position_ms" not in annotation:
-                            continue
-                        try:
-                            annotation["position_ms"] = int(annotation["position_ms"]) + shift_ms
-                        except (TypeError, ValueError):
-                            continue
+                    if isinstance(sample.get(field_name), list):
+                        sample[field_name] = normalize_temporal_annotations_for_write(
+                            sample[field_name],
+                            previous_timeline_origin_utc,
+                        )
+            input_item["UTC_time_start"] = parsed_new.strftime("%Y-%m-%d %H:%M:%S.%f")
+            new_timeline_origin = self._timeline_origin_for_sample(sample)
+            for field_name in ("events", "dense_captions"):
+                if isinstance(sample.get(field_name), list):
+                    sample[field_name] = normalize_temporal_annotations_for_write(
+                        sample[field_name], new_timeline_origin
+                    )
+            self._rebuild_runtime_index()
+            return True
+        return False
+
+    def _remove_input_utc_time_start(
+        self,
+        sample_id: str,
+        input_path: str,
+        previous_timeline_origin_utc=None,
+    ) -> bool:
+        sample = self.get_sample(sample_id)
+        target_key = self._fs_path_key(input_path)
+        if not isinstance(sample, dict) or not target_key:
+            return False
+        for input_item in sample.get("inputs", []):
+            if not isinstance(input_item, dict):
+                continue
+            resolved_path = self._resolve_media_path(input_item.get("path"))
+            if self._fs_path_key(resolved_path) != target_key:
+                continue
+            if "UTC_time_start" not in input_item:
+                return False
+            if parse_utc_datetime(previous_timeline_origin_utc) is not None:
+                for field_name in ("events", "dense_captions"):
+                    if isinstance(sample.get(field_name), list):
+                        sample[field_name] = normalize_temporal_annotations_for_write(
+                            sample[field_name], previous_timeline_origin_utc
+                        )
+            input_item.pop("UTC_time_start", None)
+            new_timeline_origin = self._timeline_origin_for_sample(sample)
+            for field_name in ("events", "dense_captions"):
+                if isinstance(sample.get(field_name), list):
+                    sample[field_name] = normalize_temporal_annotations_for_write(
+                        sample[field_name], new_timeline_origin
+                    )
             self._rebuild_runtime_index()
             return True
         return False
@@ -1332,10 +1375,16 @@ class DatasetExplorerController(QObject):
                 for event in sample["events"]:
                     if isinstance(event, dict):
                         event["position_ms"] = _safe_int(event.get("position_ms", 0))
+                        normalized_timestamp = format_utc_datetime(event.get("timestamp_utc"))
+                        if normalized_timestamp is not None:
+                            event["timestamp_utc"] = normalized_timestamp
             if "dense_captions" in sample and isinstance(sample["dense_captions"], list):
                 for event in sample["dense_captions"]:
                     if isinstance(event, dict):
                         event["position_ms"] = _safe_int(event.get("position_ms", 0))
+                        normalized_timestamp = format_utc_datetime(event.get("timestamp_utc"))
+                        if normalized_timestamp is not None:
+                            event["timestamp_utc"] = normalized_timestamp
 
             normalized_answers = self._normalize_sample_answers_payload(sample.get("answers"))
             if normalized_answers:
@@ -2459,6 +2508,39 @@ class DatasetExplorerController(QObject):
     # ------------------------------------------------------------------
     # Save helpers
     # ------------------------------------------------------------------
+    def _timeline_origin_for_sample(self, sample: dict):
+        origins = []
+        for input_item in list(sample.get("inputs") or []):
+            if not isinstance(input_item, dict):
+                continue
+            if "UTC_time_start" in input_item:
+                explicit = parse_utc_datetime(input_item.get("UTC_time_start"))
+                if explicit is not None:
+                    origins.append(explicit)
+                # An explicit malformed value intentionally disables backend UTC.
+                continue
+            input_type = self._canonical_input_type(
+                input_item.get("type"), input_item.get("path")
+            )
+            if input_type not in {"player_joints_h5", "player_centroids_h5"}:
+                continue
+            source_path = self._resolve_media_path(input_item.get("path"))
+            if not source_path or not os.path.isfile(source_path):
+                continue
+            try:
+                import h5py
+
+                with h5py.File(source_path, "r") as h5_file:
+                    timestamp_dataset = h5_file.get("timestamp_utc")
+                    if timestamp_dataset is None or not timestamp_dataset.shape[0]:
+                        continue
+                    backend_origin = parse_utc_datetime(timestamp_dataset[0])
+                    if backend_origin is not None:
+                        origins.append(backend_origin)
+            except Exception:
+                continue
+        return min(origins) if origins else None
+
     def _dataset_json_for_write(self, save_path: str):
         normalized, error = self._normalize_dataset_json(self.dataset_json)
         if error:
@@ -2468,6 +2550,12 @@ class DatasetExplorerController(QObject):
         written = copy.deepcopy(normalized)
         written.pop("questions", None)
         for sample in written.get("data", []):
+            timeline_origin = self._timeline_origin_for_sample(sample)
+            for field_name in ("events", "dense_captions"):
+                if isinstance(sample.get(field_name), list):
+                    sample[field_name] = normalize_temporal_annotations_for_write(
+                        sample[field_name], timeline_origin
+                    )
             new_inputs = []
 
             for index, input_item in enumerate(sample.get("inputs", [])):

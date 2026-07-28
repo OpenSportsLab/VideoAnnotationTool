@@ -646,7 +646,9 @@ class MediaController(QObject):
     muteStateChanged = pyqtSignal(bool)
     positionChanged = pyqtSignal(int)
     durationChanged = pyqtSignal(int)
-    inputUtcStartMutationRequested = pyqtSignal(str, str, int)
+    timelineOriginChanged = pyqtSignal(str, object)
+    inputUtcStartMutationRequested = pyqtSignal(str, str)
+    inputUtcStartRemovalRequested = pyqtSignal(str)
 
     @property
     def _RASTER_FRAME_CACHE_LIMIT(self):
@@ -670,6 +672,8 @@ class MediaController(QObject):
         self._group_key = ()
         self._focused_path = ""
         self._global_origin_utc = None
+        self._sample_id = ""
+        self._pending_sample_id = None
         self._group_duration_ms = 0
         self._group_position_ms = 0
         self._anchor_position_ms = 0
@@ -684,6 +688,7 @@ class MediaController(QObject):
         self._sync_original_local_position = 0
         self._sync_was_playing = False
         self._pending_restore_anchor_utc = None
+        self._pending_restore_position_ms = None
         self._clock = QElapsedTimer()
         self._master_timer = QTimer(self)
         self._master_timer.setInterval(30)
@@ -721,6 +726,10 @@ class MediaController(QObject):
                 media_panel.paneGoToStartRequested.connect(self.go_to_source_start)
             if hasattr(media_panel, "paneGoToEndRequested"):
                 media_panel.paneGoToEndRequested.connect(self.go_to_source_end)
+            if hasattr(media_panel, "paneUtcStartSetRequested"):
+                media_panel.paneUtcStartSetRequested.connect(self.request_manual_utc_start)
+            if hasattr(media_panel, "paneUtcStartRemoveRequested"):
+                media_panel.paneUtcStartRemoveRequested.connect(self.request_manual_utc_removal)
             if hasattr(media_panel, "syncFrameStepRequested"):
                 media_panel.syncFrameStepRequested.connect(self.step_sync_frame)
             if hasattr(media_panel, "syncApplyRequested"):
@@ -753,7 +762,20 @@ class MediaController(QObject):
             self._single._trigger_error_dialog = error_override
         self._single.load_and_play(source, auto_play=auto_play)
 
-    def route_media_group(self, sources, focused_path: str = "", ensure_playback: bool = False):
+    def route_media_group(
+        self,
+        sources,
+        focused_path: str = "",
+        ensure_playback: bool = False,
+        sample_id: str = "",
+    ):
+        if sample_id:
+            route_sample_id = str(sample_id)
+        elif self._pending_sample_id is not None:
+            route_sample_id = str(self._pending_sample_id or "")
+        else:
+            route_sample_id = self._sample_id if self._group_active else ""
+        self._pending_sample_id = None
         if self._sync_record is not None:
             self.cancel_sync_mode()
         normalized = []
@@ -767,6 +789,8 @@ class MediaController(QObject):
 
         group_key = tuple(self._single._source_key(source) for source in normalized)
         if self._group_active and group_key == self._group_key:
+            self._sample_id = route_sample_id
+            self.timelineOriginChanged.emit(self._sample_id, self._global_origin_utc)
             restore_anchor = self._pending_restore_anchor_utc
             if isinstance(restore_anchor, _datetime.datetime) and isinstance(
                 self._global_origin_utc, _datetime.datetime
@@ -775,6 +799,10 @@ class MediaController(QObject):
                 restore_ms = int(
                     round((restore_anchor - self._global_origin_utc).total_seconds() * 1000.0)
                 )
+                self.set_position(restore_ms)
+            elif self._pending_restore_position_ms is not None:
+                restore_ms = int(self._pending_restore_position_ms)
+                self._pending_restore_position_ms = None
                 self.set_position(restore_ms)
             self.focus_source(focused_path or normalized[0]["path"])
             if ensure_playback and not self.is_playing():
@@ -785,6 +813,7 @@ class MediaController(QObject):
             return
 
         self._stop_group(clear_state=True)
+        self._sample_id = route_sample_id
         self._single.stop()
         self._group_active = True
         self._pending_group_autoplay = bool(ensure_playback)
@@ -828,9 +857,13 @@ class MediaController(QObject):
         self._recalculate_group_timeline()
         restore_anchor = self._pending_restore_anchor_utc
         self._pending_restore_anchor_utc = None
+        restore_position = self._pending_restore_position_ms
+        self._pending_restore_position_ms = None
         if isinstance(restore_anchor, _datetime.datetime) and isinstance(self._global_origin_utc, _datetime.datetime):
             restore_ms = int(round((restore_anchor - self._global_origin_utc).total_seconds() * 1000.0))
             self.set_position(restore_ms)
+        elif restore_position is not None:
+            self.set_position(int(restore_position))
         else:
             self.set_position(0)
         if ensure_playback and self._all_sessions_ready():
@@ -839,6 +872,39 @@ class MediaController(QObject):
 
     def route_media_selection(self, source, ensure_playback: bool = False):
         self.route_media_group([source], str(source.get("path") if isinstance(source, dict) else source), ensure_playback)
+
+    def set_sample_context(self, sample_id: str):
+        self._pending_sample_id = str(sample_id or "")
+
+    def timeline_origin_utc(self):
+        return self._global_origin_utc if self._group_active else self._single.timeline_origin_utc()
+
+    def _prepare_manual_timeline_mutation(self):
+        self.pause()
+        position_ms = self.current_position_ms()
+        if isinstance(self._global_origin_utc, _datetime.datetime):
+            self._pending_restore_anchor_utc = self._global_origin_utc + _datetime.timedelta(
+                milliseconds=position_ms
+            )
+            self._pending_restore_position_ms = None
+        else:
+            self._pending_restore_anchor_utc = None
+            self._pending_restore_position_ms = position_ms
+
+    def request_manual_utc_start(self, input_path: str, utc_text: str):
+        normalized = parse_utc_datetime(utc_text)
+        if not input_path or normalized is None:
+            return
+        self._prepare_manual_timeline_mutation()
+        self.inputUtcStartMutationRequested.emit(
+            str(input_path), normalized.strftime("%Y-%m-%d %H:%M:%S.%f")
+        )
+
+    def request_manual_utc_removal(self, input_path: str):
+        if not input_path:
+            return
+        self._prepare_manual_timeline_mutation()
+        self.inputUtcStartRemovalRequested.emit(str(input_path))
 
     def _session_record(self, source, pane, session):
         return {
@@ -898,6 +964,7 @@ class MediaController(QObject):
             if record["valid"] and isinstance(record["origin_utc"], _datetime.datetime)
         ]
         self._global_origin_utc = min(utc_origins) if utc_origins else None
+        self.timelineOriginChanged.emit(self._sample_id, self._global_origin_utc)
         duration = 0
         for record in self._sessions:
             origin = record["origin_utc"]
@@ -1096,6 +1163,9 @@ class MediaController(QObject):
         self._anchor_position_ms = 0
         self._group_duration_ms = 0
         self._global_origin_utc = None
+        if self._sample_id:
+            self.timelineOriginChanged.emit(self._sample_id, None)
+        self._sample_id = ""
         if clear_state:
             self._group_key = ()
         if self.media_panel is not None and hasattr(self.media_panel, "set_utc_origin"):
@@ -1282,15 +1352,6 @@ class MediaController(QObject):
         record = self._sync_record
         local_position = record["controller"].current_position_ms()
         proposed = self._sync_anchor_utc - _datetime.timedelta(milliseconds=local_position)
-        proposed_origins = []
-        for item in self._sessions:
-            origin = proposed if item is record else item["origin_utc"]
-            if item["valid"] and isinstance(origin, _datetime.datetime):
-                proposed_origins.append(origin)
-        new_global_origin = min(proposed_origins) if proposed_origins else self._global_origin_utc
-        annotation_shift_ms = int(
-            round((self._global_origin_utc - new_global_origin).total_seconds() * 1000.0)
-        )
         utc_text = proposed.strftime("%Y-%m-%d %H:%M:%S.%f")
         input_path = str(record["source"].get("path") or "")
         anchor = self._sync_anchor_utc
@@ -1303,7 +1364,7 @@ class MediaController(QObject):
         self.positionChanged.emit(original_global_position)
         self.playbackStateChanged.emit(False)
         self._pending_restore_anchor_utc = anchor
-        self.inputUtcStartMutationRequested.emit(input_path, utc_text, annotation_shift_ms)
+        self.inputUtcStartMutationRequested.emit(input_path, utc_text)
 
     def _finish_sync_mode_ui(self):
         self._sync_poll_timer.stop()

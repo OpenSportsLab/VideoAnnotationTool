@@ -37,9 +37,14 @@ Provides the Localization right-panel plus adapters for spotting tabs, hand even
   - Rebuilds head tabs and spotting buttons.
   - Spotting buttons use the same deterministic label colors as table rows and timeline markers.
 - `_TableAdapter.set_data(annotations)`
-  - Displays editable event rows with a `Confidence` column for smart events.
+  - Displays editable event rows with full UTC timestamps when resolvable and relative time otherwise.
+  - UTC edits accept ISO-compatible values while selection/seeking remains based on `position_ms`.
+  - Includes a `Confidence` column for smart events.
   - Double-clicking a confidence cell opens a Yes/No/Cancel dialog to confirm/reject/ignore.
   - Applies deterministic per-label row colors so the table stays visually aligned with timeline markers.
+- `_TableAdapter.set_timeline_origin(origin_utc)`
+  - Supplies sample-scoped UTC display/edit context without coupling the panel
+    to `MediaController`.
 - `_SmartWidgetAdapter`
   - Emits smart inference range/confirm/clear requests.
 
@@ -48,10 +53,12 @@ Provides the Localization right-panel plus adapters for spotting tabs, hand even
 - Tabs adapter manages head/label UX including add/rename/delete requests.
 - Smart event actions are emitted as intent only; persistence remains in controller/history layer.
 - Table row background color is derived from the same label-color mapping used for timeline markers.
+- A malformed annotation `timestamp_utc` displays relative `position_ms`; an
+  invalid UTC edit is rejected without emitting a mutation.
 
 ## Conventions
 - Keep adapter APIs stable for controller calls/signals.
-- Keep parsing/format utilities local to this module.
+- Reuse shared UTC parsing/formatting helpers; keep relative table parsing local.
 
 ## Interactions
 - Inbound from controller:

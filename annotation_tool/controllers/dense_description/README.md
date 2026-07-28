@@ -32,6 +32,8 @@ Owns Dense Description mode behavior for timestamped text event CRUD and marker/
   - Refreshes dense display when mode becomes active.
 - `on_selected_sample_changed(sample, resolved_path="")`
   - Loads selected sample snapshot and refreshes dense events.
+- `on_timeline_origin_changed(sample_id, origin_utc)`
+  - Projects authoritative UTC captions for table display, markers, and seeking.
 - `_on_add_event_requested(initial_text="")`
   - Modal add flow; creates event at current time and emits add intent.
 - `_on_annotation_modified(old_event, new_event)`
@@ -46,6 +48,10 @@ Owns Dense Description mode behavior for timestamped text event CRUD and marker/
 - Edit/delete require valid selected sample/event.
 - No-op modifications are ignored.
 - Marker refresh is mode-aware.
+- Valid `timestamp_utc` is authoritative for matching and sorting; legacy or
+  malformed rows fall back to `position_ms`.
+- New and moved rows write both temporal fields when a genuine timeline origin
+  exists, without synthesizing UTC for relative-only samples.
 
 ## Conventions
 - Keep business mutation policy out of UI adapters.
@@ -74,3 +80,6 @@ Owns Dense Description mode behavior for timestamped text event CRUD and marker/
   Add click is wired in `MainWindow.connect_signals()` to `MediaController.pause`; dense controller does not track playback state and does not auto-resume.
 - Marker contract:
   marker refresh should remain mode-aware and tied to current selected sample path.
+- Projection contract:
+  projected rows are presentation state only; selection/playback must not
+  rewrite canonical dense-caption JSON.

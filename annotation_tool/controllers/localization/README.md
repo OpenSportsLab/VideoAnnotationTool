@@ -43,6 +43,9 @@ Implements Localization (action spotting) behavior, including schema management,
   - Wires spotting tabs/table actions to controller behavior.
 - `on_selected_sample_changed(sample)`
   - Loads selected sample snapshot into Localization panel.
+- `on_timeline_origin_changed(sample_id, origin_utc)`
+  - Projects authoritative UTC events onto the active sample timeline and gives
+    the table its UTC formatting/editing context.
 - `on_schema_context_changed(schema)`
   - Rebuilds schema-driven localization controls from runtime schema context.
 - Head/label functions:
@@ -59,6 +62,8 @@ Implements Localization (action spotting) behavior, including schema management,
 - Label add flow can optionally inject an event at current playback time.
 - Pause/resume around modal label dialogs is signal-driven.
 - Smart inference writes directly into canonical `events[]` with `confidence_score`.
+- New, moved, and inferred events write `timestamp_utc` plus `position_ms` when
+  a genuine sample origin is available; relative-only samples keep `position_ms`.
 - Smart inference startup passes the selected head labels and input fps into `LocalizationInferenceManager`; the worker should not rely on hardcoded `ball_action` schema classes from config.
 - If localization inference starts failing with `nvidia.dali` / `cupy` import errors on macOS, verify the environment is using the non-DALI OpenSportsLib build rather than `0.1.0`.
 - Confirming (or manually editing) an inferred row removes `confidence_score` only.
@@ -89,7 +94,12 @@ Implements Localization (action spotting) behavior, including schema management,
 
 ## Developer Knowledge
 - Event identity:
-  localization table edits rely on old/new event matching; preserve deterministic event keys (`head`, `label`, `position_ms`).
+  localization table edits rely on old/new event matching. A valid normalized
+  `timestamp_utc` is the stable temporal key; use `position_ms` only for legacy
+  or malformed annotations, alongside `head` and `label`.
+- Projection contract:
+  table rows and markers consume projected copies. Selection and playback must
+  not mutate canonical annotation JSON.
 - Dialog flows:
   keep pause/resume signal toggling symmetric (toggle before + after) when modal input is used.
 - Schema edits and event edits are coupled:

@@ -4,7 +4,13 @@ from PyQt6 import uic
 from PyQt6.QtCore import QAbstractTableModel, QObject, QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QMenu, QPushButton, QTableView, QWidget
 
-from utils import resource_path
+from utils import (
+    annotation_utc_datetime,
+    format_annotation_utc_display,
+    format_utc_datetime,
+    parse_utc_datetime,
+    resource_path,
+)
 
 
 def _format_mmss_msec(ms: int) -> str:
@@ -56,6 +62,7 @@ class DenseTableModel(QAbstractTableModel):
         super().__init__()
         self._data = annotations or []
         self._headers = ["Time", "Lang", "Description"]
+        self._timeline_origin_utc = None
 
     def rowCount(self, parent=None):
         return len(self._data)
@@ -82,6 +89,15 @@ class DenseTableModel(QAbstractTableModel):
 
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             if col == 0:
+                utc_display = format_annotation_utc_display(
+                    item, self._timeline_origin_utc
+                )
+                if utc_display is not None:
+                    if role == Qt.ItemDataRole.EditRole:
+                        return format_utc_datetime(
+                            annotation_utc_datetime(item, self._timeline_origin_utc)
+                        )
+                    return utc_display
                 return _format_mmss_msec(item.get("position_ms", 0))
             if col == 1:
                 return item.get("lang", "en")
@@ -105,7 +121,23 @@ class DenseTableModel(QAbstractTableModel):
         value_str = str(value).strip()
 
         if col == 0:
-            new_item["position_ms"] = _parse_time_to_ms(value_str, old_item.get("position_ms", 0))
+            existing_utc = annotation_utc_datetime(
+                old_item, self._timeline_origin_utc
+            )
+            entered_utc = parse_utc_datetime(value_str)
+            if existing_utc is not None or entered_utc is not None:
+                if entered_utc is None:
+                    return False
+                new_item["timestamp_utc"] = format_utc_datetime(entered_utc)
+                origin = parse_utc_datetime(self._timeline_origin_utc)
+                if origin is not None:
+                    new_item["position_ms"] = int(
+                        round((entered_utc - origin).total_seconds() * 1000.0)
+                    )
+            else:
+                new_item["position_ms"] = _parse_time_to_ms(
+                    value_str, old_item.get("position_ms", 0)
+                )
         elif col == 1:
             new_item["lang"] = value_str
         elif col == 2:
@@ -130,6 +162,15 @@ class DenseTableModel(QAbstractTableModel):
         self.beginResetModel()
         self._data = annotations
         self.endResetModel()
+
+    def set_timeline_origin(self, origin_utc):
+        self._timeline_origin_utc = parse_utc_datetime(origin_utc)
+        if self.rowCount() > 0:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(self.rowCount() - 1, 0),
+                [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole],
+            )
 
     def get_annotation_at(self, row):
         if 0 <= row < len(self._data):
@@ -192,6 +233,9 @@ class _DenseTableAdapter(QObject):
 
     def set_data(self, annotations):
         self.model.set_annotations(annotations)
+
+    def set_timeline_origin(self, origin_utc):
+        self.model.set_timeline_origin(origin_utc)
 
     def _on_selection_changed(self, selected, deselected):
         indexes = selected.indexes()
@@ -327,7 +371,7 @@ class DenseAnnotationPanel(QWidget):
 
     def _apply_dense_column_ratio(self):
         """
-        Keep [Time, Lang, Description] widths in a stable 2:1:4 ratio.
+        Keep enough room for a full UTC timestamp, then Lang and Description.
         """
         view = self.table.table
         width = view.viewport().width()
@@ -339,9 +383,9 @@ class DenseAnnotationPanel(QWidget):
                 QTimer.singleShot(16, self._retry_dense_column_ratio)
             return
 
-        unit = max(20, width // 7)  # 2 + 1 + 4
-        col0 = unit * 2
-        col1 = unit
+        unit = max(20, width // 8)  # 3 + 1 + 4
+        col0 = max(220, unit * 3)
+        col1 = max(60, unit)
         col2 = max(80, width - col0 - col1)
 
         view.setColumnWidth(0, col0)
@@ -350,6 +394,9 @@ class DenseAnnotationPanel(QWidget):
 
     def set_events(self, annotations):
         self.table.set_data(annotations or [])
+
+    def set_timeline_origin(self, origin_utc):
+        self.table.set_timeline_origin(origin_utc)
 
     def set_dense_enabled(self, enabled: bool):
         self.setEnabled(bool(enabled))

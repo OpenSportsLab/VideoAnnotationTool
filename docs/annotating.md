@@ -4,10 +4,11 @@ All annotation tabs work on the currently selected sample from the Dataset
 Explorer. The JSON field names below match the canonical [OSL JSON Format](OSL.md)
 page.
 
-For samples with multiple inputs, annotation timestamps are relative to the
-shared media timeline. Correcting a modality's UTC alignment automatically
-shifts localization events and dense captions when necessary so their absolute
-UTC instants do not change. See
+For samples with a UTC reference, localization events and dense captions use an
+absolute `timestamp_utc` as their stable time. The accompanying `position_ms`
+is projected onto the current shared media timeline for seeking and legacy
+compatibility. Adding, removing, filtering, or resynchronizing modalities can
+change that projected position without changing the annotation's UTC instant. See
 [Synchronized Multi-Modality Playback](synchronized_playback.md).
 
 ## Classification
@@ -34,9 +35,14 @@ Use `LOC` for point events on the timeline.
 4. Use the spotting controls to add the event.
 5. Edit or delete rows in the event table when needed.
 
-Events are stored in `events[]` with `head`, `label`, and `position_ms`.
-Smart inference can add predicted rows with `confidence_score`; confirming a row
-keeps the event and removes only the confidence marker.
+Events are stored in `events[]` with `head`, `label`, and `position_ms`. When the
+sample has an absolute origin, they also contain an authoritative
+`timestamp_utc`. The Time column displays `YYYY-MM-DD HH:MM:SS.mmm UTC` whenever
+that instant can be resolved, and otherwise displays relative `MM:SS.mmm`.
+Double-click a UTC Time cell to enter an ISO-compatible value, including `Z` or
+a timezone offset; the app normalizes it to UTC and updates `position_ms` for
+seeking. Smart inference can add predicted rows with `confidence_score`;
+confirming a row keeps the event and removes only the confidence marker.
 
 ## Description
 
@@ -60,7 +66,11 @@ Use `DENSE` for timestamped text descriptions.
 5. Edit time or text from the table when needed.
 
 Dense descriptions are stored in `dense_captions[]` with `position_ms`, `lang`,
-and `text`. The table keeps rows ordered by timestamp.
+and `text`, plus `timestamp_utc` when an absolute origin is available. The Time
+column follows the same UTC display and ISO-compatible editing rules as
+Localization, while row selection and media seeking continue to use the
+projected `position_ms`. Relative-only samples keep the existing relative-time
+editor.
 
 ## Question/Answer
 

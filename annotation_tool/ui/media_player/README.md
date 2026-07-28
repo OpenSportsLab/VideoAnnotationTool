@@ -27,6 +27,8 @@ Provides the central grouped media/timeline panel used across all annotation mod
 - `paneSyncRequested(str)`
 - `paneGoToStartRequested(str)`
 - `paneGoToEndRequested(str)`
+- `paneUtcStartSetRequested(str, str)`
+- `paneUtcStartRemoveRequested(str)`
 - `syncFrameStepRequested(int)`
 - `syncApplyRequested()`
 - `syncCancelRequested()`
@@ -53,7 +55,7 @@ Provides the central grouped media/timeline panel used across all annotation mod
 - `_create_viewer_pane()`: creates a pane and forwards its intent signals.
 - `_setup_timeline()`: initializes slider/scroll/zoom behavior.
 - `_setup_controls()`: maps buttons to emitted control signals.
-- `MediaViewerPane.contextMenuEvent(...)`: presents Go to start/end and synchronization intents.
+- `MediaViewerPane.contextMenuEvent(...)`: presents navigation, synchronization, and manual UTC-start intents.
 - `AnnotationSlider.paintEvent(...)`: draws marker lines on timeline.
 
 ## Business Rules
@@ -62,6 +64,9 @@ Provides the central grouped media/timeline panel used across all annotation mod
 - Context-menu actions never seek or mutate data directly.
 - Go to start/end is disabled for unplayable inputs and during synchronization mode.
 - Synchronization eligibility and explanatory tooltips come from `MediaController`.
+- Viewer UTC actions are dynamic: Set when no explicit override exists, or Correct/Remove when it does.
+- Set/correct treats the entered value as modality-local `00:00.000`; remove
+  requires confirmation and removes only the explicit override.
 
 ## Conventions
 - Keep widget logic and presentation in this module.

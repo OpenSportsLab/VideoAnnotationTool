@@ -27,6 +27,22 @@ are interpreted as UTC. An invalid explicit value is shown as
 **Relative ⚠ invalid UTC_time_start** and intentionally does not fall back to
 internal H5 timing.
 
+## Set, Correct, or Remove a UTC Start
+
+Right-click a viewer to manage its explicit modality origin:
+
+- Choose **Set UTC start…** when the input has no explicit `UTC_time_start`.
+- Choose **Correct UTC start…** to replace an existing value; the dialog is
+  prefilled with the current value.
+- Choose **Remove UTC start** and confirm to remove only the explicit override.
+  Timestamped backends such as H5 then resume using their backend-derived UTC.
+
+The entered timestamp always describes that modality's local `00:00.000`, not
+the frame currently displayed. Set, correct, and remove are each one undoable
+edit. Invalid input is rejected without changing the project. After an
+effective edit, the group is rerouted, remains paused, and preserves the
+current absolute playback anchor when possible.
+
 ## Jump to a Modality Boundary
 
 Right-click a playable viewer and choose:
@@ -71,22 +87,26 @@ paused, and changing samples or projects cancels synchronization without saving.
 
 ## Existing Timed Annotations
 
-Localization events and dense captions store `position_ms` relative to the
-shared union start. If synchronization changes that start, the tool shifts both
-annotation collections automatically:
+Localization events and dense captions may store an authoritative
+`timestamp_utc` together with a compatibility `position_ms`. Before changing an
+input origin, the tool promotes legacy relative annotations when the old sample
+origin is genuinely resolvable. It then leaves every valid annotation UTC
+unchanged and recomputes its projected position against the new union origin:
 
 ```text
-new position_ms = old position_ms + old union origin - new union origin
+position_ms = timestamp_utc - current sample timeline origin
 ```
 
-This preserves every annotation's absolute UTC instant. The `UTC_time_start`
-change and all annotation shifts form one undoable edit. Applying a semantically
-equivalent UTC value creates no history entry.
+This means adding or removing the earliest modality, filtering inputs at read
+time, or correcting synchronization changes only the derived timeline
+positions. Absolute annotations outside the currently available media range
+are preserved and may project to a negative or beyond-duration position. The
+input-origin update and compatibility-field recomputation form one undoable
+edit; a semantically equivalent value creates no history entry.
 
-If annotations were changed by a version of the tool that predates this
-correction, undo the old synchronization and apply it again when possible. A
-saved-and-reopened project needs the previous UTC origin or a backup to recover
-the original absolute annotation times.
+Legacy annotations remain relative when no genuine UTC origin exists. A
+malformed `timestamp_utc` is preserved and the UI falls back to `position_ms`;
+it is replaced only when that annotation is explicitly edited.
 
 ## Audio
 

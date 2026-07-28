@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage
+from PyQt6.QtWidgets import QMessageBox
 
 from controllers.media_controller import MediaController
 from controllers.media.raster_backend import BaseRasterMediaBackend, RasterClip
@@ -1645,12 +1646,12 @@ def test_sync_mode_frame_step_apply_and_cancel(media_panel_and_controller, tmp_p
 
     emitted = []
     controller.inputUtcStartMutationRequested.connect(
-        lambda path, utc_text, shift_ms: emitted.append((path, utc_text, shift_ms))
+        lambda path, utc_text: emitted.append((path, utc_text))
     )
     controller.set_position(250)
     controller.apply_sync_mode()
 
-    assert emitted == [(str(second_path), "2026-01-01 11:59:59.850000", 150)]
+    assert emitted == [(str(second_path), "2026-01-01 11:59:59.850000")]
     assert controller._sync_record is None
     assert panel.sync_bar.isVisible() is False
     assert controller.is_playing() is False
@@ -1718,7 +1719,7 @@ def test_sync_availability_requires_two_playable_inputs_and_utc_reference(
 
 
 @pytest.mark.gui
-def test_sync_apply_reports_negative_annotation_shift_when_union_origin_moves_later(
+def test_sync_apply_emits_only_the_new_absolute_input_origin(
     media_panel_and_controller,
     tmp_path,
 ):
@@ -1746,10 +1747,93 @@ def test_sync_apply_reports_negative_annotation_shift_when_union_origin_moves_la
 
     emitted = []
     controller.inputUtcStartMutationRequested.connect(
-        lambda path, utc_text, shift_ms: emitted.append((path, utc_text, shift_ms))
+        lambda path, utc_text: emitted.append((path, utc_text))
     )
     controller.apply_sync_mode()
 
     assert emitted == [
-        (str(utc_frames), "2026-01-01 12:00:00.100000", -100),
+        (str(utc_frames), "2026-01-01 12:00:00.100000"),
     ]
+
+
+@pytest.mark.gui
+def test_viewer_manual_utc_prompts_normalize_and_remove(
+    media_panel_and_controller,
+    monkeypatch,
+):
+    panel, _controller = media_panel_and_controller
+    pane = panel._viewer_panes[0]
+    pane.configure(
+        {
+            "type": "video",
+            "path": "/tmp/example.mp4",
+            "UTC_time_start": "2026-01-01T14:00:00+02:00",
+        }
+    )
+
+    entered_defaults = []
+    monkeypatch.setattr(
+        "ui.media_player.QInputDialog.getText",
+        lambda *args, **kwargs: (
+            entered_defaults.append(kwargs.get("text"))
+            or "2026-01-01T15:00:01.250000+03:00",
+            True,
+        ),
+    )
+    set_requests = []
+    pane.utcStartSetRequested.connect(
+        lambda path, utc: set_requests.append((path, utc))
+    )
+    pane._prompt_utc_start()
+
+    assert entered_defaults == ["2026-01-01 12:00:00.000000"]
+    assert set_requests == [
+        ("/tmp/example.mp4", "2026-01-01 12:00:01.250000")
+    ]
+
+    monkeypatch.setattr(
+        "ui.media_player.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    remove_requests = []
+    pane.utcStartRemoveRequested.connect(remove_requests.append)
+    pane._confirm_remove_utc_start()
+    assert remove_requests == ["/tmp/example.mp4"]
+
+
+@pytest.mark.gui
+def test_manual_utc_requests_pause_and_preserve_absolute_anchor(
+    media_panel_and_controller,
+    tmp_path,
+):
+    _panel, controller = media_panel_and_controller
+    frames_path = tmp_path / "frames.npy"
+    np.save(frames_path, np.zeros((5, 4, 4, 3), dtype=np.uint8))
+    controller.route_media_group(
+        [
+            {
+                "type": "frames_npy",
+                "path": str(frames_path),
+                "fps": 10.0,
+                "UTC_time_start": "2026-01-01 12:00:00.000000",
+            }
+        ],
+        str(frames_path),
+        False,
+    )
+    controller.set_position(200)
+
+    set_requests = []
+    controller.inputUtcStartMutationRequested.connect(
+        lambda path, utc: set_requests.append((path, utc))
+    )
+    controller.request_manual_utc_start(
+        str(frames_path), "2026-01-01T14:00:01+02:00"
+    )
+    assert set_requests == [
+        (str(frames_path), "2026-01-01 12:00:01.000000")
+    ]
+    assert controller._pending_restore_anchor_utc.strftime(
+        "%Y-%m-%d %H:%M:%S.%f"
+    ) == "2026-01-01 12:00:00.200000"
+    assert controller.is_playing() is False
