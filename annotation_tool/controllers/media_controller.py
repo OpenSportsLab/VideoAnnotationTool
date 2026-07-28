@@ -1190,7 +1190,11 @@ class MediaController(QObject):
         self._anchor_position_ms = target
         if self._group_playing:
             self._clock.restart()
-        self._render_group_position(target, force_video_seek=True)
+        self._render_group_position(
+            target,
+            force_video_seek=True,
+            seek_video_clock=True,
+        )
         self.positionChanged.emit(target)
 
     def seek_relative(self, delta_ms: int):
@@ -1479,6 +1483,7 @@ class MediaController(QObject):
         global_position: int,
         *,
         force_video_seek: bool,
+        seek_video_clock: bool = False,
     ):
         video_clock = self._playing_video_clock_record()
         for record in self._sessions:
@@ -1500,7 +1505,9 @@ class MediaController(QObject):
                 fps = float(record["source"].get("fps") or 0.0)
                 frame_ms = int(round(1000.0 / fps)) if fps > 0 else 0
                 threshold = max(self._VIDEO_DRIFT_TOLERANCE_MS, frame_ms)
-                if record is not video_clock and force_video_seek and drift > threshold:
+                if record is video_clock and seek_video_clock:
+                    session.set_position(local)
+                elif record is not video_clock and force_video_seek and drift > threshold:
                     session.set_position(local)
                 if self._group_playing and not session.is_playing():
                     session.play()

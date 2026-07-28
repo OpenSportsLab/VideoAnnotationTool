@@ -1270,6 +1270,38 @@ def test_grouped_relative_source_aligns_to_union_start_and_feed_mute(
 
 
 @pytest.mark.gui
+def test_focus_source_only_changes_viewer_highlight_and_preserves_position(
+    media_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    first_path = tmp_path / "focus_first.h5"
+    second_path = tmp_path / "focus_second.h5"
+    timestamps = [b"2026-01-01 12:00:00.000000", b"2026-01-01 12:00:01.000000"]
+    _write_minimal_player_joints_h5(first_path, timestamps)
+    _write_minimal_player_centroids_h5(second_path, timestamps)
+
+    controller.route_media_group(
+        [
+            {"type": "player_joints_h5", "path": str(first_path)},
+            {"type": "player_centroids_h5", "path": str(second_path)},
+        ],
+        str(first_path),
+        False,
+    )
+    controller.set_position(750)
+    position_before_focus = controller.current_position_ms()
+    playing_before_focus = controller.is_playing()
+
+    controller.focus_source(str(second_path))
+
+    assert controller.current_position_ms() == position_before_focus
+    assert controller.is_playing() is playing_before_focus
+    assert panel._viewer_panes[0].property("focused") is False
+    assert panel._viewer_panes[1].property("focused") is True
+
+
+@pytest.mark.gui
 def test_grouped_videos_autoplay_from_shared_clock(media_panel_and_controller, qtbot):
     panel, controller = media_panel_and_controller
     video_root = Path(__file__).resolve().parents[1] / "data"
@@ -1328,7 +1360,7 @@ def test_group_clock_does_not_seek_video_for_normal_position_reporting_lag(
 
 
 @pytest.mark.gui
-def test_running_video_is_group_clock_and_is_never_drift_seeked(
+def test_running_video_clock_skips_drift_seek_but_accepts_explicit_seek(
     media_panel_and_controller,
     monkeypatch,
     qtbot,
@@ -1350,6 +1382,9 @@ def test_running_video_is_group_clock_and_is_never_drift_seeked(
     assert controller.current_position_ms() == 1234 + record["offset_ms"]
     controller._render_group_position(4000, force_video_seek=True)
     assert seek_calls == []
+
+    controller.set_position(4000)
+    assert seek_calls == [4000 - record["offset_ms"]]
 
 
 @pytest.mark.gui

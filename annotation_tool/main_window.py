@@ -293,6 +293,20 @@ class VideoAnnotationWindow(QMainWindow):
             self.dataset_explorer_controller.current_selected_sample_id
         )
         self.media_controller.route_media_group(sources, focused_path, ensure_playback)
+        if not focused_path:
+            self.media_controller.focus_source("")
+
+    def _handle_media_selection_route(self, sources, focused_path: str):
+        preserve_playing = self.media_controller.is_playing()
+        self.media_controller.set_sample_context(
+            self.dataset_explorer_controller.current_selected_sample_id
+        )
+        self.media_controller.route_media_group(sources, focused_path, preserve_playing)
+        if not focused_path:
+            self.media_controller.focus_source("")
+
+    def _handle_media_focus(self, focused_path: str):
+        self.media_controller.focus_source(focused_path)
 
     def _handle_input_utc_start_removal(self, input_path: str):
         sample_id = self.dataset_explorer_controller.current_selected_sample_id
@@ -353,6 +367,12 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
             self._handle_media_route
+        )
+        self.dataset_explorer_controller.mediaSelectionRouteRequested.connect(
+            self._handle_media_selection_route
+        )
+        self.dataset_explorer_controller.mediaFocusRequested.connect(
+            self._handle_media_focus
         )
         self.media_controller.timelineOriginChanged.connect(
             self.history_manager.on_timeline_origin_changed

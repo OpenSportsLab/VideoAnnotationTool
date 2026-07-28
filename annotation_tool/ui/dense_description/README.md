@@ -57,6 +57,9 @@ Provides the Dense Description right-panel with table and add-event adapters.
 - The Time column reserves enough width for full UTC timestamps across resize events.
 - UTC Time edits normalize ISO-compatible input and emit both temporal fields;
   invalid input is a no-op. Relative rows retain the relative-time parser.
+- `select_row_by_time(...)` and `select_event(...)` are programmatic
+  highlight-only helpers. They block selection signals so refreshes and tab
+  switches cannot seek to a previously selected annotation.
 
 ## Conventions
 - Keep widget layout in `.ui` and adapter behavior in Python.

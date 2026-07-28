@@ -24,6 +24,11 @@ The workspace has three regions: Dataset Explorer (left), Media Center (middle),
   - Unknown/custom root keys (read-only)
   - Raw JSON preview
 
+Selecting a sample row preserves playback state: playing streams continue and
+paused or stopped streams do not start. A sample row has no focused modality,
+so all viewer contours are cleared. Selecting one of the active sample's input
+rows only highlights its viewer and likewise leaves playback unchanged.
+
 ### Middle: Media Center
 
 - One viewer for a single input, or a two-column grid for multi-input samples

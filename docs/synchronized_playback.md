@@ -3,7 +3,18 @@
 When a sample contains two or more inputs, the Media Center displays all inputs
 in a two-column grid and controls them with one shared timeline. Selecting an
 input in the Dataset Explorer or clicking a viewer focuses that pane without
-unloading the other modalities.
+unloading the other modalities. If the sample is already active, selecting one
+of its input rows changes only the highlighted viewer contour: it preserves the
+current timestamp and does not start, stop, pause, or resume playback. This also
+applies after seeking by selecting an annotation in Localization or Dense
+Description: the annotation-table selection remains intact and is not emitted
+again as a second seek.
+
+Selecting the parent sample row clears every modality contour. It preserves the
+current playback state: an already playing group keeps playing, while a paused
+or stopped group remains that way. When the row belongs to another sample, the
+new group is loaded with that same playing/paused state and with no focused
+modality.
 
 ## Timeline Alignment
 
@@ -54,6 +65,11 @@ For timestamped raster and H5 inputs, **Go to end** uses the last timestamped
 frame. For video, it uses the media duration. All viewers follow the shared
 seek and remain synchronized. These actions are disabled while synchronization
 mode is active.
+
+Timeline scrubbing, the ±1/5-second controls, and Localization/Dense annotation
+navigation are explicit group seeks. They reposition the active video clock as
+well as the other modalities, including while playback is running, so the
+timeline does not snap back to the pre-seek position.
 
 ## Correct an Input's UTC Alignment
 

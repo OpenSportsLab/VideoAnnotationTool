@@ -415,7 +415,7 @@ class DenseAnnotationPanel(QWidget):
         for row in range(model.rowCount()):
             item = model.get_annotation_at(row)
             if item and abs(item.get("position_ms", 0) - int(time_ms)) < int(tolerance_ms):
-                self.table.table.selectRow(row)
+                self._select_row_without_seek(row)
                 return
 
     def select_event(self, target_event: dict):
@@ -425,8 +425,18 @@ class DenseAnnotationPanel(QWidget):
         for row in range(model.rowCount()):
             item = model.get_annotation_at(row)
             if item is target_event or item == target_event:
-                self.table.table.selectRow(row)
+                self._select_row_without_seek(row)
                 return
+
+    def _select_row_without_seek(self, row: int):
+        selection_model = self.table.table.selectionModel()
+        if selection_model is None:
+            return
+        was_blocked = selection_model.blockSignals(True)
+        try:
+            self.table.table.selectRow(int(row))
+        finally:
+            selection_model.blockSignals(was_blocked)
 
     def _retry_dense_column_ratio(self):
         self._pending_column_layout_retry = False

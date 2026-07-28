@@ -57,7 +57,9 @@ Default signal flow:
 - Tab switch with same selection/path must not restart media.
 - Undo/redo should prefer lightweight refresh over full rebuild when possible.
 - If filter hides selected row: clear selection (do not auto-select first visible).
-- Explicit user sample/input selection should ensure playback when needed.
+- Explicit tree selection preserves playback state: changing samples carries
+  playing/paused state forward, selecting an input in the active sample changes
+  only viewer focus, and selecting the active sample clears input focus.
 
 ## UX Decisions to Preserve
 - No single-view vs multi-view creation prompt.

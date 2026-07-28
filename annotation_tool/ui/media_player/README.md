@@ -60,6 +60,12 @@ Provides the central grouped media/timeline panel used across all annotation mod
 
 ## Business Rules
 - UI emits control intents; controller decides route/playback policy.
+- Timeline, relative-seek, and annotation-navigation intents are authoritative
+  group seeks and must remain stable while playback is active.
+- `focus_viewer(path)` changes only pane contour state; it must not seek or alter
+  playback state.
+- An empty focus path clears every pane contour. Loading from a parent sample
+  row preserves the group's pre-selection playing/paused state.
 - Marker rendering is view-only and mode-agnostic.
 - Context-menu actions never seek or mutate data directly.
 - Go to start/end is disabled for unplayable inputs and during synchronization mode.

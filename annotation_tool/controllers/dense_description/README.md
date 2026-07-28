@@ -48,6 +48,9 @@ Owns Dense Description mode behavior for timestamped text event CRUD and marker/
 - Edit/delete require valid selected sample/event.
 - No-op modifications are ignored.
 - Marker refresh is mode-aware.
+- Mode activation may refresh rows and restore the highlighted event, but that
+  programmatic restoration must not emit `mediaSeekRequested`; the viewer clock
+  remains authoritative across LOC/DENSE tab switches.
 - Valid `timestamp_utc` is authoritative for matching and sorting; legacy or
   malformed rows fall back to `position_ms`.
 - New and moved rows write both temporal fields when a genuine timeline origin
@@ -76,6 +79,9 @@ Owns Dense Description mode behavior for timestamped text event CRUD and marker/
   Add action creates exactly one new event mutation (or no-op on cancel/empty text).
 - Table-edit contract:
   dense event edits should be table-driven and emit old/new payload with no-op guard.
+- Selection contract:
+  user table selection seeks, while controller-driven selection restoration is
+  highlight-only.
 - Modal add behavior:
   Add click is wired in `MainWindow.connect_signals()` to `MediaController.pause`; dense controller does not track playback state and does not auto-resume.
 - Marker contract:

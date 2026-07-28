@@ -7,8 +7,7 @@ import os
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QModelIndex, Qt, QUrl
-from PyQt6.QtMultimedia import QMediaPlayer
+from PyQt6.QtCore import QModelIndex, Qt
 from PyQt6.QtWidgets import QMessageBox
 
 from controllers.command_types import CmdType
@@ -283,6 +282,7 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
     _open_project(window, monkeypatch, project_json_path)
 
     play_calls = []
+    focus_calls = []
     monkeypatch.setattr(
         window.media_controller,
         "route_media_group",
@@ -290,6 +290,7 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
             (sources, focused_path, ensure_playback)
         ),
     )
+    monkeypatch.setattr(window.media_controller, "focus_source", focus_calls.append)
 
     parent_index = _select_top_row(window, qtbot, 0)
     assert window.tree_model.rowCount(parent_index) == 2
@@ -304,26 +305,128 @@ def test_multiview_child_selection_keeps_sample_id_and_switches_preferred_media_
 
     assert parent_sample_id == "mv_clip"
     assert parent_action_path == parent_index.data(window.tree_model.FilePathRole)
-    assert first_selected_path in window.dataset_explorer_controller.get_sources_by_id(parent_sample_id)
+    assert first_selected_path is None
 
+    sample_refreshes = []
+    window.dataset_explorer_controller.sampleSelectionChanged.connect(sample_refreshes.append)
+    calls_before_child_focus = len(play_calls)
     window.dataset_explorer_panel.tree.setCurrentIndex(child_index)
     qtbot.wait(50)
 
     assert window.dataset_explorer_controller.current_selected_sample_id == parent_sample_id
     assert window.dataset_explorer_controller.current_selected_input_path == child_path
     assert window.get_current_action_path() == parent_action_path
-    assert play_calls[-1][1] == child_path
-    assert {source["path"] for source in play_calls[-1][0]} == {first_child_path, child_path}
+    assert len(play_calls) == calls_before_child_focus
+    assert focus_calls[-1] == child_path
+    assert sample_refreshes == []
     assert len(window.dataset_explorer_controller.action_item_data) == 1
 
     calls_before_first_child = len(play_calls)
     window.dataset_explorer_panel.tree.setCurrentIndex(first_child_index)
     qtbot.wait(50)
 
-    assert len(play_calls) == calls_before_first_child + 1
-    assert play_calls[-1][1] == first_child_path
-    assert play_calls[-1][2] is True
+    assert len(play_calls) == calls_before_first_child
+    assert focus_calls[-1] == first_child_path
     assert window.dataset_explorer_controller.current_selected_input_path == first_child_path
+
+    calls_before_parent_focus = len(play_calls)
+    window.dataset_explorer_panel.tree.setCurrentIndex(parent_index)
+    qtbot.wait(50)
+
+    assert len(play_calls) == calls_before_parent_focus
+    assert focus_calls[-1] == ""
+    assert window.dataset_explorer_controller.current_selected_input_path is None
+
+
+@pytest.mark.gui
+def test_dense_annotation_seek_survives_same_sample_input_focus(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("multiview")
+    payload = json.loads(project_json_path.read_text(encoding="utf-8"))
+    payload["task"] = "dense_video_captioning"
+    payload["data"][0]["dense_captions"] = [
+        {"position_ms": 1000, "lang": "en", "text": "First dense event"},
+        {"position_ms": 2000, "lang": "en", "text": "Second dense event"},
+    ]
+    project_json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _open_project(window, monkeypatch, project_json_path)
+
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["dense_description"])
+    parent_index = _select_top_row(window, qtbot, 0)
+    qtbot.waitUntil(lambda: window.media_controller._group_duration_ms > 2000, timeout=5000)
+    qtbot.waitUntil(lambda: window.dense_panel.table.model.rowCount() == 2, timeout=1000)
+    window.media_controller.pause()
+
+    seek_requests = []
+    window.dense_editor_controller.mediaSeekRequested.connect(seek_requests.append)
+    window.dense_panel.table.table.selectRow(1)
+    qtbot.wait(50)
+    assert seek_requests[-1] == 2000
+    assert window.media_controller.current_position_ms() == 2000
+
+    requests_before_focus = list(seek_requests)
+    second_child = window.tree_model.index(1, 0, parent_index)
+    window.dataset_explorer_panel.tree.setCurrentIndex(second_child)
+    qtbot.wait(50)
+
+    assert seek_requests == requests_before_focus
+    assert window.media_controller.current_position_ms() == 2000
+    assert window.media_controller.is_playing() is False
+    assert window.center_panel._viewer_panes[1].property("focused") is True
+
+
+@pytest.mark.gui
+def test_switching_between_localization_and_dense_preserves_viewer_time(
+    window,
+    monkeypatch,
+    qtbot,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("mixed")
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+    qtbot.waitUntil(lambda: window.media_controller._group_duration_ms > 4000, timeout=5000)
+    window.media_controller.pause()
+
+    localization_seeks = []
+    dense_seeks = []
+    window.localization_editor_controller.mediaSeekRequested.connect(localization_seeks.append)
+    window.dense_editor_controller.mediaSeekRequested.connect(dense_seeks.append)
+
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["localization"])
+    qtbot.waitUntil(lambda: window.localization_panel.table.model.rowCount() == 2, timeout=1000)
+    window.localization_panel.table.table.selectRow(0)
+    qtbot.wait(50)
+    assert localization_seeks[-1] == 1000
+
+    window.media_controller.set_position(3000)
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["dense_description"])
+    qtbot.waitUntil(lambda: window.dense_panel.table.model.rowCount() == 1, timeout=1000)
+    qtbot.wait(50)
+    assert window.media_controller.current_position_ms() == 3000
+
+    window.dense_panel.table.table.selectRow(0)
+    qtbot.wait(50)
+    assert dense_seeks[-1] == 1500
+
+    window.media_controller.set_position(3200)
+    localization_requests_before_switch = list(localization_seeks)
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["localization"])
+    qtbot.wait(50)
+    assert localization_seeks == localization_requests_before_switch
+    assert window.media_controller.current_position_ms() == 3200
+
+    window.media_controller.set_position(3500)
+    dense_requests_before_switch = list(dense_seeks)
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["dense_description"])
+    qtbot.wait(50)
+    assert dense_seeks == dense_requests_before_switch
+    assert window.media_controller.current_position_ms() == 3500
+    assert window.media_controller.is_playing() is False
 
 
 @pytest.mark.gui
@@ -382,21 +485,22 @@ def test_selecting_non_video_input_keeps_selection_without_requesting_playback(
 
 
 @pytest.mark.gui
-def test_selecting_parent_while_stopped_restarts_playback_for_same_source(
+@pytest.mark.parametrize("was_playing", [False, True])
+def test_selecting_parent_preserves_playback_state_and_clears_input_focus(
     window,
     monkeypatch,
     qtbot,
     synthetic_project_json,
+    was_playing,
 ):
     project_json_path = synthetic_project_json("multiview")
     _open_project(window, monkeypatch, project_json_path)
 
     parent_index = window.tree_model.index(0, 0)
     assert parent_index.isValid()
-    parent_path = parent_index.data(window.tree_model.FilePathRole)
-    assert parent_path
-
     play_calls = []
+    focus_calls = []
+    monkeypatch.setattr(window.media_controller, "is_playing", lambda: was_playing)
     monkeypatch.setattr(
         window.media_controller,
         "route_media_group",
@@ -404,24 +508,17 @@ def test_selecting_parent_while_stopped_restarts_playback_for_same_source(
             (sources, focused_path, ensure_playback)
         ),
     )
-    monkeypatch.setattr(
-        window.center_panel.player,
-        "source",
-        lambda: QUrl.fromLocalFile(parent_path),
-    )
-    monkeypatch.setattr(
-        window.center_panel.player,
-        "playbackState",
-        lambda: QMediaPlayer.PlaybackState.StoppedState,
-    )
+    monkeypatch.setattr(window.media_controller, "focus_source", focus_calls.append)
 
     window.dataset_explorer_panel.tree.setCurrentIndex(QModelIndex())
     window.dataset_explorer_panel.tree.setCurrentIndex(parent_index)
     qtbot.wait(50)
 
     assert play_calls
-    assert play_calls[-1][1] == parent_path
-    assert play_calls[-1][2] is True
+    assert play_calls[-1][1] == ""
+    assert play_calls[-1][2] is was_playing
+    assert focus_calls[-1] == ""
+    assert window.dataset_explorer_controller.current_selected_input_path is None
 
 
 @pytest.mark.gui
@@ -1195,7 +1292,7 @@ def test_filter_smart_labelled_uses_sample_state_across_modes(
     qtbot.wait(50)
 
     assert window.dataset_explorer_controller.current_selected_sample_id == "clip_1"
-    assert window.dataset_explorer_controller.current_selected_input_path == window.get_current_action_path()
+    assert window.dataset_explorer_controller.current_selected_input_path is None
     assert not window.dataset_explorer_panel.tree.isRowHidden(0, window.dataset_explorer_panel.tree.rootIndex())
     assert window.dataset_explorer_panel.tree.isRowHidden(1, window.dataset_explorer_panel.tree.rootIndex())
 

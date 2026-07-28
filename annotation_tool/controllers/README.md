@@ -26,7 +26,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `import_annotations()`, `open_project_from_path()`, `load_project()`: open/normalize/load dataset.
 - `save_project()`, `export_project()`: write dataset JSON to disk.
 - `populate_tree()`, `handle_filter_change()`: tree render + visibility filtering.
-- `_on_selection_changed()`, `_route_media_for_selection()`: selection context and media route emission (resolved media source object, not just path).
+- `_on_selection_changed()`, `_route_media_for_selection()`, `_focus_media_for_selection()`: selection context plus preserve-state route, ordinary route, or focus-only media intent emission.
 - `handle_add_sample()`, `handle_remove_item()`, `handle_clear_workspace()`: explorer mutation intent emission (`handle_add_sample()` accepts files/folders in one picker; files map to single-input samples, folders expand recursively to multi-input samples).
 - `restore_dataset_json_from_history()`: apply history snapshot restore.
 
@@ -37,6 +37,8 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 
 ### `MediaController`
 - `route_media_group(sources, focused_path, ensure_playback)`: canonical sample-level route. One session is created per input; focusing an existing pane does not reload the group.
+- `focus_source(path)`: changes only the focused pane highlight and preserves
+  group position and playback state.
 - `toggle_play_pause()`, `stop()`, `seek_relative()`, `set_position()`, `set_playback_rate()`: shared-clock playback control.
 - `go_to_source_start(path)`, `go_to_source_end(path)`: seek the shared clock to a modality boundary. Timestamped backends use their first/last frame times; video end uses media duration.
 - `enter_sync_mode(path)`, `step_sync_frame(direction)`, `apply_sync_mode()`, `cancel_sync_mode()`: selected-session visual UTC synchronization lifecycle.
@@ -54,6 +56,9 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   forces relative alignment.
 - The sample origin is the earliest valid session origin; duration is the union
   through the latest session end. Relative inputs have offset zero.
+- A running video may be the native group clock. Periodic drift correction must
+  not seek that clock, but every explicit group seek must reposition it before
+  the next clock tick; otherwise the old player position overwrites the seek.
 - Sync entry freezes the group at `anchor_utc = group_origin + group_position`
   and redirects playback commands to the selected session's local timeline.
 - Apply computes `UTC_time_start = anchor_utc - selected_local_position` and
@@ -89,6 +94,17 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - Save/export normalizes temporal annotations using a genuine resolved origin;
   it must not invent one for relative-only samples.
 - Tab changes must not repopulate tree or restart media unnecessarily.
+- Selecting an input child of the already active sample emits
+  `mediaFocusRequested(path)`, not `mediaRouteRequested(...)`. `MainWindow`
+  routes that intent to `MediaController.focus_source()` without touching the
+  shared clock or playback state. The focus-only branch also does not re-emit
+  `sampleSelectionChanged`; refreshing mode panels can re-emit a selected
+  annotation and cause an unintended second seek.
+- Explicit selection of a different sample/input emits
+  `mediaSelectionRouteRequested(sources, focused_path)`. `MainWindow` snapshots
+  `MediaController.is_playing()` before routing so the new group inherits the
+  playing/paused state. A parent sample uses an empty `focused_path`; selecting
+  the already active parent emits only `mediaFocusRequested("")`.
 - A valid temporal-annotation `timestamp_utc` is authoritative. Controllers use
   projected `position_ms` values for UI/playback, while UTC alignment edits
   preserve absolute instants and recompute only compatibility positions.

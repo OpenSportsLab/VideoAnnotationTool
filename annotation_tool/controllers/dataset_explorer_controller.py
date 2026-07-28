@@ -235,6 +235,8 @@ class DatasetExplorerController(QObject):
     schemaContextChanged = pyqtSignal(dict)
     classificationActionListChanged = pyqtSignal(list)
     mediaRouteRequested = pyqtSignal(object, str, bool)
+    mediaSelectionRouteRequested = pyqtSignal(object, str)
+    mediaFocusRequested = pyqtSignal(str)
     mediaStopRequested = pyqtSignal()
     mediaResetRequested = pyqtSignal()
     statusMessageRequested = pyqtSignal(str, str, int)
@@ -1834,6 +1836,7 @@ class DatasetExplorerController(QObject):
             self._reemit_current_selection()
 
     def _on_selection_changed(self, current, _previous):
+        previous_sample_id = str(self.current_selected_sample_id or "")
         self._set_annotation_panels_enabled(current.isValid())
         self._expand_current_parent()
         if not current.isValid():
@@ -1867,7 +1870,19 @@ class DatasetExplorerController(QObject):
         if self._reconcile_annotation_tab_for_sample(sample):
             return
 
-        self._route_media_for_selection(current, sample_id, ensure_playback=True)
+        is_input_selection = current.parent().isValid()
+        same_active_sample = bool(
+            previous_sample_id and previous_sample_id == str(sample_id)
+        )
+        if same_active_sample:
+            if is_input_selection:
+                self._focus_media_for_selection(current, sample_id)
+            else:
+                self.current_selected_input_path = None
+                self.mediaFocusRequested.emit("")
+            return
+
+        self._route_media_for_selection(current, sample_id, preserve_playback=True)
         self._reemit_current_selection()
 
     def _sample_supports_mode(self, sample: dict, mode_idx: int) -> bool:
@@ -1915,7 +1930,9 @@ class DatasetExplorerController(QObject):
         selected_idx: QModelIndex,
         sample_id: str,
         ensure_playback: bool = False,
+        preserve_playback: bool = False,
     ):
+        is_input_selection = selected_idx.parent().isValid()
         preferred_path = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
         media_sources = self.get_media_sources_by_id(sample_id)
         if not media_sources:
@@ -1925,14 +1942,29 @@ class DatasetExplorerController(QObject):
         primary_path = str((media_source or {}).get("path") or "")
         if not primary_path:
             return
-        self.current_selected_input_path = primary_path
+        focused_path = primary_path if is_input_selection else ""
+        self.current_selected_input_path = primary_path if is_input_selection else None
         if (
             not ensure_playback
+            and not preserve_playback
             and self._fs_path_key(self._last_routed_media_path) == self._fs_path_key(primary_path)
         ):
             return
-        self.mediaRouteRequested.emit(media_sources, primary_path, ensure_playback)
+        if preserve_playback:
+            self.mediaSelectionRouteRequested.emit(media_sources, focused_path)
+        else:
+            self.mediaRouteRequested.emit(media_sources, focused_path, ensure_playback)
         self._last_routed_media_path = primary_path
+
+    def _focus_media_for_selection(self, selected_idx: QModelIndex, sample_id: str):
+        preferred_path = selected_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
+        media_source = self.get_media_source_by_id(sample_id, preferred_path)
+        focused_path = str((media_source or {}).get("path") or "")
+        if not focused_path:
+            return
+        self.current_selected_input_path = focused_path
+        self.mediaFocusRequested.emit(focused_path)
+        self._last_routed_media_path = focused_path
 
     def handle_active_mode_changed(self, mode_idx: int = None):
         if mode_idx is not None:
