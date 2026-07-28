@@ -719,6 +719,8 @@ class MediaController(QObject):
                 media_panel.paneSyncRequested.connect(self.enter_sync_mode)
             if hasattr(media_panel, "paneGoToStartRequested"):
                 media_panel.paneGoToStartRequested.connect(self.go_to_source_start)
+            if hasattr(media_panel, "paneGoToEndRequested"):
+                media_panel.paneGoToEndRequested.connect(self.go_to_source_end)
             if hasattr(media_panel, "syncFrameStepRequested"):
                 media_panel.syncFrameStepRequested.connect(self.step_sync_frame)
             if hasattr(media_panel, "syncApplyRequested"):
@@ -1186,6 +1188,12 @@ class MediaController(QObject):
             self.media_panel.set_navigation_availability(navigation_availability)
 
     def go_to_source_start(self, path: str):
+        self._go_to_source_boundary(path, end=False)
+
+    def go_to_source_end(self, path: str):
+        self._go_to_source_boundary(path, end=True)
+
+    def _go_to_source_boundary(self, path: str, *, end: bool):
         if not self._group_active or self._sync_record is not None:
             return
         target_key = self._single._fs_path_key(path)
@@ -1200,7 +1208,13 @@ class MediaController(QObject):
         )
         if record is None:
             return
-        self.set_position(int(record["offset_ms"]))
+        target = int(record["offset_ms"])
+        if end:
+            session = record["controller"]
+            clip = getattr(getattr(session, "_active_backend", None), "_clip", None)
+            time_axis = list(getattr(clip, "time_axis_ms", []) or [])
+            target += int(time_axis[-1]) if time_axis else int(record["duration_ms"])
+        self.set_position(target)
 
     def enter_sync_mode(self, path: str):
         if not self._group_active or self._sync_record is not None:

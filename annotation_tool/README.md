@@ -64,7 +64,7 @@ For H5 joints and centroid inputs, the earliest usable `timestamp_utc` is normal
 
 Audio from all audio-capable panes may play together. Each pane has its own mute control, while the timeline mute button temporarily mutes every pane without discarding the individual feed choices.
 
-Right-click a playable viewer and choose **Go to start** to seek the shared timeline to that modality's first frame. For UTC-capable inputs this is its UTC origin; relative inputs seek to shared elapsed zero. Every pane follows the seek and remains synchronized.
+Right-click a playable viewer and choose **Go to start** or **Go to end** to seek the shared timeline to that modality's first or final frame. For UTC-capable inputs these positions include the modality's UTC offset; relative inputs start at shared elapsed zero. Every pane follows the seek and remains synchronized.
 
 To correct an input's alignment visually, right-click its viewer and choose **Synchronize this modality**. The action is available when the sample has at least two playable inputs and at least one valid absolute UTC origin. Synchronization pauses the group and freezes the other panes at the current UTC anchor. The normal timeline and playback controls then operate only on the selected modality; the sync bar also provides exact previous/next-frame controls. Left/Right provide the same frame stepping, while the existing relative-seek controls continue to move by one or five seconds.
 

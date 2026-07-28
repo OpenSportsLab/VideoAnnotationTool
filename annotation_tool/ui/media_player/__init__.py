@@ -113,6 +113,7 @@ class MediaViewerPane(QFrame):
     muteToggleRequested = pyqtSignal(str)
     syncRequested = pyqtSignal(str)
     goToStartRequested = pyqtSignal(str)
+    goToEndRequested = pyqtSignal(str)
 
     def __init__(self, source_key: str = "", parent=None):
         super().__init__(parent)
@@ -243,12 +244,17 @@ class MediaViewerPane(QFrame):
         go_to_start_action.setEnabled(
             self._navigation_available and not self._sync_mode_active
         )
+        go_to_end_action = menu.addAction("Go to end")
+        go_to_end_action.setEnabled(
+            self._navigation_available and not self._sync_mode_active
+        )
         if not self._navigation_available:
             go_to_start_action.setToolTip("This input is not playable.")
+            go_to_end_action.setToolTip("This input is not playable.")
         elif self._sync_mode_active:
-            go_to_start_action.setToolTip(
-                "Finish synchronization before navigating the shared timeline."
-            )
+            navigation_tooltip = "Finish synchronization before navigating the shared timeline."
+            go_to_start_action.setToolTip(navigation_tooltip)
+            go_to_end_action.setToolTip(navigation_tooltip)
         menu.addSeparator()
         action = menu.addAction("Synchronize this modality")
         action.setEnabled(self._sync_available)
@@ -258,6 +264,8 @@ class MediaViewerPane(QFrame):
         selected_action = menu.exec(event.globalPos())
         if selected_action is go_to_start_action:
             self.goToStartRequested.emit(self.source_key)
+        elif selected_action is go_to_end_action:
+            self.goToEndRequested.emit(self.source_key)
         elif selected_action is action:
             self.syncRequested.emit(self.source_key)
 
@@ -278,6 +286,7 @@ class MediaCenterPanel(QWidget):
     paneMuteToggleRequested = pyqtSignal(str)
     paneSyncRequested = pyqtSignal(str)
     paneGoToStartRequested = pyqtSignal(str)
+    paneGoToEndRequested = pyqtSignal(str)
     syncFrameStepRequested = pyqtSignal(int)
     syncApplyRequested = pyqtSignal()
     syncCancelRequested = pyqtSignal()
@@ -334,6 +343,7 @@ class MediaCenterPanel(QWidget):
         pane.muteToggleRequested.connect(self.paneMuteToggleRequested)
         pane.syncRequested.connect(self.paneSyncRequested)
         pane.goToStartRequested.connect(self.paneGoToStartRequested)
+        pane.goToEndRequested.connect(self.paneGoToEndRequested)
         return pane
 
     def _setup_sync_bar(self):

@@ -1608,8 +1608,14 @@ def test_viewer_go_to_start_seeks_shared_clock_to_modality_utc_origin(
     panel._viewer_panes[1].goToStartRequested.emit(str(second_path))
     assert controller.current_position_ms() == 250
 
+    panel._viewer_panes[1].goToEndRequested.emit(str(second_path))
+    assert controller.current_position_ms() == 1250
+
     panel._viewer_panes[0].goToStartRequested.emit(str(first_path))
     assert controller.current_position_ms() == 0
+
+    panel._viewer_panes[0].goToEndRequested.emit(str(first_path))
+    assert controller.current_position_ms() == 1000
 
 
 @pytest.mark.gui
