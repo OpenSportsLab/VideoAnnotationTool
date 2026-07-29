@@ -1200,6 +1200,9 @@ class MediaController(QObject):
     def seek_relative(self, delta_ms: int):
         self.set_position(self.current_position_ms() + int(delta_ms))
 
+    def playback_rate(self) -> float:
+        return self._playback_rate
+
     def set_playback_rate(self, rate: float):
         try:
             safe_rate = float(rate)
@@ -1207,6 +1210,7 @@ class MediaController(QObject):
             safe_rate = 1.0
         if safe_rate <= 0:
             safe_rate = 1.0
+        self._playback_rate = safe_rate
         if self._sync_record is not None:
             self._sync_record["controller"].set_playback_rate(safe_rate)
             return
@@ -1215,7 +1219,6 @@ class MediaController(QObject):
             return
         self._group_position_ms = self.current_position_ms()
         self._anchor_position_ms = self._group_position_ms
-        self._playback_rate = safe_rate
         if self._group_playing:
             self._clock.restart()
         for record in self._sessions:

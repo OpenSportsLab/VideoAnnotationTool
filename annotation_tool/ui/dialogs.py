@@ -4,11 +4,116 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QGroupBox, QFormLayout, QLineEdit, QHBoxLayout,
     QFrame, QListWidget, QComboBox, QPushButton, QLabel, QProgressBar,
     QMessageBox, QWidget, QListWidgetItem, QStyle, QButtonGroup, QScrollArea,
-    QFileDialog, QCheckBox, QSizePolicy, QSpinBox
+    QFileDialog, QCheckBox, QSizePolicy, QSpinBox, QTabWidget
 )
 from PyQt6.QtCore import QDir, Qt, QSize, QSettings, pyqtSignal
 from PyQt6.QtGui import QFileSystemModel, QIcon
 from utils import get_square_remove_btn_style
+from media_control_settings import (
+    DEFAULT_PLAYBACK_FACTORS,
+    DEFAULT_SEEK_INTERVALS,
+    parse_playback_factors,
+    parse_seek_intervals,
+)
+
+
+class ApplicationSettingsDialog(QDialog):
+    """Extensible application settings dialog, initially for media controls."""
+
+    mediaControlsApplyRequested = pyqtSignal(str, str, object, object)
+
+    def __init__(
+        self,
+        playback_factors: str,
+        seek_intervals: str,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setModal(True)
+        self.resize(520, 260)
+
+        root_layout = QVBoxLayout(self)
+        tabs = QTabWidget(self)
+        root_layout.addWidget(tabs)
+
+        media_page = QWidget(tabs)
+        media_layout = QVBoxLayout(media_page)
+        form = QFormLayout()
+        media_layout.addLayout(form)
+
+        self.playback_factors_edit = QLineEdit(str(playback_factors), media_page)
+        self.playback_factors_edit.setObjectName("playbackFactorsEdit")
+        self.playback_factors_edit.setPlaceholderText(DEFAULT_PLAYBACK_FACTORS)
+        self.playback_factors_edit.setToolTip(
+            "Comma-separated positive factors. Each factor adds its direct and reciprocal speed."
+        )
+        form.addRow("Playback speed factors:", self.playback_factors_edit)
+
+        self.seek_intervals_edit = QLineEdit(str(seek_intervals), media_page)
+        self.seek_intervals_edit.setObjectName("seekIntervalsEdit")
+        self.seek_intervals_edit.setPlaceholderText(DEFAULT_SEEK_INTERVALS)
+        self.seek_intervals_edit.setToolTip("Comma-separated positive seek intervals in seconds.")
+        form.addRow("Seek intervals (seconds):", self.seek_intervals_edit)
+
+        help_label = QLabel(
+            "Examples: speed factors 2,4 create 0.25x through 4x; "
+            "seek intervals 1,5 create matching backward and forward buttons.",
+            media_page,
+        )
+        help_label.setWordWrap(True)
+        media_layout.addWidget(help_label)
+
+        self.validation_label = QLabel("", media_page)
+        self.validation_label.setObjectName("settingsValidationLabel")
+        self.validation_label.setWordWrap(True)
+        self.validation_label.setStyleSheet("color: #d9534f;")
+        media_layout.addWidget(self.validation_label)
+        media_layout.addStretch(1)
+        tabs.addTab(media_page, "Media Controls")
+
+        self.buttons = QDialogButtonBox(self)
+        self.restore_defaults_button = self.buttons.addButton(
+            "Restore Defaults", QDialogButtonBox.ButtonRole.ResetRole
+        )
+        self.apply_button = self.buttons.addButton(
+            QDialogButtonBox.StandardButton.Apply
+        )
+        self.ok_button = self.buttons.addButton(QDialogButtonBox.StandardButton.Ok)
+        self.cancel_button = self.buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+        root_layout.addWidget(self.buttons)
+
+        self.restore_defaults_button.clicked.connect(self._restore_defaults)
+        self.apply_button.clicked.connect(lambda: self._apply(close_after=False))
+        self.ok_button.clicked.connect(lambda: self._apply(close_after=True))
+        self.cancel_button.clicked.connect(self.reject)
+        self.playback_factors_edit.textChanged.connect(lambda _text: self.validation_label.clear())
+        self.seek_intervals_edit.textChanged.connect(lambda _text: self.validation_label.clear())
+
+    def _restore_defaults(self) -> None:
+        self.playback_factors_edit.setText(DEFAULT_PLAYBACK_FACTORS)
+        self.seek_intervals_edit.setText(DEFAULT_SEEK_INTERVALS)
+        self.validation_label.clear()
+
+    def _apply(self, *, close_after: bool) -> None:
+        try:
+            factors = parse_playback_factors(self.playback_factors_edit.text())
+            intervals = parse_seek_intervals(self.seek_intervals_edit.text())
+        except ValueError as exc:
+            self.validation_label.setText(str(exc))
+            return
+
+        self.playback_factors_edit.setText(factors.normalized_text)
+        self.seek_intervals_edit.setText(intervals.normalized_text)
+        self.validation_label.clear()
+        self.mediaControlsApplyRequested.emit(
+            factors.normalized_text,
+            intervals.normalized_text,
+            factors.values,
+            intervals.values,
+        )
+        if close_after:
+            self.accept()
 
 class UnsavedChangesDialog(QDialog):
     """Dialog with fixed button order for close-project decisions."""
