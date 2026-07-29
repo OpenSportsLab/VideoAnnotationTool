@@ -40,6 +40,9 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `focus_source(path)`: changes only the focused pane highlight and preserves
   group position and playback state.
 - `toggle_play_pause()`, `stop()`, `seek_relative()`, `set_position()`, `set_playback_rate()`: shared-clock playback control.
+- `playback_rate()` returns the authoritative active rate. Every single,
+  grouped, and synchronization playback route updates it so a settings change
+  can preserve a represented rate or reset a removed rate to `1x`.
 - `go_to_source_start(path)`, `go_to_source_end(path)`: seek the shared clock to a modality boundary. Timestamped backends use their first/last frame times; video end uses media duration.
 - `enter_sync_mode(path)`, `step_sync_frame(direction)`, `apply_sync_mode()`, `cancel_sync_mode()`: selected-session visual UTC synchronization lifecycle.
 - `is_muted()`, `set_muted()`, `toggle_mute()`: mute control and signaling.

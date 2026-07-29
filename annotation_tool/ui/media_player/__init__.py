@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from media_control_settings import format_control_value
 from utils import format_utc_datetime, parse_utc_datetime, resource_path
 
 
@@ -672,11 +673,7 @@ class MediaCenterPanel(QWidget):
         self.btn_zoom_in.clicked.connect(lambda: self._change_zoom(1))
 
     def _setup_controls(self):
-        self.btn_seek_back_5.clicked.connect(lambda: self.seekRelativeRequested.emit(-5000))
-        self.btn_seek_back_1.clicked.connect(lambda: self.seekRelativeRequested.emit(-1000))
         self.btn_play_pause.clicked.connect(self.playPauseRequested.emit)
-        self.btn_seek_fwd_1.clicked.connect(lambda: self.seekRelativeRequested.emit(1000))
-        self.btn_seek_fwd_5.clicked.connect(lambda: self.seekRelativeRequested.emit(5000))
         self._icon_volume = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume)
         self._icon_muted = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolumeMuted)
         self.btn_mute.setText("")
@@ -685,11 +682,64 @@ class MediaCenterPanel(QWidget):
         self.btn_mute.setAccessibleName("Mute")
         self.btn_mute.clicked.connect(self.muteToggleRequested.emit)
 
-        self.btn_speed_025.clicked.connect(lambda: self.playbackRateRequested.emit(0.25))
-        self.btn_speed_050.clicked.connect(lambda: self.playbackRateRequested.emit(0.5))
-        self.btn_speed_100.clicked.connect(lambda: self.playbackRateRequested.emit(1.0))
-        self.btn_speed_200.clicked.connect(lambda: self.playbackRateRequested.emit(2.0))
-        self.btn_speed_400.clicked.connect(lambda: self.playbackRateRequested.emit(4.0))
+        self.speed_buttons = {}
+        self.seek_buttons = {}
+        self.configure_playback_controls(
+            (0.25, 0.5, 1.0, 2.0, 4.0),
+            (1.0, 5.0),
+        )
+
+    def configure_playback_controls(self, speed_rates, seek_intervals) -> None:
+        """Rebuild rate and relative-seek buttons without touching playback state."""
+        for button in self.speed_buttons.values():
+            self.playbackRowTwoLayout.removeWidget(button)
+            button.hide()
+            button.deleteLater()
+        for button in self.seek_buttons.values():
+            self.playbackRowOneLayout.removeWidget(button)
+            button.hide()
+            button.deleteLater()
+        self.speed_buttons = {}
+        self.seek_buttons = {}
+
+        rates = sorted({round(float(rate), 3) for rate in speed_rates} | {1.0})
+        intervals = sorted({round(float(seconds), 3) for seconds in seek_intervals})
+
+        for seconds in reversed(intervals):
+            label = format_control_value(seconds)
+            button = QPushButton(f"<< {label}s", self.playback_container)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, value=seconds: self.seekRelativeRequested.emit(
+                    -round(value * 1000)
+                )
+            )
+            self.playbackRowOneLayout.insertWidget(
+                self.playbackRowOneLayout.indexOf(self.btn_play_pause), button
+            )
+            self.seek_buttons[-seconds] = button
+
+        play_index = self.playbackRowOneLayout.indexOf(self.btn_play_pause)
+        for offset, seconds in enumerate(intervals, start=1):
+            label = format_control_value(seconds)
+            button = QPushButton(f"{label}s >>", self.playback_container)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, value=seconds: self.seekRelativeRequested.emit(
+                    round(value * 1000)
+                )
+            )
+            self.playbackRowOneLayout.insertWidget(play_index + offset, button)
+            self.seek_buttons[seconds] = button
+
+        for rate in rates:
+            button = QPushButton(f"{format_control_value(rate)}x", self.playback_container)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, value=rate: self.playbackRateRequested.emit(value)
+            )
+            self.playbackRowTwoLayout.addWidget(button)
+            self.speed_buttons[rate] = button
 
     # ------------------------------------------------------------------
     # Public media API

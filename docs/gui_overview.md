@@ -19,6 +19,12 @@ Layout**, choose **Single Modality**, **Mosaic**, or **Modality Tabs**. These
 choices are application preferences and are restored when the app restarts;
 they are not written to dataset JSON.
 
+The **Edit → Settings…** dialog contains application-wide preferences. On its
+**Media Controls** page, comma-separated playback factors and seek intervals
+change the two media-control rows immediately when **Apply** or **OK** is used.
+These preferences are stored in application settings and are never added to a
+dataset JSON file.
+
 ### Left: Dataset Explorer
 
 - Tree of samples (parent row) and inputs (child rows)
@@ -48,6 +54,14 @@ rows only highlights its viewer and likewise leaves playback unchanged.
 - Mute icon button (state persists via app settings)
 - Per-viewer right-click actions for **Go to start**, **Go to end**, manual UTC
   start management, and visual UTC synchronization
+
+Playback factors add both a direct and reciprocal speed, with `1x` always
+present. For example, `2,4,8` creates `0.125x`, `0.25x`, `0.5x`, `1x`, `2x`,
+`4x`, and `8x`. Seek intervals such as `1,5,10,30,60` create matching backward
+and forward buttons around the Play/Pause button. Values must be positive,
+finite comma-separated numbers; duplicates are normalized and displayed with
+at most three decimal places. **Restore Defaults** restores `2,4` and `1,5` in
+the dialog and takes effect after **Apply** or **OK**.
 
 See [Synchronized Multi-Modality Playback](synchronized_playback.md) for UTC
 alignment rules and the synchronization workflow.

@@ -15,6 +15,12 @@ When duplicate or missing IDs are loaded, the app normalizes them to unique IDs 
 
 In application settings (`QSettings`), not in the dataset JSON.
 
+## Where are customized media controls stored?
+
+Playback factors and relative-seek intervals from **Edit → Settings…** are
+application-wide `QSettings` preferences. They are not saved in or exported
+with dataset JSON.
+
 ## Why is HF upload disabled?
 
 Upload is available only when a dataset JSON is currently opened from disk (not unsaved in-memory only).

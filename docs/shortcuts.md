@@ -19,10 +19,10 @@
 - `Space`: Play/Pause
 - `Left`: Seek backward ~40 ms
 - `Right`: Seek forward ~40 ms
-- `Ctrl+Left`: Seek backward 1 second
-- `Ctrl+Right`: Seek forward 1 second
-- `Ctrl+Shift+Left`: Seek backward 5 seconds
-- `Ctrl+Shift+Right`: Seek forward 5 seconds
+- `Ctrl+Left` / `Ctrl+Right`: Seek by the smallest interval configured under
+  **Edit → Settings… → Media Controls** (1 second by default)
+- `Ctrl+Shift+Left` / `Ctrl+Shift+Right`: Seek by the second-smallest configured
+  interval (5 seconds by default); disabled when only one interval is configured
 
 During modality synchronization, the same controls affect only the selected
 modality. Left and Right step to the previous or next exact raster/H5 timestamp;
