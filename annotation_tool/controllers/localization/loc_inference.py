@@ -102,7 +102,7 @@ class LocInferenceWorker(QThread):
             return self.video_path, 0
 
         clip_video_path = os.path.join(tmp_dir, "clipped_segment.mp4")
-        cmd = [
+        base_cmd = [
             _resolve_ffmpeg_executable(),
             "-y",
             "-ss",
@@ -112,9 +112,35 @@ class LocInferenceWorker(QThread):
         ]
         if self.end_ms > 0:
             duration_ms = max(0, self.end_ms - self.start_ms)
-            cmd.extend(["-t", _ms_to_ffmpeg_time(duration_ms)])
-        cmd.extend(["-c", "copy", clip_video_path])
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            base_cmd.extend(["-t", _ms_to_ffmpeg_time(duration_ms)])
+
+        copy_cmd = [*base_cmd, "-c", "copy", clip_video_path]
+        try:
+            subprocess.run(
+                copy_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            reencode_cmd = [
+                *base_cmd,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "23",
+                "-c:a",
+                "aac",
+                clip_video_path,
+            ]
+            subprocess.run(
+                reencode_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+            )
         return clip_video_path, self.start_ms
 
     def _build_runtime_config(self, tmp_dir: str, tmp_input_json: str) -> tuple[str, list[str]]:

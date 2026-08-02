@@ -15,9 +15,12 @@ import json
 import os
 import sys
 import types
+from datetime import datetime, timedelta
 from itertools import cycle, islice
 from pathlib import Path
 
+import h5py
+import numpy as np
 import pytest
 from PyQt6.QtCore import QSettings
 
@@ -116,6 +119,46 @@ def _install_opensportslib_stub() -> None:
 
 
 _install_opensportslib_stub()
+
+
+def _fixture_timestamps(row_count=80) -> list[bytes]:
+    origin = datetime(2026, 1, 1)
+    return [
+        (origin + timedelta(milliseconds=40 * index)).strftime(
+            "%Y-%m-%d %H:%M:%S.%f"
+        ).encode("utf-8")
+        for index in range(row_count)
+    ]
+
+
+@pytest.fixture
+def player_centroids_h5_path(tmp_path):
+    path = tmp_path / "live_centroids.h5"
+    timestamps = _fixture_timestamps()
+    row_count = len(timestamps)
+    with h5py.File(path, "w") as h5_file:
+        h5_file.create_dataset("timestamp_utc", data=np.asarray(timestamps))
+        h5_file.create_dataset("x", data=np.linspace(0.0, 1.0, row_count))
+        h5_file.create_dataset("y", data=np.linspace(1.0, 0.0, row_count))
+        h5_file.create_dataset("is_home", data=np.arange(row_count) % 2)
+        h5_file.create_dataset(
+            "jersey_number",
+            data=np.asarray([str(index + 1).encode("utf-8") for index in range(row_count)]),
+        )
+    return path
+
+
+@pytest.fixture
+def ball_h5_path(tmp_path):
+    path = tmp_path / "live_ball.h5"
+    timestamps = _fixture_timestamps()
+    row_count = len(timestamps)
+    with h5py.File(path, "w") as h5_file:
+        h5_file.create_dataset("timestamp_utc", data=np.asarray(timestamps))
+        h5_file.create_dataset("x", data=np.linspace(0.0, 1.0, row_count))
+        h5_file.create_dataset("y", data=np.zeros(row_count))
+        h5_file.create_dataset("z", data=np.full(row_count, 0.12))
+    return path
 
 
 

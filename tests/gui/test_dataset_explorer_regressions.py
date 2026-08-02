@@ -42,10 +42,6 @@ PLAYER_JOINTS_H5_PATH = (
     / "test_data"
     / "live_joints_sirus_mini_test.h5"
 )
-PLAYER_CENTROIDS_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_centroids.h5"
-BALL_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_ball.h5"
-
-
 def _open_project(window, monkeypatch, project_json_path: Path):
     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
     monkeypatch.setattr(
@@ -893,8 +889,9 @@ def test_player_centroids_h5_tab_switch_same_selection_does_not_restart_media(
     monkeypatch,
     qtbot,
     tmp_path,
+    player_centroids_h5_path,
 ):
-    rel_h5_path = os.path.relpath(PLAYER_CENTROIDS_H5_PATH, start=tmp_path).replace("\\", "/")
+    rel_h5_path = os.path.relpath(player_centroids_h5_path, start=tmp_path).replace("\\", "/")
     project_json_path = tmp_path / "player_centroids_h5_tab_switch.json"
     payload = {
         "version": "2.0",
