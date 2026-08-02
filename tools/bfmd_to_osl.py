@@ -185,9 +185,9 @@ def match_names(data_root: Path, subdir: str, suffix: str = ".json"):
 
 
 def load_metadata(path: Path) -> dict:
-    obj = json.load(open(path))
+    with path.open(encoding="utf-8") as f:
+        obj = json.load(f)
     return obj[0] if isinstance(obj, list) else obj
-
 
 def load_hits_singles(path: Path):
     return json.load(open(path)).get("hits", [])
