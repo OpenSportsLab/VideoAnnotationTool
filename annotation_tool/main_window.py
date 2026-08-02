@@ -1463,7 +1463,7 @@ class VideoAnnotationWindow(QMainWindow):
         )
 
         if action_path:
-            idx = self.tree_model.index_for_path(action_path, expose=True)
+            idx = self.dataset_explorer_controller._index_for_path(action_path)
             if idx.isValid() and self.dataset_explorer_panel.tree.currentIndex() != idx:
                 self.dataset_explorer_panel.tree.setCurrentIndex(idx)
 

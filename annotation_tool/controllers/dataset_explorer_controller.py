@@ -4,7 +4,7 @@ import json
 import os
 from collections.abc import MutableMapping
 
-from PyQt6.QtCore import QDir, QModelIndex, QObject, QSettings, QTimer, pyqtSignal
+from PyQt6.QtCore import QDir, QModelIndex, QObject, QSettings, QSignalBlocker, QTimer, pyqtSignal
 from PyQt6.QtGui import QFileSystemModel
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -311,6 +311,7 @@ class DatasetExplorerController(QObject):
         self._last_routed_media_path = None
         self._sort_by_confidence = False
         self._json_preview_dirty = True
+        self._tree_page_change_in_progress = False
 
         self.manual_annotations = _ManualAnnotationsProxy(self)
         self.localization_events = _SampleListProxy(self, "events")
@@ -423,13 +424,12 @@ class DatasetExplorerController(QObject):
         if hasattr(self.panel, "confidenceSortToggled"):
             self.panel.confidenceSortToggled.connect(self._on_confidence_sort_toggled)
         self.panel.sampleNavigateRequested.connect(self.navigate_samples)
+        self.panel.pageNavigateRequested.connect(self.handle_page_navigation)
         self.panel.headerDraftChanged.connect(self._on_header_draft_changed)
         if hasattr(self.panel, "header_tabs"):
             self.panel.header_tabs.currentChanged.connect(self._on_explorer_tab_changed)
         self.panel.tree.selectionModel().currentChanged.connect(self._on_selection_changed)
         self.tree_model.renameRequested.connect(self.sampleRenameRequested.emit)
-        self.tree_model.exposureProgressChanged.connect(self._on_tree_exposure_progress)
-        self.tree_model.exposureFinished.connect(self._on_tree_exposure_finished)
 
     def reset(self, full_reset: bool = False):
         self.current_json_path = None
@@ -813,7 +813,17 @@ class DatasetExplorerController(QObject):
         return False
 
     def _top_level_index_for_sample(self, sample_id: str) -> QModelIndex:
-        return self.tree_model.index_for_sample_id(sample_id, expose=True)
+        return self._run_with_tree_page_guard(
+            lambda: self.tree_model.index_for_sample_id(sample_id, expose=True)
+        )
+
+    def _run_with_tree_page_guard(self, callback):
+        previous = self._tree_page_change_in_progress
+        self._tree_page_change_in_progress = True
+        try:
+            return callback()
+        finally:
+            self._tree_page_change_in_progress = previous
 
     def _first_visible_top_level_index(self, start_row: int) -> QModelIndex:
         root = QModelIndex()
@@ -974,6 +984,11 @@ class DatasetExplorerController(QObject):
         self.populate_tree(select_first=False)
         self._reconcile_tab_with_current_selection()
         self.saveStateRefreshRequested.emit()
+        self.statusMessageRequested.emit(
+            "Loaded",
+            f"Loaded {len(self.action_item_data):,} samples.",
+            1500,
+        )
         return True
 
     def create_new_project(self, mode=None):
@@ -1565,9 +1580,11 @@ class DatasetExplorerController(QObject):
         preferred_input_path = self.current_selected_input_path
         self._rebuild_runtime_index()
         sorted_items = self._prepare_tree_entries(self._sorted_action_items())
-        self.tree_model.set_entries(
-            sorted_items,
-            filter_index=self.panel.filter_combo.currentIndex(),
+        self._run_with_tree_page_guard(
+            lambda: self.tree_model.set_entries(
+                sorted_items,
+                filter_index=self.panel.filter_combo.currentIndex(),
+            )
         )
 
         if self.tree_model.rowCount() > 0:
@@ -1595,22 +1612,6 @@ class DatasetExplorerController(QObject):
             if done_icon is not None and empty_icon is not None:
                 entry["status_icon"] = done_icon if (hand_labelled or smart_labelled) else empty_icon
         return entries
-
-    def _on_tree_exposure_progress(self, visible: int, total: int):
-        if visible < total:
-            self.statusMessageRequested.emit(
-                "Loading Dataset",
-                f"Loading samples: {visible:,} / {total:,}",
-                0,
-            )
-
-    def _on_tree_exposure_finished(self, _visible_total: int):
-        if self.json_loaded:
-            self.statusMessageRequested.emit(
-                "Loaded",
-                f"Loaded {len(self.action_item_data):,} samples.",
-                1500,
-            )
 
     def _sorted_action_items(self):
         if not self._sort_by_confidence:
@@ -1692,13 +1693,15 @@ class DatasetExplorerController(QObject):
         return action_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100)), action_idx
 
     def _index_for_path(self, path: str) -> QModelIndex:
-        direct = self.tree_model.index_for_path(path, expose=True)
+        direct = self._run_with_tree_page_guard(
+            lambda: self.tree_model.index_for_path(path, expose=True)
+        )
         if direct.isValid():
             return direct
         sample = self.get_sample_by_path(path)
         if not isinstance(sample, dict):
             return QModelIndex()
-        return self.tree_model.index_for_sample_id(str(sample.get("id") or ""), expose=True)
+        return self._top_level_index_for_sample(str(sample.get("id") or ""))
 
     def _restore_tree_selection(self, preferred_sample_id: str = "", preferred_input_path: str = None) -> bool:
         tree = self.panel.tree
@@ -1759,6 +1762,8 @@ class DatasetExplorerController(QObject):
             self._reemit_current_selection()
 
     def _on_selection_changed(self, current, _previous):
+        if self._tree_page_change_in_progress:
+            return
         previous_sample_id = str(self.current_selected_sample_id or "")
         self._set_annotation_panels_enabled(current.isValid())
         self._expand_current_parent()
@@ -1893,7 +1898,14 @@ class DatasetExplorerController(QObject):
         if mode_idx is not None:
             self.set_active_mode(mode_idx)
         current_idx = self.panel.tree.currentIndex()
-        if not current_idx.isValid() or not self.current_selected_sample_id:
+        if not current_idx.isValid():
+            if self.current_selected_sample_id:
+                self._reemit_current_selection()
+                return
+            self.current_selected_sample_id = ""
+            self._reemit_current_selection()
+            return
+        if not self.current_selected_sample_id:
             self.current_selected_sample_id = ""
             self._reemit_current_selection()
             return
@@ -1903,26 +1915,72 @@ class DatasetExplorerController(QObject):
     def navigate_samples(self, step: int):
         tree = self.panel.tree
         current = tree.currentIndex()
-        if not current.isValid():
+        first, last, total = self.tree_model.visible_range()
+        if total <= 0:
             return
 
-        current_top = self._get_action_index(current)
-        if not current_top.isValid():
+        direction = 1 if step > 0 else -1
+        if current.isValid():
+            current_top = self._get_action_index(current)
+            if not current_top.isValid():
+                return
+            target_row = (first - 1) + current_top.row() + direction
+        else:
+            target_row = (first - 1) if direction > 0 else (last - 1)
+
+        if not 0 <= target_row < total:
+            return
+        target_page = target_row // self.tree_model.PAGE_SIZE
+        self._set_tree_page(target_page, restore_active=False)
+        next_idx = self.tree_model.index_for_projected_row(target_row)
+        if next_idx.isValid():
+            tree.setCurrentIndex(next_idx)
+            tree.scrollTo(next_idx)
+
+    def _restore_active_page_highlight(self):
+        sample_id = str(self.current_selected_sample_id or "")
+        if not sample_id:
+            return
+        if self.current_selected_input_path:
+            target = self.tree_model.index_for_path(
+                self.current_selected_input_path,
+                expose=False,
+            )
+        else:
+            target = self.tree_model.index_for_sample_id(sample_id, expose=False)
+        if not target.isValid():
+            return
+        selection_model = self.panel.tree.selectionModel()
+        blocker = QSignalBlocker(selection_model)
+        self.panel.tree.setCurrentIndex(target)
+        if target.parent().isValid():
+            self.panel.tree.setExpanded(target.parent(), True)
+        del blocker
+
+    def _set_tree_page(self, page_number: int, restore_active=True):
+        changed = self._run_with_tree_page_guard(
+            lambda: self.tree_model.set_page(page_number)
+        )
+        if changed and restore_active:
+            self._restore_active_page_highlight()
+        return changed
+
+    def handle_page_navigation(self, step: int):
+        direction = 1 if step > 0 else -1
+        target_page = self.tree_model.page_number() + direction
+        if not self._set_tree_page(target_page):
             return
 
-        row = current_top.row() + (1 if step > 0 else -1)
-        root = QModelIndex()
-
-        if 0 <= row < self.tree_model.rowCount(root):
-            next_idx = self.tree_model.index(row, 0, root)
-            if next_idx.isValid():
-                tree.setCurrentIndex(next_idx)
-                tree.scrollTo(next_idx)
+        scroll_bar = self.panel.tree.verticalScrollBar()
+        if direction > 0:
+            QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_bar.minimum()))
+        else:
+            QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_bar.maximum()))
 
     def handle_filter_change(self, index, selection_fallback: str = "first_visible"):
         preferred_sample_id = self.current_selected_sample_id
         preferred_input_path = self.current_selected_input_path
-        self.tree_model.set_filter(index)
+        self._run_with_tree_page_guard(lambda: self.tree_model.set_filter(index))
 
         restored = self._restore_tree_selection(preferred_sample_id, preferred_input_path)
         if restored:

@@ -4,13 +4,14 @@ import json
 import re
 
 from PyQt6 import uic
-from PyQt6.QtCore import QAbstractItemModel, Qt, QModelIndex, QTimer, pyqtSignal
+from PyQt6.QtCore import QAbstractItemModel, QEvent, Qt, QModelIndex, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QHeaderView,
+    QLabel,
     QMenu,
     QMessageBox,
     QPlainTextEdit,
@@ -28,7 +29,7 @@ def _natural_sort_text(value) -> str:
 
 
 class DatasetExplorerTreeModel(QAbstractItemModel):
-    """Data-backed, progressively exposed model for dataset samples and inputs."""
+    """Data-backed model exposing one bounded page of samples and inputs."""
 
     FilePathRole = Qt.ItemDataRole.UserRole
     DataIdRole = Qt.ItemDataRole.UserRole + 1
@@ -37,10 +38,9 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
     BallPathRole = Qt.ItemDataRole.UserRole + 4
 
     renameRequested = pyqtSignal(str, str)
-    exposureProgressChanged = pyqtSignal(int, int)
-    exposureFinished = pyqtSignal(int)
+    pageChanged = pyqtSignal(int, int, int)
 
-    DEFAULT_BATCH_SIZE = 500
+    PAGE_SIZE = 500
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -50,13 +50,10 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
         self._children_by_id = {}
         self._projected_row_by_id = {}
         self._path_nodes = {}
-        self._visible_count = 0
         self._filter_index = 0
-        self._batch_size = self.DEFAULT_BATCH_SIZE
-        self._generation = 0
+        self._page_number = 0
 
     def clear(self):
-        self._generation += 1
         self.beginResetModel()
         self._all_entries = []
         self._projected_entries = []
@@ -64,30 +61,25 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
         self._children_by_id = {}
         self._projected_row_by_id = {}
         self._path_nodes = {}
-        self._visible_count = 0
+        self._page_number = 0
         self.endResetModel()
+        self.pageChanged.emit(0, 0, 0)
 
-    def set_entries(self, entries, filter_index=0, batch_size=None):
-        self._generation += 1
-        generation = self._generation
+    def set_entries(self, entries, filter_index=0):
         self.beginResetModel()
         self._all_entries = list(entries or [])
         self._filter_index = int(filter_index)
-        self._batch_size = max(1, int(batch_size or self.DEFAULT_BATCH_SIZE))
         self._rebuild_indexes()
         self._rebuild_projection()
-        self._visible_count = min(self._batch_size, len(self._projected_entries))
+        self._page_number = 0
+        self._rebuild_page_children()
         self.endResetModel()
-        self._emit_exposure_progress()
-        if self._visible_count < len(self._projected_entries):
-            QTimer.singleShot(0, lambda: self._expose_next_batch(generation))
-        else:
-            self.exposureFinished.emit(len(self._projected_entries))
+        self._emit_page_changed()
 
     def set_filter(self, filter_index: int):
         filter_index = int(filter_index)
         self._filter_index = filter_index
-        self.set_entries(self._all_entries, filter_index, self._batch_size)
+        self.set_entries(self._all_entries, filter_index)
 
     def _rebuild_indexes(self):
         self._entry_by_id = {}
@@ -100,22 +92,17 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
             entry["_node_kind"] = "sample"
             entry["_sample_id"] = sample_id
             self._entry_by_id[sample_id] = entry
-            child_nodes = []
             parent_path = str(entry.get("path") or "")
             if parent_path:
                 self._path_nodes.setdefault(parent_path, (sample_id, None))
-            for child_row, media_source in enumerate(entry.get("media_sources") or []):
+            valid_child_row = 0
+            for media_source in entry.get("media_sources") or []:
                 if not isinstance(media_source, dict):
                     continue
-                child_node = dict(media_source)
-                child_node["_node_kind"] = "input"
-                child_node["_sample_id"] = sample_id
-                child_node["_child_row"] = child_row
-                child_nodes.append(child_node)
-                child_path = str(child_node.get("path") or "")
+                child_path = str(media_source.get("path") or "")
                 if child_path:
-                    self._path_nodes.setdefault(child_path, (sample_id, child_row))
-            self._children_by_id[sample_id] = child_nodes
+                    self._path_nodes.setdefault(child_path, (sample_id, valid_child_row))
+                valid_child_row += 1
 
     def _entry_matches_filter(self, entry) -> bool:
         hand = bool(entry.get("hand_labelled"))
@@ -135,30 +122,90 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
             for row, entry in enumerate(self._projected_entries)
         }
 
-    def _emit_exposure_progress(self):
-        self.exposureProgressChanged.emit(self._visible_count, len(self._projected_entries))
+    def _page_bounds(self):
+        start = self._page_number * self.PAGE_SIZE
+        return start, min(start + self.PAGE_SIZE, len(self._projected_entries))
 
-    def _expose_next_batch(self, generation: int):
-        if generation != self._generation:
-            return
+    def _rebuild_page_children(self):
+        self._children_by_id = {}
+        start, end = self._page_bounds()
+        for entry in self._projected_entries[start:end]:
+            sample_id = str(entry.get("_sample_id") or "")
+            child_nodes = []
+            for media_source in entry.get("media_sources") or []:
+                if not isinstance(media_source, dict):
+                    continue
+                child_node = dict(media_source)
+                child_node["_node_kind"] = "input"
+                child_node["_sample_id"] = sample_id
+                child_node["_child_row"] = len(child_nodes)
+                child_nodes.append(child_node)
+            self._children_by_id[sample_id] = child_nodes
+
+    def _emit_page_changed(self):
+        self.pageChanged.emit(*self.visible_range())
+
+    def page_count(self):
         total = len(self._projected_entries)
-        if self._visible_count >= total:
-            self.exposureFinished.emit(total)
-            return
-        first = self._visible_count
-        last = min(first + self._batch_size, total) - 1
-        self.beginInsertRows(QModelIndex(), first, last)
-        self._visible_count = last + 1
-        self.endInsertRows()
-        self._emit_exposure_progress()
-        if self._visible_count < total:
-            QTimer.singleShot(0, lambda: self._expose_next_batch(generation))
-        else:
-            self.exposureFinished.emit(total)
+        return (total + self.PAGE_SIZE - 1) // self.PAGE_SIZE
+
+    def page_number(self):
+        return self._page_number
+
+    def visible_range(self):
+        total = len(self._projected_entries)
+        if total == 0:
+            return 0, 0, 0
+        start, end = self._page_bounds()
+        return start + 1, end, total
+
+    def set_page(self, page_number: int):
+        page_count = self.page_count()
+        target = min(max(0, int(page_number)), max(0, page_count - 1))
+        if target == self._page_number:
+            return False
+        self.beginResetModel()
+        self._page_number = target
+        self._rebuild_page_children()
+        self.endResetModel()
+        self._emit_page_changed()
+        return True
+
+    def next_page(self):
+        return self.set_page(self._page_number + 1)
+
+    def previous_page(self):
+        return self.set_page(self._page_number - 1)
+
+    def page_for_sample_id(self, sample_id: str):
+        row = self._projected_row_by_id.get(str(sample_id or ""))
+        return None if row is None else row // self.PAGE_SIZE
+
+    def ensure_sample_visible(self, sample_id: str):
+        page_number = self.page_for_sample_id(sample_id)
+        if page_number is None:
+            return False
+        self.set_page(page_number)
+        return True
+
+    def projected_row_for_sample_id(self, sample_id: str):
+        return self._projected_row_by_id.get(str(sample_id or ""))
+
+    def index_for_projected_row(self, projected_row: int, expose=False):
+        projected_row = int(projected_row)
+        if not 0 <= projected_row < len(self._projected_entries):
+            return QModelIndex()
+        if expose:
+            self.set_page(projected_row // self.PAGE_SIZE)
+        start, end = self._page_bounds()
+        if not start <= projected_row < end:
+            return QModelIndex()
+        return self.index(projected_row - start, 0)
 
     def rowCount(self, parent=QModelIndex()):
         if not parent.isValid():
-            return self._visible_count
+            start, end = self._page_bounds()
+            return end - start
         node = parent.internalPointer()
         if isinstance(node, dict) and node.get("_node_kind") == "sample":
             return len(self._children_by_id.get(str(node.get("_sample_id") or ""), []))
@@ -171,9 +218,10 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
         if row < 0 or column != 0:
             return QModelIndex()
         if not parent.isValid():
-            if row >= self._visible_count:
+            start, end = self._page_bounds()
+            if row >= end - start:
                 return QModelIndex()
-            return self.createIndex(row, column, self._projected_entries[row])
+            return self.createIndex(row, column, self._projected_entries[start + row])
         parent_node = parent.internalPointer()
         if not isinstance(parent_node, dict) or parent_node.get("_node_kind") != "sample":
             return QModelIndex()
@@ -190,10 +238,11 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
             return QModelIndex()
         sample_id = str(node.get("_sample_id") or "")
         row = self._projected_row_by_id.get(sample_id)
-        if row is None or row >= self._visible_count:
+        start, end = self._page_bounds()
+        if row is None or not start <= row < end:
             return QModelIndex()
         entry = self._entry_by_id.get(sample_id)
-        return self.createIndex(row, 0, entry) if entry is not None else QModelIndex()
+        return self.createIndex(row - start, 0, entry) if entry is not None else QModelIndex()
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
@@ -257,17 +306,15 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
             return
         reverse = order == Qt.SortOrder.DescendingOrder
         entries = sorted(self._all_entries, key=lambda item: item.get("sort_text") or "", reverse=reverse)
-        self.set_entries(entries, self._filter_index, self._batch_size)
+        self.set_entries(entries, self._filter_index)
 
     def index_for_sample_id(self, sample_id: str, expose=False):
         row = self._projected_row_by_id.get(str(sample_id or ""))
         if row is None:
             return QModelIndex()
         if expose:
-            self.ensure_sample_exposed(sample_id)
-        if row >= self._visible_count:
-            return QModelIndex()
-        return self.index(row, 0)
+            self.ensure_sample_visible(sample_id)
+        return self.index_for_projected_row(row)
 
     def index_for_path(self, path: str, expose=False):
         node_ref = self._path_nodes.get(str(path or ""))
@@ -278,17 +325,6 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
         if not parent_index.isValid() or child_row is None:
             return parent_index
         return self.index(child_row, 0, parent_index)
-
-    def ensure_sample_exposed(self, sample_id: str):
-        row = self._projected_row_by_id.get(str(sample_id or ""))
-        if row is None or row < self._visible_count:
-            return
-        first = self._visible_count
-        last = row
-        self.beginInsertRows(QModelIndex(), first, last)
-        self._visible_count = last + 1
-        self.endInsertRows()
-        self._emit_exposure_progress()
 
     def refresh_sample(self, sample_id: str):
         index = self.index_for_sample_id(sample_id)
@@ -313,6 +349,7 @@ class DatasetExplorerPanel(QWidget):
     clearBallH5Requested = pyqtSignal(QModelIndex)
     addDataRequested = pyqtSignal()
     sampleNavigateRequested = pyqtSignal(int)
+    pageNavigateRequested = pyqtSignal(int)
     headerDraftChanged = pyqtSignal(dict)
     confidenceSortToggled = pyqtSignal(bool)
 
@@ -355,6 +392,7 @@ class DatasetExplorerPanel(QWidget):
         self._suspend_header_signals = False
 
         self._configure_widgets(tree_title, filter_items, clear_text)
+        self.tree_model.pageChanged.connect(self._update_page_range)
         self.btn_add_data.clicked.connect(self.addDataRequested.emit)
         self.btn_prev_sample.clicked.connect(lambda: self.sampleNavigateRequested.emit(-1))
         self.btn_next_sample.clicked.connect(lambda: self.sampleNavigateRequested.emit(1))
@@ -383,9 +421,43 @@ class DatasetExplorerPanel(QWidget):
         header.setStretchLastSection(True)
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tree.viewport().installEventFilter(self)
+        self.page_range_label = QLabel("No samples", self)
+        self.page_range_label.setObjectName("dataset_page_range_label")
+        self.page_range_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.verticalLayout_tab_data.insertWidget(2, self.page_range_label)
         self.json_raw_text.setReadOnly(True)
         self.json_raw_text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._configure_header_tables()
+
+    def _update_page_range(self, first: int, last: int, total: int):
+        if total <= 0:
+            self.page_range_label.setText("No samples")
+            return
+        suffix = " · scroll for more" if total > self.tree_model.PAGE_SIZE else ""
+        self.page_range_label.setText(
+            f"Showing {first:,}–{last:,} of {total:,}{suffix}"
+        )
+
+    def eventFilter(self, watched, event):
+        if watched is self.tree.viewport() and event.type() == QEvent.Type.Wheel:
+            delta = event.angleDelta().y() or event.pixelDelta().y()
+            scroll_bar = self.tree.verticalScrollBar()
+            if (
+                delta < 0
+                and scroll_bar.value() >= scroll_bar.maximum()
+                and self.tree_model.page_number() + 1 < self.tree_model.page_count()
+            ):
+                self.pageNavigateRequested.emit(1)
+                return True
+            if (
+                delta > 0
+                and scroll_bar.value() <= scroll_bar.minimum()
+                and self.tree_model.page_number() > 0
+            ):
+                self.pageNavigateRequested.emit(-1)
+                return True
+        return super().eventFilter(watched, event)
 
     def _configure_header_tables(self):
         self._configure_single_header_table(self.table_header_known, editable=True)

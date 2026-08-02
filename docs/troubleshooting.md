@@ -27,12 +27,13 @@ python tools/convert_legacy_vqa_to_grouped.py \
 
 ## Large Dataset Is Still Populating
 
-Datasets with thousands of samples populate the left explorer progressively.
-The first rows should appear quickly, and the status bar shows progress while
-more rows are exposed. Filtering during this period safely restarts the visible
-projection; it does not discard samples. The JSON inspector and classification
-batch-range lists are intentionally prepared only when opened so they do not
-delay project loading.
+Datasets with thousands of samples keep the left explorer bounded to 500 rows.
+The range below the tree shows which samples are visible. Scroll down again at
+the bottom for the next page or up at the top for the previous page. Filtering
+rebuilds pages from all matching samples; it does not discard data. The JSON
+inspector and classification batch-range lists are intentionally prepared only
+when opened so they do not delay project loading. An active sample can continue
+playing while its row is off-page.
 
 ## Media Files Are Missing After Loading
 

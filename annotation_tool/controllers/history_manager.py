@@ -778,7 +778,7 @@ class HistoryManager(QObject):
             self.model.current_selected_sample_id = final_id
 
         self.model.populate_tree()
-        index = self.model.tree_model.index_for_sample_id(final_id, expose=True)
+        index = self.model._top_level_index_for_sample(final_id)
         if index.isValid():
             self.model.panel.tree.setCurrentIndex(index)
 
@@ -850,7 +850,7 @@ class HistoryManager(QObject):
         )
 
         if first_sample_id:
-            index = self.model.tree_model.index_for_sample_id(first_sample_id, expose=True)
+            index = self.model._top_level_index_for_sample(first_sample_id)
             if index.isValid():
                 self.model.panel.tree.setCurrentIndex(index)
                 self.model.panel.tree.setFocus()

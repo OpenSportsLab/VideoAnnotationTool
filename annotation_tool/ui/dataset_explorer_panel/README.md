@@ -25,14 +25,16 @@ Provides the left dock dataset explorer tree, header inspector tables, and explo
 - `removeItemRequested(QModelIndex)`
 - `addDataRequested()`
 - `sampleNavigateRequested(int)`
+- `pageNavigateRequested(int)`
 - `headerDraftChanged(dict)`
 
 ## Key Functions and Responsibilities
 - `DatasetExplorerTreeModel.set_entries(...)`
-  - Resets the filtered/sorted projection, exposes the first 500 samples, and
-    schedules later batches on zero-delay event-loop turns.
-- `index_for_sample_id(...)`, `index_for_path(...)`, `ensure_sample_exposed(...)`
-  - Provide constant-time controller lookup without a `QStandardItem` map.
+  - Resets the filtered/sorted projection and exposes its first 500-sample page.
+- `set_page(...)`, `next_page()`, `previous_page()`, `visible_range()`
+  - Replace the visible slice without accumulating Qt rows.
+- `index_for_sample_id(...)`, `index_for_path(...)`, `ensure_sample_visible(...)`
+  - Provide constant-time lookup and open the containing page when requested.
 - `refresh_sample(...)`
   - Emits a lightweight row update for status/display changes.
 - `DatasetExplorerPanel._set_context_menu_enabled(...)`
@@ -48,8 +50,10 @@ Provides the left dock dataset explorer tree, header inspector tables, and explo
 - Header draft updates are staged via signal; controller decides persistence.
 - Tree model is view data only. Inline `setData()` emits a rename intent;
   canonical JSON mutation remains in history/controller layers.
-- Each reset increments a generation token. Pending exposure callbacks from a
-  prior dataset, filter, sort, or structural refresh must exit without changes.
+- The tree exposes at most 500 top-level rows. Scrolling beyond the bottom or
+  top boundary requests the adjacent page; no page is loaded automatically.
+- Paging is a view-only reset. The controller suppresses the transient invalid
+  Qt selection so off-page annotation and playback state remain active.
 - Filtering builds a new projection rather than hiding thousands of view rows.
 - Selecting another input child in the active sample is focus-only: the
   controller highlights its viewer without rerouting media, refreshing
@@ -75,7 +79,9 @@ Provides the left dock dataset explorer tree, header inspector tables, and explo
 
 ## Developer Knowledge
 - Role values (`FilePathRole`, `DataIdRole`) are used pervasively by controllers/tests; treat them as stable API.
-- All Qt model resets/inserts remain on the GUI thread. Only exposure is
-  chunked; canonical dataset preparation is complete before the first batch.
+- All Qt model resets remain on the GUI thread. Canonical dataset preparation
+  and the complete filtered/sorted projection exist independently of the page.
+- Child input nodes are cached only for samples in the current page. Keep global
+  ID/path indexes lightweight and never grow the Qt row set across page changes.
 - Header editor emits staged draft updates; do not write directly to dataset from this module.
 - Context-menu remove behavior expects selected index fidelity (parent vs child row); keep this distinction intact.

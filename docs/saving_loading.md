@@ -12,11 +12,12 @@ On load, the app validates that the root is a JSON object and that top-level
 or duplicate sample IDs, canonicalizes known input types, and preserves unknown
 root/sample fields when possible.
 
-For large datasets, the workspace becomes usable after the first 500 explorer
-rows and reveals later rows in background event-loop turns. The status bar
-reports `Loading samples: visible / total` until the complete filtered view is
-available. Saving, export, and the canonical in-memory dataset do not depend on
-how many explorer rows are currently visible.
+For large datasets, the explorer displays only the first 500 samples. Its range
+indicator reports `Showing 1–500 of total`; scroll beyond a tree boundary to
+replace that window with the next or previous page. No later rows are inserted
+in the background. Saving, export, and the canonical in-memory dataset do not
+depend on which page is visible. An active sample keeps playing if it moves
+off-page.
 
 !!! note "Relative input paths"
     Relative `data[].inputs[].path` values are resolved from the directory that
