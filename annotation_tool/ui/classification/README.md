@@ -3,6 +3,8 @@
 ## Role
 Provides the Classification right-panel widgets and dynamic label-group controls.
 
+Includes one **Run Inference…** action for the shared backend/model/input dialog.
+
 ## Architecture Context
 - Static layout comes from `classification_annotation_panel.ui`.
 - Runtime dynamic controls and signal plumbing are implemented in `__init__.py`.

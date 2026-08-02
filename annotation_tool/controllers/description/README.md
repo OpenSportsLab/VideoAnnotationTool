@@ -3,6 +3,10 @@
 ## Role
 Owns Description mode editor behavior for sample-level captions.
 
+Shared inference replaces the English caption with a confidence-bearing smart
+candidate. Confirm removes inference metadata; reject restores the previous
+captions. Each action emits one caption-update mutation intent.
+
 ## Architecture Context
 - `DescEditorController` is selection-driven and operates on the selected sample payload.
 - It emits caption updates to `HistoryManager` and never mutates project lifecycle state.

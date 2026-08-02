@@ -1,6 +1,7 @@
 import copy
 import html
 import importlib.metadata
+import json
 import os
 
 from PyQt6.QtCore import Qt, QModelIndex, QTimer
@@ -10,6 +11,7 @@ from PyQt6.QtWidgets import QLabel, QDockWidget, QMainWindow, QMessageBox, QStac
 from app_info import APP_DISPLAY_NAME, APP_VERSION, build_shortcuts_help_text
 from controllers.classification import ClassificationEditorController
 from controllers.hf_transfer_controller import HfTransferController
+from controllers.inference_controller import InferenceController
 from opensportslib.tools.hf_transfer import (
     create_dataset_branch_on_hf,
     create_dataset_repo_on_hf,
@@ -37,13 +39,15 @@ from ui.localization import LocalizationAnnotationPanel
 from ui.description import DescriptionAnnotationPanel
 from ui.dense_description import DenseAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
-from ui.dialogs import ApplicationSettingsDialog, BusyStatusDialog, HfDownloadDialog, HfUploadDialog
+from ui.dialogs import ApplicationSettingsDialog, BusyStatusDialog, HfDownloadDialog, HfUploadDialog, InferenceRunDialog
 
 from media_control_settings import (
     PLAYBACK_FACTORS_KEY,
     SEEK_INTERVALS_KEY,
     load_media_control_settings,
 )
+from inference_settings import BACKEND_KEY, LOCAL_MODELS_KEY, SERVER_URL_KEY, SHARED_MAPPINGS_KEY
+from inference_types import InferenceItem, InferenceRequest, resolve_sample_inputs
 
 from utils import create_checkmark_icon, resource_path
 
@@ -167,6 +171,14 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.welcome_controller = WelcomeController(self.welcome_widget, self.dataset_explorer_controller, self)
         self.hf_transfer_controller = HfTransferController()
+        self.inference_controller = InferenceController(
+            settings=self.dataset_explorer_controller.settings,
+            base_dir=os.path.abspath(os.path.dirname(__file__)),
+            parent=self,
+        )
+        self._inference_busy_dialog = None
+        self._pending_inference_requests = {}
+        self._pending_prediction_samples_by_task = {}
         self._hf_busy_dialog = None
         self._active_hf_transfer_kind: str | None = None
         self._last_hf_download_payload: dict | None = None
@@ -354,7 +366,6 @@ class VideoAnnotationWindow(QMainWindow):
         center_panel = self.center_panel
 
         # Runtime dataset context wiring for helper services.
-        self.classification_editor_controller.inference_manager.set_dataset_model(self.dataset_explorer_controller)
         self.classification_editor_controller.train_manager.set_dataset_model(self.dataset_explorer_controller)
         
         # --- Dataset Explorer panel (Unified) ---
@@ -390,6 +401,26 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.schemaContextChanged.connect(
             self.localization_editor_controller.on_schema_context_changed
         )
+        self.classification_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
+        self.localization_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
+        self.desc_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
+        self.dense_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
+        self.qa_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
+        for task_name, controller in (
+            ("classification", self.classification_editor_controller),
+            ("localization", self.localization_editor_controller),
+            ("description", self.desc_editor_controller),
+            ("dense_description", self.dense_editor_controller),
+            ("question_answer", self.qa_editor_controller),
+        ):
+            controller.pendingPredictionsChanged.connect(
+                lambda sample_ids, task=task_name: self._on_pending_predictions_changed(task, sample_ids)
+            )
+        self.inference_controller.inferenceStarted.connect(self._on_shared_inference_started)
+        self.inference_controller.inferenceProgress.connect(self._on_shared_inference_progress)
+        self.inference_controller.inferenceCompleted.connect(self._on_shared_inference_completed)
+        self.inference_controller.inferenceFailed.connect(self._on_shared_inference_failed)
+        self.inference_controller.inferenceCancelled.connect(self._on_shared_inference_cancelled)
         self.dataset_explorer_controller.mediaRouteRequested.connect(
             self._handle_media_route
         )
@@ -586,6 +617,9 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.dense_editor_controller.denseEventDelRequested.connect(
             self.history_manager.execute_dense_event_del
+        )
+        self.dense_editor_controller.denseEventsSetRequested.connect(
+            self.history_manager.execute_dense_events_set
         )
         self.dense_editor_controller.mediaSeekRequested.connect(
             lambda ms: self.media_controller.set_position(ms)
@@ -945,13 +979,245 @@ class VideoAnnotationWindow(QMainWindow):
         )
 
     def _open_settings_dialog(self) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
         dialog = ApplicationSettingsDialog(
             self._playback_factor_text,
             self._seek_interval_text,
+            settings=settings,
             parent=self,
         )
         dialog.mediaControlsApplyRequested.connect(self._save_and_apply_media_controls)
+        dialog.inferenceSettingsApplyRequested.connect(self._save_inference_settings)
+        dialog.inferenceTestRequested.connect(lambda: self._test_inference_connection(dialog))
         dialog.exec()
+
+    def _save_inference_settings(self, payload: dict) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is None:
+            return
+        settings.setValue(BACKEND_KEY, str(payload.get("backend") or "local"))
+        settings.setValue(SERVER_URL_KEY, str(payload.get("server_url") or ""))
+        settings.setValue(SHARED_MAPPINGS_KEY, json.dumps(list(payload.get("shared_mappings") or [])))
+        settings.setValue(LOCAL_MODELS_KEY, json.dumps(list(payload.get("local_models") or [])))
+        settings.sync()
+
+    def _test_inference_connection(self, dialog) -> None:
+        try:
+            config = {"server_url": dialog.inference_server_url_edit.text().strip()}
+            capabilities = self.inference_controller.test_connection(config)
+            version = str(capabilities.get("version") or "unknown")
+            shared_roots = list(capabilities.get("shared_roots") or [])
+            root_ids = [str(root.get("id") or "") for root in shared_roots if isinstance(root, dict) and root.get("id")]
+            root_text = f" Available root IDs: {', '.join(root_ids)}." if root_ids else ""
+            dialog.set_inference_connection_status(
+                f"Connected to API version {version}; {len(shared_roots)} shared root(s) advertised.{root_text}", True
+            )
+        except Exception as exc:
+            dialog.set_inference_connection_status(str(exc), False)
+
+    def _open_inference_run_dialog(self, task: str, context) -> None:
+        context = dict(context or {})
+        current_sample_id = str(self.dataset_explorer_controller.current_selected_sample_id or "")
+        sample_ids = list(context.get("batch_sample_ids") or [current_sample_id])
+        if task == "classification" and not context.get("batch_sample_ids"):
+            available = [str(sample.get("id") or "") for sample in self.dataset_explorer_controller.dataset_json.get("data", []) if isinstance(sample, dict) and sample.get("id")]
+            if available:
+                sample_ids = available
+                context["available_batch_sample_ids"] = available
+                context["current_sample_id"] = current_sample_id
+        samples = [
+            self.dataset_explorer_controller.get_sample(str(sample_id))
+            for sample_id in sample_ids
+        ]
+        samples = [sample for sample in samples if isinstance(sample, dict)]
+        if not samples:
+            QMessageBox.warning(self, "Inference", "Please select a sample first.")
+            return
+        inputs_by_sample = {
+            str(sample.get("id") or ""): resolve_sample_inputs(
+                sample, str(self.dataset_explorer_controller.current_json_path or "")
+            )
+            for sample in samples
+        }
+        for sample_id, sample_inputs in inputs_by_sample.items():
+            for source in sample_inputs:
+                source.sample_id = sample_id
+        inputs = [source for sample_inputs in inputs_by_sample.values() for source in sample_inputs]
+        if not inputs:
+            QMessageBox.warning(self, "Inference", "The selected sample has no usable inputs.")
+            return
+
+        dialog = InferenceRunDialog(
+            task,
+            inputs,
+            context,
+            default_backend=self.inference_controller.default_backend(),
+            provider_config=self.inference_controller.configuration_snapshot(),
+            parent=self,
+        )
+        model_slots = []
+        model_error_slots = []
+
+        def refresh_models(backend: str, selected_task: str):
+            dialog.set_models([])
+            dialog.availability_label.setText("Discovering models…")
+
+            def apply_models(discovered_backend, discovered_task, models):
+                if discovered_backend != backend or discovered_task != selected_task:
+                    return
+                input_types = {source.type for source in inputs}
+                dialog.set_models([
+                    descriptor for descriptor in models
+                    if not descriptor.accepted_input_types
+                    or not input_types.isdisjoint(descriptor.accepted_input_types)
+                ])
+
+            model_slots.append(apply_models)
+            self.inference_controller.modelsDiscovered.connect(apply_models)
+            def show_discovery_error(discovered_backend, discovered_task, message):
+                if discovered_backend == backend and discovered_task == selected_task:
+                    dialog.availability_label.setText(message)
+
+            model_error_slots.append(show_discovery_error)
+            self.inference_controller.discoveryFailed.connect(show_discovery_error)
+            try:
+                draft_config = dialog.configuration_widget.payload()
+            except ValueError as exc:
+                dialog.availability_label.setText(str(exc))
+                return
+            if not self.inference_controller.request_model_discovery(selected_task, backend, draft_config):
+                dialog.availability_label.setText("Another model discovery request is still running.")
+
+        def test_draft_connection(config):
+            try:
+                capabilities = self.inference_controller.test_connection(config)
+                version = str(capabilities.get("version") or "unknown")
+                dialog.configuration_widget.set_connection_status(f"Connected to API version {version}.", True)
+            except Exception as exc:
+                dialog.configuration_widget.set_connection_status(str(exc), False)
+
+        dialog.refreshModelsRequested.connect(refresh_models)
+        dialog.testConnectionRequested.connect(test_draft_connection)
+        refresh_models(self.inference_controller.default_backend(), task)
+        dialog_result = dialog.exec()
+        for slot in model_slots:
+            try:
+                self.inference_controller.modelsDiscovered.disconnect(slot)
+            except Exception:
+                pass
+        for slot in model_error_slots:
+            try:
+                self.inference_controller.discoveryFailed.disconnect(slot)
+            except Exception:
+                pass
+        if dialog_result != dialog.DialogCode.Accepted:
+            return
+        payload = dialog.payload()
+        if payload.get("remember_defaults"):
+            self._save_inference_settings(payload["provider_config"])
+        parameters = {
+            key: value for key, value in payload.items()
+            if key in {"head", "start_ms", "end_ms", "language", "question"}
+            and value not in (None, "")
+        }
+        if task == "localization":
+            parameters["labels"] = list(context.get("labels") or [])
+        selected_sources = {(str(getattr(source, "sample_id", "") or ""), os.path.realpath(source.path)) for source in payload["inputs"]}
+        if payload.get("scope") == "current":
+            samples = [sample for sample in samples if str(sample.get("id") or "") == current_sample_id]
+        request_items = []
+        for sample in samples:
+            sample_id = str(sample.get("id") or "")
+            selected_inputs = [
+                source for source in inputs_by_sample.get(sample_id, [])
+                if (sample_id, os.path.realpath(source.path)) in selected_sources
+            ]
+            if selected_inputs:
+                request_items.append(InferenceItem(
+                    sample_id=sample_id,
+                    inputs=selected_inputs,
+                    sample=copy.deepcopy(sample),
+                ))
+        if not request_items or len(request_items) != len(samples):
+            QMessageBox.warning(self, "Inference", "Every batch sample must retain at least one input.")
+            return
+        request = InferenceRequest(
+            task=task,
+            model_id=payload["model_id"],
+            backend=payload["backend"],
+            provider_config=copy.deepcopy(payload["provider_config"]),
+            target_context=copy.deepcopy(context),
+            schema=copy.deepcopy(self.dataset_explorer_controller.label_definitions),
+            parameters=parameters,
+            items=request_items,
+        )
+        self._pending_inference_requests[request.request_id] = {
+            "task": task,
+            "sample_id": current_sample_id,
+            "context": copy.deepcopy(parameters),
+        }
+        if not self.inference_controller.start_inference(request):
+            self._pending_inference_requests.pop(request.request_id, None)
+            QMessageBox.information(self, "Inference", "Another inference is already running.")
+
+    def _on_shared_inference_started(self, request_id: str, task: str) -> None:
+        dialog = BusyStatusDialog(
+            "Inference",
+            f"Starting {task.replace('_', ' ')} inference…",
+            self,
+            show_cancel=True,
+        )
+        dialog.cancelRequested.connect(self.inference_controller.cancel_inference)
+        self._inference_busy_dialog = dialog
+        dialog.show()
+
+    def _on_shared_inference_progress(self, request_id: str, message: str, current: int, total: int) -> None:
+        if self._inference_busy_dialog is None:
+            return
+        suffix = f" ({current}/{total})" if total else ""
+        self._inference_busy_dialog.set_message(f"{message}{suffix}")
+        if total > 0:
+            self._inference_busy_dialog._progress.setRange(0, total)
+            self._inference_busy_dialog._progress.setValue(max(0, min(current, total)))
+
+    def _close_inference_busy_dialog(self):
+        if self._inference_busy_dialog is not None:
+            self._inference_busy_dialog.hide()
+            self._inference_busy_dialog.deleteLater()
+            self._inference_busy_dialog = None
+
+    def _on_shared_inference_completed(self, request_id: str, result) -> None:
+        self._close_inference_busy_dialog()
+        pending = self._pending_inference_requests.pop(request_id, None)
+        if not pending:
+            return
+        handlers = {
+            "classification": self.classification_editor_controller.apply_shared_inference_result,
+            "localization": self.localization_editor_controller.apply_shared_inference_result,
+            "description": self.desc_editor_controller.apply_shared_inference_result,
+            "dense_description": self.dense_editor_controller.apply_shared_inference_result,
+            "question_answer": self.qa_editor_controller.apply_shared_inference_result,
+        }
+        try:
+            handlers[pending["task"]](result, pending.get("context", {}))
+        except Exception as exc:
+            QMessageBox.critical(self, "Inference Result Error", str(exc))
+
+    def _on_pending_predictions_changed(self, task: str, sample_ids) -> None:
+        self._pending_prediction_samples_by_task[str(task)] = {str(value) for value in sample_ids or [] if str(value)}
+        combined = set().union(*self._pending_prediction_samples_by_task.values()) if self._pending_prediction_samples_by_task else set()
+        self.dataset_explorer_controller.set_pending_prediction_samples(combined)
+
+    def _on_shared_inference_failed(self, request_id, message, code, retryable, details) -> None:
+        self._close_inference_busy_dialog()
+        self._pending_inference_requests.pop(request_id, None)
+        retry_text = " The operation may be retried." if retryable else ""
+        QMessageBox.critical(self, "Inference Error", f"{message}{retry_text}\n\nCode: {code}")
+
+    def _on_shared_inference_cancelled(self, request_id: str) -> None:
+        self._close_inference_busy_dialog()
+        self._pending_inference_requests.pop(request_id, None)
+        self.show_temp_msg("Inference", "Inference cancelled.", 1500)
 
     def _save_and_apply_media_controls(
         self,
@@ -1085,6 +1351,14 @@ class VideoAnnotationWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         if self.dataset_explorer_controller.check_and_close_current_project():
+            if not self.inference_controller.shutdown(wait_ms=3000):
+                self.show_temp_msg(
+                    "Inference Running",
+                    "Shared inference is still stopping. Please wait and close again.",
+                    2500,
+                )
+                event.ignore()
+                return
             if not self.classification_editor_controller.shutdown_background_tasks(wait_ms=2500):
                 self.show_temp_msg(
                     "Inference Running",

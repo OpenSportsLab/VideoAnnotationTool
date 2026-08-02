@@ -20,6 +20,11 @@ class QuestionAnswerAnnotationPanel(QWidget):
     answerEditRequested = pyqtSignal(int)
     answerDeleteRequested = pyqtSignal(int)
     answerSelectionChanged = pyqtSignal(int)
+    inferenceRequested = pyqtSignal()
+    smartConfirmRequested = pyqtSignal()
+    smartRejectRequested = pyqtSignal()
+    smartAcceptAllRequested = pyqtSignal()
+    smartRejectAllRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -39,6 +44,17 @@ class QuestionAnswerAnnotationPanel(QWidget):
         self.answer_list: QListWidget = self.answerList
         self.add_answer_button: QPushButton = self.addAnswerButton
 
+        self.run_inference_button = QPushButton("Run Inference…", self)
+        self.confirm_smart_button = QPushButton("Accept Prediction", self)
+        self.reject_smart_button = QPushButton("Reject Prediction", self)
+        self.accept_all_smart_button = QPushButton("Accept All", self)
+        self.reject_all_smart_button = QPushButton("Reject All", self)
+        self.answerButtonLayout.addWidget(self.run_inference_button)
+        self.answerButtonLayout.addWidget(self.confirm_smart_button)
+        self.answerButtonLayout.addWidget(self.reject_smart_button)
+        self.answerButtonLayout.addWidget(self.accept_all_smart_button)
+        self.answerButtonLayout.addWidget(self.reject_all_smart_button)
+
         self._suspend_changes = False
 
         self.add_question_button.clicked.connect(self.questionGroupAddRequested.emit)
@@ -54,6 +70,13 @@ class QuestionAnswerAnnotationPanel(QWidget):
         self.answer_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.answer_list.customContextMenuRequested.connect(self._on_answer_context_menu_requested)
         self.answer_list.itemDoubleClicked.connect(self._on_answer_item_double_clicked)
+        self.run_inference_button.clicked.connect(self.inferenceRequested.emit)
+        self.confirm_smart_button.clicked.connect(self.smartConfirmRequested.emit)
+        self.reject_smart_button.clicked.connect(self.smartRejectRequested.emit)
+        self.accept_all_smart_button.clicked.connect(self.smartAcceptAllRequested.emit)
+        self.reject_all_smart_button.clicked.connect(self.smartRejectAllRequested.emit)
+        self.accept_all_smart_button.setVisible(False)
+        self.reject_all_smart_button.setVisible(False)
 
     def set_question_groups(self, groups, selected_group_index: int = 0, selected_answer_index: int = 0):
         valid_groups = []
@@ -61,7 +84,7 @@ class QuestionAnswerAnnotationPanel(QWidget):
             if not isinstance(group, dict):
                 continue
             question = str(group.get("question") or "")
-            answers = [str(answer or "") for answer in list(group.get("answers") or [])]
+            answers = [self._answer_text(answer) for answer in list(group.get("answers") or [])]
             valid_groups.append({"question": question, "answers": answers})
 
         self._suspend_changes = True
@@ -88,14 +111,20 @@ class QuestionAnswerAnnotationPanel(QWidget):
             self._suspend_changes = False
 
     def set_answer_rows(self, answers, selected_answer_index: int = 0):
-        answer_texts = [str(answer or "") for answer in list(answers or [])]
+        answer_texts = [self._answer_text(answer) for answer in list(answers or [])]
 
         self._suspend_changes = True
         try:
             self._block_answer_signals(True)
             self.answer_list.clear()
+            raw_answers = list(answers or [])
             for index, answer_text in enumerate(answer_texts, start=1):
                 item = QListWidgetItem(self._answer_label(answer_text, index))
+                raw = raw_answers[index - 1]
+                if isinstance(raw, dict) and raw.get("_pending_prediction"):
+                    item.setBackground(Qt.GlobalColor.yellow)
+                    score = float(raw.get("confidence_score", 0.0) or 0.0) * 100
+                    item.setToolTip(f"Pending model prediction · {score:.1f}% · {raw.get('inference_model_id', '')}")
                 item.setData(Qt.ItemDataRole.UserRole, index - 1)
                 self.answer_list.addItem(item)
 
@@ -221,6 +250,12 @@ class QuestionAnswerAnnotationPanel(QWidget):
         if not answer:
             return f"Answer {index}"
         return answer if len(answer) <= 80 else f"{answer[:77]}..."
+
+    @staticmethod
+    def _answer_text(answer) -> str:
+        if isinstance(answer, dict):
+            return str(answer.get("text") or "")
+        return str(answer or "")
 
 
 __all__ = ["QuestionAnswerAnnotationPanel"]

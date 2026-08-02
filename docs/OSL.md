@@ -250,7 +250,7 @@ Sample-level `labels` uses the same head names defined at the root.
 }
 ```
 
-For smart predictions, a head payload may include `confidence_score` as a float
+Legacy project files may contain smart predictions whose head payload includes `confidence_score` as a float
 from `0.0` to `1.0`:
 
 ```json
@@ -264,8 +264,8 @@ from `0.0` to `1.0`:
 }
 ```
 
-Confirming a smart prediction removes only `confidence_score`; the chosen label
-stays as the manual annotation.
+The loader remains compatible with this shape. New inference predictions are
+kept transient; accepting writes only the chosen label as a manual annotation.
 
 ### Localization
 
@@ -353,6 +353,22 @@ question text and one or more non-empty answers.
 
 Legacy top-level `questions` and per-answer `question_id` entries are not
 persisted. Convert old VQA files with `tools/convert_legacy_vqa_to_grouped.py`.
+
+While a generated answer is awaiting review, an `answers[]` entry may also be
+an object:
+
+```json
+{
+  "text": "The receiving player shoots.",
+  "confidence_score": 0.82,
+  "inference_model_id": "sports-vqa-v2"
+}
+```
+
+The loader preserves manual strings and legacy smart answer objects. New Q/A,
+caption, and dense-caption predictions remain transient until accepted. Legacy
+smart captions and dense captions use the same optional `confidence_score` and
+`inference_model_id` fields on their existing objects.
 
 ## Complete Examples
 

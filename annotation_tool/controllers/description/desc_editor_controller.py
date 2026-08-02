@@ -11,6 +11,8 @@ class DescEditorController(QObject):
 
     clearMarkersRequested = pyqtSignal()
     captionsUpdateRequested = pyqtSignal(str, object)
+    inferenceRunRequested = pyqtSignal(str, object)
+    pendingPredictionsChanged = pyqtSignal(object)
 
     def __init__(self, description_panel):
         super().__init__()
@@ -24,10 +26,17 @@ class DescEditorController(QObject):
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.setInterval(250)
         self._autosave_timer.timeout.connect(self.save_current_annotation)
+        self._pre_smart_captions = None
+        self._pending_predictions = {}
 
     def setup_connections(self):
         """Connect Description editor UI signals to controller actions."""
         self.description_panel.captionTextChanged.connect(self._on_caption_text_changed)
+        self.description_panel.inferenceRequested.connect(
+            lambda: self.inferenceRunRequested.emit("description", {"language": "en"})
+        )
+        self.description_panel.inferenceConfirmRequested.connect(self.confirm_smart_inference)
+        self.description_panel.inferenceRejectRequested.connect(self.reject_smart_inference)
 
     def on_mode_changed(self, index: int):
         self._active_mode_index = index
@@ -42,11 +51,16 @@ class DescEditorController(QObject):
         self._current_sample_snapshot = {}
         self._set_editor_text("")
         self.description_panel.set_caption_editor_enabled(False)
+        self._pre_smart_captions = None
+        self._pending_predictions.clear()
+        self.pendingPredictionsChanged.emit(set())
+        self.description_panel.set_smart_inference_state(False)
 
     def on_selected_sample_changed(self, sample):
         """
         Refresh Description editor content for selected tree item.
         """
+        self._pre_smart_captions = None
         if not isinstance(sample, dict):
             self._autosave_timer.stop()
             self.current_sample_id = ""
@@ -76,6 +90,79 @@ class DescEditorController(QObject):
             self.clearMarkersRequested.emit()
 
         self._load_and_format_text(sample)
+        pending = self._pending_predictions.get(self.current_sample_id)
+        if pending:
+            self.description_panel.set_pending_prediction(pending)
+            return
+        smart = next(
+            (caption for caption in sample.get("captions", []) if isinstance(caption, dict) and "confidence_score" in caption),
+            None,
+        )
+        self.description_panel.set_smart_inference_state(
+            bool(smart),
+            float(smart.get("confidence_score", 0.0) or 0.0) if smart else 0.0,
+            str(smart.get("inference_model_id") or "") if smart else "",
+        )
+
+    def apply_shared_inference_result(self, result, context=None):
+        if not result.items:
+            return
+        for item in result.items:
+            captions = item.get("captions")
+            candidate = copy.deepcopy(captions[0]) if isinstance(captions, list) and captions else None
+            sample_id = str(item.get("sample_id") or self.current_sample_id)
+            if not isinstance(candidate, dict) or not sample_id or not str(candidate.get("text") or "").strip():
+                continue
+            candidate.setdefault("lang", "en")
+            candidate["confidence_score"] = float(candidate.get("confidence_score", 1.0) or 0.0)
+            candidate["inference_model_id"] = result.model_id
+            self._pending_predictions[sample_id] = candidate
+        if self.current_sample_id in self._pending_predictions:
+            self.description_panel.set_pending_prediction(self._pending_predictions[self.current_sample_id])
+        self.pendingPredictionsChanged.emit(set(self._pending_predictions))
+
+    def confirm_smart_inference(self):
+        pending = self._pending_predictions.pop(self.current_sample_id, None)
+        if pending is not None:
+            accepted = copy.deepcopy(pending)
+            accepted.pop("confidence_score", None)
+            accepted.pop("inference_model_id", None)
+            captions = [accepted]
+            if captions != self._current_sample_snapshot.get("captions", []):
+                self.captionsUpdateRequested.emit(self.current_sample_id, captions)
+                self._current_sample_snapshot["captions"] = copy.deepcopy(captions)
+                self._load_and_format_text(self._current_sample_snapshot)
+            self.description_panel.set_pending_prediction(None)
+            self.pendingPredictionsChanged.emit(set(self._pending_predictions))
+            return
+        captions = copy.deepcopy(self._current_sample_snapshot.get("captions", []))
+        changed = False
+        for caption in captions:
+            if not isinstance(caption, dict) or "confidence_score" not in caption:
+                continue
+            caption.pop("confidence_score", None)
+            caption.pop("inference_model_id", None)
+            changed = True
+        if not changed or not self.current_sample_id:
+            return
+        self.captionsUpdateRequested.emit(self.current_sample_id, captions)
+        self._current_sample_snapshot["captions"] = copy.deepcopy(captions)
+        self._pre_smart_captions = None
+        self.description_panel.set_smart_inference_state(False)
+
+    def reject_smart_inference(self):
+        if self._pending_predictions.pop(self.current_sample_id, None) is not None:
+            self.description_panel.set_pending_prediction(None)
+            self.pendingPredictionsChanged.emit(set(self._pending_predictions))
+            return
+        if not self.current_sample_id:
+            return
+        captions = copy.deepcopy(self._pre_smart_captions if self._pre_smart_captions is not None else [])
+        self.captionsUpdateRequested.emit(self.current_sample_id, captions)
+        self._current_sample_snapshot["captions"] = copy.deepcopy(captions)
+        self._pre_smart_captions = None
+        self._load_and_format_text(self._current_sample_snapshot)
+        self.description_panel.set_smart_inference_state(False)
 
     def _load_and_format_text(self, data):
         """
@@ -116,6 +203,8 @@ class DescEditorController(QObject):
             return
         if not self.current_sample_id:
             return
+        if self._pending_predictions.pop(self.current_sample_id, None) is not None:
+            self.description_panel.set_pending_prediction(None)
         self._autosave_timer.start()
 
     def save_current_annotation(self):

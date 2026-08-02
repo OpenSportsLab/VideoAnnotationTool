@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ui.dialogs import BusyStatusDialog
 from utils import resource_path
 
 
@@ -174,6 +173,7 @@ class DynamicSingleLabelGroup(QWidget):
         self.lbl_head.setProperty("class", "group_head_lbl group_head_single")
 
         self.btn_smart_infer = QPushButton("Smart Inference")
+        self.btn_smart_infer.setVisible(False)
         self.btn_smart_infer.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_smart_infer.clicked.connect(lambda: self.smart_infer_requested.emit(self.head_name))
 
@@ -341,6 +341,7 @@ class DynamicMultiLabelGroup(QWidget):
         self.lbl_head.setProperty("class", "group_head_lbl group_head_multi")
 
         self.btn_smart_infer = QPushButton("Smart Inference")
+        self.btn_smart_infer.setVisible(False)
         self.btn_smart_infer.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_smart_infer.clicked.connect(lambda: self.smart_infer_requested.emit(self.head_name))
 
@@ -492,7 +493,9 @@ class ClassificationAnnotationPanel(QWidget):
     batch_run_requested = pyqtSignal(int, int)
 
     hand_clear_requested = pyqtSignal()
-    inferenceCancelRequested = pyqtSignal()
+    sharedInferenceRequested = pyqtSignal()
+    acceptAllPredictionsRequested = pyqtSignal()
+    rejectAllPredictionsRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -537,6 +540,18 @@ class ClassificationAnnotationPanel(QWidget):
 
         self.schema_box.setVisible(False)
 
+        self.btn_shared_inference = QPushButton("Run Inference…", self)
+        self.btn_shared_inference.setObjectName("btnSharedInference")
+        self.smartButtonsLayout.addWidget(self.btn_shared_inference)
+        self.btn_shared_inference.clicked.connect(self.sharedInferenceRequested.emit)
+        self.btn_accept_all_predictions = QPushButton("Accept All", self)
+        self.btn_reject_all_predictions = QPushButton("Reject All", self)
+        self.smartButtonsLayout.addWidget(self.btn_accept_all_predictions)
+        self.smartButtonsLayout.addWidget(self.btn_reject_all_predictions)
+        self.btn_accept_all_predictions.clicked.connect(self.acceptAllPredictionsRequested.emit)
+        self.btn_reject_all_predictions.clicked.connect(self.rejectAllPredictionsRequested.emit)
+        self.set_bulk_prediction_actions_visible(False)
+
         self.head_tabs_widget = QTabWidget(self.manual_box)
         self.head_tabs_widget.setDocumentMode(True)
         self.head_tabs_widget.setTabBarAutoHide(False)
@@ -563,7 +578,8 @@ class ClassificationAnnotationPanel(QWidget):
         self.chart_widget.setVisible(False)
 
         self._configure_train_defaults()
-        self._configure_inference_feedback()
+        self.batch_input_widget.setVisible(False)
+        self.btn_batch_infer.setVisible(False)
         self.clear_dynamic_labels()
         self.manual_box.setEnabled(False)
         self._update_confirm_button_state()
@@ -729,28 +745,6 @@ class ClassificationAnnotationPanel(QWidget):
 
         self.btn_stop_train.setEnabled(False)
 
-    def _configure_inference_feedback(self):
-        self._inference_loading_dialog = BusyStatusDialog(
-            "Inference",
-            "Loading model and running inference. Please wait...",
-            self,
-            show_cancel=True,
-        )
-        self._inference_loading_dialog.cancelRequested.connect(self.inferenceCancelRequested.emit)
-        self._inference_loading_dialog.hide()
-
-    def _set_inference_controls_loading(self, is_loading: bool):
-        self.head_tabs_widget.setEnabled(not is_loading)
-        self.clear_sel_btn.setEnabled(not is_loading)
-        self.btn_batch_infer.setEnabled(not is_loading)
-        self.btn_run_batch.setEnabled(not is_loading)
-        self.spin_start.setEnabled(not is_loading)
-        self.spin_end.setEnabled(not is_loading)
-
-        for group in self.label_groups.values():
-            if hasattr(group, "set_inference_loading"):
-                group.set_inference_loading(is_loading)
-
     def _toggle_batch_widget(self):
         self.batch_input_widget.setVisible(not self.batch_input_widget.isVisible())
 
@@ -794,7 +788,6 @@ class ClassificationAnnotationPanel(QWidget):
         self.is_batch_mode_active = False
         self.pending_batch_results = {}
         self.chart_widget.setVisible(False)
-        self.show_inference_loading(False)
 
     def reset_train_ui(self):
         self.train_progress.setValue(0)
@@ -817,22 +810,6 @@ class ClassificationAnnotationPanel(QWidget):
         self.spin_end.blockSignals(False)
         if self.full_action_names:
             self._validate_batch_range()
-
-    def show_inference_loading(self, is_loading: bool):
-        is_loading = bool(is_loading)
-        self._set_inference_controls_loading(is_loading)
-
-        if is_loading:
-            self._inference_loading_dialog.set_message("Loading model and running inference. Please wait...")
-            self._inference_loading_dialog.set_cancel_enabled(True)
-            self._inference_loading_dialog.show()
-            self._inference_loading_dialog.raise_()
-            self._inference_loading_dialog.activateWindow()
-            self.setCursor(Qt.CursorShape.WaitCursor)
-            return
-
-        self._inference_loading_dialog.hide()
-        self.unsetCursor()
 
     def display_inference_result(self, target_head: str, predicted_label: str, conf_dict: dict):
         score = 0.0
@@ -907,6 +884,11 @@ class ClassificationAnnotationPanel(QWidget):
         if not group or not hasattr(group, "set_smart_state"):
             return
         group.set_smart_state(str(predicted_label or ""), float(confidence_score or 0.0), bool(is_smart))
+
+    def set_bulk_prediction_actions_visible(self, visible: bool):
+        if hasattr(self, "btn_accept_all_predictions"):
+            self.btn_accept_all_predictions.setVisible(bool(visible))
+            self.btn_reject_all_predictions.setVisible(bool(visible))
 
     def get_head_row_smart_widgets(self, head: str, label_text: str):
         group = self.label_groups.get(head)

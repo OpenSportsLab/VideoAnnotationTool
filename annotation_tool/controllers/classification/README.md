@@ -3,6 +3,10 @@
 ## Role
 Implements Classification mode behavior and coordinates smart inference/train helpers.
 
+The **Run Inference…** path emits shared inference intent through
+`MainWindow`; single and batch results reuse the existing smart-label and
+confirmation/history behavior.
+
 ## Architecture Context
 - `ClassificationEditorController` manages panel behavior for Classification mode.
 - Constructor takes only the classification panel object.
@@ -52,8 +56,9 @@ Implements Classification mode behavior and coordinates smart inference/train he
 - No-op saves (same normalized annotation) do nothing.
 - Schema operations enforce duplicate checks and route through `HistoryManager`.
 - Head/category management is tab-driven; create still prompts for `single_label` vs `multi_label`.
-- Smart inference is persisted in `labels[head]` with `confidence_score`.
-- Confirming smart annotation removes `confidence_score` only.
+- Predictions remain in a per-sample transient review store.
+- Accepting writes the plain `labels[head]` value through `HistoryManager`;
+  rejecting never mutates the dataset.
 - Rejecting/clearing smart annotation restores pre-inference manual state (or removes head if none existed).
 - Smart inference is triggered per head from the manual panel (no Smart tab flow).
 

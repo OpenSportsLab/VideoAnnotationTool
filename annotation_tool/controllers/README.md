@@ -18,6 +18,8 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `media/`: internal playback backends used by `MediaController` (`video`, `frames_npy`, `tracking_parquet`).
 - `welcome_controller.py`: welcome-page routing.
 - `hf_transfer_controller.py`: threaded Hugging Face download/upload orchestration for GUI menu actions.
+- `inference_controller.py`: canonical local/remote model discovery, execution,
+  progress, cancellation, and worker lifecycle owner.
 - `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`: mode controllers.
 
 ## Key Functions and Responsibilities
@@ -90,6 +92,18 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `start_download(...)`: execute Hugging Face dataset download in a worker thread.
 - `start_upload(...)`: execute Hugging Face dataset upload from local dataset JSON inputs in a worker thread.
 - Emits start/progress/completion/failure signals for UI wiring in `main_window.py`.
+
+### `InferenceController`
+- Owns the one active shared inference operation and selects the local or
+  remote provider from each typed request.
+- Local adapters call public OpenSportsLib task classes. Missing native
+  Description/Dense APIs are advertised as unavailable rather than emulated.
+- Remote execution resolves shared assets or resumable uploads, submits an
+  idempotent job, polls terminal state, and validates task-native results.
+- Mode controllers emit inference intent; `MainWindow.connect_signals()` adds
+  canonical sample/schema context and routes results back. Mode controllers
+  then emit ordinary mutation intents to `HistoryManager`.
+- Upload manifests are application settings and never enter dataset JSON.
 
 ## Business Rules
 - Dataset JSON mutation must preserve undo/redo correctness.

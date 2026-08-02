@@ -2,6 +2,7 @@ import os
 
 from PyQt6 import uic
 from PyQt6.QtCore import QAbstractTableModel, QObject, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QMenu, QPushButton, QTableView, QWidget
 
 from utils import (
@@ -73,6 +74,8 @@ class DenseTableModel(QAbstractTableModel):
     def flags(self, index):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
+        if self._data[index.row()].get("_pending_prediction"):
+            return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         return (
             Qt.ItemFlag.ItemIsEnabled
             | Qt.ItemFlag.ItemIsSelectable
@@ -106,6 +109,11 @@ class DenseTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.UserRole:
             return item
+        if role == Qt.ItemDataRole.BackgroundRole and item.get("_pending_prediction"):
+            return QColor("#fff3bf")
+        if role == Qt.ItemDataRole.ToolTipRole and item.get("_pending_prediction"):
+            score = float(item.get("confidence_score", 0.0) or 0.0) * 100
+            return f"Pending model prediction · {score:.1f}% · {item.get('inference_model_id', '')}"
 
         return None
 
@@ -307,6 +315,11 @@ class DenseAnnotationPanel(QWidget):
     eventDeleted = pyqtSignal(dict)
     eventModified = pyqtSignal(dict, dict)
     updateTimeForSelectedRequested = pyqtSignal(dict)
+    inferenceRequested = pyqtSignal()
+    smartConfirmRequested = pyqtSignal()
+    smartRejectRequested = pyqtSignal()
+    smartAcceptAllRequested = pyqtSignal()
+    smartRejectAllRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -325,6 +338,23 @@ class DenseAnnotationPanel(QWidget):
         self.denseConfirmBtn.setProperty("class", "dense_confirm_btn")
 
         self.input_widget = _DenseInputAdapter(submit_btn=self.denseConfirmBtn)
+
+        self.run_inference_button = QPushButton("Run Inference…", self)
+        self.confirm_smart_button = QPushButton("Accept Selected", self)
+        self.reject_smart_button = QPushButton("Reject Selected Prediction", self)
+        self.accept_all_smart_button = QPushButton("Accept All", self)
+        self.reject_all_smart_button = QPushButton("Reject All", self)
+        self.denseMainLayout.insertWidget(3, self.run_inference_button)
+        self.denseMainLayout.insertWidget(4, self.confirm_smart_button)
+        self.denseMainLayout.insertWidget(5, self.reject_smart_button)
+        self.denseMainLayout.insertWidget(6, self.accept_all_smart_button)
+        self.denseMainLayout.insertWidget(7, self.reject_all_smart_button)
+        self.run_inference_button.clicked.connect(self.inferenceRequested.emit)
+        self.confirm_smart_button.clicked.connect(self.smartConfirmRequested.emit)
+        self.reject_smart_button.clicked.connect(self.smartRejectRequested.emit)
+        self.accept_all_smart_button.clicked.connect(self.smartAcceptAllRequested.emit)
+        self.reject_all_smart_button.clicked.connect(self.smartRejectAllRequested.emit)
+        self.set_prediction_actions_visible(False)
 
         self.table = _DenseTableAdapter(
             self.denseEventsTableView,
@@ -394,6 +424,10 @@ class DenseAnnotationPanel(QWidget):
 
     def set_events(self, annotations):
         self.table.set_data(annotations or [])
+
+    def set_prediction_actions_visible(self, visible):
+        for button in (self.confirm_smart_button, self.reject_smart_button, self.accept_all_smart_button, self.reject_all_smart_button):
+            button.setVisible(bool(visible))
 
     def set_timeline_origin(self, origin_utc):
         self.table.set_timeline_origin(origin_utc)

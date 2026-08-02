@@ -7,6 +7,10 @@ Owns Question/Answer mode behavior:
 - multiline answer add/edit dialogs
 - emits typed mutation intents to `HistoryManager`
 
+Shared VQA inference answers the selected question. Pending answers are
+session-only `{text, confidence_score, inference_model_id}` candidates; accept stores
+a manual string and reject removes it. Readers accept both forms.
+
 ## Contracts
 - Constructor accepts only panel dependency.
 - Does not mutate dataset directly.

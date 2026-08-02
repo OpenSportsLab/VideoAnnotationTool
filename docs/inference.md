@@ -1,0 +1,120 @@
+# Local and Remote Inference
+
+The application can run models in the local Python process through
+OpenSportsLib or submit asynchronous jobs to one remote inference server.
+Classification, Localization, Description, Dense Description, and Q/A share
+the same model-selection, input-selection, progress, cancellation, and error
+workflow.
+
+## Configure inference
+
+Open **Edit → Settings → Inference**, or expand **Advanced connection and
+model settings** in the run dialog. Both surfaces use the same configuration
+editor. Run-dialog changes are one-shot unless **Remember these settings as
+defaults** is checked.
+
+- Choose the default **Local** or **Remote** backend.
+- For Remote, enter the server base URL and use **Test Connection**. The client
+  calls `/api/v1/capabilities` and reports the API version and shared-root IDs.
+- Add a shared mapping when a local directory and a server storage root contain
+  the same files. A file below that directory is sent as
+  `shared://<root-id>/<relative-path>` and is not uploaded.
+- Add local models with a task, model ID, display name, config YAML, and
+  optional weights. Built-in Classification and Localization entries continue
+  to use the application config templates.
+
+Remote v1 has no authentication. Localhost HTTP is allowed. An HTTP server on
+another host is marked as unauthenticated and unencrypted; use it only on a
+trusted private network.
+
+## Run inference
+
+Use the single **Run Inference…** button in any annotation mode. Choose Local
+or Remote, a compatible model and inputs, then fill in the task options shown
+by the dialog. Local executes OpenSportsLib directly and never contacts the
+configured server. Remote uses the `/api/v1` API.
+
+The run dialog discovers models for the current task, disables unavailable
+local model APIs, and lets you choose compatible sample inputs. Localization
+and Dense models may accept a time range. Localization range uploads are
+clipped locally when shared storage is unavailable, and returned positions are
+translated back to the original sample timeline.
+
+Classification exposes current-sample and all-samples scope in this dialog; it
+does not have a separate batch-inference control.
+
+## Large files
+
+The client resolves each input in this order:
+
+1. A configured shared-storage mapping.
+2. A previously completed upload for the same server, path, size, and modified
+   time.
+3. A resumable multipart upload.
+
+Multipart state is application state, not project JSON. The server chooses the
+part size. The client uploads up to three parts concurrently, streams each part
+in bounded chunks, sends a SHA-256 checksum, retries transient failures up to
+five times, and records completed ETags/checksums. Restarting asks the server
+which parts already exist. Cancelling aborts the active job and an incomplete
+active upload.
+
+## Review predictions
+
+- Classification shows the proposed label beside its head.
+- Localization and Dense Description show visually distinct pending rows.
+- Description previews the candidate without replacing the editable caption.
+- Q/A shows a pending answer under the selected or newly entered question.
+
+Predictions remain in session memory until accepted. They do not dirty the
+project, enter exported JSON, or create undo entries. **Accept** commits a
+plain annotation as one undoable mutation; **Reject** only removes the pending
+candidate. Multi-result widgets also provide **Accept All** and **Reject All**.
+Pending rows show confidence and model identity, and the Smart Labelled filter
+recognizes them while the application is open. Editing the same annotation
+manually invalidates its pending candidates.
+
+## Server API v1
+
+The client expects these JSON endpoints below `/api/v1`:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /capabilities` | API version, tasks, polling interval, multipart limits, shared roots |
+| `GET /models?task=…` | Task-compatible model descriptors |
+| `POST /uploads` | Create or deduplicate a multipart upload |
+| `GET /uploads/{id}` | Resume state and refreshed part URLs |
+| `POST /uploads/{id}/complete` | Complete parts and return an asset ID |
+| `DELETE /uploads/{id}` | Abort an incomplete upload |
+| `POST /jobs` | Create an idempotent asynchronous inference job |
+| `GET /jobs/{id}` | Poll status and retrieve an inline result |
+| `GET /jobs/{id}/result` | Retrieve a non-inline successful result |
+| `DELETE /jobs/{id}` | Cancel a job |
+
+Model descriptors use `id`, `display_name`, `task`, `version`, `available`,
+`unavailable_reason`, `accepted_input_types`, `min_inputs`, `max_inputs`, and
+`supports_time_range`.
+
+Jobs receive `idempotency_key`, `model_id`, `task`, `schema`, `parameters`, and
+`items`. Each item has `item_id`, `sample_id`, and inputs whose asset is either
+`{"kind":"shared","uri":"shared://…"}` or
+`{"kind":"upload","id":"…"}`. Job states are `queued`, `running`,
+`succeeded`, `failed`, and `cancelled`. Errors use `code`, `message`, `details`,
+and `retryable`; polling may return `Retry-After`.
+
+Successful result items use the task-native field: `labels`, `events`,
+`captions`, `dense_captions`, or `answer`.
+
+The Flask application should be a control plane behind a production WSGI
+server/reverse proxy. Model execution belongs in durable workers. Large media
+should go to S3-compatible multipart storage or an equivalent chunk store, not
+through one long-running Flask multipart request.
+
+## Local model availability
+
+The installed OpenSportsLib currently exposes `ClassificationModel`,
+`LocalizationModel`, and `VQAModel`. Local Description and Dense Description
+entries remain visible but disabled until OpenSportsLib supplies native
+`DescriptionModel` and `DenseDescriptionModel` APIs. The client does not
+approximate these tasks with VQA prompts. Remote models for those tasks remain
+fully available.

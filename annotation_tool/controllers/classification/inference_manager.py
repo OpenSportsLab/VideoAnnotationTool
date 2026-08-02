@@ -587,7 +587,7 @@ class InferenceManager(QObject):
         self.worker = worker
         worker.start()
 
-    def _on_inference_success(self, target_head, label, conf_dict):
+    def _on_inference_success(self, target_head, label, conf_dict, inference_model_id=""):
         self.panel.show_inference_loading(False)
 
         if self.model is None:
@@ -624,6 +624,8 @@ class InferenceManager(QObject):
         labels = self._sample_labels(sample)
         old_payload = copy.deepcopy(labels.get(target_head))
         new_payload = {"label": mapped_label, "confidence_score": score}
+        if inference_model_id:
+            new_payload["inference_model_id"] = str(inference_model_id)
 
         if old_payload == new_payload:
             self.panel.display_inference_result(target_head, mapped_label, self._chart_conf_dict(mapped_label, score))
@@ -667,6 +669,7 @@ class InferenceManager(QObject):
                 new_payload = copy.deepcopy(old_payload) if isinstance(old_payload, dict) else None
                 if isinstance(new_payload, dict):
                     new_payload.pop("confidence_score", None)
+                    new_payload.pop("inference_model_id", None)
                     if not new_payload:
                         new_payload = None
                 if old_payload == new_payload:

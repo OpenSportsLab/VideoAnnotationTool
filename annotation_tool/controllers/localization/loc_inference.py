@@ -114,7 +114,37 @@ class LocInferenceWorker(QThread):
             duration_ms = max(0, self.end_ms - self.start_ms)
             cmd.extend(["-t", _ms_to_ffmpeg_time(duration_ms)])
         cmd.extend(["-c", "copy", clip_video_path])
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        except subprocess.CalledProcessError:
+            # Stream-copy can fail when the requested boundary does not align
+            # with a usable keyframe or the source container cannot be copied.
+            fallback = [
+                _resolve_ffmpeg_executable(),
+                "-y",
+                "-ss",
+                _ms_to_ffmpeg_time(self.start_ms),
+                "-i",
+                self.video_path,
+            ]
+            if self.end_ms > 0:
+                fallback.extend(["-t", _ms_to_ffmpeg_time(max(0, self.end_ms - self.start_ms))])
+            fallback.extend(
+                [
+                    "-c:v", "libx264",
+                    "-preset", "veryfast",
+                    "-crf", "23",
+                    "-c:a", "aac",
+                    "-movflags", "+faststart",
+                    clip_video_path,
+                ]
+            )
+            subprocess.run(
+                fallback,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+            )
         return clip_video_path, self.start_ms
 
     def _build_runtime_config(self, tmp_dir: str, tmp_input_json: str) -> tuple[str, list[str]]:

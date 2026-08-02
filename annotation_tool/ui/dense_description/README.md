@@ -3,6 +3,8 @@
 ## Role
 Provides the Dense Description right-panel with table and add-event adapters.
 
+Includes shared inference and selected smart-row confirm/reject controls.
+
 ## Architecture Context
 - Static layout comes from `dense_annotation_panel.ui`.
 - `DenseAnnotationPanel` builds runtime adapters and table model in `__init__.py`.

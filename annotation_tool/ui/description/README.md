@@ -3,6 +3,8 @@
 ## Role
 Provides the Description right-panel widget for sample captions.
 
+Includes inference Run/Confirm/Reject controls and smart-result status.
+
 ## Architecture Context
 - Layout is defined in `description_annotation_panel.ui`.
 - `DescriptionAnnotationPanel` is a thin wrapper exposing a stable controller-facing API.

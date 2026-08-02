@@ -2,6 +2,7 @@
 
 ## Role
 Presents Question/Answer editor UI:
+- model inference and smart-answer confirm/reject controls
 - sample-level question group list
 - add/edit dialogs with dataset question suggestions
 - double-click and right-click question edit/remove affordances

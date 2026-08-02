@@ -22,6 +22,11 @@ they are not written to dataset JSON.
 The **Edit → Settings…** dialog contains application-wide preferences. On its
 **Media Controls** page, comma-separated playback factors and seek intervals
 change the two media-control rows immediately when **Apply** or **OK** is used.
+
+The **Inference** settings tab selects Local or Remote execution, configures the
+server URL, tests `/api/v1/capabilities`, maps local directories to advertised
+server storage roots, and manages local model config/weights entries. See
+[Local and Remote Inference](inference.md).
 These preferences are stored in application settings and are never added to a
 dataset JSON file.
 

@@ -3,6 +3,10 @@
 ## Role
 Implements Localization (action spotting) behavior, including schema management, event CRUD, and per-head smart inference workflows.
 
+The shared local/remote path is owned by the central inference controller.
+Remote range inputs may be clipped before upload and returned positions are
+offset back onto the original sample timeline.
+
 ## Architecture Context
 - `LocalizationEditorController` orchestrates Localization panel behavior.
 - Constructor takes only the localization panel object.
@@ -61,12 +65,12 @@ Implements Localization (action spotting) behavior, including schema management,
 - Event modify/delete requires event existence and valid selection.
 - Label add flow can optionally inject an event at current playback time.
 - Pause/resume around modal label dialogs is signal-driven.
-- Smart inference writes directly into canonical `events[]` with `confidence_score`.
+- Inference results remain transient and are combined with canonical events only for display.
 - New, moved, and inferred events write `timestamp_utc` plus `position_ms` when
   a genuine sample origin is available; relative-only samples keep `position_ms`.
 - Smart inference startup passes the selected head labels and input fps into `LocalizationInferenceManager`; the worker should not rely on hardcoded `ball_action` schema classes from config.
 - If localization inference starts failing with `nvidia.dali` / `cupy` import errors on macOS, verify the environment is using the non-DALI OpenSportsLib build rather than `0.1.0`.
-- Confirming (or manually editing) an inferred row removes `confidence_score` only.
+- Accepting adds a metadata-free event; rejecting is non-mutating. Manual edits invalidate pending rows.
 - Table confidence-cell confirmation prompt supports `Yes` (confirm), `No` (reject), `Cancel` (no-op).
 - Rejecting an inferred row deletes the smart-inferred event row.
 - Unknown predicted labels are mapped via popup per inference run.

@@ -1,0 +1,222 @@
+"""Transport-neutral contracts for local and remote inference."""
+
+from __future__ import annotations
+
+import copy
+import os
+import uuid
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+
+INFERENCE_TASKS = (
+    "classification",
+    "localization",
+    "description",
+    "dense_description",
+    "question_answer",
+)
+
+
+@dataclass(frozen=True)
+class ModelDescriptor:
+    id: str
+    display_name: str
+    task: str
+    version: str = ""
+    available: bool = True
+    unavailable_reason: str = ""
+    accepted_input_types: tuple[str, ...] = ()
+    min_inputs: int = 1
+    max_inputs: int | None = None
+    supports_time_range: bool = False
+    config_path: str = ""
+    weights: str = ""
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ModelDescriptor":
+        if not isinstance(payload, dict):
+            raise TypeError("Model descriptor must be an object.")
+        task = str(payload.get("task") or "").strip()
+        if task not in INFERENCE_TASKS:
+            raise ValueError(f"Unsupported inference task: {task!r}")
+        model_id = str(payload.get("id") or "").strip()
+        if not model_id:
+            raise ValueError("Model descriptor id cannot be empty.")
+        raw_max = payload.get("max_inputs")
+        return cls(
+            id=model_id,
+            display_name=str(payload.get("display_name") or model_id),
+            task=task,
+            version=str(payload.get("version") or ""),
+            available=bool(payload.get("available", True)),
+            unavailable_reason=str(payload.get("unavailable_reason") or ""),
+            accepted_input_types=tuple(str(value) for value in payload.get("accepted_input_types", []) or []),
+            min_inputs=max(0, int(payload.get("min_inputs", 1) or 0)),
+            max_inputs=None if raw_max in (None, "") else max(0, int(raw_max)),
+            supports_time_range=bool(payload.get("supports_time_range", False)),
+            config_path=str(payload.get("config_path") or ""),
+            weights=str(payload.get("weights") or ""),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["accepted_input_types"] = list(self.accepted_input_types)
+        return payload
+
+
+@dataclass
+class InferenceInput:
+    path: str
+    type: str = "video"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_sample_input(cls, item: dict[str, Any], resolved_path: str | None = None):
+        metadata = copy.deepcopy(item)
+        metadata.pop("path", None)
+        input_type = str(metadata.pop("type", "video") or "video")
+        return cls(path=str(resolved_path or item.get("path") or ""), type=input_type, metadata=metadata)
+
+    def to_wire(self, asset: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = {"type": self.type, **copy.deepcopy(self.metadata)}
+        if asset is None:
+            payload["path"] = self.path
+        else:
+            payload["asset"] = copy.deepcopy(asset)
+        return payload
+
+
+@dataclass
+class InferenceItem:
+    sample_id: str
+    inputs: list[InferenceInput]
+    sample: dict[str, Any] = field(default_factory=dict)
+    item_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+
+@dataclass
+class InferenceRequest:
+    task: str
+    model_id: str
+    items: list[InferenceItem]
+    parameters: dict[str, Any] = field(default_factory=dict)
+    schema: dict[str, Any] = field(default_factory=dict)
+    backend: str = "local"
+    # Immutable, request-scoped provider options.  This deliberately keeps a
+    # run-dialog draft independent from the application-wide defaults.
+    provider_config: dict[str, Any] = field(default_factory=dict)
+    target_context: dict[str, Any] = field(default_factory=dict)
+    request_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    def __post_init__(self):
+        if self.task not in INFERENCE_TASKS:
+            raise ValueError(f"Unsupported inference task: {self.task!r}")
+        if not str(self.model_id or "").strip():
+            raise ValueError("Inference model id cannot be empty.")
+        if not self.items:
+            raise ValueError("Inference requires at least one item.")
+
+
+@dataclass(frozen=True)
+class InferenceResult:
+    request_id: str
+    task: str
+    model_id: str
+    items: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class PendingPrediction:
+    """A normalized, session-only prediction awaiting human review."""
+
+    prediction_id: str
+    request_id: str
+    task: str
+    sample_id: str
+    model_id: str
+    payload: dict[str, Any]
+    confidence_score: float = 0.0
+    target_context: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def create(cls, result: InferenceResult, item: dict[str, Any], payload: dict[str, Any], *, confidence=0.0, target_context=None):
+        return cls(
+            prediction_id=uuid.uuid4().hex,
+            request_id=result.request_id,
+            task=result.task,
+            sample_id=str(item.get("sample_id") or ""),
+            model_id=result.model_id,
+            payload=copy.deepcopy(payload),
+            confidence_score=max(0.0, min(1.0, float(confidence or 0.0))),
+            target_context=copy.deepcopy(target_context or {}),
+        )
+
+
+class InferenceError(RuntimeError):
+    def __init__(self, message: str, *, code: str = "inference_error", retryable: bool = False, details=None):
+        super().__init__(str(message))
+        self.code = str(code)
+        self.retryable = bool(retryable)
+        self.details = details
+
+
+def resolve_sample_inputs(sample: dict[str, Any], project_json_path: str = "") -> list[InferenceInput]:
+    """Resolve project-relative input paths without mutating the sample."""
+    base_dir = os.path.dirname(project_json_path) if project_json_path else ""
+    resolved = []
+    for item in list(sample.get("inputs") or []):
+        if not isinstance(item, dict) or not item.get("path"):
+            continue
+        path = os.path.expanduser(str(item["path"]))
+        if not os.path.isabs(path) and base_dir:
+            path = os.path.join(base_dir, path)
+        resolved.append(InferenceInput.from_sample_input(item, os.path.abspath(path)))
+    return resolved
+
+
+def validate_result_payload(request: InferenceRequest, payload: Any) -> InferenceResult:
+    """Validate the stable outer result envelope and task-native item fields."""
+    if not isinstance(payload, dict):
+        raise InferenceError("Inference result must be a JSON object.", code="invalid_result")
+    raw_items = payload.get("items")
+    if raw_items is None and isinstance(payload.get("result"), dict):
+        raw_items = payload["result"].get("items")
+    if not isinstance(raw_items, list):
+        # Local OSL results commonly return a top-level data array.
+        raw_items = payload.get("data")
+    if not isinstance(raw_items, list):
+        raise InferenceError("Inference result is missing an items array.", code="invalid_result")
+
+    required_field = {
+        "classification": "labels",
+        "localization": "events",
+        "description": "captions",
+        "dense_description": "dense_captions",
+        "question_answer": "answer",
+    }[request.task]
+    normalized = []
+    for index, raw in enumerate(raw_items):
+        if not isinstance(raw, dict):
+            raise InferenceError(f"Result item {index} must be an object.", code="invalid_result")
+        item = copy.deepcopy(raw)
+        if required_field not in item:
+            # OSL data items use id rather than item_id; preserve and correlate by order.
+            if request.task == "question_answer" and isinstance(item.get("answers"), list):
+                answers = item["answers"]
+                if answers:
+                    item["answer"] = copy.deepcopy(answers[0])
+            if required_field not in item:
+                raise InferenceError(
+                    f"Result item {index} is missing {required_field!r}.", code="invalid_result"
+                )
+        item.setdefault("item_id", request.items[index].item_id if index < len(request.items) else "")
+        item.setdefault("sample_id", request.items[index].sample_id if index < len(request.items) else str(item.get("id") or ""))
+        normalized.append(item)
+
+    return InferenceResult(
+        request_id=request.request_id,
+        task=request.task,
+        model_id=request.model_id,
+        items=tuple(normalized),
+    )

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QMessageBox
+from inference_types import InferenceResult
 
 
 MODE_TO_TAB_INDEX = {
@@ -129,30 +130,20 @@ def test_history_contract_classification_mutations(window, monkeypatch, qtbot, s
         window.classification_editor_controller.clear_current_manual_annotation,
     )
 
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: window.classification_editor_controller.inference_manager._on_inference_success(
-            "action",
-            "pass",
-            {"pass": 0.9, "Other Uncertainties": 0.1},
-        ),
+    result = InferenceResult(
+        "request", "classification", "model",
+        ({"sample_id": controller.current_sample_id, "labels": {"action": {"label": "pass", "confidence_score": 0.9}}},),
+    )
+    _assert_non_mutating_action_keeps_history_unchanged(
+        window, qtbot, lambda: controller.apply_shared_inference_result(result, {"head": "action"})
     )
 
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: window.classification_editor_controller.reject_smart_annotation_head("action"),
+    _assert_non_mutating_action_keeps_history_unchanged(
+        window, qtbot, lambda: controller.reject_smart_annotation_head("action")
     )
 
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: window.classification_editor_controller.inference_manager._on_inference_success(
-            "action",
-            "pass",
-            {"pass": 0.9, "Other Uncertainties": 0.1},
-        ),
+    _assert_non_mutating_action_keeps_history_unchanged(
+        window, qtbot, lambda: controller.apply_shared_inference_result(result, {"head": "action"})
     )
 
     _assert_mutating_action_creates_single_history_entry(
@@ -166,20 +157,6 @@ def test_history_contract_classification_mutations(window, monkeypatch, qtbot, s
         qtbot,
         window.classification_editor_controller.clear_current_smart_annotation,
     )
-
-    path = window.get_current_action_path()
-    assert path
-    sample = window.dataset_explorer_controller.get_sample_by_path(path)
-    assert isinstance(sample, dict)
-    sample.setdefault("labels", {})
-    sample["labels"]["action"] = {"label": "shot", "confidence_score": 1.0}
-
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: window.classification_editor_controller.inference_manager.confirm_batch_inference({path: "shot"}),
-    )
-
 
 @pytest.mark.gui
 def test_history_contract_localization_event_and_schema_mutations(window, monkeypatch, qtbot, synthetic_project_json):
@@ -292,21 +269,20 @@ def test_history_contract_localization_smart_mutations(window, monkeypatch, qtbo
     controller = window.localization_editor_controller
 
     controller.current_head = "ball_action"
-    predicted_confirm = [{"head": "ball_action", "label": "pass", "position_ms": 3500, "confidence_score": 0.9}]
-    predicted_reject = [{"head": "ball_action", "label": "shot", "position_ms": 3600, "confidence_score": 0.85}]
-    predicted_edit = [{"head": "ball_action", "label": "shot", "position_ms": 3700, "confidence_score": 0.8}]
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: controller._on_inference_success(copy.deepcopy(predicted_confirm)),
+    def result(label, position, confidence):
+        return InferenceResult(
+            f"request-{position}", "localization", "model",
+            ({"sample_id": controller.current_sample_id, "events": [{"head": "ball_action", "label": label, "position_ms": position, "confidence_score": confidence}]},),
+        )
+
+    _assert_non_mutating_action_keeps_history_unchanged(
+        window, qtbot, lambda: controller.apply_shared_inference_result(result("pass", 3500, 0.9), {"head": "ball_action"})
     )
 
     def _confirm_first_smart_event():
-        path = controller.current_video_path
-        events = list(window.dataset_explorer_controller.localization_events.get(path, []))
-        smart_events = [evt for evt in events if isinstance(evt, dict) and "confidence_score" in evt]
-        assert smart_events
-        controller._on_confirm_single_annotation(copy.deepcopy(smart_events[0]))
+        pending = controller._pending_predictions[controller.current_sample_id]
+        assert pending
+        controller._on_confirm_single_annotation(copy.deepcopy(pending[0]))
 
     _assert_mutating_action_creates_single_history_entry(
         window,
@@ -314,45 +290,19 @@ def test_history_contract_localization_smart_mutations(window, monkeypatch, qtbo
         _confirm_first_smart_event,
     )
 
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: controller._on_inference_success(copy.deepcopy(predicted_reject)),
+    _assert_non_mutating_action_keeps_history_unchanged(
+        window, qtbot, lambda: controller.apply_shared_inference_result(result("shot", 3600, 0.85), {"head": "ball_action"})
     )
 
     def _reject_first_smart_event():
-        path = controller.current_video_path
-        events = list(window.dataset_explorer_controller.localization_events.get(path, []))
-        smart_events = [evt for evt in events if isinstance(evt, dict) and "confidence_score" in evt]
-        assert smart_events
-        controller._on_reject_single_annotation(copy.deepcopy(smart_events[0]))
+        pending = controller._pending_predictions[controller.current_sample_id]
+        assert pending
+        controller._on_reject_single_annotation(copy.deepcopy(pending[0]))
 
-    _assert_mutating_action_creates_single_history_entry(
+    _assert_non_mutating_action_keeps_history_unchanged(
         window,
         qtbot,
         _reject_first_smart_event,
-    )
-
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        lambda: controller._on_inference_success(copy.deepcopy(predicted_edit)),
-    )
-
-    def _edit_smart_event_time_auto_confirms():
-        path = controller.current_video_path
-        events = list(window.dataset_explorer_controller.localization_events.get(path, []))
-        smart_events = [evt for evt in events if isinstance(evt, dict) and "confidence_score" in evt]
-        assert smart_events
-        old_event = copy.deepcopy(smart_events[0])
-        new_event = copy.deepcopy(old_event)
-        new_event["position_ms"] = int(old_event.get("position_ms", 0)) + 222
-        controller._on_annotation_modified(old_event, new_event)
-
-    _assert_mutating_action_creates_single_history_entry(
-        window,
-        qtbot,
-        _edit_smart_event_time_auto_confirms,
     )
 
 

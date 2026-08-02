@@ -28,7 +28,6 @@ from colors import (
     localization_label_text_hex,
     normalize_hex_color,
 )
-from ui.dialogs import BusyStatusDialog
 from utils import (
     annotation_utc_datetime,
     format_annotation_utc_display,
@@ -98,7 +97,7 @@ class _LocalizationTableModel(QAbstractTableModel):
     def flags(self, index):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
-        if index.column() >= 3:
+        if self._data[index.row()].get("_pending_prediction") or index.column() >= 3:
             return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         return (
             Qt.ItemFlag.ItemIsEnabled
@@ -141,7 +140,7 @@ class _LocalizationTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.BackgroundRole:
             definition = self._schema.get(item.get("head", ""), {}) if isinstance(self._schema, dict) else {}
             label_colors = definition.get("label_colors", {}) if isinstance(definition, dict) else {}
-            color = QColor(localization_label_color_hex(item.get("head", ""), item.get("label", ""), label_colors))
+            color = QColor("#fff3bf") if item.get("_pending_prediction") else QColor(localization_label_color_hex(item.get("head", ""), item.get("label", ""), label_colors))
             color.setAlpha(72)
             return QBrush(color)
 
@@ -489,6 +488,7 @@ class _SpottingTabsAdapter(QObject):
         header_layout.addWidget(time_label)
         header_layout.addStretch()
         smart_infer_btn = QPushButton("Smart Inference")
+        smart_infer_btn.setVisible(False)
         smart_infer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         header_layout.addWidget(smart_infer_btn)
         page_layout.addLayout(header_layout)
@@ -809,7 +809,9 @@ class LocalizationAnnotationPanel(QWidget):
 
     tabSwitched = pyqtSignal(int)
     eventNavigateRequested = pyqtSignal(int)
-    inferenceCancelRequested = pyqtSignal()
+    sharedInferenceRequested = pyqtSignal()
+    acceptAllPredictionsRequested = pyqtSignal()
+    rejectAllPredictionsRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -846,44 +848,23 @@ class LocalizationAnnotationPanel(QWidget):
         self.btn_prev_event.clicked.connect(lambda: self.eventNavigateRequested.emit(-1))
         self.btn_next_event.clicked.connect(lambda: self.eventNavigateRequested.emit(1))
 
-        self._inference_loading_dialog = BusyStatusDialog(
-            "Inference",
-            "Loading model and running inference. Please wait...",
-            self,
-            show_cancel=True,
-        )
-        self._inference_loading_dialog.cancelRequested.connect(self.inferenceCancelRequested.emit)
-        self._inference_loading_dialog.hide()
+        self.btn_shared_inference = QPushButton("Run Inference…", self)
+        self.btn_shared_inference.setObjectName("btnSharedInference")
+        self.layout().addWidget(self.btn_shared_inference)
+        self.btn_shared_inference.clicked.connect(self.sharedInferenceRequested.emit)
+        self.btn_accept_all_predictions = QPushButton("Accept All", self)
+        self.btn_reject_all_predictions = QPushButton("Reject All", self)
+        self.layout().addWidget(self.btn_accept_all_predictions)
+        self.layout().addWidget(self.btn_reject_all_predictions)
+        self.btn_accept_all_predictions.clicked.connect(self.acceptAllPredictionsRequested.emit)
+        self.btn_reject_all_predictions.clicked.connect(self.rejectAllPredictionsRequested.emit)
+        self.set_prediction_actions_visible(False)
+
+    def set_prediction_actions_visible(self, visible):
+        self.btn_accept_all_predictions.setVisible(bool(visible))
+        self.btn_reject_all_predictions.setVisible(bool(visible))
 
     def set_timeline_origin(self, origin_utc):
         self.table.set_timeline_origin(origin_utc)
-
-    def show_inference_loading(self, is_loading: bool):
-        is_loading = bool(is_loading)
-        self.annot_mgmt.set_inference_loading(is_loading)
-        self.table.table.setEnabled(not is_loading)
-        self.btn_prev_event.setEnabled(not is_loading)
-        self.btn_next_event.setEnabled(not is_loading)
-
-        if self.table.btn_set_time is not None:
-            if is_loading:
-                self.table.btn_set_time.setEnabled(False)
-            else:
-                selection_model = self.table.table.selectionModel()
-                has_selection = bool(selection_model and selection_model.selectedRows())
-                self.table.btn_set_time.setEnabled(has_selection)
-
-        if is_loading:
-            self._inference_loading_dialog.set_message("Loading model and running inference. Please wait...")
-            self._inference_loading_dialog.set_cancel_enabled(True)
-            self._inference_loading_dialog.show()
-            self._inference_loading_dialog.raise_()
-            self._inference_loading_dialog.activateWindow()
-            self.setCursor(Qt.CursorShape.WaitCursor)
-            return
-
-        self._inference_loading_dialog.hide()
-        self.unsetCursor()
-
 
 __all__ = ["LocalizationAnnotationPanel"]

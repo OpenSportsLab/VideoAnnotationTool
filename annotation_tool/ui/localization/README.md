@@ -3,6 +3,8 @@
 ## Role
 Provides the Localization right-panel plus adapters for spotting tabs, hand events, and smart events.
 
+Includes one **Run Inference…** action and shared progress/cancellation controls.
+
 ## Architecture Context
 - Static layout comes from `localization_annotation_panel.ui`.
 - Runtime adapters in `__init__.py` expose controller-friendly interfaces.

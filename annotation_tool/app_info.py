@@ -3,7 +3,7 @@
 from media_control_settings import format_control_value
 
 APP_DISPLAY_NAME = "Video Annotation Tool"
-APP_VERSION = "v1.4.1"
+APP_VERSION = "v1.4.3"
 
 _SHORTCUTS_HELP_PREFIX = """Project
 Ctrl+O: Load dataset JSON
