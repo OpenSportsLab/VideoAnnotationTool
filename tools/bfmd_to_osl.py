@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-bfmd_to_osl_v2.py
+bfmd_to_osl.py
 
 Convert BFMD to OSL-JSON with integrated video handling:
 1. Direct yt-dlp download of full-match videos (no external script)
