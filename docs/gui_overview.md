@@ -30,6 +30,11 @@ they are not written to dataset JSON.
   - Unknown/custom root keys (read-only)
   - Raw JSON preview
 
+Large datasets appear progressively in correctly sorted batches so the window
+continues to repaint and accept input. Filters restart that progressive view
+using only matching samples; they never change or partially load the canonical
+dataset. The raw JSON text is generated only when its inspector tab is opened.
+
 Selecting a sample row preserves playback state: playing streams continue and
 paused or stopped streams do not start. A sample row has no focused modality,
 so all viewer contours are cleared. Selecting one of the active sample's input

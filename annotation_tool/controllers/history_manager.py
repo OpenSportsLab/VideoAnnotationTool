@@ -778,10 +778,9 @@ class HistoryManager(QObject):
             self.model.current_selected_sample_id = final_id
 
         self.model.populate_tree()
-        entry = self.model.sample_id_to_entry.get(final_id)
-        item = self.model.action_item_map.get(entry["path"]) if entry else None
-        if item is not None:
-            self.model.panel.tree.setCurrentIndex(item.index())
+        index = self.model.tree_model.index_for_sample_id(final_id, expose=True)
+        if index.isValid():
+            self.model.panel.tree.setCurrentIndex(index)
 
         self.model._refresh_json_preview()
         self.saveStateRefreshRequested.emit()
@@ -851,10 +850,9 @@ class HistoryManager(QObject):
         )
 
         if first_sample_id:
-            entry = self.model.sample_id_to_entry.get(first_sample_id)
-            item = self.model.action_item_map.get(entry["path"]) if entry else None
-            if item is not None:
-                self.model.panel.tree.setCurrentIndex(item.index())
+            index = self.model.tree_model.index_for_sample_id(first_sample_id, expose=True)
+            if index.isValid():
+                self.model.panel.tree.setCurrentIndex(index)
                 self.model.panel.tree.setFocus()
 
     def execute_clear_workspace(self):

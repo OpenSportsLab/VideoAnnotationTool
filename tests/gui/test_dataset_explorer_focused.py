@@ -5,7 +5,7 @@ Focused Dataset Explorer controller and panel tests using minimal fixtures.
 import pytest
 import h5py
 import numpy as np
-from PyQt6.QtCore import QSettings, Qt
+from PyQt6.QtCore import QSettings, Qt, QTimer
 from PyQt6.QtWidgets import QDialog, QMessageBox
 
 from controllers.dataset_explorer_controller import DatasetExplorerController
@@ -33,6 +33,71 @@ def _known_row(panel, key: str) -> int:
         if key_item and key_item.text() == key:
             return row
     raise AssertionError(f"Missing known header row: {key}")
+
+
+def _large_dataset(sample_count=11_301):
+    return {
+        "version": "2.0",
+        "labels": {"action": {"type": "single_label", "labels": ["pass"]}},
+        "data": [
+            {
+                "id": f"clip_{index + 1}",
+                "inputs": [],
+                "labels": {"action": {"label": "pass"}} if index % 2 == 0 else {},
+            }
+            for index in range(sample_count)
+        ],
+    }
+
+
+def test_large_dataset_exposes_sorted_rows_progressively_and_yields_to_event_loop(
+    explorer_panel_and_controller,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    rebuild_calls = {"count": 0}
+    original_rebuild = controller._rebuild_runtime_index
+
+    def counted_rebuild():
+        rebuild_calls["count"] += 1
+        return original_rebuild()
+
+    controller._rebuild_runtime_index = counted_rebuild
+    emitted_summaries = []
+    controller.classificationActionListChanged.connect(emitted_summaries.append)
+
+    assert controller.load_project(_large_dataset(), str(tmp_path / "large.json"))
+    assert rebuild_calls["count"] == 1
+    assert panel.tree_model.rowCount() == panel.tree_model.DEFAULT_BATCH_SIZE
+    assert panel.tree_model.index(0, 0).data() == "clip_1"
+    assert panel.tree_model.index(1, 0).data() == "clip_2"
+    assert emitted_summaries and "sample_ref" not in emitted_summaries[-1][0]
+
+    heartbeat_rows = []
+    QTimer.singleShot(0, lambda: heartbeat_rows.append(panel.tree_model.rowCount()))
+    qtbot.waitUntil(lambda: bool(heartbeat_rows), timeout=1000)
+    assert heartbeat_rows[0] < 11_301
+
+    qtbot.waitUntil(lambda: panel.tree_model.rowCount() == 11_301, timeout=3000)
+
+
+def test_progressive_generation_is_cancelled_by_filter_and_reset(
+    explorer_panel_and_controller,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    assert controller.load_project(_large_dataset(), str(tmp_path / "large.json"))
+
+    controller.handle_filter_change(1, selection_fallback="clear_selection")
+    assert panel.tree_model.rowCount() == panel.tree_model.DEFAULT_BATCH_SIZE
+    assert panel.tree_model.index(0, 0).data() == "clip_1"
+    assert panel.tree_model.index(1, 0).data() == "clip_3"
+
+    controller.reset(full_reset=True)
+    qtbot.wait(50)
+    assert panel.tree_model.rowCount() == 0
 
 
 def test_write_promotes_and_reprojects_absolute_temporal_annotations(
@@ -556,11 +621,18 @@ def test_dataset_tree_child_inputs_keep_roles_and_no_conf_suffix(
     assert child_name.data() == "view_1.mp4"
 
 
-def test_dataset_tree_rename_strips_conf_suffix(explorer_panel_and_controller):
-    _panel, controller = explorer_panel_and_controller
+def test_dataset_tree_rename_strips_conf_suffix(explorer_panel_and_controller, qtbot):
+    panel, controller = explorer_panel_and_controller
+    controller.dataset_json = {"labels": {}, "data": [{"id": "clip_1", "inputs": []}]}
+    controller.populate_tree()
+    rename_requests = []
+    panel.tree_model.renameRequested.connect(lambda old, new: rename_requests.append((old, new)))
 
-    assert controller._sample_id_from_tree_item_text("clip_1 (conf:0.75)") == "clip_1"
-    assert controller._sample_id_from_tree_item_text("renamed_clip") == "renamed_clip"
+    index = panel.tree_model.index(0, 0)
+    assert panel.tree_model.setData(index, "renamed_clip (conf:0.75)", Qt.ItemDataRole.EditRole)
+    qtbot.waitUntil(lambda: bool(rename_requests))
+
+    assert rename_requests == [("clip_1", "renamed_clip")]
 
 
 def test_group_selected_files_and_sample_id_rules(

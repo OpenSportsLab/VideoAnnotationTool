@@ -242,7 +242,6 @@ class DatasetExplorerController(QObject):
     statusMessageRequested = pyqtSignal(str, str, int)
     saveStateRefreshRequested = pyqtSignal()
     schemaRefreshRequested = pyqtSignal()
-    batchDropdownSyncRequested = pyqtSignal()
     workspaceViewRequested = pyqtSignal()
     welcomeViewRequested = pyqtSignal()
     resetEditorsRequested = pyqtSignal()
@@ -299,8 +298,9 @@ class DatasetExplorerController(QObject):
         self.redo_stack = []
 
         self.action_item_data = []
-        self.action_item_map = {}
         self.action_path_to_name = {}
+        self.action_path_to_sample = {}
+        self.path_key_to_sample = {}
         self.action_id_to_path = {}
         self.action_id_to_item = {}
         self.sample_id_to_sample = {}
@@ -309,9 +309,8 @@ class DatasetExplorerController(QObject):
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
         self._last_routed_media_path = None
-        self._suspend_tree_item_changed = False
         self._sort_by_confidence = False
-        self._is_populating_tree = False
+        self._json_preview_dirty = True
 
         self.manual_annotations = _ManualAnnotationsProxy(self)
         self.localization_events = _SampleListProxy(self, "events")
@@ -428,7 +427,9 @@ class DatasetExplorerController(QObject):
         if hasattr(self.panel, "header_tabs"):
             self.panel.header_tabs.currentChanged.connect(self._on_explorer_tab_changed)
         self.panel.tree.selectionModel().currentChanged.connect(self._on_selection_changed)
-        self.tree_model.itemChanged.connect(self._on_tree_item_changed)
+        self.tree_model.renameRequested.connect(self.sampleRenameRequested.emit)
+        self.tree_model.exposureProgressChanged.connect(self._on_tree_exposure_progress)
+        self.tree_model.exposureFinished.connect(self._on_tree_exposure_finished)
 
     def reset(self, full_reset: bool = False):
         self.current_json_path = None
@@ -441,8 +442,9 @@ class DatasetExplorerController(QObject):
         self.redo_stack = []
 
         self.action_item_data = []
-        self.action_item_map = {}
         self.action_path_to_name = {}
+        self.action_path_to_sample = {}
+        self.path_key_to_sample = {}
         self.action_id_to_path = {}
         self.action_id_to_item = {}
         self.sample_id_to_sample = {}
@@ -451,9 +453,8 @@ class DatasetExplorerController(QObject):
         self.current_selected_sample_id = ""
         self.current_selected_input_path = None
         self._last_routed_media_path = None
-        self._suspend_tree_item_changed = False
         self._sort_by_confidence = False
-        self._is_populating_tree = False
+        self._json_preview_dirty = True
 
         if hasattr(self.panel, "sort_conf_checkbox"):
             was_blocked = self.panel.sort_conf_checkbox.blockSignals(True)
@@ -462,8 +463,8 @@ class DatasetExplorerController(QObject):
 
         if hasattr(self.tree_model, "clear"):
             self.tree_model.clear()
-            if hasattr(self.tree_model, "configure_columns"):
-                self.tree_model.configure_columns()
+        if hasattr(self.panel, "clear_raw_json_text"):
+            self.panel.clear_raw_json_text()
         if hasattr(self.panel, "tree") and self.panel.tree is not None:
             self.panel.tree.setCurrentIndex(QModelIndex())
 
@@ -474,6 +475,7 @@ class DatasetExplorerController(QObject):
         self.undo_stack.append({"type": cmd_type, **kwargs})
         self.redo_stack.clear()
         self.is_data_dirty = True
+        self._json_preview_dirty = True
 
     def snapshot_dataset_json(self):
         return copy.deepcopy(self.dataset_json)
@@ -519,10 +521,9 @@ class DatasetExplorerController(QObject):
             return None
         path = str(path)
 
-        # Fast exact match on canonical runtime path.
-        for entry in self.action_item_data:
-            if entry.get("path") == path:
-                return entry["sample_ref"]
+        sample = self.action_path_to_sample.get(path)
+        if sample is not None:
+            return sample
 
         # Compatibility: accept equivalent source paths (relative/absolute).
         candidate_keys = []
@@ -535,13 +536,10 @@ class DatasetExplorerController(QObject):
         if not candidate_keys:
             return None
 
-        for entry in self.action_item_data:
-            entry_key = self._fs_path_key(entry.get("path"))
-            if entry_key in candidate_keys:
-                return entry["sample_ref"]
-            for source_path in list(entry.get("source_files", [])):
-                if self._fs_path_key(source_path) in candidate_keys:
-                    return entry["sample_ref"]
+        for candidate_key in candidate_keys:
+            sample = self.path_key_to_sample.get(candidate_key)
+            if sample is not None:
+                return sample
         return None
 
     def get_item_by_id(self, data_id: str):
@@ -586,9 +584,6 @@ class DatasetExplorerController(QObject):
             sample_id = sample.get("id")
             if sample_id:
                 return str(sample_id)
-        for entry in self.action_item_data:
-            if entry.get("path") == path:
-                return entry.get("data_id")
         return None
 
     def _emit_selected_sample(self, sample_id: str):
@@ -620,7 +615,11 @@ class DatasetExplorerController(QObject):
         self.qaQuestionCatalogChanged.emit(questions)
 
     def _emit_classification_action_list(self):
-        self.classificationActionListChanged.emit(copy.deepcopy(self.action_item_data))
+        summaries = [
+            {"id": entry["data_id"], "name": entry["name"], "path": entry["path"]}
+            for entry in self.action_item_data
+        ]
+        self.classificationActionListChanged.emit(summaries)
 
     def _reemit_current_selection(self):
         selected = self.current_selected_sample_id or ""
@@ -814,14 +813,7 @@ class DatasetExplorerController(QObject):
         return False
 
     def _top_level_index_for_sample(self, sample_id: str) -> QModelIndex:
-        entry = self.sample_id_to_entry.get(sample_id)
-        if not entry:
-            return QModelIndex()
-        item = self.action_item_map.get(entry.get("path"))
-        if item is None:
-            return QModelIndex()
-        idx = item.index()
-        return idx if idx.isValid() else QModelIndex()
+        return self.tree_model.index_for_sample_id(sample_id, expose=True)
 
     def _first_visible_top_level_index(self, start_row: int) -> QModelIndex:
         root = QModelIndex()
@@ -831,15 +823,11 @@ class DatasetExplorerController(QObject):
 
         tree = self.panel.tree
         for row in range(start_row, -1, -1):
-            if tree.isRowHidden(row, root):
-                continue
             idx = self.tree_model.index(row, 0, root)
             if idx.isValid():
                 return idx
 
         for row in range(max(start_row + 1, 0), row_count):
-            if tree.isRowHidden(row, root):
-                continue
             idx = self.tree_model.index(row, 0, root)
             if idx.isValid():
                 return idx
@@ -978,19 +966,14 @@ class DatasetExplorerController(QObject):
         self.current_working_directory = self.project_root
         self.json_loaded = True
         self.is_data_dirty = False
+        self._json_preview_dirty = True
 
-        self._rebuild_runtime_index()
         self.workspaceViewRequested.emit()
         self._refresh_header_panel()
         self._refresh_schema_panels()
         self.populate_tree(select_first=False)
         self._reconcile_tab_with_current_selection()
         self.saveStateRefreshRequested.emit()
-        self.statusMessageRequested.emit(
-            "Loaded",
-            f"Loaded {len(self.action_item_data)} samples.",
-            1500,
-        )
         return True
 
     def create_new_project(self, mode=None):
@@ -1001,7 +984,7 @@ class DatasetExplorerController(QObject):
         self.dataset_json = self._default_dataset_json()
         self.json_loaded = True
         self.is_data_dirty = True
-        self._rebuild_runtime_index()
+        self._json_preview_dirty = True
 
         self.workspaceViewRequested.emit()
         self.editorTabRequested.emit(initial_tab)
@@ -1150,14 +1133,24 @@ class DatasetExplorerController(QObject):
             draft={},
             key_order=list(self.HEADER_EDITABLE_KEYS),
         )
-        self._refresh_json_preview()
+        self._json_preview_dirty = True
+
+    def _json_tab_is_active(self) -> bool:
+        if not hasattr(self.panel, "header_tabs"):
+            return False
+        index = self.panel.header_tabs.currentIndex()
+        return self.panel.header_tabs.tabText(index).strip().lower() == "json"
 
     def _refresh_json_preview(self):
         if hasattr(self.panel, "set_raw_json_text"):
-            if self.json_loaded:
-                self.panel.set_raw_json_text(json.dumps(self.dataset_json, indent=2, ensure_ascii=False))
-            else:
+            if not self.json_loaded:
                 self.panel.clear_raw_json_text()
+                self._json_preview_dirty = False
+                return
+            if not self._json_tab_is_active() or not self._json_preview_dirty:
+                return
+            self.panel.set_raw_json_text(json.dumps(self.dataset_json, indent=2, ensure_ascii=False))
+            self._json_preview_dirty = False
 
     def _on_explorer_tab_changed(self, index: int):
         if not hasattr(self.panel, "header_tabs"):
@@ -1412,13 +1405,14 @@ class DatasetExplorerController(QObject):
             sample["id"] = sample_id
 
     def _make_unique_sample_id(self, base: str, reserved=None):
-        used = set(reserved or set())
         if reserved is None:
-            used.update(
+            used = {
                 str(sample.get("id"))
                 for sample in self.get_samples()
                 if isinstance(sample, dict) and sample.get("id")
-            )
+            }
+        else:
+            used = reserved
         if base not in used:
             return base
         idx = 2
@@ -1516,6 +1510,8 @@ class DatasetExplorerController(QObject):
 
         self.action_item_data = []
         self.action_path_to_name = {}
+        self.action_path_to_sample = {}
+        self.path_key_to_sample = {}
         self.action_id_to_path = {}
         self.action_id_to_item = {}
         self.sample_id_to_sample = {}
@@ -1540,6 +1536,11 @@ class DatasetExplorerController(QObject):
             }
             self.action_item_data.append(entry)
             self.action_path_to_name[path] = entry["name"]
+            self.action_path_to_sample[path] = sample
+            for indexed_path in [path, *source_files]:
+                path_key = self._fs_path_key(indexed_path)
+                if path_key:
+                    self.path_key_to_sample.setdefault(path_key, sample)
             self.action_id_to_path[sample_id] = path
             self.action_id_to_item[sample_id] = entry
             self.sample_id_to_sample[sample_id] = sample
@@ -1556,98 +1557,17 @@ class DatasetExplorerController(QObject):
         sample_id = action_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
         return self.get_sample(sample_id)
 
-    def _on_tree_item_changed(self, item):
-        if self._suspend_tree_item_changed:
-            return
-        if item is None:
-            return
-
-        item_idx = item.index()
-        if not item_idx.isValid() or item_idx.parent().isValid() or item_idx.column() != 0:
-            return
-
-        old_sample_id = str(item.data(getattr(self.tree_model, "DataIdRole", 0x0101)) or "")
-        if not old_sample_id:
-            return
-
-        requested_id = self._sample_id_from_tree_item_text(item.text())
-        if not requested_id:
-            self._suspend_tree_item_changed = True
-            try:
-                item.setText(old_sample_id)
-            finally:
-                self._suspend_tree_item_changed = False
-            return
-
-        if requested_id == old_sample_id:
-            # Ignore programmatic item changes (e.g. icon/status updates).
-            return
-
-        sample = self.get_sample(old_sample_id)
-        if not isinstance(sample, dict):
-            self._suspend_tree_item_changed = True
-            try:
-                item.setText(old_sample_id)
-            finally:
-                self._suspend_tree_item_changed = False
-            return
-
-        self._suspend_tree_item_changed = True
-        try:
-            # History manager owns the mutation; keep UI stable until refresh.
-            item.setText(old_sample_id)
-        finally:
-            self._suspend_tree_item_changed = False
-
-        # Defer mutation dispatch to avoid re-entering Qt model reset/clear while
-        # still inside the tree_model.itemChanged callback.
-        QTimer.singleShot(
-            0,
-            lambda old_id=old_sample_id, new_id=requested_id: self.sampleRenameRequested.emit(old_id, new_id),
-        )
-
-    @staticmethod
-    def _sample_id_from_tree_item_text(text: str) -> str:
-        sample_id = str(text or "").strip()
-        marker = " (conf:"
-        if sample_id.endswith(")") and marker in sample_id:
-            sample_id = sample_id.rsplit(marker, 1)[0].strip()
-        return sample_id
-
     # ------------------------------------------------------------------
     # Tree population and selection
     # ------------------------------------------------------------------
     def populate_tree(self, select_first: bool = True):
-        self._is_populating_tree = True
-        self._rebuild_runtime_index()
         preferred_sample_id = self.current_selected_sample_id
         preferred_input_path = self.current_selected_input_path
-        self.tree_model.clear()
-        if hasattr(self.tree_model, "configure_columns"):
-            self.tree_model.configure_columns()
-        self.action_item_map.clear()
-
-        sorted_items = self._sorted_action_items()
-
-        self._suspend_tree_item_changed = True
-        try:
-            for entry in sorted_items:
-                item = self.tree_model.add_entry(
-                    name=entry["name"],
-                    path=entry["path"],
-                    source_files=entry.get("source_files"),
-                    media_sources=entry.get("media_sources"),
-                    data_id=entry["data_id"],
-                    confidence_score=self._average_smart_confidence_for_sample(entry.get("sample_ref")),
-                )
-                self.action_item_map[entry["path"]] = item
-                self.update_item_status(entry["path"])
-        finally:
-            self._suspend_tree_item_changed = False
-
-        self.handle_filter_change(
-            self.panel.filter_combo.currentIndex(),
-            selection_fallback="first_visible" if select_first else "clear_selection",
+        self._rebuild_runtime_index()
+        sorted_items = self._prepare_tree_entries(self._sorted_action_items())
+        self.tree_model.set_entries(
+            sorted_items,
+            filter_index=self.panel.filter_combo.currentIndex(),
         )
 
         if self.tree_model.rowCount() > 0:
@@ -1660,10 +1580,37 @@ class DatasetExplorerController(QObject):
         else:
             self._clear_selection_for_empty_filtered_view()
 
-        self._refresh_json_preview()
-        self.batchDropdownSyncRequested.emit()
         self._emit_classification_action_list()
-        self._is_populating_tree = False
+
+    def _prepare_tree_entries(self, entries):
+        done_icon, empty_icon = self._done_icon, self._empty_icon
+        for entry in entries:
+            sample = entry.get("sample_ref")
+            confidence = self._average_smart_confidence_for_sample(sample)
+            hand_labelled, smart_labelled = self._label_state_for_sample(sample)
+            entry["display_name"] = self.tree_model.entry_display_name(entry.get("name"), confidence)
+            entry["sort_text"] = natural_sort_key(entry.get("name", ""))
+            entry["hand_labelled"] = hand_labelled
+            entry["smart_labelled"] = smart_labelled
+            if done_icon is not None and empty_icon is not None:
+                entry["status_icon"] = done_icon if (hand_labelled or smart_labelled) else empty_icon
+        return entries
+
+    def _on_tree_exposure_progress(self, visible: int, total: int):
+        if visible < total:
+            self.statusMessageRequested.emit(
+                "Loading Dataset",
+                f"Loading samples: {visible:,} / {total:,}",
+                0,
+            )
+
+    def _on_tree_exposure_finished(self, _visible_total: int):
+        if self.json_loaded:
+            self.statusMessageRequested.emit(
+                "Loaded",
+                f"Loaded {len(self.action_item_data):,} samples.",
+                1500,
+            )
 
     def _sorted_action_items(self):
         if not self._sort_by_confidence:
@@ -1688,33 +1635,26 @@ class DatasetExplorerController(QObject):
         self.populate_tree()
 
     def update_item_status(self, action_path: str):
-        item = self.action_item_map.get(action_path)
         sample = self.get_sample_by_path(action_path)
-        if item is None and isinstance(sample, dict):
-            entry = self.sample_id_to_entry.get(str(sample.get("id") or ""))
-            if entry:
-                item = self.action_item_map.get(entry.get("path"))
-        if not item:
+        if not isinstance(sample, dict):
             return
-
-        if isinstance(sample, dict):
-            self._suspend_tree_item_changed = True
-            try:
-                item.setText(self._tree_display_name_for_sample(sample))
-            finally:
-                self._suspend_tree_item_changed = False
-
-        if self._sort_by_confidence and not self._is_populating_tree:
+        sample_id = str(sample.get("id") or "")
+        entry = self.sample_id_to_entry.get(sample_id)
+        if entry is None:
+            return
+        self._prepare_tree_entries([entry])
+        if self._sort_by_confidence:
             self.populate_tree()
             return
-
-        done_icon, empty_icon = self._done_icon, self._empty_icon
-        if done_icon is not None and empty_icon is not None:
-            item.setIcon(done_icon if self.is_action_done(action_path) else empty_icon)
+        self.tree_model.refresh_sample(sample_id)
 
     def refresh_all_item_statuses(self):
-        for action_path in list(self.action_item_map.keys()):
-            self.update_item_status(action_path)
+        self._prepare_tree_entries(self.action_item_data)
+        if self._sort_by_confidence:
+            self.populate_tree()
+            return
+        for entry in self.action_item_data:
+            self.tree_model.refresh_sample(entry.get("data_id"))
 
     def _set_annotation_panels_enabled(self, enabled: bool):
         self.annotationPanelsEnabledRequested.emit(enabled)
@@ -1752,24 +1692,13 @@ class DatasetExplorerController(QObject):
         return action_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100)), action_idx
 
     def _index_for_path(self, path: str) -> QModelIndex:
-        target_key = self._fs_path_key(path)
-        if not target_key:
+        direct = self.tree_model.index_for_path(path, expose=True)
+        if direct.isValid():
+            return direct
+        sample = self.get_sample_by_path(path)
+        if not isinstance(sample, dict):
             return QModelIndex()
-
-        root = QModelIndex()
-        for row in range(self.tree_model.rowCount(root)):
-            parent_idx = self.tree_model.index(row, 0, root)
-            if not parent_idx.isValid():
-                continue
-            parent_path = parent_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-            if self._fs_path_key(parent_path) == target_key:
-                return parent_idx
-            for child_row in range(self.tree_model.rowCount(parent_idx)):
-                child_idx = self.tree_model.index(child_row, 0, parent_idx)
-                child_path = child_idx.data(getattr(self.tree_model, "FilePathRole", 0x0100))
-                if self._fs_path_key(child_path) == target_key:
-                    return child_idx
-        return QModelIndex()
+        return self.tree_model.index_for_sample_id(str(sample.get("id") or ""), expose=True)
 
     def _restore_tree_selection(self, preferred_sample_id: str = "", preferred_input_path: str = None) -> bool:
         tree = self.panel.tree
@@ -1778,13 +1707,11 @@ class DatasetExplorerController(QObject):
         if preferred_input_path:
             candidate = self._index_for_path(preferred_input_path)
             if candidate.isValid():
-                action_idx = self._get_action_index(candidate)
-                if not tree.isRowHidden(action_idx.row(), QModelIndex()):
-                    target_idx = candidate
+                target_idx = candidate
 
         if not target_idx.isValid() and preferred_sample_id:
             parent_idx = self._top_level_index_for_sample(preferred_sample_id)
-            if parent_idx.isValid() and not tree.isRowHidden(parent_idx.row(), QModelIndex()):
+            if parent_idx.isValid():
                 target_idx = parent_idx
 
         if not target_idx.isValid():
@@ -1803,16 +1730,12 @@ class DatasetExplorerController(QObject):
         expanded_sample_ids=None,
     ):
         self.dataset_json = copy.deepcopy(dataset_json_state) if isinstance(dataset_json_state, dict) else {}
-        self._rebuild_runtime_index()
+        self._json_preview_dirty = True
         self._refresh_header_panel()
         self._refresh_schema_panels()
         self.populate_tree()
         self._reapply_expanded_samples(expanded_sample_ids or set())
         self._restore_tree_selection(preferred_sample_id, preferred_input_path)
-
-    def _remove_tree_row(self, action_idx: QModelIndex):
-        if action_idx.isValid():
-            self.tree_model.removeRow(action_idx.row(), action_idx.parent())
 
     def _expand_current_parent(self):
         tree = self.panel.tree
@@ -1990,52 +1913,35 @@ class DatasetExplorerController(QObject):
         row = current_top.row() + (1 if step > 0 else -1)
         root = QModelIndex()
 
-        while 0 <= row < self.tree_model.rowCount(root):
-            if not tree.isRowHidden(row, root):
-                next_idx = self.tree_model.index(row, 0, root)
-                if next_idx.isValid():
-                    tree.setCurrentIndex(next_idx)
-                    tree.scrollTo(next_idx)
-                    return
-            row += 1 if step > 0 else -1
+        if 0 <= row < self.tree_model.rowCount(root):
+            next_idx = self.tree_model.index(row, 0, root)
+            if next_idx.isValid():
+                tree.setCurrentIndex(next_idx)
+                tree.scrollTo(next_idx)
 
     def handle_filter_change(self, index, selection_fallback: str = "first_visible"):
-        root = self.tree_model.invisibleRootItem()
-        first_visible_idx = QModelIndex()
-        for row in range(root.rowCount()):
-            item = root.child(row)
-            if item is None:
-                continue
+        preferred_sample_id = self.current_selected_sample_id
+        preferred_input_path = self.current_selected_input_path
+        self.tree_model.set_filter(index)
 
-            data_id = item.data(getattr(self.tree_model, "DataIdRole", 0x0101))
-            sample = self.get_sample(str(data_id or ""))
-            hand_labelled, smart_labelled = self._label_state_for_sample(sample)
-
-            hide = False
-            if index == 1 and not hand_labelled:
-                hide = True
-            elif index == 2 and not smart_labelled:
-                hide = True
-            elif index == 3 and (hand_labelled or smart_labelled):
-                hide = True
-
-            self.panel.tree.setRowHidden(row, QModelIndex(), hide)
-            if not hide and not first_visible_idx.isValid():
-                first_visible_idx = self.tree_model.index(row, 0, QModelIndex())
-
-        if first_visible_idx.isValid():
-            current_idx = self._get_action_index(self.panel.tree.currentIndex())
-            current_visible = current_idx.isValid() and not self.panel.tree.isRowHidden(current_idx.row(), QModelIndex())
-            if not current_visible:
-                if selection_fallback == "clear_selection":
-                    self._clear_selection_for_empty_filtered_view()
-                    return
-                self.panel.tree.setCurrentIndex(first_visible_idx)
-                self.panel.tree.scrollTo(first_visible_idx)
+        restored = self._restore_tree_selection(preferred_sample_id, preferred_input_path)
+        if restored:
             self._expand_current_parent()
             return
 
-        self._clear_selection_for_empty_filtered_view()
+        if self.tree_model.rowCount() <= 0:
+            self._clear_selection_for_empty_filtered_view()
+            return
+
+        if selection_fallback == "clear_selection":
+            self._clear_selection_for_empty_filtered_view()
+            return
+
+        first_visible_idx = self.tree_model.index(0, 0, QModelIndex())
+        if first_visible_idx.isValid():
+            self.panel.tree.setCurrentIndex(first_visible_idx)
+            self.panel.tree.scrollTo(first_visible_idx)
+            self._expand_current_parent()
 
     def _label_state_for_sample(self, sample):
         if not isinstance(sample, dict):

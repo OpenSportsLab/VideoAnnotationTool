@@ -236,7 +236,6 @@ class VideoAnnotationWindow(QMainWindow):
         
         # Also clear the tree model
         self.tree_model.clear()
-        self.dataset_explorer_controller.action_item_map.clear()
         self.main_window_title = "Action Classifier"
         self.setWindowTitle("Action Classifier")
 
@@ -408,10 +407,10 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.mediaResetRequested.connect(self.media_controller.reset_viewers)
         self.dataset_explorer_controller.statusMessageRequested.connect(self.show_temp_msg)
         self.dataset_explorer_controller.saveStateRefreshRequested.connect(self.update_save_export_button_state)
-        self.dataset_explorer_controller.schemaRefreshRequested.connect(self._refresh_schema_panels)
-        self.dataset_explorer_controller.batchDropdownSyncRequested.connect(
-            self.classification_editor_controller.sync_batch_inference_dropdowns
+        self.dataset_explorer_controller.saveStateRefreshRequested.connect(
+            self.dataset_explorer_controller._refresh_json_preview
         )
+        self.dataset_explorer_controller.schemaRefreshRequested.connect(self._refresh_schema_panels)
         self.dataset_explorer_controller.classificationActionListChanged.connect(
             self.classification_editor_controller.on_action_items_changed
         )
@@ -586,6 +585,9 @@ class VideoAnnotationWindow(QMainWindow):
         # --- History manager request signals ---
         self.history_manager.allItemStatusRefreshRequested.connect(self.dataset_explorer_controller.refresh_all_item_statuses)
         self.history_manager.saveStateRefreshRequested.connect(self.update_save_export_button_state)
+        self.history_manager.saveStateRefreshRequested.connect(
+            self.dataset_explorer_controller._refresh_json_preview
+        )
         self.history_manager.statusMessageRequested.connect(self.show_temp_msg)
         self.history_manager.filterRefreshRequested.connect(self.dataset_explorer_controller.handle_filter_change)
         self.history_manager.refreshUiAfterUndoRedoRequested.connect(self.refresh_ui_after_undo_redo)
@@ -1370,8 +1372,6 @@ class VideoAnnotationWindow(QMainWindow):
         self.action_redo.setEnabled(len(self.dataset_explorer_controller.redo_stack) > 0)
         if hasattr(self, "action_hf_upload"):
             self.action_hf_upload.setEnabled(can_hf_upload)
-        if hasattr(self, "dataset_explorer_controller"):
-            self.dataset_explorer_controller._refresh_json_preview()
 
     def show_temp_msg(self, title: str, msg: str, duration: int = 1500, **kwargs) -> None:
         one_line = " ".join(str(msg).splitlines()).strip()
@@ -1429,9 +1429,6 @@ class VideoAnnotationWindow(QMainWindow):
         if idx.parent().isValid(): return idx.parent().data(self.tree_model.FilePathRole)
         return idx.data(self.tree_model.FilePathRole)
 
-    def sync_batch_inference_dropdowns(self) -> None:
-        self.classification_editor_controller.sync_batch_inference_dropdowns()
-
     def populate_action_tree(self) -> None:
         """Loads data from the app state into the UI model tree."""
         self.dataset_explorer_controller.populate_tree()
@@ -1458,6 +1455,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.classification_editor_controller._connect_dynamic_type_buttons()
 
     def refresh_ui_after_undo_redo(self, action_path: str, filter_selection_fallback: str = "first_visible") -> None:
+        self.dataset_explorer_controller._json_preview_dirty = True
         self.dataset_explorer_controller.refresh_all_item_statuses()
         self.dataset_explorer_controller.handle_filter_change(
             self.dataset_explorer_panel.filter_combo.currentIndex(),
@@ -1465,13 +1463,11 @@ class VideoAnnotationWindow(QMainWindow):
         )
 
         if action_path:
-            item = self.dataset_explorer_controller.action_item_map.get(action_path)
-            if item:
-                idx = item.index()
-                if idx.isValid() and not self.dataset_explorer_panel.tree.isRowHidden(idx.row(), QModelIndex()):
-                    if self.dataset_explorer_panel.tree.currentIndex() != idx:
-                        self.dataset_explorer_panel.tree.setCurrentIndex(idx)
+            idx = self.tree_model.index_for_path(action_path, expose=True)
+            if idx.isValid() and self.dataset_explorer_panel.tree.currentIndex() != idx:
+                self.dataset_explorer_panel.tree.setCurrentIndex(idx)
 
         self.dataset_explorer_controller.reemit_current_selection()
+        self.dataset_explorer_controller._refresh_json_preview()
 
         self.update_save_export_button_state()

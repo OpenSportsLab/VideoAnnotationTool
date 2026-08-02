@@ -25,6 +25,15 @@ python tools/convert_legacy_vqa_to_grouped.py \
   --output-json grouped_vqa.json
 ```
 
+## Large Dataset Is Still Populating
+
+Datasets with thousands of samples populate the left explorer progressively.
+The first rows should appear quickly, and the status bar shows progress while
+more rows are exposed. Filtering during this period safely restarts the visible
+projection; it does not discard samples. The JSON inspector and classification
+batch-range lists are intentionally prepared only when opened so they do not
+delay project loading.
+
 ## Media Files Are Missing After Loading
 
 Relative paths in `data[].inputs[].path` are resolved from the directory that

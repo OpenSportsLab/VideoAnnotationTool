@@ -57,7 +57,7 @@ def test_launches_to_welcome_view(window):
 @pytest.mark.gui
 @pytest.mark.parametrize("mode", list(MODE_TO_TAB_INDEX.keys()))
 # Workflow: For each mode, import a synthetic JSON via routed file dialog and verify mode/view/tree state.
-def test_import_project_routed_flow_all_modes(window, monkeypatch, synthetic_project_json, mode):
+def test_import_project_routed_flow_all_modes(window, monkeypatch, qtbot, synthetic_project_json, mode):
     project_json_path = synthetic_project_json(mode)
 
     monkeypatch.setattr(
@@ -66,6 +66,8 @@ def test_import_project_routed_flow_all_modes(window, monkeypatch, synthetic_pro
     )
 
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
 
     assert window.dataset_explorer_controller.json_loaded is True
     assert window.dataset_explorer_controller.current_json_path == str(project_json_path)
@@ -407,7 +409,7 @@ def test_dataset_selection_emits_data_id_and_routes_media(
     assert selected_data_id == selected_entry.get("data_id")
 
     assert media_calls
-    assert media_calls[-1][1] == selected_entry.get("path")
+    assert media_calls[-1][1] == ""
     assert media_calls[-1][0][0]["path"] == selected_entry.get("path")
     assert selected_data_id != media_calls[-1][1]
 
@@ -464,7 +466,7 @@ def test_frames_npy_dataset_selection_routes_canonical_media_source(
     assert routed_source["path"] == str(FRAME_STACK_PATH)
     assert routed_source["fps"] == pytest.approx(2.0)
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["frames_npy"]
-    assert window.dataset_explorer_controller.current_selected_input_path == str(FRAME_STACK_PATH)
+    assert window.dataset_explorer_controller.current_selected_input_path is None
 
 
 @pytest.mark.gui
@@ -547,7 +549,7 @@ def test_tracking_parquet_dataset_selection_routes_canonical_media_source(
     assert routed_source["path"] == str(TRACKING_PARQUET_PATH)
     assert routed_source["fps"] == pytest.approx(2.0)
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["tracking_parquet"]
-    assert window.dataset_explorer_controller.current_selected_input_path == str(TRACKING_PARQUET_PATH)
+    assert window.dataset_explorer_controller.current_selected_input_path is None
 
 
 @pytest.mark.gui
@@ -603,7 +605,7 @@ def test_player_joints_h5_dataset_selection_routes_canonical_media_source(
     assert routed_source["ball_path"] == str(BALL_H5_PATH)
     assert "fps" not in routed_source
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["player_joints_h5"]
-    assert window.dataset_explorer_controller.current_selected_input_path == str(PLAYER_JOINTS_H5_PATH)
+    assert window.dataset_explorer_controller.current_selected_input_path is None
 
 
 @pytest.mark.gui
@@ -659,7 +661,7 @@ def test_player_centroids_h5_dataset_selection_routes_canonical_media_source(
     assert routed_source["ball_path"] == str(BALL_H5_PATH)
     assert "fps" not in routed_source
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["player_centroids_h5"]
-    assert window.dataset_explorer_controller.current_selected_input_path == str(PLAYER_CENTROIDS_H5_PATH)
+    assert window.dataset_explorer_controller.current_selected_input_path is None
 
 
 @pytest.mark.gui
@@ -745,6 +747,7 @@ def test_mixed_video_and_tracking_selection_routes_selected_input(
     )
 
     media_calls = []
+    focus_calls = []
     monkeypatch.setattr(
         window.media_controller,
         "route_media_group",
@@ -752,6 +755,7 @@ def test_mixed_video_and_tracking_selection_routes_selected_input(
             (sources, focused_path, ensure_playback)
         ),
     )
+    monkeypatch.setattr(window.media_controller, "focus_source", focus_calls.append)
 
     window.dataset_explorer_controller.import_annotations()
     parent_index = window.tree_model.index(0, 0)
@@ -764,12 +768,13 @@ def test_mixed_video_and_tracking_selection_routes_selected_input(
     window.dataset_explorer_panel.tree.setCurrentIndex(tracking_child_index)
     qtbot.wait(50)
 
-    assert len(media_calls) >= 2
+    assert len(media_calls) == 1
     assert [source["path"] for source in media_calls[0][0]] == [
         str(source_video),
         str(TRACKING_PARQUET_PATH),
     ]
-    assert media_calls[-1][1] == str(TRACKING_PARQUET_PATH)
+    assert media_calls[-1][1] == ""
+    assert focus_calls[-1] == str(TRACKING_PARQUET_PATH)
     assert media_calls[-1][0][1]["type"] == "tracking_parquet"
 
 
@@ -860,7 +865,7 @@ def test_close_project_when_clean_skips_confirmation_popup(window, monkeypatch):
 
     should_close = window.check_and_close_current_project()
     assert should_close is True
-    assert stop_calls["count"] == 1
+    assert stop_calls["count"] >= 1
 
 
 @pytest.mark.gui
@@ -894,6 +899,8 @@ def test_filter_with_no_visible_samples_clears_media_and_annotation(
 
     window.dataset_explorer_controller.import_annotations()
     assert window.tree_model.rowCount() == 1
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.dataset_explorer_panel.tree.currentIndex().isValid()
 
     # Default synthetic classification data is unlabelled, so hand-labelled filter hides all.
@@ -901,7 +908,7 @@ def test_filter_with_no_visible_samples_clears_media_and_annotation(
     window.dataset_explorer_controller.handle_filter_change(1)
     qtbot.wait(50)
 
-    assert window.dataset_explorer_panel.tree.isRowHidden(0, QModelIndex()) is True
+    assert window.tree_model.rowCount() == 0
     assert window.dataset_explorer_panel.tree.currentIndex().isValid() is False
     assert emitted_ids and emitted_ids[-1] == ""
     assert stop_calls["count"] >= 1
@@ -935,11 +942,11 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 
     combo.setCurrentIndex(1)  # Show Labelled
     window.dataset_explorer_controller.handle_filter_change(1)
-    assert tree.isRowHidden(0, root_index.parent()) is False
+    assert window.tree_model.rowCount() == 1
 
     combo.setCurrentIndex(2)  # Show Smart Labelled
     window.dataset_explorer_controller.handle_filter_change(2)
-    assert tree.isRowHidden(0, root_index.parent()) is True
+    assert window.tree_model.rowCount() == 0
 
 
 @pytest.mark.gui

@@ -97,6 +97,14 @@ def _set_known_header_value(panel, key: str, value: str):
     raise AssertionError(f"Known header row not found: {key}")
 
 
+def _open_json_tab(panel):
+    for index in range(panel.header_tabs.count()):
+        if panel.header_tabs.tabText(index).strip().lower() == "json":
+            panel.header_tabs.setCurrentIndex(index)
+            return
+    raise AssertionError("JSON tab not found")
+
+
 def _recent_file_button_text(window, row: int = 0) -> str:
     recent_list = window.welcome_widget.recent_projects_list
     item = recent_list.item(row)
@@ -218,6 +226,7 @@ def test_legacy_task_header_is_preserved_but_does_not_route_initial_tab(
             unknown_rows[key_item.text()] = value_item.text()
 
     assert unknown_rows.get("task") == "video_captioning"
+    _open_json_tab(panel)
     raw_json = json.loads(panel.json_raw_text.toPlainText())
     assert raw_json.get("task") == "video_captioning"
 
@@ -605,9 +614,7 @@ def test_rename_sample_id_updates_tree_selection_and_dataset_json(
     assert sample_index.isValid()
     assert sample_index.data(window.tree_model.DataIdRole) == "clip_1"
 
-    parent_item = window.tree_model.itemFromIndex(sample_index)
-    assert parent_item is not None
-    parent_item.setText("renamed_clip")
+    assert window.tree_model.setData(sample_index, "renamed_clip", Qt.ItemDataRole.EditRole)
     qtbot.wait(50)
 
     refreshed_index = window.tree_model.index(0, 0)
@@ -1310,8 +1317,8 @@ def test_filter_not_labelled_reselects_first_visible_row_for_each_mode(
 
     assert window.dataset_explorer_controller.current_selected_sample_id == "clip_2"
     assert window.get_current_action_path() == window.dataset_explorer_controller.get_path_by_id("clip_2")
-    assert window.dataset_explorer_panel.tree.isRowHidden(0, window.dataset_explorer_panel.tree.rootIndex())
-    assert not window.dataset_explorer_panel.tree.isRowHidden(1, window.dataset_explorer_panel.tree.rootIndex())
+    assert window.tree_model.rowCount() == 1
+    assert window.tree_model.index(0, 0).data(window.tree_model.DataIdRole) == "clip_2"
 
 
 @pytest.mark.gui
@@ -1334,8 +1341,8 @@ def test_filter_smart_labelled_uses_sample_state_across_modes(
 
     assert window.dataset_explorer_controller.current_selected_sample_id == "clip_1"
     assert window.dataset_explorer_controller.current_selected_input_path is None
-    assert not window.dataset_explorer_panel.tree.isRowHidden(0, window.dataset_explorer_panel.tree.rootIndex())
-    assert window.dataset_explorer_panel.tree.isRowHidden(1, window.dataset_explorer_panel.tree.rootIndex())
+    assert window.tree_model.rowCount() == 1
+    assert window.tree_model.index(0, 0).data(window.tree_model.DataIdRole) == "clip_1"
 
 
 # @pytest.mark.gui
@@ -1503,6 +1510,7 @@ def test_clear_workspace_preserves_headers_schema_and_unknown_keys(
     assert window.tree_model.rowCount() == 0
     assert not window.description_panel.isEnabled()
 
+    _open_json_tab(window.dataset_explorer_panel)
     raw_json = json.loads(window.dataset_explorer_panel.json_raw_text.toPlainText())
     assert raw_json["data"] == []
     assert raw_json["custom_root"] == {"keep": True}
@@ -1519,6 +1527,7 @@ def test_clear_workspace_cancel_is_a_noop(window, monkeypatch, qtbot, synthetic_
         lambda self: QMessageBox.StandardButton.Cancel,
     )
 
+    _open_json_tab(window.dataset_explorer_panel)
     before_json = json.loads(window.dataset_explorer_panel.json_raw_text.toPlainText())
     window.dataset_explorer_controller.handle_clear_workspace()
 
@@ -1630,6 +1639,7 @@ def test_json_tab_reflects_header_edit_sample_edit_and_undo_redo(
     window.description_panel.caption_edit.setPlainText(edited_caption)
     qtbot.wait(350)
 
+    _open_json_tab(window.dataset_explorer_panel)
     raw_json = json.loads(window.dataset_explorer_panel.json_raw_text.toPlainText())
     assert raw_json["description"] == edited_description
     assert raw_json["data"][0]["captions"][0]["text"] == edited_caption
@@ -1740,5 +1750,5 @@ def test_undo_filter_clear_selection_when_selected_row_becomes_hidden(
     assert not tree.currentIndex().isValid()
     assert window.dataset_explorer_controller.current_selected_sample_id == ""
     assert window.dataset_explorer_controller.current_selected_input_path is None
-    assert not tree.isRowHidden(0, tree.rootIndex())
-    assert tree.isRowHidden(1, tree.rootIndex())
+    assert window.tree_model.rowCount() == 1
+    assert window.tree_model.index(0, 0).data(window.tree_model.DataIdRole) == "clip_1"

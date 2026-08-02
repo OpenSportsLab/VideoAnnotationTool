@@ -33,6 +33,7 @@ class ClassificationEditorController(QObject):
         self._active_mode_index = 0
         self._action_items_cache = []
         self._action_path_by_sample_id = {}
+        self._batch_action_list_dirty = True
         self._schema_definitions = {}
         self._preferred_head = None
 
@@ -59,6 +60,7 @@ class ClassificationEditorController(QObject):
         self.classification_panel.head_smart_reject_requested.connect(self.reject_smart_annotation_head)
         self.classification_panel.confirm_infer_requested.connect(self.save_manual_annotation)
         self.classification_panel.inferenceCancelRequested.connect(self._on_inference_cancel_requested)
+        self.classification_panel.batch_controls_opened.connect(self.sync_batch_inference_dropdowns)
 
     def on_mode_changed(self, index: int):
         self._active_mode_index = index
@@ -69,6 +71,10 @@ class ClassificationEditorController(QObject):
     def reset_ui(self):
         self.classification_panel.clear_dynamic_labels()
         self.classification_panel.manual_box.setEnabled(False)
+        self._action_items_cache = []
+        self._action_path_by_sample_id = {}
+        self._batch_action_list_dirty = True
+        self.classification_panel.update_action_list([])
         self.current_sample_id = ""
         self.current_action_path = None
         self._current_sample_snapshot = {}
@@ -90,15 +96,19 @@ class ClassificationEditorController(QObject):
         self.display_manual_annotation()
 
     def sync_batch_inference_dropdowns(self):
+        if not self._batch_action_list_dirty:
+            return
         sorted_list = sorted(
             list(self._action_items_cache or []),
             key=lambda data: natural_sort_key(data.get("name", "")),
         )
         action_names = [data.get("name", "") for data in sorted_list if data.get("name")]
         self.classification_panel.update_action_list(action_names)
+        self._batch_action_list_dirty = False
 
     def on_action_items_changed(self, action_items: list):
         self._action_items_cache = list(action_items or [])
+        self._batch_action_list_dirty = True
         self._action_path_by_sample_id = {}
         for item in self._action_items_cache:
             if not isinstance(item, dict):
