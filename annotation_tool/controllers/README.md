@@ -109,13 +109,20 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   used as the preferred choice on the next run when still available.
 - `enqueue_inference()`, `cancel_request()`, `cancel_all()`, `queue_snapshot()`,
   `queueChanged`, and `clear_queue_history()` form the queue interface.
-  Immutable `InferenceQueueEntry` snapshots drive a status summary and
-  non-modal detail panel. The latest 20 terminal entries remain session-only.
+  Immutable `InferenceQueueEntry` snapshots drive the Inference Jobs dock. Each
+  entry includes a bounded immutable event timeline; repeated stage progress is
+  coalesced and the latest 20 terminal entries remain session-only.
 - Provider work runs in one `QThread` per active lane; `MainWindow` leaves
   navigation, editing, and further inference submission enabled. A generic
   post-provider cancellation check suppresses late Local results.
 - Result validation correlates by request `item_id`, then unique request
   `sample_id`, with positional fallback restricted to legacy Local OSL output.
+- `MainWindow` preserves the user's active annotation and head tabs while
+  dispatching completed results. Classification batch input choices are shown
+  from the selected sample and applied positionally to each queued sample.
+- `MainWindow` also owns the Inference Jobs dock visibility preference. Welcome
+  mode hides the dock without overwriting that preference and disables its View
+  action; workspace mode restores it alongside the other project docks.
   Canonical request IDs overwrite result-owned IDs; unknown and duplicate
   targets are invalid results.
 - `DatasetExplorerController.project_generation` increments on every reset.

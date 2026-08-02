@@ -21,7 +21,6 @@ class QuestionAnswerAnnotationPanel(QWidget):
     answerEditRequested = pyqtSignal(int)
     answerDeleteRequested = pyqtSignal(int)
     answerSelectionChanged = pyqtSignal(int)
-    inferenceRequested = pyqtSignal()
     smartConfirmRequested = pyqtSignal()
     smartRejectRequested = pyqtSignal()
     smartAcceptAllRequested = pyqtSignal()
@@ -47,7 +46,6 @@ class QuestionAnswerAnnotationPanel(QWidget):
 
         self.inference_review_bar = InferenceReviewBar(self)
         self.qaMainLayout.addWidget(self.inference_review_bar)
-        self.run_inference_button = self.inference_review_bar.run_button
         self.confirm_smart_button = self.inference_review_bar.accept_button
         self.reject_smart_button = self.inference_review_bar.reject_button
         self.accept_all_smart_button = self.inference_review_bar.accept_all_button
@@ -68,7 +66,6 @@ class QuestionAnswerAnnotationPanel(QWidget):
         self.answer_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.answer_list.customContextMenuRequested.connect(self._on_answer_context_menu_requested)
         self.answer_list.itemDoubleClicked.connect(self._on_answer_item_double_clicked)
-        self.inference_review_bar.runRequested.connect(self.inferenceRequested.emit)
         self.inference_review_bar.acceptRequested.connect(self.smartConfirmRequested.emit)
         self.inference_review_bar.rejectRequested.connect(self.smartRejectRequested.emit)
         self.inference_review_bar.acceptAllRequested.connect(self.smartAcceptAllRequested.emit)

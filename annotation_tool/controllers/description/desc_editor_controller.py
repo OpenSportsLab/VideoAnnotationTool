@@ -1,6 +1,7 @@
 import copy
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtWidgets import QMessageBox
 
 
 class DescEditorController(QObject):
@@ -32,9 +33,6 @@ class DescEditorController(QObject):
     def setup_connections(self):
         """Connect Description editor UI signals to controller actions."""
         self.description_panel.captionTextChanged.connect(self._on_caption_text_changed)
-        self.description_panel.inferenceRequested.connect(
-            lambda: self.inferenceRunRequested.emit("description", {"language": "en"})
-        )
         self.description_panel.inferenceConfirmRequested.connect(self.confirm_smart_inference)
         self.description_panel.inferenceRejectRequested.connect(self.reject_smart_inference)
 
@@ -42,6 +40,14 @@ class DescEditorController(QObject):
         self._active_mode_index = index
         if self._is_active_mode():
             self.clearMarkersRequested.emit()
+
+    def request_inference(self):
+        if not self.current_sample_id:
+            QMessageBox.warning(
+                self.description_panel, "Inference", "Please select a sample first."
+            )
+            return
+        self.inferenceRunRequested.emit("description", {"language": "en"})
 
     def reset_ui(self):
         """Reset the Description editor UI for project clear/close flows."""

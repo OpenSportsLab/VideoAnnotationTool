@@ -291,3 +291,72 @@ def test_shutdown_cancels_waiting_jobs_and_never_dispatches_them(qtbot, monkeypa
     release.set()
     assert controller.shutdown(wait_ms=2000)
     assert not entered["waiting"].is_set()
+
+
+@pytest.mark.gui
+def test_job_log_records_lifecycle_and_coalesces_repeated_progress(qtbot, monkeypatch):
+    controller = InferenceController()
+
+    class Provider:
+        def run(self, request, progress, _cancel_event):
+            progress("Uploading", 1, 3)
+            progress("Uploading", 2, 3)
+            progress("Running model", 0, 0)
+            return _result(request)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(controller, "_provider", lambda *_args, **_kwargs: Provider())
+    request = _request("local", "logged")
+    controller.enqueue_inference(request)
+    qtbot.waitUntil(lambda: not controller.has_running_inference())
+
+    entry = next(
+        item for item in controller.queue_snapshot() if item.request_id == request.request_id
+    )
+    assert [event.state for event in entry.log_events] == [
+        "queued",
+        "running",
+        "running",
+        "running",
+        "succeeded",
+    ]
+    uploading = [event for event in entry.log_events if event.message == "Uploading"]
+    assert len(uploading) == 1
+    assert (uploading[0].current, uploading[0].total) == (2, 3)
+    assert entry.log_events[-1].message == "Succeeded"
+    assert controller.shutdown()
+
+
+@pytest.mark.gui
+def test_job_log_is_bounded_while_preserving_submission_and_terminal_events(
+    qtbot, monkeypatch
+):
+    controller = InferenceController()
+
+    class Provider:
+        def run(self, request, progress, _cancel_event):
+            for index in range(controller.MAX_LOG_EVENTS_PER_JOB + 10):
+                progress(f"Stage {index}", 0, 0)
+            return _result(request)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(controller, "_provider", lambda *_args, **_kwargs: Provider())
+    request = _request("remote", "bounded-log")
+    controller.enqueue_inference(request)
+    qtbot.waitUntil(
+        lambda: any(
+            entry.request_id == request.request_id and entry.state == "succeeded"
+            for entry in controller.queue_snapshot()
+        )
+    )
+    entry = next(
+        item for item in controller.queue_snapshot() if item.request_id == request.request_id
+    )
+    assert len(entry.log_events) == controller.MAX_LOG_EVENTS_PER_JOB
+    assert entry.log_events[0].state == "queued"
+    assert entry.log_events[-1].state == "succeeded"
+    assert controller.shutdown()

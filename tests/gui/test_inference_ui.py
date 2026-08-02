@@ -1,6 +1,8 @@
+import os
 import threading
 
 import pytest
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QAbstractItemView, QPushButton
 
 from controllers.classification import ClassificationEditorController
@@ -12,6 +14,7 @@ from controllers.question_answer import QAEditorController
 from inference_types import (
     InferenceInput,
     InferenceItem,
+    InferenceLogEvent,
     InferenceModelChoice,
     InferenceQueueEntry,
     InferenceRequest,
@@ -25,7 +28,7 @@ from ui.classification import ClassificationAnnotationPanel
 from ui.localization import LocalizationAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
 from ui.inference_review_bar import InferenceReviewBar
-from ui.inference_activity_widget import InferenceActivityWidget
+from ui.inference_jobs_widget import InferenceJobsWidget
 
 
 @pytest.mark.gui
@@ -39,43 +42,30 @@ from ui.inference_activity_widget import InferenceActivityWidget
         QuestionAnswerAnnotationPanel,
     ],
 )
-def test_every_annotation_panel_uses_one_bottom_inference_footer(qtbot, panel_type):
+def test_every_annotation_panel_uses_one_bottom_prediction_review_footer(qtbot, panel_type):
     panel = panel_type()
     qtbot.addWidget(panel)
 
     footer = panel.findChild(InferenceReviewBar, "inferenceReviewBar")
     assert footer is panel.inference_review_bar
     assert panel.layout().itemAt(panel.layout().count() - 1).widget() is footer
-    assert footer.run_button.text() == "Run Inference…"
-    assert footer.run_button.objectName() == "runInferenceButton"
-
     run_buttons = [
         button
         for button in panel.findChildren(QPushButton)
         if button.text() == "Run Inference…"
     ]
-    assert run_buttons == [footer.run_button]
+    assert run_buttons == []
+    assert not hasattr(footer, "run_button")
     assert not any("smart inference" in button.text().lower() for button in panel.findChildren(QPushButton))
 
 
 @pytest.mark.gui
-@pytest.mark.parametrize(
-    ("panel_type", "signal_name"),
-    [
-        (ClassificationAnnotationPanel, "sharedInferenceRequested"),
-        (LocalizationAnnotationPanel, "sharedInferenceRequested"),
-        (DescriptionAnnotationPanel, "inferenceRequested"),
-        (DenseAnnotationPanel, "inferenceRequested"),
-        (QuestionAnswerAnnotationPanel, "inferenceRequested"),
-    ],
-)
-def test_every_bottom_footer_dispatches_the_shared_inference_intent(
-    qtbot, panel_type, signal_name
-):
-    panel = panel_type()
-    qtbot.addWidget(panel)
-    with qtbot.waitSignal(getattr(panel, signal_name), timeout=500):
-        panel.inference_review_bar.run_button.click()
+def test_jobs_widget_exposes_shared_run_action(qtbot):
+    action = QAction("Run Inference…")
+    widget = InferenceJobsWidget(action)
+    qtbot.addWidget(widget)
+    with qtbot.waitSignal(action.triggered, timeout=500):
+        widget.run_button.click()
 
 
 @pytest.mark.gui
@@ -221,8 +211,8 @@ def test_run_dialog_range_controls_follow_model_capability(qtbot):
 
 
 @pytest.mark.gui
-def test_status_bar_inference_activity_is_non_modal_and_cancellable(qtbot):
-    widget = InferenceActivityWidget()
+def test_inference_jobs_widget_renders_queues_history_logs_and_actions(qtbot):
+    widget = InferenceJobsWidget(QAction("Run Inference…"))
     qtbot.addWidget(widget)
     active = InferenceQueueEntry(
         request_id="request",
@@ -235,6 +225,10 @@ def test_status_bar_inference_activity_is_non_modal_and_cancellable(qtbot):
         current=2,
         total=5,
         queue_position=0,
+        log_events=(
+            InferenceLogEvent(1.0, "queued", "Queued"),
+            InferenceLogEvent(2.0, "running", "Running inference", current=2, total=5),
+        ),
     )
     queued = InferenceQueueEntry(
         request_id="queued",
@@ -247,13 +241,14 @@ def test_status_bar_inference_activity_is_non_modal_and_cancellable(qtbot):
     )
     widget.set_entries((active, queued))
 
-    assert not widget.isHidden()
-    assert "Local: Running 2/5, 1 queued" in widget.label.text()
-    assert widget.panel.isModal() is False
-    widget.show_panel()
-    assert widget.panel.local_table.rowCount() == 2
+    assert "Local: Running 2/5, 1 queued" in widget.summary_label.text()
+    assert widget.local_table.rowCount() == 2
     with qtbot.waitSignal(widget.cancelRequested, timeout=500):
-        widget.panel.local_table.cellWidget(0, 3).click()
+        widget.local_table.cellWidget(0, 3).click()
+    with qtbot.waitSignal(widget.cancelAllRequested, timeout=500):
+        widget.cancel_all_button.click()
+    widget.local_table.cellWidget(0, 2).click()
+    assert "Running inference" in widget.details_view.toPlainText()
 
     failed = InferenceQueueEntry(
         request_id="failed",
@@ -265,15 +260,194 @@ def test_status_bar_inference_activity_is_non_modal_and_cancellable(qtbot):
         message="Server failed",
         error_code="server_error",
         error_details={"job_id": "job-1"},
+        log_events=(
+            InferenceLogEvent(
+                3.0, "failed", "Server failed", level="error", details={"job_id": "job-1"}
+            ),
+        ),
     )
     widget.set_entries((failed,))
-    assert widget.panel.recent_table.rowCount() == 1
-    assert "job-1" in widget.panel.recent_table.item(0, 3).text()
+    assert widget.history_table.rowCount() == 1
+    widget.history_table.cellWidget(0, 4).click()
+    assert "job-1" in widget.details_view.toPlainText()
     with qtbot.waitSignal(widget.clearHistoryRequested, timeout=500):
-        widget.panel.clear_history_button.click()
+        widget.clear_history_button.click()
 
     widget.set_entries(())
-    assert widget.isHidden()
+    assert widget.summary_label.text() == "Local: Idle | Remote: Idle"
+
+
+@pytest.mark.gui
+def test_main_window_jobs_dock_preserves_status_messages_and_toggles(
+    qtbot, window
+):
+    assert window.dockWidgetArea(window.inference_jobs_dock).name == "RightDockWidgetArea"
+    assert window.inference_jobs_dock.isHidden()
+    assert window.statusBar().findChildren(InferenceJobsWidget) == []
+
+    window.statusBar().showMessage("Ordinary status information")
+    window.inference_jobs_widget.set_entries(
+        (
+            InferenceQueueEntry(
+                request_id="queued",
+                backend="local",
+                task="description",
+                model_id="model",
+                sample_ids=("sample",),
+                state="queued",
+                queue_position=1,
+            ),
+        )
+    )
+    assert window.statusBar().currentMessage() == "Ordinary status information"
+
+    window.show_workspace()
+    window._show_inference_jobs()
+    assert window.inference_jobs_dock.isVisible()
+    assert window._inference_jobs_dock_preferred_visible is True
+    window.show_welcome_view()
+    assert window.inference_jobs_dock.isHidden()
+    assert not window.action_show_inference_jobs.isEnabled()
+    assert window._inference_jobs_dock_preferred_visible is True
+
+    window.show_workspace()
+    assert window.action_show_inference_jobs.isEnabled()
+    assert window.inference_jobs_dock.isVisible()
+    window.action_show_inference_jobs.trigger()
+    assert window.inference_jobs_dock.isHidden()
+    assert window._inference_jobs_dock_preferred_visible is False
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("tab_index", "controller_name"),
+    [
+        (0, "classification_editor_controller"),
+        (1, "localization_editor_controller"),
+        (2, "desc_editor_controller"),
+        (3, "dense_editor_controller"),
+        (4, "qa_editor_controller"),
+    ],
+)
+def test_run_action_routes_to_every_active_mode(
+    window, monkeypatch, tab_index, controller_name
+):
+    requested = []
+    controller = getattr(window, controller_name)
+    monkeypatch.setattr(
+        controller, "request_inference", lambda: requested.append(tab_index)
+    )
+    window.right_tabs.setCurrentIndex(tab_index)
+    window.action_run_inference.setEnabled(True)
+    window.action_run_inference.trigger()
+    assert requested == [tab_index]
+
+
+@pytest.mark.gui
+def test_localization_run_uses_visible_active_head(qtbot):
+    panel = LocalizationAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = LocalizationEditorController(panel)
+    controller.setup_connections()
+    controller.on_schema_context_changed(
+        {
+            "first": {"type": "single_label", "labels": ["a"]},
+            "active": {"type": "single_label", "labels": ["b", "c"]},
+        }
+    )
+    controller.current_sample_id = "sample"
+    controller.current_video_path = "/tmp/sample.mp4"
+    panel.annot_mgmt.tabs.set_current_head("active")
+    controller.current_head = None
+
+    with qtbot.waitSignal(controller.inferenceRunRequested, timeout=500) as signal:
+        controller.request_inference()
+
+    assert signal.args == [
+        "localization",
+        {"head": "active", "labels": ["b", "c"], "start_ms": 0, "end_ms": 0},
+    ]
+
+
+@pytest.mark.gui
+def test_classification_dialog_lists_selected_sample_inputs_only_and_reuses_selection_for_batch(
+    window, synthetic_project_json, monkeypatch
+):
+    project_path = synthetic_project_json("classification", item_count=2)
+    assert window.dataset_explorer_controller.open_project_from_path(str(project_path))
+    samples = window.dataset_explorer_controller.dataset_json["data"]
+    for index, sample in enumerate(samples):
+        sample["inputs"] = [
+            {"path": f"sample-{index}-main.mp4", "type": "video"},
+            {"path": f"sample-{index}-aux.mp4", "type": "video"},
+        ]
+    current_id = str(samples[0]["id"])
+    window.dataset_explorer_controller.current_selected_sample_id = current_id
+    captured = {}
+
+    class DraftSignal:
+        def connect(self, _slot):
+            pass
+
+    class Label:
+        def setText(self, _text):
+            pass
+
+    class FakeDialog:
+        class DialogCode:
+            Accepted = 1
+
+        def __init__(self, task, inputs, context, **_kwargs):
+            captured["dialog_inputs"] = list(inputs)
+            self.refreshModelsRequested = DraftSignal()
+            self.availability_label = Label()
+
+        def set_models(self, *_args):
+            pass
+
+        def exec(self):
+            return self.DialogCode.Accepted
+
+        def payload(self):
+            return {
+                "backend": "local",
+                "model_id": "classifier",
+                "inputs": [captured["dialog_inputs"][1]],
+                "scope": "all",
+                "start_ms": 0,
+                "end_ms": 0,
+                "language": "en",
+                "question": "",
+            }
+
+    monkeypatch.setattr("main_window.InferenceRunDialog", FakeDialog)
+    monkeypatch.setattr(
+        window.inference_controller, "request_model_catalog", lambda _task: True
+    )
+
+    def enqueue(request):
+        captured["request"] = request
+        return InferenceQueueEntry(
+            request.request_id,
+            request.backend,
+            request.task,
+            request.model_id,
+            tuple(item.sample_id for item in request.items),
+            "running",
+        )
+
+    monkeypatch.setattr(window.inference_controller, "enqueue_inference", enqueue)
+    window._open_inference_run_dialog("classification", {"head": "action"})
+
+    assert len(captured["dialog_inputs"]) == 2
+    assert {source.sample_id for source in captured["dialog_inputs"]} == {current_id}
+    request = captured["request"]
+    assert len(request.items) == 2
+    assert [len(item.inputs) for item in request.items] == [1, 1]
+    assert [os.path.basename(item.inputs[0].path) for item in request.items] == [
+        "sample-0-aux.mp4",
+        "sample-1-aux.mp4",
+    ]
 
 
 @pytest.mark.gui
@@ -461,8 +635,9 @@ def test_main_window_filters_deleted_samples_from_completed_queue_job(
     }
     assert window.data_dock.isEnabled()
     assert window.editor_dock.isEnabled()
-    assert all(
-        panel.inference_review_bar.run_button.text() == "Run Inference…"
+    assert window.action_run_inference.text() == "Run Inference…"
+    assert not any(
+        panel.findChildren(QPushButton, "runInferenceButton")
         for panel in (
             window.classification_panel,
             window.localization_panel,
@@ -487,6 +662,52 @@ def test_main_window_filters_deleted_samples_from_completed_queue_job(
 
     assert sample_a not in window.desc_editor_controller._pending_predictions
     assert window.desc_editor_controller._pending_predictions[sample_b]["text"] == "Surviving"
+
+
+@pytest.mark.gui
+def test_completed_inference_does_not_change_current_annotation_tab(
+    window, synthetic_project_json, monkeypatch
+):
+    project_path = synthetic_project_json("description", item_count=1)
+    assert window.dataset_explorer_controller.open_project_from_path(str(project_path))
+    sample = window.dataset_explorer_controller.dataset_json["data"][0]
+    sample_id = str(sample["id"])
+    request_id = "tab-stability"
+    window._pending_inference_requests[request_id] = {
+        "task": "description",
+        "sample_ids": (sample_id,),
+        "request_items": {"item": sample_id},
+        "project_generation": window.dataset_explorer_controller.project_generation,
+        "context": {"language": "en"},
+        "backend": "local",
+        "model_id": "model",
+        "invalidated": False,
+    }
+    window.right_tabs.setCurrentIndex(4)
+
+    def apply_result(_result, _context):
+        window.right_tabs.setCurrentIndex(2)
+
+    monkeypatch.setattr(
+        window.desc_editor_controller, "apply_shared_inference_result", apply_result
+    )
+    window._on_shared_inference_completed(
+        request_id,
+        InferenceResult(
+            request_id,
+            "description",
+            "model",
+            (
+                {
+                    "item_id": "item",
+                    "sample_id": sample_id,
+                    "captions": [{"text": "Prediction"}],
+                },
+            ),
+        ),
+    )
+
+    assert window.right_tabs.currentIndex() == 4
 
 
 @pytest.mark.gui

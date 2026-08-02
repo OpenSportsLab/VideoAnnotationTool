@@ -3,7 +3,7 @@
 ## Role
 Provides the Classification right-panel widgets and dynamic label-group controls.
 
-Includes the shared bottom inference-review footer used by every annotation panel.
+Includes the shared bottom prediction-review footer used by every annotation panel.
 
 ## Architecture Context
 - Static layout comes from `classification_annotation_panel.ui`.
@@ -28,7 +28,6 @@ Includes the shared bottom inference-review footer used by every annotation pane
 - `head_smart_reject_requested(str)`
 - `annotation_saved(dict)`
 - `hand_clear_requested()`
-- `sharedInferenceRequested()`
 - `acceptAllPredictionsRequested()`
 - `rejectAllPredictionsRequested()`
 
@@ -54,7 +53,8 @@ Includes the shared bottom inference-review footer used by every annotation pane
 - Pending state is rendered at row level inside each head group.
 - There are no per-head, single, or batch inference buttons; scope is selected
   in the shared run dialog.
-- `InferenceReviewBar` is the last widget in the panel layout.
+- `InferenceReviewBar` is the last widget and contains review actions only;
+  execution starts from the main-window Inference Jobs dock.
 - The training tab is intentionally hidden for now; keep the train widgets/API stable behind the panel until the training flow is repaired.
 
 ## Conventions

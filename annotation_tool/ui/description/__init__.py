@@ -13,7 +13,6 @@ class DescriptionAnnotationPanel(QWidget):
     Description annotation editor panel view loaded from Qt Designer UI.
     """
     captionTextChanged = pyqtSignal()
-    inferenceRequested = pyqtSignal()
     inferenceConfirmRequested = pyqtSignal()
     inferenceRejectRequested = pyqtSignal()
 
@@ -39,11 +38,9 @@ class DescriptionAnnotationPanel(QWidget):
         self.verticalLayout.addWidget(self.inference_candidate_label)
         self.inference_review_bar = InferenceReviewBar(self)
         self.verticalLayout.addWidget(self.inference_review_bar)
-        self.run_inference_button = self.inference_review_bar.run_button
         self.confirm_inference_button = self.inference_review_bar.accept_button
         self.reject_inference_button = self.inference_review_bar.reject_button
         self.inference_status_label = self.inference_review_bar.status_label
-        self.inference_review_bar.runRequested.connect(self.inferenceRequested.emit)
         self.inference_review_bar.acceptRequested.connect(self.inferenceConfirmRequested.emit)
         self.inference_review_bar.rejectRequested.connect(self.inferenceRejectRequested.emit)
         self.set_smart_inference_state(False)
@@ -68,9 +65,6 @@ class DescriptionAnnotationPanel(QWidget):
         self.inference_candidate_label.setText(
             f"Candidate: {candidate.get('text', '')}" if active else ""
         )
-
-    def set_inference_loading(self, loading: bool):
-        self.inference_review_bar.set_running(loading)
 
     def set_caption_text(self, text: str):
         self.caption_edit.setPlainText(text or "")

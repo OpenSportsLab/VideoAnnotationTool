@@ -95,6 +95,19 @@ class InferenceModelChoice:
 
 
 @dataclass(frozen=True)
+class InferenceLogEvent:
+    """One immutable, timestamped event from an inference job."""
+
+    timestamp: float
+    state: str
+    message: str
+    level: str = "info"
+    current: int = 0
+    total: int = 0
+    details: Any = None
+
+
+@dataclass(frozen=True)
 class InferenceQueueEntry:
     """Immutable presentation snapshot for one queued or recent inference job."""
 
@@ -114,6 +127,7 @@ class InferenceQueueEntry:
     error_code: str = ""
     error_details: Any = None
     retryable: bool = False
+    log_events: tuple[InferenceLogEvent, ...] = ()
 
 
 @dataclass

@@ -1,7 +1,7 @@
 import copy
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QInputDialog
+from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 
 class QAEditorController(QObject):
@@ -54,14 +54,18 @@ class QAEditorController(QObject):
         self.question_answer_panel.answerEditRequested.connect(self._on_edit_answer_requested)
         self.question_answer_panel.answerDeleteRequested.connect(self._on_delete_answer_requested)
         self.question_answer_panel.answerSelectionChanged.connect(self._on_answer_selection_changed)
-        self.question_answer_panel.inferenceRequested.connect(self._request_inference)
         self.question_answer_panel.smartConfirmRequested.connect(self.confirm_selected_smart_answer)
         self.question_answer_panel.smartRejectRequested.connect(self.reject_selected_smart_answer)
         self.question_answer_panel.smartAcceptAllRequested.connect(self.accept_all_predictions)
         self.question_answer_panel.smartRejectAllRequested.connect(self.reject_all_predictions)
 
-    def _request_inference(self):
+    def request_inference(self):
         if not self._valid_group_index(self._selected_group_index):
+            QMessageBox.warning(
+                self.question_answer_panel,
+                "Inference",
+                "Select a question before running inference.",
+            )
             return
         question = str(self._answer_groups[self._selected_group_index].get("question") or "").strip()
         if question:
@@ -440,7 +444,6 @@ class QAEditorController(QObject):
             has_group=has_group,
             has_answer=has_answer,
         )
-        self.question_answer_panel.run_inference_button.setEnabled(editor_enabled and has_group)
         pending_count = len(self._pending_by_sample.get(self.current_sample_id, []))
         self.question_answer_panel.set_prediction_actions_visible(
             selected=has_smart_answer,

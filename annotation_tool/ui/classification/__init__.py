@@ -464,7 +464,6 @@ class ClassificationAnnotationPanel(QWidget):
     annotation_saved = pyqtSignal(dict)
 
     hand_clear_requested = pyqtSignal()
-    sharedInferenceRequested = pyqtSignal()
     acceptAllPredictionsRequested = pyqtSignal()
     rejectAllPredictionsRequested = pyqtSignal()
 
@@ -510,10 +509,8 @@ class ClassificationAnnotationPanel(QWidget):
 
         self.inference_review_bar = InferenceReviewBar(self)
         self.mainLayout.addWidget(self.inference_review_bar)
-        self.btn_shared_inference = self.inference_review_bar.run_button
         self.btn_accept_all_predictions = self.inference_review_bar.accept_all_button
         self.btn_reject_all_predictions = self.inference_review_bar.reject_all_button
-        self.inference_review_bar.runRequested.connect(self.sharedInferenceRequested.emit)
         self.inference_review_bar.acceptAllRequested.connect(self.acceptAllPredictionsRequested.emit)
         self.inference_review_bar.rejectAllRequested.connect(self.rejectAllPredictionsRequested.emit)
         self.set_bulk_prediction_actions_visible(False)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-bfmd_to_osl.py
+bfmd_to_osl_v2.py
 
 Convert BFMD to OSL-JSON with integrated video handling:
 1. Direct yt-dlp download of full-match videos (no external script)
@@ -21,12 +21,12 @@ REQUIREMENTS
   pip install yt-dlp opencv-python  (ffmpeg on PATH for video trimming)
 
 USAGE
-  python bfmd_to_osl.py --data-root BFMD_data --out-dir bfmd_osl \\
+  python bfmd_to_osl_v2.py --data-root BFMD_data --out-dir bfmd_osl \\
     --download-videos --trim-clips
   # Downloads full matches, extracts 11,301 16-frame clips, writes JSONs
   # Then upload (annotations + videos only, never redistributed):
   export HF_TOKEN=...
-  python bfmd_to_osl.py --data-root BFMD_data --out-dir bfmd_osl \\
+  python bfmd_to_osl_v2.py --data-root BFMD_data --out-dir bfmd_osl \\
     --repo-id your-org/bfmd-osl --private
 """
 
@@ -37,6 +37,7 @@ import os
 import subprocess
 import sys
 from datetime import date
+from glob import glob
 from pathlib import Path
 
 FPS = 30.0
@@ -57,7 +58,7 @@ def download_full_match_video(url: str, out_path: Path, match_name: str):
     if out_path.exists():
         print(f"  [skip] {out_path.name} already exists")
         return
-
+    
     fmt = "bv*[height<=720]+ba/b[height<=720]"  # ≤720p merged
     cmd = [
         "yt-dlp",
@@ -80,36 +81,36 @@ def download_videos(data_root: Path, out_dir: Path, match_filter: str = None):
         import yt_dlp  # noqa: F401
     except ImportError:
         sys.exit("Please `pip install yt-dlp` (and have ffmpeg on PATH) to download videos.")
-
+    
     # Load video list with type info
     csv_path = data_root / "Badminton_video_list.csv"
     if not csv_path.is_file():
         sys.exit(f"No Badminton_video_list.csv in {data_root}")
-
+    
     matches = []
     with open(csv_path, newline="") as f:
         for row in csv.DictReader(f):
             matches.append(row)
-
+    
     if match_filter:
         matches = [r for r in matches if match_filter.lower() in r.get("match_name", "").lower()]
         print(f"[dl] filtered to {len(matches)} matches")
-
+    
     print(f"[dl] downloading {len(matches)} videos...")
     for row in matches:
         name = row.get("match_name", "").strip()
         url = row.get("youtube_url", "").strip()
         match_type = row.get("type", "").strip().lower()
-
+        
         if not name or not url:
             continue
-
+        
         # Save singles to videos/, doubles to videos_doubles/
         if match_type == "doubles":
             out_path = out_dir / "videos_doubles" / f"{name}.mp4"
         else:
             out_path = out_dir / "videos" / f"{name}.mp4"
-
+        
         download_full_match_video(url, out_path, name)
     print(f"[dl] done")
 
@@ -122,7 +123,7 @@ def trim_clip(video_path: Path, start_frame: int, num_frames: int, out_path: Pat
     out_path.parent.mkdir(parents=True, exist_ok=True)
     start_sec = start_frame / fps
     duration_sec = num_frames / fps
-
+    
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-ss", f"{start_sec:.3f}",
@@ -139,11 +140,11 @@ def trim_clips_for_matches(data_root: Path, out_dir: Path, matches: list):
     full_match_singles_dir = out_dir / "videos"
     full_match_doubles_dir = out_dir / "videos_doubles"
     clips_dir = out_dir / "trimmed_videos"
-
+    
     print(f"[trim] extracting clips to {clips_dir}...")
     total_clips = sum(len(m["hits"]) for m in matches if not m["doubles"])
     done = 0
-
+    
     for m in matches:
         if m["doubles"]:
             continue
@@ -152,12 +153,12 @@ def trim_clips_for_matches(data_root: Path, out_dir: Path, matches: list):
         if not video_path.exists():
             print(f"  SKIP {name}: video not found at {video_path}")
             continue
-
+        
         for i, h in enumerate(m["hits"]):
             fr = h["frame"]
             clip_id = f"{name}_shot_{i:04d}"
             out_path = clips_dir / f"{clip_id}.mp4"
-
+            
             try:
                 trim_clip(video_path, fr - 3, 16, out_path, FPS)
                 done += 1
@@ -166,7 +167,7 @@ def trim_clips_for_matches(data_root: Path, out_dir: Path, matches: list):
             except Exception as e:
                 print(f"    ERROR trimming {clip_id}: {e}")
                 raise
-
+    
     print(f"[trim] done ({done} clips)")
 
 
@@ -184,9 +185,9 @@ def match_names(data_root: Path, subdir: str, suffix: str = ".json"):
 
 
 def load_metadata(path: Path) -> dict:
-    with path.open(encoding="utf-8") as f:
-        obj = json.load(f)
+    obj = json.load(open(path))
     return obj[0] if isinstance(obj, list) else obj
+
 
 def load_hits_singles(path: Path):
     return json.load(open(path)).get("hits", [])
@@ -217,8 +218,34 @@ def load_doubles_hits(path: Path):
     return [p for p in points if p["label"] in DOUBLES_HIT_LABELS]
 
 
-def load_captions(data_root: Path):
-    return {}
+def load_captions(data_root: Path) -> dict:
+    """
+    Load captions from annotations/caption/ folder.
+    Returns {match_name: {frame: {caption_variant: text}}}
+    Caption variants: "auto" (auto-generated), "clean" (placeholder), "refined" (manual).
+    """
+    captions = {}
+    cap_dir = data_root / "annotations" / "caption"
+    if not cap_dir.is_dir():
+        return captions
+    
+    for cap_file in sorted(cap_dir.glob("*.json")):
+        try:
+            obj = json.load(open(cap_file))
+            match_name = obj.get("match_name")
+            if not match_name:
+                continue
+            
+            cap_map = {}
+            for shot in obj.get("shots", []):
+                fr = shot.get("frame")
+                if fr is not None:
+                    cap_map[fr] = shot.get("captions", {})
+            captions[match_name] = cap_map
+        except Exception as e:
+            print(f"  [warn] error loading {cap_file.name}: {e}")
+    
+    return captions
 
 
 # ============================================================================
@@ -248,8 +275,25 @@ def build_fullmatch_localization(matches: list, captions: dict, split: str) -> d
             events.append(ev)
 
         dense = []
-        for fr, text in captions.get(name, {}).items():
-            dense.append({"position_ms": frame_to_ms(int(fr)), "lang": "en", "text": text})
+        cap_map = captions.get(name, {})
+        for fr, cap_variants in cap_map.items():
+            # cap_variants is {variant: text}, e.g., {"auto": "...", "clean": "...", "refined": "..."}
+            if isinstance(cap_variants, dict):
+                # Add one dense caption entry per variant
+                for variant, text in cap_variants.items():
+                    dense.append({
+                        "position_ms": frame_to_ms(int(fr)),
+                        "lang": "en",
+                        "text": text,
+                        "variant": variant,  # "auto", "clean", or "refined"
+                    })
+            else:
+                # Fallback for string captions (older format)
+                dense.append({
+                    "position_ms": frame_to_ms(int(fr)),
+                    "lang": "en",
+                    "text": cap_variants,
+                })
 
         # Use videos_doubles/ for doubles, videos/ for singles
         video_folder = "videos_doubles" if doubles else "videos"
@@ -322,8 +366,17 @@ def build_clip_classification(matches: list, captions: dict, split: str) -> dict
                     "rally": h.get("rally"),
                 },
             }
-            if str(fr) in cap_map:
-                sample["captions"] = [{"lang": "en", "text": cap_map[str(fr)]}]
+            if fr in cap_map:
+                cap_variants = cap_map[fr]
+                if isinstance(cap_variants, dict):
+                    # cap_variants is {variant: text}, add all variants
+                    sample["captions"] = [
+                        {"lang": "en", "text": text, "variant": variant}
+                        for variant, text in cap_variants.items()
+                    ]
+                else:
+                    # Fallback for string captions
+                    sample["captions"] = [{"lang": "en", "text": cap_variants}]
             data.append(sample)
 
     return {
@@ -337,6 +390,70 @@ def build_clip_classification(matches: list, captions: dict, split: str) -> dict
         "metadata": {"sport": "badminton", "split": split, "source": "BFMD",
                      "fps": FPS, "license": "non-commercial, no redistribution"},
         "labels": {"action": {"type": "single_label", "labels": SHOT_TYPES}},
+        "data": data,
+    }
+
+
+def build_caption_vqa(matches: list, captions: dict, split: str) -> dict:
+    """
+    One OSL sample per shot with caption variants for VQA/captioning tasks.
+    Includes all three caption layers (auto, clean, refined) per shot.
+    """
+    data = []
+    for m in matches:
+        if m["doubles"]:
+            continue
+        name = m["name"]
+        cap_map = captions.get(name, {})
+        for i, h in enumerate(m["hits"]):
+            fr = h["frame"]
+            clip_id = f"{name}_shot_{i:04d}"
+            
+            # Build captions list with all variants
+            caption_list = []
+            if fr in cap_map:
+                cap_variants = cap_map[fr]
+                if isinstance(cap_variants, dict):
+                    for variant in ["auto", "clean", "refined"]:
+                        if variant in cap_variants:
+                            caption_list.append({
+                                "lang": "en",
+                                "text": cap_variants[variant],
+                                "variant": variant,
+                            })
+            
+            sample = {
+                "id": clip_id,
+                "inputs": [{
+                    "type": "video",
+                    "path": f"trimmed_videos/{clip_id}.mp4",
+                    "fps": FPS,
+                }],
+                "captions": caption_list,
+                "metadata": {
+                    "match_name": name,
+                    "hit_frame": fr,
+                    "shot_type": h["shot_type"],
+                    "player": h.get("player"),
+                    "side": h.get("side"),
+                    "game": h.get("game"),
+                    "rally": h.get("rally"),
+                    "position_ms": frame_to_ms(fr),
+                },
+            }
+            data.append(sample)
+
+    return {
+        "version": "2.0",
+        "date": str(date.today()),
+        "task": "video_captioning",
+        "dataset_name": f"bfmd-captions-{split}",
+        "description": "BFMD shot captions with three variants: auto-generated, clean (with [PLAYER] placeholder), "
+                       "and manually refined. For video captioning and VQA tasks.",
+        "modalities": ["video"],
+        "metadata": {"sport": "badminton", "split": split, "source": "BFMD",
+                     "fps": FPS, "license": "non-commercial, no redistribution",
+                     "caption_variants": ["auto", "clean", "refined"]},
         "data": data,
     }
 
@@ -457,8 +574,8 @@ def main():
                     help="Only download matches whose name contains this substring.")
     ap.add_argument("--trim-clips", action="store_true",
                     help="Extract 16-frame clips for all 11,301 shots.")
-    ap.add_argument("--view", choices=["localization", "clips", "both"], default="both",
-                    help="Which OSL JSON to generate.")
+    ap.add_argument("--view", choices=["localization", "clips", "captions", "all"], default="all",
+                    help="Which OSL JSON to generate: localization, clips, captions, or all.")
     ap.add_argument("--repo-id", default=None,
                     help="HuggingFace repo ID to upload to (e.g., your-org/bfmd-osl).")
     ap.add_argument("--private", action="store_true",
@@ -491,13 +608,17 @@ def main():
 
     # --- Write JSONs ---
     written = []
-    if args.view in ("localization", "both"):
+    if args.view in ("localization", "all"):
         p = args.out_dir / "bfmd_fullmatch_osl.json"
         p.write_text(json.dumps(build_fullmatch_localization(matches, captions, "all"), indent=2))
         written.append(p)
-    if args.view in ("clips", "both"):
+    if args.view in ("clips", "all"):
         p = args.out_dir / "bfmd_clips_osl.json"
         p.write_text(json.dumps(build_clip_classification(matches, captions, "all"), indent=2))
+        written.append(p)
+    if args.view in ("captions", "all"):
+        p = args.out_dir / "bfmd_captions_osl.json"
+        p.write_text(json.dumps(build_caption_vqa(matches, captions, "all"), indent=2))
         written.append(p)
 
     (args.out_dir / "NOTICE.txt").write_text(
@@ -511,9 +632,9 @@ def main():
 
     # --- Upload ---
     if args.repo_id:
-        if args.public and args.private: sys.exit("Use only one of --public or --private.")
-        private = not args.public
-        if args.public: print("[hf] WARNING: uploading as public. BFMD terms forbid redistribution; prefer --private.")
+        if args.public and not args.private:
+            print("[hf] WARNING: uploading as public. BFMD terms require non-commercial use.")
+        private = not args.public if args.public or not args.private else args.private
         upload_to_hf(args.out_dir, args.repo_id, private=private)
     else:
         print("[hf] no --repo-id given; skipping upload.")

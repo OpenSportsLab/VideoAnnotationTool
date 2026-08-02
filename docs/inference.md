@@ -42,7 +42,8 @@ trusted private network.
 
 ## Run inference
 
-Use the single **Run Inference…** button in any annotation mode. Choose a
+Use **Run Inference…** in the **Inference Jobs** dock. The action targets the
+currently active annotation mode. Choose a
 compatible model and inputs, then fill in the task options shown by the dialog.
 The model list combines saved Local models and, when enabled, discovered Remote
 models. Entries are prefixed **Local —** or **Remote —**; selecting one chooses
@@ -60,7 +61,9 @@ shared storage is unavailable, and returned positions are translated back to
 the original sample timeline.
 
 Classification exposes current-sample and all-samples scope in this dialog; it
-does not have a separate batch-inference control.
+does not have a separate batch-inference control. Its input list shows only the
+currently selected sample. For all-samples scope, that input selection is used
+as the positional modality template for every sample in the batch.
 
 ## Background execution
 
@@ -70,12 +73,18 @@ job may run concurrently. Additional **Run Inference…** actions remain availab
 and append work to the selected model's provider queue. Local providers and
 Remote uploads/jobs are not created until their request reaches the front.
 
-The main-window status bar summarizes both lanes and their waiting counts.
-**Details** opens a non-modal queue panel showing each active and waiting job,
-progress, and per-job **Cancel**. Cancelling a waiting job removes it immediately;
+The dock is placed below the Annotation Editor and is available from
+**View → Inference Jobs**. It opens automatically when work is queued and is
+raised when a job fails. It hides with the other project docks when returning
+to the welcome screen, where its View action is disabled. Its previous visible
+or hidden preference is restored when a project workspace is shown again. The
+application status bar remains reserved for normal
+status messages. The dock shows both lanes, active and waiting jobs, progress,
+per-job **Cancel**, and **Cancel All**. Cancelling a waiting job removes it immediately;
 cancelling an active job remains `Cancelling` until its worker exits. The panel
 retains the latest 20 completed, failed, or cancelled jobs for the current
-application session, including failure codes, and provides **Clear History**.
+application session and provides **Clear History**. **Details** shows a bounded,
+timestamped timeline of state, progress-stage, cancellation, and error messages.
 Dataset navigation, playback, editing, saving, and tab switching remain
 available throughout.
 
@@ -84,7 +93,8 @@ question, and request-item IDs. Results are correlated back to those immutable
 request items and never to the sample currently visible when the model finishes.
 Navigating from sample A to sample B therefore leaves A's predictions pending;
 they appear when A is selected again and its Smart Labelled status updates in
-the explorer. Removed or renamed sample targets are discarded rather than
+the explorer. Completion never changes the currently selected annotation mode,
+Classification head, or Localization head. Removed or renamed sample targets are discarded rather than
 redirected. Opening, creating, or closing a project cancels both active jobs,
 discards both waiting queues, and suppresses late results from the previous
 project.
@@ -94,10 +104,9 @@ OpenSportsLib calls may be indivisible, so cancellation can take effect only
 after the current library call returns; its late output is still suppressed.
 Queued Remote work is not submitted to the server before it becomes active.
 
-Every annotation panel uses the same footer: pending-result status and review
-actions appear immediately above a bottom-row **Run Inference…** button. There
-are no separate Smart, single-inference, or batch-inference buttons in the
-task-specific editors.
+Every annotation panel uses the same pending-result footer for Accept/Reject and
+bulk review only. Inference execution is centralized in the dock; there are no
+task-specific Smart, single-inference, or batch-inference buttons.
 
 ## Large files
 

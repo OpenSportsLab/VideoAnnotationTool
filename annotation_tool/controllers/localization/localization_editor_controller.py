@@ -97,7 +97,6 @@ class LocalizationEditorController(QObject):
 
     def setup_connections(self):
         self.localization_panel.eventNavigateRequested.connect(self._navigate_annotation)
-        self.localization_panel.sharedInferenceRequested.connect(self._request_shared_inference)
         self.localization_panel.acceptAllPredictionsRequested.connect(self.accept_all_predictions)
         self.localization_panel.rejectAllPredictionsRequested.connect(self.reject_all_predictions)
 
@@ -611,14 +610,19 @@ class LocalizationEditorController(QObject):
         self.refresh_tree_icons(self.current_video_path)
 
     # --- Shared inference integration ---
-    def _request_shared_inference(self):
+    def request_inference(self):
         if not self.current_video_path or not self.current_sample_id:
             QMessageBox.warning(self.localization_panel, "Inference", "Please select a sample first.")
             return
-        head = str(self.current_head or "")
+        head = str(
+            self.localization_panel.annot_mgmt.tabs.get_current_head()
+            or self.current_head
+            or ""
+        )
         if not head:
             QMessageBox.warning(self.localization_panel, "Inference", "Select a localization head first.")
             return
+        self.current_head = head
         labels = self._head_labels(head)
         if not labels:
             QMessageBox.warning(self.localization_panel, "Inference", f"Head '{head}' has no labels.")

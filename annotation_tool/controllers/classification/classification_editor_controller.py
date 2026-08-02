@@ -55,11 +55,10 @@ class ClassificationEditorController(QObject):
         self.classification_panel.head_selected.connect(self._on_head_selected)
         self.classification_panel.head_smart_confirm_requested.connect(self.confirm_smart_annotation_head)
         self.classification_panel.head_smart_reject_requested.connect(self.reject_smart_annotation_head)
-        self.classification_panel.sharedInferenceRequested.connect(self._request_shared_inference)
         self.classification_panel.acceptAllPredictionsRequested.connect(self.accept_all_predictions)
         self.classification_panel.rejectAllPredictionsRequested.connect(self.reject_all_predictions)
 
-    def _request_shared_inference(self):
+    def request_inference(self):
         if not self.current_sample_id:
             QMessageBox.warning(self.classification_panel, "Inference", "Please select a sample first.")
             return

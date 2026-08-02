@@ -5,7 +5,7 @@ import json
 import os
 
 from PyQt6.QtCore import Qt, QModelIndex, QTimer
-from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QLabel, QDockWidget, QMainWindow, QMessageBox, QStackedWidget, QTabWidget
 
 from app_info import APP_DISPLAY_NAME, APP_VERSION, build_shortcuts_help_text
@@ -40,7 +40,7 @@ from ui.description import DescriptionAnnotationPanel
 from ui.dense_description import DenseAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
 from ui.dialogs import ApplicationSettingsDialog, BusyStatusDialog, HfDownloadDialog, HfUploadDialog, InferenceRunDialog
-from ui.inference_activity_widget import InferenceActivityWidget
+from ui.inference_jobs_widget import InferenceJobsWidget
 
 from media_control_settings import (
     PLAYBACK_FACTORS_KEY,
@@ -75,6 +75,7 @@ class VideoAnnotationWindow(QMainWindow):
     _VIEWER_LAYOUT_SETTING_KEY = "view/viewer_layout"
     _DATA_DOCK_VISIBLE_SETTING_KEY = "view/dataset_explorer_visible"
     _EDITOR_DOCK_VISIBLE_SETTING_KEY = "view/annotation_editor_visible"
+    _INFERENCE_JOBS_DOCK_VISIBLE_SETTING_KEY = "view/inference_jobs_visible"
 
     def __init__(self) -> None:
         super().__init__()
@@ -190,14 +191,23 @@ class VideoAnnotationWindow(QMainWindow):
             base_dir=os.path.abspath(os.path.dirname(__file__)),
             parent=self,
         )
-        self._inference_activity_widget = InferenceActivityWidget(self)
-        self.statusBar().addPermanentWidget(self._inference_activity_widget, 1)
-        self._inference_activity_widget.cancelRequested.connect(
-            self.inference_controller.cancel_request
+        self.action_run_inference = QAction("Run Inference…", self)
+        self.action_run_inference.setEnabled(False)
+        self.inference_jobs_widget = InferenceJobsWidget(
+            self.action_run_inference, self
         )
-        self._inference_activity_widget.clearHistoryRequested.connect(
-            self.inference_controller.clear_queue_history
+        self.inference_jobs_dock = QDockWidget("Inference Jobs", self)
+        self.inference_jobs_dock.setObjectName("InferenceJobsDock")
+        self.inference_jobs_dock.setWidget(self.inference_jobs_widget)
+        self.addDockWidget(
+            Qt.DockWidgetArea.RightDockWidgetArea, self.inference_jobs_dock
         )
+        self.splitDockWidget(
+            self.editor_dock,
+            self.inference_jobs_dock,
+            Qt.Orientation.Vertical,
+        )
+        self.inference_jobs_dock.hide()
         self._pending_inference_requests = {}
         self._pending_prediction_samples_by_task = {}
         self._hf_busy_dialog = None
@@ -209,6 +219,7 @@ class VideoAnnotationWindow(QMainWindow):
         self._updating_view_state = False
         self._data_dock_preferred_visible = True
         self._editor_dock_preferred_visible = True
+        self._inference_jobs_dock_preferred_visible = False
         self._playback_factor_text = "2,4"
         self._seek_interval_text = "1,5"
         self._speed_rates = (0.25, 0.5, 1.0, 2.0, 4.0)
@@ -296,6 +307,7 @@ class VideoAnnotationWindow(QMainWindow):
         """Enables/Disables all project-related docks and editors."""
         self.data_dock.setEnabled(enabled)
         self.editor_dock.setEnabled(enabled)
+        self.action_run_inference.setEnabled(enabled)
         self.qa_editor_controller.set_project_enabled(enabled)
         
         # Also explicitly disable the sub-editors to be safe
@@ -309,11 +321,12 @@ class VideoAnnotationWindow(QMainWindow):
         self.qa_editor_controller.set_sample_selection_enabled(enabled)
 
     def _set_side_docks_visible(self, visible: bool):
-        """Show or hide side dock widgets (dataset explorer + annotation editor)."""
+        """Show or hide project dock widgets without changing their preferences."""
         self._updating_view_state = True
         try:
             self.data_dock.setVisible(visible)
             self.editor_dock.setVisible(visible)
+            self.inference_jobs_dock.setVisible(visible)
         finally:
             self._updating_view_state = False
 
@@ -426,6 +439,18 @@ class VideoAnnotationWindow(QMainWindow):
         self.desc_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
         self.dense_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
         self.qa_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
+        self.action_run_inference.triggered.connect(
+            self._request_inference_for_active_mode
+        )
+        self.inference_jobs_widget.cancelRequested.connect(
+            self.inference_controller.cancel_request
+        )
+        self.inference_jobs_widget.cancelAllRequested.connect(
+            self.inference_controller.cancel_all
+        )
+        self.inference_jobs_widget.clearHistoryRequested.connect(
+            self.inference_controller.clear_queue_history
+        )
         for task_name, controller in (
             ("classification", self.classification_editor_controller),
             ("localization", self.localization_editor_controller),
@@ -440,7 +465,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.inference_controller.inferenceFailed.connect(self._on_shared_inference_failed)
         self.inference_controller.inferenceCancelled.connect(self._on_shared_inference_cancelled)
         self.inference_controller.queueChanged.connect(
-            self._inference_activity_widget.set_entries
+            self.inference_jobs_widget.set_entries
         )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
             self._handle_media_route
@@ -727,7 +752,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.hf_transfer_controller.uploadCancelled.connect(self._on_hf_upload_cancelled)
 
     def _setup_menu_bar(self) -> None:
-        from PyQt6.QtGui import QAction, QActionGroup
+        from PyQt6.QtGui import QActionGroup
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("&File")
 
@@ -807,6 +832,10 @@ class VideoAnnotationWindow(QMainWindow):
         )
         view_menu.addAction(self.action_show_annotation_editor)
 
+        self.action_show_inference_jobs = self.inference_jobs_dock.toggleViewAction()
+        self.action_show_inference_jobs.setText("Inference Jobs")
+        view_menu.addAction(self.action_show_inference_jobs)
+
         view_menu.addSeparator()
         layout_menu = view_menu.addMenu("Viewer Layout")
         self.viewer_layout_action_group = QActionGroup(self)
@@ -833,6 +862,9 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.editor_dock.visibilityChanged.connect(
             lambda visible: self._on_dock_visibility_changed("editor", visible)
+        )
+        self.inference_jobs_dock.visibilityChanged.connect(
+            lambda visible: self._on_dock_visibility_changed("inference", visible)
         )
         self._restore_view_state_from_settings()
 
@@ -872,6 +904,10 @@ class VideoAnnotationWindow(QMainWindow):
         self._editor_dock_preferred_visible = self._setting_bool(
             settings.value(self._EDITOR_DOCK_VISIBLE_SETTING_KEY, True), True
         )
+        self._inference_jobs_dock_preferred_visible = self._setting_bool(
+            settings.value(self._INFERENCE_JOBS_DOCK_VISIBLE_SETTING_KEY, False),
+            False,
+        )
         raw_mode = str(
             settings.value(
                 self._VIEWER_LAYOUT_SETTING_KEY,
@@ -888,11 +924,17 @@ class VideoAnnotationWindow(QMainWindow):
         try:
             self.action_show_dataset_explorer.setChecked(self._data_dock_preferred_visible)
             self.action_show_annotation_editor.setChecked(self._editor_dock_preferred_visible)
+            self.action_show_inference_jobs.setChecked(
+                self._inference_jobs_dock_preferred_visible
+            )
             self.viewer_layout_actions[mode].setChecked(True)
             self.center_panel.set_viewer_layout(mode)
             if self._workspace_visible:
                 self.data_dock.setVisible(self._data_dock_preferred_visible)
                 self.editor_dock.setVisible(self._editor_dock_preferred_visible)
+                self.inference_jobs_dock.setVisible(
+                    self._inference_jobs_dock_preferred_visible
+                )
         finally:
             self._updating_view_state = False
 
@@ -911,10 +953,14 @@ class VideoAnnotationWindow(QMainWindow):
             self._data_dock_preferred_visible = target
             setting_key = self._DATA_DOCK_VISIBLE_SETTING_KEY
             dock = self.data_dock
-        else:
+        elif dock_name == "editor":
             self._editor_dock_preferred_visible = target
             setting_key = self._EDITOR_DOCK_VISIBLE_SETTING_KEY
             dock = self.editor_dock
+        else:
+            self._inference_jobs_dock_preferred_visible = target
+            setting_key = self._INFERENCE_JOBS_DOCK_VISIBLE_SETTING_KEY
+            dock = self.inference_jobs_dock
         if self._updating_view_state:
             return
         if self._workspace_visible:
@@ -931,11 +977,12 @@ class VideoAnnotationWindow(QMainWindow):
     def _on_dock_visibility_changed(self, dock_name: str, visible: bool) -> None:
         if self._updating_view_state or not self._workspace_visible:
             return
-        action = (
-            self.action_show_dataset_explorer
-            if dock_name == "data"
-            else self.action_show_annotation_editor
-        )
+        actions = {
+            "data": self.action_show_dataset_explorer,
+            "editor": self.action_show_annotation_editor,
+            "inference": self.action_show_inference_jobs,
+        }
+        action = actions[dock_name]
         self._updating_view_state = True
         try:
             action.setChecked(bool(visible))
@@ -948,6 +995,9 @@ class VideoAnnotationWindow(QMainWindow):
         try:
             self.data_dock.setVisible(self._data_dock_preferred_visible)
             self.editor_dock.setVisible(self._editor_dock_preferred_visible)
+            self.inference_jobs_dock.setVisible(
+                self._inference_jobs_dock_preferred_visible
+            )
         finally:
             self._updating_view_state = False
 
@@ -955,6 +1005,7 @@ class VideoAnnotationWindow(QMainWindow):
         if hasattr(self, "action_show_dataset_explorer"):
             self.action_show_dataset_explorer.setEnabled(enabled)
             self.action_show_annotation_editor.setEnabled(enabled)
+            self.action_show_inference_jobs.setEnabled(enabled)
 
     def _setup_shortcuts(self) -> None:
         """Register common keyboard shortcuts."""
@@ -1084,6 +1135,22 @@ class VideoAnnotationWindow(QMainWindow):
         except Exception as exc:
             dialog.set_inference_connection_status(str(exc), False)
 
+    def _request_inference_for_active_mode(self) -> None:
+        controllers = (
+            self.classification_editor_controller,
+            self.localization_editor_controller,
+            self.desc_editor_controller,
+            self.dense_editor_controller,
+            self.qa_editor_controller,
+        )
+        index = self.right_tabs.currentIndex()
+        if index < 0 or index >= len(controllers):
+            QMessageBox.warning(
+                self, "Inference", "Select an annotation mode first."
+            )
+            return
+        controllers[index].request_inference()
+
     def _open_inference_run_dialog(self, task: str, context) -> None:
         context = dict(context or {})
         current_sample_id = str(self.dataset_explorer_controller.current_selected_sample_id or "")
@@ -1112,13 +1179,18 @@ class VideoAnnotationWindow(QMainWindow):
             for source in sample_inputs:
                 source.sample_id = sample_id
         inputs = [source for sample_inputs in inputs_by_sample.values() for source in sample_inputs]
-        if not inputs:
+        dialog_inputs = (
+            list(inputs_by_sample.get(current_sample_id, []))
+            if task == "classification"
+            else inputs
+        )
+        if not dialog_inputs:
             QMessageBox.warning(self, "Inference", "The selected sample has no usable inputs.")
             return
 
         dialog = InferenceRunDialog(
             task,
-            inputs,
+            dialog_inputs,
             context,
             preferred_model=load_last_model_choice(
                 getattr(self.dataset_explorer_controller, "settings", None), task
@@ -1135,7 +1207,7 @@ class VideoAnnotationWindow(QMainWindow):
         def apply_catalog(discovered_task, choices, warning):
             if discovered_task != task:
                 return
-            input_types = {source.type for source in inputs}
+            input_types = {source.type for source in dialog_inputs}
             dialog.set_models(
                 [
                     choice
@@ -1172,15 +1244,34 @@ class VideoAnnotationWindow(QMainWindow):
         if task == "localization":
             parameters["labels"] = list(context.get("labels") or [])
         selected_sources = {(str(getattr(source, "sample_id", "") or ""), os.path.realpath(source.path)) for source in payload["inputs"]}
+        classification_input_indices = []
+        if task == "classification":
+            selected_paths = {
+                os.path.realpath(source.path) for source in payload["inputs"]
+            }
+            classification_input_indices = [
+                index
+                for index, source in enumerate(dialog_inputs)
+                if os.path.realpath(source.path) in selected_paths
+            ]
         if payload.get("scope") == "current":
             samples = [sample for sample in samples if str(sample.get("id") or "") == current_sample_id]
         request_items = []
         for sample in samples:
             sample_id = str(sample.get("id") or "")
-            selected_inputs = [
-                source for source in inputs_by_sample.get(sample_id, [])
-                if (sample_id, os.path.realpath(source.path)) in selected_sources
-            ]
+            sample_inputs = inputs_by_sample.get(sample_id, [])
+            if task == "classification":
+                selected_inputs = [
+                    sample_inputs[index]
+                    for index in classification_input_indices
+                    if index < len(sample_inputs)
+                    and sample_inputs[index].type == dialog_inputs[index].type
+                ]
+            else:
+                selected_inputs = [
+                    source for source in sample_inputs
+                    if (sample_id, os.path.realpath(source.path)) in selected_sources
+                ]
             if selected_inputs:
                 request_items.append(InferenceItem(
                     sample_id=sample_id,
@@ -1219,6 +1310,7 @@ class VideoAnnotationWindow(QMainWindow):
             self._pending_inference_requests.pop(request.request_id, None)
             QMessageBox.information(self, "Inference", "The inference request could not be queued.")
             return
+        self._show_inference_jobs()
         if entry.state == "queued":
             self.show_temp_msg(
                 "Inference",
@@ -1284,11 +1376,35 @@ class VideoAnnotationWindow(QMainWindow):
             "dense_description": self.dense_editor_controller.apply_shared_inference_result,
             "question_answer": self.qa_editor_controller.apply_shared_inference_result,
         }
+        active_annotation_tab = self.right_tabs.currentIndex()
+        active_classification_head = self.classification_panel.get_current_head()
+        active_localization_head = (
+            self.localization_panel.annot_mgmt.tabs.get_current_head()
+        )
         try:
             handlers[pending["task"]](result, pending.get("context", {}))
         except Exception as exc:
             QMessageBox.critical(self, "Inference Result Error", str(exc))
             return
+        finally:
+            if self.right_tabs.currentIndex() != active_annotation_tab:
+                self.right_tabs.setCurrentIndex(active_annotation_tab)
+            if (
+                active_classification_head
+                and self.classification_panel.get_current_head()
+                != active_classification_head
+            ):
+                self.classification_panel.set_current_head(
+                    active_classification_head
+                )
+            if (
+                active_localization_head
+                and self.localization_panel.annot_mgmt.tabs.get_current_head()
+                != active_localization_head
+            ):
+                self.localization_panel.annot_mgmt.tabs.set_current_head(
+                    active_localization_head
+                )
         sample_ids = tuple(
             str(item.get("sample_id") or "") for item in surviving_items
         )
@@ -1313,12 +1429,17 @@ class VideoAnnotationWindow(QMainWindow):
         pending = self._pending_inference_requests.pop(request_id, None)
         if not pending or pending.get("invalidated"):
             return
+        self._show_inference_jobs()
         retry_text = " The operation may be retried." if retryable else ""
         self.show_temp_msg(
             "Inference Error",
-            f"{message}{retry_text} Code: {code}. See Inference Details.",
+            f"{message}{retry_text} Code: {code}. See Inference Jobs.",
             6000,
         )
+
+    def _show_inference_jobs(self) -> None:
+        self.inference_jobs_dock.show()
+        self.inference_jobs_dock.raise_()
 
     def _on_shared_inference_cancelled(self, request_id: str) -> None:
         pending = self._pending_inference_requests.pop(request_id, None)
@@ -1487,7 +1608,6 @@ class VideoAnnotationWindow(QMainWindow):
                 event.ignore()
                 return
             self._pending_inference_requests.clear()
-            self._inference_activity_widget.close_panel()
             if not self.classification_editor_controller.shutdown_background_tasks(wait_ms=2500):
                 self.show_temp_msg(
                     "Inference Running",

@@ -3,7 +3,8 @@
 ## Role
 Provides the Localization right-panel plus adapters for spotting tabs and event review.
 
-Includes one **Run Inference…** action and shared progress/cancellation controls.
+Includes inline pending-event review controls. Execution and queue management
+live in the main-window Inference Jobs dock.
 
 ## Architecture Context
 - Static layout comes from `localization_annotation_panel.ui`.
@@ -22,7 +23,6 @@ Includes one **Run Inference…** action and shared progress/cancellation contro
 ### Panel Signals
 - `tabSwitched(int)`
 - `eventNavigateRequested(int)`
-- `sharedInferenceRequested()`
 - `acceptAllPredictionsRequested()`
 - `rejectAllPredictionsRequested()`
 
@@ -49,8 +49,7 @@ Includes one **Run Inference…** action and shared progress/cancellation contro
 - `_TableAdapter.set_timeline_origin(origin_utc)`
   - Supplies sample-scoped UTC display/edit context without coupling the panel
     to `MediaController`.
-- `InferenceReviewBar` is the last widget in the panel layout and is the only
-  inference execution surface.
+- `InferenceReviewBar` is the last widget and contains review actions only.
 
 ## Business Rules
 - Table edit emits old/new payloads; controller decides mutation validity.

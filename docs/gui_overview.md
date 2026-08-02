@@ -90,19 +90,23 @@ layouts stay pinned to the modality being synchronized.
 
 ### Right: Annotation Tabs
 
-All five editors end with the same inference footer. **Run Inference…** opens a
-runtime-only dialog with one task-compatible Local/Remote model list, inputs,
-and applicable task parameters. Server and model setup lives exclusively in
-**Edit → Settings → Inference**. Accept/Reject and bulk review actions appear
-in the footer only when pending predictions exist. Task-specific prediction
-rows remain inline in the editor above it.
+All five editors end with the same prediction-review footer. Accept/Reject and
+bulk review actions appear only when pending predictions exist. Task-specific
+prediction rows remain inline in the editor above it.
 
-The status bar summarizes independent Local and Remote inference queues.
-**Details** opens a non-modal panel with active progress, FIFO waiting jobs,
-per-job cancellation, and recent outcomes. One Local and one Remote job may run
+The **Inference Jobs** dock sits below the Annotation Editor. Its single
+**Run Inference…** action opens a runtime-only dialog for the active annotation
+mode, with task-compatible Local/Remote models, inputs, and applicable task
+parameters. Server and model setup lives in **Edit → Settings → Inference**.
+The dock shows active progress, FIFO waiting jobs, cancellation, recent outcomes,
+and timestamped per-job details while leaving the status bar unobstructed.
+It hides when the project closes and the welcome screen is restored; its View
+action is disabled there, and its prior visibility returns with the workspace.
+One Local and one Remote job may run
 at the same time, and more runs can be queued without blocking the annotation
 workspace. Predictions stay associated with the sample from which each request
-was submitted even if another sample is selected before completion.
+was submitted even if another sample is selected before completion, and
+completion does not switch the active annotation or head tab.
 
 #### Classification (`CLS`)
 

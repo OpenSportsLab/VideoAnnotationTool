@@ -23,6 +23,7 @@ from inference_settings import (
 from inference_types import (
     INFERENCE_TASKS,
     InferenceError,
+    InferenceLogEvent,
     InferenceModelChoice,
     InferenceQueueEntry,
     InferenceRequest,
@@ -42,6 +43,7 @@ class _QueueRecord:
     error_code: str = ""
     error_details: object = None
     retryable: bool = False
+    log_events: list[InferenceLogEvent] | None = None
 
 
 class _InferenceWorker(QThread):
@@ -125,6 +127,7 @@ class InferenceController(QObject):
 
     SETTINGS_ORG = "OpenSportsLab"
     SETTINGS_APP = "VideoAnnotationTool"
+    MAX_LOG_EVENTS_PER_JOB = 200
 
     def __init__(self, settings=None, base_dir: str = "", parent=None):
         super().__init__(parent)
@@ -285,7 +288,13 @@ class InferenceController(QObject):
     ) -> InferenceQueueEntry | None:
         if self._shutting_down or request.request_id in self._seen_request_ids:
             return None
-        record = _QueueRecord(request=copy.deepcopy(request), submitted_at=time.time())
+        submitted_at = time.time()
+        record = _QueueRecord(
+            request=copy.deepcopy(request),
+            submitted_at=submitted_at,
+            log_events=[],
+        )
+        self._append_log(record, "queued", "Queued", timestamp=submitted_at)
         self._seen_request_ids.add(request.request_id)
         self._records[request.request_id] = record
         self._queues[request.backend].append(record)
@@ -303,6 +312,12 @@ class InferenceController(QObject):
             record.state = "running"
             record.message = "Starting inference"
             record.started_at = time.time()
+            self._append_log(
+                record,
+                "running",
+                record.message,
+                timestamp=record.started_at,
+            )
             self._active_records[backend] = record
             try:
                 provider = self._provider(backend, request.provider_config)
@@ -352,6 +367,14 @@ class InferenceController(QObject):
         record.message = str(message or "")
         record.current = max(0, int(current or 0))
         record.total = max(0, int(total or 0))
+        self._append_log(
+            record,
+            "running",
+            record.message,
+            current=record.current,
+            total=record.total,
+            coalesce_progress=True,
+        )
         self.inferenceProgress.emit(
             request_id, record.message, record.current, record.total
         )
@@ -400,8 +423,57 @@ class InferenceController(QObject):
         record.error_code = str(error_code or "")
         record.error_details = error_details
         record.retryable = bool(retryable)
+        level = "error" if state == "failed" else "info"
+        self._append_log(
+            record,
+            state,
+            record.message,
+            level=level,
+            timestamp=record.finished_at,
+            current=record.current,
+            total=record.total,
+            details=error_details,
+        )
         self._records.pop(record.request.request_id, None)
         self._history.append(record)
+
+    def _append_log(
+        self,
+        record,
+        state,
+        message,
+        *,
+        level="info",
+        timestamp=None,
+        current=0,
+        total=0,
+        details=None,
+        coalesce_progress=False,
+    ):
+        events = record.log_events
+        if events is None:
+            events = []
+            record.log_events = events
+        event = InferenceLogEvent(
+            timestamp=float(timestamp if timestamp is not None else time.time()),
+            state=str(state or ""),
+            message=str(message or ""),
+            level=str(level or "info"),
+            current=max(0, int(current or 0)),
+            total=max(0, int(total or 0)),
+            details=copy.deepcopy(details),
+        )
+        if (
+            coalesce_progress
+            and events
+            and events[-1].state == event.state
+            and events[-1].message == event.message
+        ):
+            events[-1] = event
+            return
+        events.append(event)
+        if len(events) > self.MAX_LOG_EVENTS_PER_JOB:
+            del events[1 : len(events) - self.MAX_LOG_EVENTS_PER_JOB + 1]
 
     def cancel_request(self, request_id: str) -> bool:
         request_id = str(request_id or "")
@@ -412,6 +484,7 @@ class InferenceController(QObject):
                     return False
                 active.state = "cancelling"
                 active.message = "Cancelling inference"
+                self._append_log(active, "cancelling", active.message)
                 worker = self._workers[backend]
                 if worker is not None:
                     worker.cancel()
@@ -487,6 +560,7 @@ class InferenceController(QObject):
             error_code=record.error_code,
             error_details=record.error_details,
             retryable=record.retryable,
+            log_events=tuple(record.log_events or ()),
         )
 
     def _emit_queue_changed(self):

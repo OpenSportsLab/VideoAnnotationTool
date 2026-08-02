@@ -49,13 +49,20 @@ class DenseEditorController(QObject):
         self.dense_panel.eventDeleted.connect(self._on_delete_single_annotation)
         self.dense_panel.eventModified.connect(self._on_annotation_modified)
         self.dense_panel.updateTimeForSelectedRequested.connect(self._on_update_time_for_selected)
-        self.dense_panel.inferenceRequested.connect(
-            lambda: self.inferenceRunRequested.emit("dense_description", {"language": "en"})
-        )
         self.dense_panel.smartConfirmRequested.connect(self.confirm_selected_smart_prediction)
         self.dense_panel.smartRejectRequested.connect(self.reject_selected_smart_prediction)
         self.dense_panel.smartAcceptAllRequested.connect(self.accept_all_predictions)
         self.dense_panel.smartRejectAllRequested.connect(self.reject_all_predictions)
+
+    def request_inference(self):
+        if not self.current_sample_id:
+            QMessageBox.warning(
+                self.dense_panel, "Inference", "Please select a sample first."
+            )
+            return
+        self.inferenceRunRequested.emit(
+            "dense_description", {"language": "en"}
+        )
 
     def apply_shared_inference_result(self, result, context=None):
         for item in result.items:

@@ -316,7 +316,6 @@ class DenseAnnotationPanel(QWidget):
     eventDeleted = pyqtSignal(dict)
     eventModified = pyqtSignal(dict, dict)
     updateTimeForSelectedRequested = pyqtSignal(dict)
-    inferenceRequested = pyqtSignal()
     smartConfirmRequested = pyqtSignal()
     smartRejectRequested = pyqtSignal()
     smartAcceptAllRequested = pyqtSignal()
@@ -342,12 +341,10 @@ class DenseAnnotationPanel(QWidget):
 
         self.inference_review_bar = InferenceReviewBar(self)
         self.denseMainLayout.addWidget(self.inference_review_bar)
-        self.run_inference_button = self.inference_review_bar.run_button
         self.confirm_smart_button = self.inference_review_bar.accept_button
         self.reject_smart_button = self.inference_review_bar.reject_button
         self.accept_all_smart_button = self.inference_review_bar.accept_all_button
         self.reject_all_smart_button = self.inference_review_bar.reject_all_button
-        self.inference_review_bar.runRequested.connect(self.inferenceRequested.emit)
         self.inference_review_bar.acceptRequested.connect(self.smartConfirmRequested.emit)
         self.inference_review_bar.rejectRequested.connect(self.smartRejectRequested.emit)
         self.inference_review_bar.acceptAllRequested.connect(self.smartAcceptAllRequested.emit)

@@ -18,7 +18,6 @@ Includes the shared bottom inference-review footer and pending-caption preview.
 
 ### Exposed Signal
 - `captionTextChanged()`
-- `inferenceRequested()`
 - `inferenceConfirmRequested()`
 - `inferenceRejectRequested()`
 
@@ -38,7 +37,8 @@ Includes the shared bottom inference-review footer and pending-caption preview.
 
 ## Business Rules
 - UI layer is passive; controller owns autosave and mutation behavior.
-- `InferenceReviewBar` is always the final layout widget.
+- `InferenceReviewBar` is always the final layout widget and contains review
+  actions only; execution starts from the Inference Jobs dock.
 
 ## Conventions
 - Keep this module intentionally thin.

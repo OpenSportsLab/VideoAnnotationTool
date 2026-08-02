@@ -2,7 +2,7 @@
 
 ## Role
 Presents Question/Answer editor UI:
-- one shared bottom inference-review footer
+- one shared bottom prediction-review footer
 - pending-answer Accept/Reject controls
 - sample-level question group list
 - add/edit dialogs with dataset question suggestions
@@ -10,6 +10,9 @@ Presents Question/Answer editor UI:
 - selected answer list
 - multiline answer add/edit dialogs
 - right-click answer edit/remove menu
+
+Inference execution starts from the main-window Inference Jobs dock; this panel
+only emits answer-review and manual-edit intents.
 
 ## Contracts
 - Emits user intent signals only.

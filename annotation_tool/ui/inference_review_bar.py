@@ -3,9 +3,8 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayou
 
 
 class InferenceReviewBar(QFrame):
-    """Shared footer used by every annotation panel for inference and review."""
+    """Shared footer used by every annotation panel for prediction review."""
 
-    runRequested = pyqtSignal()
     acceptRequested = pyqtSignal()
     rejectRequested = pyqtSignal()
     acceptAllRequested = pyqtSignal()
@@ -28,8 +27,6 @@ class InferenceReviewBar(QFrame):
 
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
-        self.run_button = QPushButton("Run Inference…", self)
-        self.run_button.setObjectName("runInferenceButton")
         self.accept_button = QPushButton("Accept", self)
         self.accept_button.setObjectName("acceptPredictionButton")
         self.reject_button = QPushButton("Reject", self)
@@ -39,7 +36,6 @@ class InferenceReviewBar(QFrame):
         self.reject_all_button = QPushButton("Reject All", self)
         self.reject_all_button.setObjectName("rejectAllPredictionsButton")
 
-        button_row.addWidget(self.run_button)
         button_row.addStretch(1)
         button_row.addWidget(self.accept_button)
         button_row.addWidget(self.reject_button)
@@ -47,7 +43,6 @@ class InferenceReviewBar(QFrame):
         button_row.addWidget(self.reject_all_button)
         layout.addLayout(button_row)
 
-        self.run_button.clicked.connect(self.runRequested.emit)
         self.accept_button.clicked.connect(self.acceptRequested.emit)
         self.reject_button.clicked.connect(self.rejectRequested.emit)
         self.accept_all_button.clicked.connect(self.acceptAllRequested.emit)
@@ -71,10 +66,5 @@ class InferenceReviewBar(QFrame):
         text = str(text or "").strip()
         self.status_label.setText(text)
         self.status_label.setVisible(bool(text))
-
-    def set_running(self, running: bool) -> None:
-        self.run_button.setEnabled(not bool(running))
-        self.run_button.setText("Running Inference…" if running else "Run Inference…")
-
 
 __all__ = ["InferenceReviewBar"]
