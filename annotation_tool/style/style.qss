@@ -824,3 +824,32 @@ QPushButton[class="dense_confirm_btn"]:hover {
 QPushButton[class="dense_confirm_btn"]:pressed {
     background-color: #005A9E;
 }
+
+/* Shared bottom inference/review footer for every annotation panel. */
+QFrame#inferenceReviewBar {
+    border-top: 1px solid #444;
+}
+
+QLabel#inferencePredictionStatus {
+    color: #d7b85b;
+    font-size: 12px;
+}
+
+QPushButton#runInferenceButton {
+    background-color: #0078D7;
+    color: white;
+    border: 1px solid #005A9E;
+    border-radius: 5px;
+    font-weight: bold;
+    padding: 6px 12px;
+}
+
+QPushButton#runInferenceButton:hover {
+    background-color: #1084E3;
+}
+
+QPushButton#runInferenceButton:disabled {
+    background-color: #444;
+    color: #888;
+    border-color: #555;
+}

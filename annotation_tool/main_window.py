@@ -46,7 +46,14 @@ from media_control_settings import (
     SEEK_INTERVALS_KEY,
     load_media_control_settings,
 )
-from inference_settings import BACKEND_KEY, LOCAL_MODELS_KEY, SERVER_URL_KEY, SHARED_MAPPINGS_KEY
+from inference_settings import (
+    LOCAL_MODELS_KEY,
+    REMOTE_ENABLED_KEY,
+    SERVER_URL_KEY,
+    SHARED_MAPPINGS_KEY,
+    load_last_model_choice,
+    save_last_model_choice,
+)
 from inference_types import InferenceItem, InferenceRequest, resolve_sample_inputs
 from explorer_settings import EXPLORER_PAGE_SIZE_KEY, load_explorer_page_size
 
@@ -1000,21 +1007,55 @@ class VideoAnnotationWindow(QMainWindow):
         )
         dialog.inferenceSettingsApplyRequested.connect(self._save_inference_settings)
         dialog.inferenceTestRequested.connect(lambda: self._test_inference_connection(dialog))
+        dialog.inferenceRemoteCatalogRequested.connect(
+            lambda: self._refresh_remote_model_catalog(dialog)
+        )
+        catalog_slot = lambda models: dialog.set_remote_model_catalog(models)
+        catalog_error_slot = lambda message: dialog.set_inference_connection_status(message, False)
+        self.inference_controller.remoteCatalogDiscovered.connect(catalog_slot)
+        self.inference_controller.remoteCatalogFailed.connect(catalog_error_slot)
         dialog.exec()
+        try:
+            self.inference_controller.remoteCatalogDiscovered.disconnect(catalog_slot)
+            self.inference_controller.remoteCatalogFailed.disconnect(catalog_error_slot)
+        except Exception:
+            pass
 
     def _save_inference_settings(self, payload: dict) -> None:
         settings = getattr(self.dataset_explorer_controller, "settings", None)
         if settings is None:
             return
-        settings.setValue(BACKEND_KEY, str(payload.get("backend") or "local"))
+        settings.setValue(REMOTE_ENABLED_KEY, bool(payload.get("remote_enabled", False)))
         settings.setValue(SERVER_URL_KEY, str(payload.get("server_url") or ""))
         settings.setValue(SHARED_MAPPINGS_KEY, json.dumps(list(payload.get("shared_mappings") or [])))
         settings.setValue(LOCAL_MODELS_KEY, json.dumps(list(payload.get("local_models") or [])))
         settings.sync()
 
+    def _refresh_remote_model_catalog(self, dialog) -> None:
+        try:
+            config = dialog.inference_payload()
+        except ValueError as exc:
+            dialog.set_inference_connection_status(str(exc), False)
+            return
+        if not config.get("remote_enabled", False):
+            dialog.set_inference_connection_status(
+                "Enable remote inference before refreshing models.", False
+            )
+            return
+        dialog.set_inference_connection_status("Discovering remote models…", True)
+        if not self.inference_controller.request_remote_catalog(config):
+            dialog.set_inference_connection_status(
+                "Another model discovery request is still running.", False
+            )
+
     def _test_inference_connection(self, dialog) -> None:
         try:
-            config = {"server_url": dialog.inference_server_url_edit.text().strip()}
+            config = dialog.inference_payload()
+            if not config.get("remote_enabled", False):
+                dialog.set_inference_connection_status(
+                    "Enable remote inference before testing the connection.", False
+                )
+                return
             capabilities = self.inference_controller.test_connection(config)
             version = str(capabilities.get("version") or "unknown")
             shared_roots = list(capabilities.get("shared_roots") or [])
@@ -1062,75 +1103,55 @@ class VideoAnnotationWindow(QMainWindow):
             task,
             inputs,
             context,
-            default_backend=self.inference_controller.default_backend(),
-            provider_config=self.inference_controller.configuration_snapshot(),
+            preferred_model=load_last_model_choice(
+                getattr(self.dataset_explorer_controller, "settings", None), task
+            ),
             parent=self,
         )
-        model_slots = []
-        model_error_slots = []
-
-        def refresh_models(backend: str, selected_task: str):
+        def refresh_models(selected_task: str):
             dialog.set_models([])
             dialog.availability_label.setText("Discovering models…")
-
-            def apply_models(discovered_backend, discovered_task, models):
-                if discovered_backend != backend or discovered_task != selected_task:
-                    return
-                input_types = {source.type for source in inputs}
-                dialog.set_models([
-                    descriptor for descriptor in models
-                    if not descriptor.accepted_input_types
-                    or not input_types.isdisjoint(descriptor.accepted_input_types)
-                ])
-
-            model_slots.append(apply_models)
-            self.inference_controller.modelsDiscovered.connect(apply_models)
-            def show_discovery_error(discovered_backend, discovered_task, message):
-                if discovered_backend == backend and discovered_task == selected_task:
-                    dialog.availability_label.setText(message)
-
-            model_error_slots.append(show_discovery_error)
-            self.inference_controller.discoveryFailed.connect(show_discovery_error)
-            try:
-                draft_config = dialog.configuration_widget.payload()
-            except ValueError as exc:
-                dialog.availability_label.setText(str(exc))
-                return
-            if not self.inference_controller.request_model_discovery(selected_task, backend, draft_config):
+            if not self.inference_controller.request_model_catalog(selected_task):
                 dialog.availability_label.setText("Another model discovery request is still running.")
 
-        def test_draft_connection(config):
-            try:
-                capabilities = self.inference_controller.test_connection(config)
-                version = str(capabilities.get("version") or "unknown")
-                dialog.configuration_widget.set_connection_status(f"Connected to API version {version}.", True)
-            except Exception as exc:
-                dialog.configuration_widget.set_connection_status(str(exc), False)
-
         dialog.refreshModelsRequested.connect(refresh_models)
-        dialog.testConnectionRequested.connect(test_draft_connection)
-        refresh_models(self.inference_controller.default_backend(), task)
+        def apply_catalog(discovered_task, choices, warning):
+            if discovered_task != task:
+                return
+            input_types = {source.type for source in inputs}
+            dialog.set_models(
+                [
+                    choice
+                    for choice in choices
+                    if not choice.descriptor.accepted_input_types
+                    or not input_types.isdisjoint(choice.descriptor.accepted_input_types)
+                ],
+                warning,
+            )
+
+        def show_catalog_error(discovered_task, message):
+            if discovered_task == task:
+                dialog.set_models([], message)
+
+        self.inference_controller.modelCatalogDiscovered.connect(apply_catalog)
+        self.inference_controller.modelCatalogFailed.connect(show_catalog_error)
+        refresh_models(task)
         dialog_result = dialog.exec()
-        for slot in model_slots:
-            try:
-                self.inference_controller.modelsDiscovered.disconnect(slot)
-            except Exception:
-                pass
-        for slot in model_error_slots:
-            try:
-                self.inference_controller.discoveryFailed.disconnect(slot)
-            except Exception:
-                pass
+        try:
+            self.inference_controller.modelCatalogDiscovered.disconnect(apply_catalog)
+            self.inference_controller.modelCatalogFailed.disconnect(show_catalog_error)
+        except Exception:
+            pass
         if dialog_result != dialog.DialogCode.Accepted:
             return
         payload = dialog.payload()
-        if payload.get("remember_defaults"):
-            self._save_inference_settings(payload["provider_config"])
         parameters = {
             key: value for key, value in payload.items()
-            if key in {"head", "start_ms", "end_ms", "language", "question"}
+            if key in {"start_ms", "end_ms", "language", "question"}
             and value not in (None, "")
         }
+        if task in {"classification", "localization"}:
+            parameters["head"] = str(context.get("head") or "")
         if task == "localization":
             parameters["labels"] = list(context.get("labels") or [])
         selected_sources = {(str(getattr(source, "sample_id", "") or ""), os.path.realpath(source.path)) for source in payload["inputs"]}
@@ -1156,7 +1177,9 @@ class VideoAnnotationWindow(QMainWindow):
             task=task,
             model_id=payload["model_id"],
             backend=payload["backend"],
-            provider_config=copy.deepcopy(payload["provider_config"]),
+            provider_config=copy.deepcopy(
+                self.inference_controller.configuration_snapshot()
+            ),
             target_context=copy.deepcopy(context),
             schema=copy.deepcopy(self.dataset_explorer_controller.label_definitions),
             parameters=parameters,
@@ -1166,6 +1189,8 @@ class VideoAnnotationWindow(QMainWindow):
             "task": task,
             "sample_id": current_sample_id,
             "context": copy.deepcopy(parameters),
+            "backend": payload["backend"],
+            "model_id": payload["model_id"],
         }
         if not self.inference_controller.start_inference(request):
             self._pending_inference_requests.pop(request.request_id, None)
@@ -1202,6 +1227,12 @@ class VideoAnnotationWindow(QMainWindow):
         pending = self._pending_inference_requests.pop(request_id, None)
         if not pending:
             return
+        save_last_model_choice(
+            getattr(self.dataset_explorer_controller, "settings", None),
+            pending["task"],
+            pending.get("backend", ""),
+            pending.get("model_id", ""),
+        )
         handlers = {
             "classification": self.classification_editor_controller.apply_shared_inference_result,
             "localization": self.localization_editor_controller.apply_shared_inference_result,

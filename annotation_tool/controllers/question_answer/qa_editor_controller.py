@@ -441,11 +441,11 @@ class QAEditorController(QObject):
             has_answer=has_answer,
         )
         self.question_answer_panel.run_inference_button.setEnabled(editor_enabled and has_group)
-        self.question_answer_panel.confirm_smart_button.setVisible(has_smart_answer)
-        self.question_answer_panel.reject_smart_button.setVisible(has_smart_answer)
         pending_count = len(self._pending_by_sample.get(self.current_sample_id, []))
-        self.question_answer_panel.accept_all_smart_button.setVisible(pending_count > 1)
-        self.question_answer_panel.reject_all_smart_button.setVisible(pending_count > 1)
+        self.question_answer_panel.set_prediction_actions_visible(
+            selected=has_smart_answer,
+            bulk=pending_count > 1,
+        )
 
     def _valid_group_index(self, index: int) -> bool:
         try:

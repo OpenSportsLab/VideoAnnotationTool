@@ -18,6 +18,12 @@ INFERENCE_TASKS = (
 )
 
 
+def _explicit_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class ModelDescriptor:
     id: str
@@ -32,6 +38,7 @@ class ModelDescriptor:
     supports_time_range: bool = False
     config_path: str = ""
     weights: str = ""
+    trusted_legacy: bool = False
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ModelDescriptor":
@@ -57,12 +64,34 @@ class ModelDescriptor:
             supports_time_range=bool(payload.get("supports_time_range", False)),
             config_path=str(payload.get("config_path") or ""),
             weights=str(payload.get("weights") or ""),
+            trusted_legacy=_explicit_bool(payload.get("trusted_legacy", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["accepted_input_types"] = list(self.accepted_input_types)
         return payload
+
+
+@dataclass(frozen=True)
+class InferenceModelChoice:
+    """A runnable model together with the provider that owns it."""
+
+    backend: str
+    descriptor: ModelDescriptor
+
+    def __post_init__(self):
+        if self.backend not in {"local", "remote"}:
+            raise ValueError(f"Unsupported inference backend: {self.backend!r}")
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return self.backend, self.descriptor.id
+
+    @property
+    def display_name(self) -> str:
+        provider = "Local" if self.backend == "local" else "Remote"
+        return f"{provider} — {self.descriptor.display_name}"
 
 
 @dataclass
@@ -103,8 +132,8 @@ class InferenceRequest:
     parameters: dict[str, Any] = field(default_factory=dict)
     schema: dict[str, Any] = field(default_factory=dict)
     backend: str = "local"
-    # Immutable, request-scoped provider options.  This deliberately keeps a
-    # run-dialog draft independent from the application-wide defaults.
+    # Immutable request-scoped snapshot of the saved provider setup. The run
+    # dialog selects a model and runtime parameters but never edits this data.
     provider_config: dict[str, Any] = field(default_factory=dict)
     target_context: dict[str, Any] = field(default_factory=dict)
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex)

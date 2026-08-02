@@ -199,6 +199,7 @@ def test_localization_worker_uses_class_model_weights_and_position_fallback(monk
 
     assert calls["infer_kwargs"]["weights"] == "OpenSportsLab/some-localizer"
     assert calls["infer_kwargs"]["use_wandb"] is False
+    assert calls["infer_kwargs"]["trusted_legacy"] is False
     assert calls["infer_kwargs"]["test_set"].endswith("temp_test.json")
     assert len(finished_payloads) == 1
     assert finished_payloads[0] == [
@@ -209,6 +210,55 @@ def test_localization_worker_uses_class_model_weights_and_position_fallback(monk
             "confidence_score": 0.75,
         }
     ]
+
+
+def test_localization_worker_forwards_explicit_legacy_checkpoint_trust(
+    monkeypatch, tmp_path
+):
+    import opensportslib
+
+    calls = {}
+
+    class _FakeLocalizationModel:
+        def __init__(self, config):
+            calls["config"] = config
+
+        def infer(self, **kwargs):
+            calls["infer_kwargs"] = kwargs
+            return {"data": []}
+
+    monkeypatch.setattr(
+        opensportslib,
+        "model",
+        types.SimpleNamespace(LocalizationModel=_FakeLocalizationModel),
+        raising=False,
+    )
+    config_path = tmp_path / "loc_config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "DATA": {"classes": ["pass"], "test": {}},
+            "MODEL": {},
+            "SYSTEM": {},
+        }),
+        encoding="utf-8",
+    )
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"")
+    worker = localization_inference_module.LocInferenceWorker(
+        video_path=str(video_path),
+        start_ms=0,
+        end_ms=0,
+        config_path=str(config_path),
+        model_id="jeetv/snpro-snbas-2024",
+        head_name="ball_action",
+        labels=["pass"],
+        input_fps=25.0,
+        trusted_legacy=True,
+    )
+
+    worker.run()
+
+    assert calls["infer_kwargs"]["trusted_legacy"] is True
 
 
 def test_localization_worker_clip_falls_back_to_reencode(monkeypatch, tmp_path):

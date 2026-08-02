@@ -20,7 +20,7 @@ class LocalizationEditorController(QObject):
     """
     Localization controller.
     Owns localization editor logic, sample-driven selection handling, navigation,
-    and smart inference actions.
+    and transient inference review actions.
     """
 
     statusMessageRequested = pyqtSignal(str, str, int)
@@ -610,7 +610,7 @@ class LocalizationEditorController(QObject):
         self._display_events_for_item(self.current_video_path)
         self.refresh_tree_icons(self.current_video_path)
 
-    # --- Smart inference integration ---
+    # --- Shared inference integration ---
     def _request_shared_inference(self):
         if not self.current_video_path or not self.current_sample_id:
             QMessageBox.warning(self.localization_panel, "Inference", "Please select a sample first.")

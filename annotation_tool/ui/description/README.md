@@ -3,7 +3,7 @@
 ## Role
 Provides the Description right-panel widget for sample captions.
 
-Includes inference Run/Confirm/Reject controls and smart-result status.
+Includes the shared bottom inference-review footer and pending-caption preview.
 
 ## Architecture Context
 - Layout is defined in `description_annotation_panel.ui`.
@@ -18,11 +18,15 @@ Includes inference Run/Confirm/Reject controls and smart-result status.
 
 ### Exposed Signal
 - `captionTextChanged()`
+- `inferenceRequested()`
+- `inferenceConfirmRequested()`
+- `inferenceRejectRequested()`
 
 ### Exposed Methods
 - `set_caption_text(text: str)`
 - `get_caption_text() -> str`
 - `set_caption_editor_enabled(enabled: bool)`
+- `set_pending_prediction(candidate)`
 
 ## Key Functions and Responsibilities
 - `DescriptionAnnotationPanel.__init__()`
@@ -34,6 +38,7 @@ Includes inference Run/Confirm/Reject controls and smart-result status.
 
 ## Business Rules
 - UI layer is passive; controller owns autosave and mutation behavior.
+- `InferenceReviewBar` is always the final layout widget.
 
 ## Conventions
 - Keep this module intentionally thin.

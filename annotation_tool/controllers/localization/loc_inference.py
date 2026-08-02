@@ -86,7 +86,19 @@ class LocInferenceWorker(QThread):
     finished_signal = pyqtSignal(list)
     error_signal = pyqtSignal(str)
 
-    def __init__(self, video_path, start_ms, end_ms, config_path, model_id, head_name, labels, input_fps):
+    def __init__(
+        self,
+        video_path,
+        start_ms,
+        end_ms,
+        config_path,
+        model_id,
+        head_name,
+        labels,
+        input_fps,
+        *,
+        trusted_legacy=False,
+    ):
         super().__init__()
         self.video_path = os.path.abspath(video_path)
         self.start_ms = start_ms
@@ -96,6 +108,7 @@ class LocInferenceWorker(QThread):
         self.target_head = str(head_name or "ball_action")
         self.labels = [str(label) for label in list(labels or []) if str(label).strip()]
         self.input_fps = float(input_fps or 25.0)
+        self.trusted_legacy = bool(trusted_legacy)
 
     def _clip_video_if_needed(self, tmp_dir: str) -> tuple[str, int]:
         if self.start_ms <= 0 and self.end_ms <= 0:
@@ -255,6 +268,7 @@ class LocInferenceWorker(QThread):
                             test_set=tmp_input_json,
                             weights=self.model_id,
                             use_wandb=False,
+                            trusted_legacy=self.trusted_legacy,
                         )
                     )
                     raw_evts = self._extract_prediction_events(output_data)

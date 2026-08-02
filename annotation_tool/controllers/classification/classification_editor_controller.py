@@ -3,8 +3,6 @@ import copy
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
-from utils import natural_sort_key
-
 from .train_manager import TrainManager
 
 
@@ -34,7 +32,6 @@ class ClassificationEditorController(QObject):
         self._active_mode_index = 0
         self._action_items_cache = []
         self._action_path_by_sample_id = {}
-        self._batch_action_list_dirty = True
         self._schema_definitions = {}
         self._preferred_head = None
 
@@ -68,24 +65,6 @@ class ClassificationEditorController(QObject):
             return
         head = self.classification_panel.get_current_head() or self._preferred_head or "action"
         self.inferenceRunRequested.emit("classification", {"head": str(head)})
-
-    def _request_shared_batch_inference(self, start_idx: int, end_idx: int):
-        sorted_items = sorted(
-            list(self._action_items_cache or []),
-            key=lambda data: natural_sort_key(data.get("name", "")),
-        )
-        if start_idx < 0 or end_idx < start_idx or end_idx >= len(sorted_items):
-            return
-        sample_ids = [
-            str(item.get("data_id") or item.get("id") or "")
-            for item in sorted_items[start_idx : end_idx + 1]
-        ]
-        sample_ids = [sample_id for sample_id in sample_ids if sample_id]
-        if sample_ids:
-            self.inferenceRunRequested.emit(
-                "classification",
-                {"head": self.classification_panel.get_current_head() or "action", "batch_sample_ids": sample_ids},
-            )
 
     def apply_shared_inference_result(self, result, context=None):
         default_head = str((context or {}).get("head") or self.classification_panel.get_current_head() or self._preferred_head or "action")
@@ -131,8 +110,6 @@ class ClassificationEditorController(QObject):
         self.classification_panel.manual_box.setEnabled(False)
         self._action_items_cache = []
         self._action_path_by_sample_id = {}
-        self._batch_action_list_dirty = True
-        self.classification_panel.update_action_list([])
         self.current_sample_id = ""
         self.current_action_path = None
         self._current_sample_snapshot = {}
@@ -155,20 +132,8 @@ class ClassificationEditorController(QObject):
         self.setup_dynamic_ui()
         self.display_manual_annotation()
 
-    def sync_batch_inference_dropdowns(self):
-        if not self._batch_action_list_dirty:
-            return
-        sorted_list = sorted(
-            list(self._action_items_cache or []),
-            key=lambda data: natural_sort_key(data.get("name", "")),
-        )
-        action_names = [data.get("name", "") for data in sorted_list if data.get("name")]
-        self.classification_panel.update_action_list(action_names)
-        self._batch_action_list_dirty = False
-
     def on_action_items_changed(self, action_items: list):
         self._action_items_cache = list(action_items or [])
-        self._batch_action_list_dirty = True
         self._action_path_by_sample_id = {}
         for item in self._action_items_cache:
             if not isinstance(item, dict):

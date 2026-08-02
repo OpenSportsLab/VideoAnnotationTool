@@ -3,7 +3,7 @@
 ## Role
 Provides the Classification right-panel widgets and dynamic label-group controls.
 
-Includes one **Run Inference…** action for the shared backend/model/input dialog.
+Includes the shared bottom inference-review footer used by every annotation panel.
 
 ## Architecture Context
 - Static layout comes from `classification_annotation_panel.ui`.
@@ -24,14 +24,13 @@ Includes one **Run Inference…** action for the shared backend/model/input dial
 - `head_rename_requested(str, str)`
 - `head_delete_requested(str)`
 - `head_selected(str)`
-- `head_smart_infer_requested(str)`
 - `head_smart_confirm_requested(str)`
 - `head_smart_reject_requested(str)`
-- `confirm_infer_requested(dict)`
-- `batch_confirm_requested(dict)`
 - `annotation_saved(dict)`
-- `batch_run_requested(int, int)`
 - `hand_clear_requested()`
+- `sharedInferenceRequested()`
+- `acceptAllPredictionsRequested()`
+- `rejectAllPredictionsRequested()`
 
 ## Key Functions and Responsibilities
 - `setup_dynamic_labels(label_definitions)`
@@ -42,10 +41,8 @@ Includes one **Run Inference…** action for the shared backend/model/input dial
   - Clears all selected label values.
 - `set_current_head(head_name)` / `get_current_head()`
   - Keeps the selected category tab stable across schema refreshes when possible.
-- `show_inference_loading(is_loading)`
-  - Toggles inference loading state in the panel.
 - `display_inference_result(...)`
-  - Updates per-row smart controls (confidence + accept/reject) for inferred labels.
+  - Updates per-row pending controls (confidence + accept/reject) for inferred labels.
 - `reset_smart_inference()` / `reset_train_ui()`
   - Resets smart/train related UI state.
 
@@ -54,7 +51,10 @@ Includes one **Run Inference…** action for the shared backend/model/input dial
 - Category management is tab-driven; the old category editor is hidden.
 - A trailing `+` tab creates a new category, and tab context actions own rename/delete.
 - UI emits intent signals only; it does not commit dataset mutations.
-- Smart state is rendered at row level inside each head group.
+- Pending state is rendered at row level inside each head group.
+- There are no per-head, single, or batch inference buttons; scope is selected
+  in the shared run dialog.
+- `InferenceReviewBar` is the last widget in the panel layout.
 - The training tab is intentionally hidden for now; keep the train widgets/API stable behind the panel until the training flow is repaired.
 
 ## Conventions
@@ -64,7 +64,7 @@ Includes one **Run Inference…** action for the shared backend/model/input dial
 
 ## Interactions
 - Inbound from controller:
-  - setup dynamic labels, set/get annotation, smart output display.
+  - setup dynamic labels, set/get annotation, pending output display.
 - Outbound to controller:
   - user actions via panel signals listed above.
 

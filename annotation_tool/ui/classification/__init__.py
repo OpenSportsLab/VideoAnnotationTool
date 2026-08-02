@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ui.inference_review_bar import InferenceReviewBar
 from utils import resource_path
 
 
@@ -155,7 +156,6 @@ class DynamicSingleLabelGroup(QWidget):
     value_changed = pyqtSignal(str, str)
     remove_category_signal = pyqtSignal(str)
     remove_label_signal = pyqtSignal(str, str)
-    smart_infer_requested = pyqtSignal(str)
     smart_confirm_requested = pyqtSignal(str)
     smart_reject_requested = pyqtSignal(str)
 
@@ -172,13 +172,7 @@ class DynamicSingleLabelGroup(QWidget):
         self.lbl_head = QLabel(head_name)
         self.lbl_head.setProperty("class", "group_head_lbl group_head_single")
 
-        self.btn_smart_infer = QPushButton("Smart Inference")
-        self.btn_smart_infer.setVisible(False)
-        self.btn_smart_infer.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_smart_infer.clicked.connect(lambda: self.smart_infer_requested.emit(self.head_name))
-
         header_layout.addWidget(self.lbl_head)
-        header_layout.addWidget(self.btn_smart_infer)
         header_layout.addStretch()
         self.layout.addLayout(header_layout)
 
@@ -306,15 +300,6 @@ class DynamicSingleLabelGroup(QWidget):
         return self._smart_controls_by_label.get(str(label_text or ""))
 
     def set_inference_loading(self, is_loading: bool):
-        self.btn_smart_infer.setEnabled(not is_loading)
-        self.btn_smart_infer.setText("Loading..." if is_loading else "Smart Inference")
-        for _conf_btn, accept_btn, reject_btn in self._smart_controls_by_label.values():
-            accept_btn.setEnabled(not is_loading)
-            reject_btn.setEnabled(not is_loading)
-
-    def set_inference_loading(self, is_loading: bool):
-        self.btn_smart_infer.setEnabled(not is_loading)
-        self.btn_smart_infer.setText("Loading..." if is_loading else "Smart Inference")
         for _conf_btn, accept_btn, reject_btn in self._smart_controls_by_label.values():
             accept_btn.setEnabled(not is_loading)
             reject_btn.setEnabled(not is_loading)
@@ -324,7 +309,6 @@ class DynamicMultiLabelGroup(QWidget):
     value_changed = pyqtSignal(str, list)
     remove_category_signal = pyqtSignal(str)
     remove_label_signal = pyqtSignal(str, str)
-    smart_infer_requested = pyqtSignal(str)
     smart_confirm_requested = pyqtSignal(str)
     smart_reject_requested = pyqtSignal(str)
 
@@ -340,13 +324,7 @@ class DynamicMultiLabelGroup(QWidget):
         self.lbl_head = QLabel(head_name)
         self.lbl_head.setProperty("class", "group_head_lbl group_head_multi")
 
-        self.btn_smart_infer = QPushButton("Smart Inference")
-        self.btn_smart_infer.setVisible(False)
-        self.btn_smart_infer.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_smart_infer.clicked.connect(lambda: self.smart_infer_requested.emit(self.head_name))
-
         header_layout.addWidget(self.lbl_head)
-        header_layout.addWidget(self.btn_smart_infer)
         header_layout.addStretch()
         self.layout.addLayout(header_layout)
 
@@ -467,8 +445,6 @@ class DynamicMultiLabelGroup(QWidget):
         return self._smart_controls_by_label.get(str(label_text or ""))
 
     def set_inference_loading(self, is_loading: bool):
-        self.btn_smart_infer.setEnabled(not is_loading)
-        self.btn_smart_infer.setText("Loading..." if is_loading else "Smart Inference")
         for _conf_btn, accept_btn, reject_btn in self._smart_controls_by_label.values():
             accept_btn.setEnabled(not is_loading)
             reject_btn.setEnabled(not is_loading)
@@ -483,15 +459,9 @@ class ClassificationAnnotationPanel(QWidget):
     head_delete_requested = pyqtSignal(str)
     head_selected = pyqtSignal(str)
 
-    head_smart_infer_requested = pyqtSignal(str)
     head_smart_confirm_requested = pyqtSignal(str)
     head_smart_reject_requested = pyqtSignal(str)
-    confirm_infer_requested = pyqtSignal(dict)
-    batch_confirm_requested = pyqtSignal(dict)
-
     annotation_saved = pyqtSignal(dict)
-    batch_run_requested = pyqtSignal(int, int)
-    batch_controls_opened = pyqtSignal()
 
     hand_clear_requested = pyqtSignal()
     sharedInferenceRequested = pyqtSignal()
@@ -511,9 +481,6 @@ class ClassificationAnnotationPanel(QWidget):
                 f"Failed to load ClassificationAnnotationPanel UI: {ui_path}. Reason: {exc}"
             ) from exc
 
-        self.is_batch_mode_active = False
-        self.pending_batch_results = {}
-        self.full_action_names = []
         self.label_groups = {}
         self._smart_state_by_head = {}
         self._ignore_head_tab_change = False
@@ -541,16 +508,14 @@ class ClassificationAnnotationPanel(QWidget):
 
         self.schema_box.setVisible(False)
 
-        self.btn_shared_inference = QPushButton("Run Inference…", self)
-        self.btn_shared_inference.setObjectName("btnSharedInference")
-        self.smartButtonsLayout.addWidget(self.btn_shared_inference)
-        self.btn_shared_inference.clicked.connect(self.sharedInferenceRequested.emit)
-        self.btn_accept_all_predictions = QPushButton("Accept All", self)
-        self.btn_reject_all_predictions = QPushButton("Reject All", self)
-        self.smartButtonsLayout.addWidget(self.btn_accept_all_predictions)
-        self.smartButtonsLayout.addWidget(self.btn_reject_all_predictions)
-        self.btn_accept_all_predictions.clicked.connect(self.acceptAllPredictionsRequested.emit)
-        self.btn_reject_all_predictions.clicked.connect(self.rejectAllPredictionsRequested.emit)
+        self.inference_review_bar = InferenceReviewBar(self)
+        self.mainLayout.addWidget(self.inference_review_bar)
+        self.btn_shared_inference = self.inference_review_bar.run_button
+        self.btn_accept_all_predictions = self.inference_review_bar.accept_all_button
+        self.btn_reject_all_predictions = self.inference_review_bar.reject_all_button
+        self.inference_review_bar.runRequested.connect(self.sharedInferenceRequested.emit)
+        self.inference_review_bar.acceptAllRequested.connect(self.acceptAllPredictionsRequested.emit)
+        self.inference_review_bar.rejectAllRequested.connect(self.rejectAllPredictionsRequested.emit)
         self.set_bulk_prediction_actions_visible(False)
 
         self.head_tabs_widget = QTabWidget(self.manual_box)
@@ -568,12 +533,9 @@ class ClassificationAnnotationPanel(QWidget):
         self.manualLayout.insertWidget(0, self.head_tabs_widget)
         self.manualScrollArea.setVisible(False)
 
-        # Smart inference is now per head in dynamic group headers.
         self.confirm_btn.setVisible(False)
         self.confirm_btn.setEnabled(False)
         self.clear_sel_btn.clicked.connect(self.on_clear_clicked)
-        self.btn_batch_infer.clicked.connect(self._toggle_batch_widget)
-        self.btn_run_batch.clicked.connect(self._on_run_batch_clicked)
         self.batch_input_widget.setVisible(False)
 
         self._remove_disabled_tabs()
@@ -583,7 +545,6 @@ class ClassificationAnnotationPanel(QWidget):
 
         self._configure_train_defaults()
         self.batch_input_widget.setVisible(False)
-        self.btn_batch_infer.setVisible(False)
         self.clear_dynamic_labels()
         self.manual_box.setEnabled(False)
         self._update_confirm_button_state()
@@ -597,6 +558,9 @@ class ClassificationAnnotationPanel(QWidget):
                 if self.tabs.widget(idx) is tab_widget:
                     self.tabs.removeTab(idx)
                     break
+            if tab_widget is getattr(self, "smart_box", None):
+                tab_widget.setParent(None)
+                tab_widget.deleteLater()
         self.tabs.tabBar().setVisible(self.tabs.count() > 1)
 
     def _create_head_page(self):
@@ -749,39 +713,6 @@ class ClassificationAnnotationPanel(QWidget):
 
         self.btn_stop_train.setEnabled(False)
 
-    def _toggle_batch_widget(self):
-        showing = not self.batch_input_widget.isVisible()
-        self.batch_input_widget.setVisible(showing)
-        if showing:
-            self.batch_controls_opened.emit()
-
-    def _on_run_batch_clicked(self):
-        start_idx = self.spin_start.currentIndex()
-        if start_idx < 0:
-            return
-        end_idx = start_idx + self.spin_end.currentIndex()
-        if end_idx >= start_idx:
-            self.batch_run_requested.emit(start_idx, end_idx)
-
-    def _validate_batch_range(self):
-        start_idx = self.spin_start.currentIndex()
-        if start_idx < 0:
-            return
-
-        current_end_text = self.spin_end.currentText()
-        self.spin_end.blockSignals(True)
-        self.spin_end.clear()
-
-        valid_end_items = self.full_action_names[start_idx:]
-        self.spin_end.addItems(valid_end_items)
-
-        if current_end_text in valid_end_items:
-            self.spin_end.setCurrentText(current_end_text)
-        else:
-            self.spin_end.setCurrentIndex(0)
-
-        self.spin_end.blockSignals(False)
-
     def on_confirm_clicked(self):
         return
 
@@ -792,8 +723,6 @@ class ClassificationAnnotationPanel(QWidget):
         self.hand_clear_requested.emit()
 
     def reset_smart_inference(self):
-        self.is_batch_mode_active = False
-        self.pending_batch_results = {}
         self.chart_widget.setVisible(False)
 
     def reset_train_ui(self):
@@ -805,19 +734,6 @@ class ClassificationAnnotationPanel(QWidget):
         self.btn_start_train.setEnabled(True)
         self.btn_stop_train.setEnabled(False)
 
-    def update_action_list(self, action_names: list):
-        self.full_action_names = list(action_names or [])
-        self.spin_start.blockSignals(True)
-        self.spin_end.blockSignals(True)
-        self.spin_start.clear()
-        self.spin_end.clear()
-        self.spin_start.addItems(self.full_action_names)
-        self.spin_end.addItems(self.full_action_names)
-        self.spin_start.blockSignals(False)
-        self.spin_end.blockSignals(False)
-        if self.full_action_names:
-            self._validate_batch_range()
-
     def display_inference_result(self, target_head: str, predicted_label: str, conf_dict: dict):
         score = 0.0
         if isinstance(conf_dict, dict):
@@ -826,9 +742,6 @@ class ClassificationAnnotationPanel(QWidget):
             except Exception:
                 score = 0.0
         self.set_head_smart_state(target_head, predicted_label, score, True)
-
-    def display_batch_inference_result(self, result_text: str, batch_predictions: dict):
-        _ = (result_text, batch_predictions)
 
     def clear_dynamic_labels(self):
         self.setup_dynamic_labels({})
@@ -843,7 +756,6 @@ class ClassificationAnnotationPanel(QWidget):
             else:
                 group = DynamicMultiLabelGroup(head, definition)
 
-            group.smart_infer_requested.connect(self.head_smart_infer_requested.emit)
             group.smart_confirm_requested.connect(self.head_smart_confirm_requested.emit)
             group.smart_reject_requested.connect(self.head_smart_reject_requested.emit)
             page_info = self._head_pages.get(head)
@@ -893,9 +805,11 @@ class ClassificationAnnotationPanel(QWidget):
         group.set_smart_state(str(predicted_label or ""), float(confidence_score or 0.0), bool(is_smart))
 
     def set_bulk_prediction_actions_visible(self, visible: bool):
-        if hasattr(self, "btn_accept_all_predictions"):
-            self.btn_accept_all_predictions.setVisible(bool(visible))
-            self.btn_reject_all_predictions.setVisible(bool(visible))
+        self.inference_review_bar.set_review_actions_visible(
+            visible,
+            allow_selected=False,
+            allow_bulk=True,
+        )
 
     def get_head_row_smart_widgets(self, head: str, label_text: str):
         group = self.label_groups.get(head)

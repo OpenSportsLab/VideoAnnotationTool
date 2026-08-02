@@ -3,7 +3,7 @@
 ## Role
 Provides the Dense Description right-panel with table and add-event adapters.
 
-Includes shared inference and selected smart-row confirm/reject controls.
+Includes the shared bottom inference-review footer and pending-row review.
 
 ## Architecture Context
 - Static layout comes from `dense_annotation_panel.ui`.
@@ -27,6 +27,9 @@ Includes shared inference and selected smart-row confirm/reject controls.
 - `eventDeleted(dict)`
 - `eventModified(dict, dict)`
 - `updateTimeForSelectedRequested(dict)`
+- `inferenceRequested()`
+- `smartConfirmRequested()` / `smartRejectRequested()`
+- `smartAcceptAllRequested()` / `smartRejectAllRequested()`
 
 ### Table Adapter Signals
 - `annotationSelected(int)`
@@ -56,6 +59,7 @@ Includes shared inference and selected smart-row confirm/reject controls.
 ## Business Rules
 - Table emits edit intents; controller validates and persists changes.
 - Add-event button only emits intent.
+- `InferenceReviewBar` is always the final layout widget.
 - The Time column reserves enough width for full UTC timestamps across resize events.
 - UTC Time edits normalize ISO-compatible input and emit both temporal fields;
   invalid input is a no-op. Relative rows retain the relative-time parser.

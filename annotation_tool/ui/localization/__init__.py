@@ -28,6 +28,7 @@ from colors import (
     localization_label_text_hex,
     normalize_hex_color,
 )
+from ui.inference_review_bar import InferenceReviewBar
 from utils import (
     annotation_utc_datetime,
     format_annotation_utc_display,
@@ -406,7 +407,6 @@ class _SpottingTabsAdapter(QObject):
     labelRenameReq = pyqtSignal(str, str)
     labelDeleteReq = pyqtSignal(str, str)
     labelColorReq = pyqtSignal(str, str, str)
-    smartInferenceRequested = pyqtSignal(str)
 
     def __init__(self, tab_widget: QTabWidget, parent=None):
         super().__init__(parent)
@@ -439,7 +439,7 @@ class _SpottingTabsAdapter(QObject):
         for head in heads:
             definition = label_definitions[head]
             labels = definition.get("labels", [])
-            page, time_label, scroll, smart_infer_btn = self._create_head_page()
+            page, time_label, scroll = self._create_head_page()
 
             self._tabs.addTab(page, head.replace("_", " "))
             self._head_keys_map.append(head)
@@ -448,9 +448,7 @@ class _SpottingTabsAdapter(QObject):
                 "scroll": scroll,
                 "labels": labels,
                 "label_colors": dict(definition.get("label_colors", {})),
-                "smart_infer_btn": smart_infer_btn,
             }
-            smart_infer_btn.clicked.connect(lambda _, h=head: self.smartInferenceRequested.emit(h))
             self._populate_head_buttons(head)
 
         self._plus_tab_index = self._tabs.addTab(QWidget(), "+")
@@ -487,10 +485,6 @@ class _SpottingTabsAdapter(QObject):
         header_layout = QHBoxLayout()
         header_layout.addWidget(time_label)
         header_layout.addStretch()
-        smart_infer_btn = QPushButton("Smart Inference")
-        smart_infer_btn.setVisible(False)
-        smart_infer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        header_layout.addWidget(smart_infer_btn)
         page_layout.addLayout(header_layout)
 
         scroll = QScrollArea()
@@ -499,7 +493,7 @@ class _SpottingTabsAdapter(QObject):
         scroll.setProperty("class", "spotting_scroll_area")
         page_layout.addWidget(scroll)
 
-        return page, time_label, scroll, smart_infer_btn
+        return page, time_label, scroll
 
     def _populate_head_buttons(self, head_name):
         page_info = self._head_pages.get(head_name)
@@ -693,12 +687,6 @@ class _SpottingTabsAdapter(QObject):
 
     def set_inference_loading(self, is_loading: bool):
         self._tabs.setEnabled(not is_loading)
-        for page_info in self._head_pages.values():
-            smart_infer_btn = page_info.get("smart_infer_btn")
-            if smart_infer_btn is None:
-                continue
-            smart_infer_btn.setEnabled(not is_loading)
-            smart_infer_btn.setText("Loading..." if is_loading else "Smart Inference")
 
 
 class _AnnotationManagementAdapter(QObject):
@@ -711,94 +699,6 @@ class _AnnotationManagementAdapter(QObject):
 
     def set_inference_loading(self, is_loading: bool):
         self.tabs.set_inference_loading(is_loading)
-
-
-class _SmartWidgetAdapter(QObject):
-    """
-    Adapter that preserves the smart-widget API expected by controller code.
-    Uses only standard widgets defined in localization_annotation_panel.ui.
-    """
-
-    setTimeRequested = pyqtSignal(str)
-    runInferenceRequested = pyqtSignal(int, int)
-    confirmSmartRequested = pyqtSignal()
-    clearSmartRequested = pyqtSignal()
-
-    def __init__(self, panel, parent=None):
-        super().__init__(parent)
-
-        self.val_start = panel.smartStartTimeEdit
-        self.val_end = panel.smartEndTimeEdit
-        self.btn_set_start = panel.smartSetStartBtn
-        self.btn_set_end = panel.smartSetEndBtn
-        self.btn_run_infer = panel.smartRunInferenceBtn
-        self.btn_confirm = panel.smartConfirmBtn
-        self.btn_clear = panel.smartClearBtn
-
-        self.start_ms = 0
-        self.end_ms = 0
-
-        self.val_start.setText("00:00.000")
-        self.val_end.setText("00:00.000")
-        self.val_start.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.val_end.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # Keep a compact monospaced look close to the previous custom line edit.
-        line_edit_style = "font-family: monospace; font-weight: bold; font-size: 13px; padding: 2px;"
-        self.val_start.setStyleSheet(line_edit_style)
-        self.val_end.setStyleSheet(line_edit_style)
-
-        self.btn_set_start.clicked.connect(lambda: self.setTimeRequested.emit("start"))
-        self.btn_set_end.clicked.connect(lambda: self.setTimeRequested.emit("end"))
-        self.btn_run_infer.clicked.connect(self._on_run_clicked)
-        self.btn_confirm.clicked.connect(self.confirmSmartRequested.emit)
-        self.btn_clear.clicked.connect(self.clearSmartRequested.emit)
-
-        self.val_start.editingFinished.connect(self._on_start_edit_finished)
-        self.val_end.editingFinished.connect(self._on_end_edit_finished)
-
-        self.smart_table = _TableAdapter(
-            panel.smartEventsTableView,
-            edit_label=None,
-            set_time_btn=None,
-            list_label=panel.smartEventsListLabel,
-            parent=self,
-        )
-
-    def update_time_display(self, target: str, time_str: str, time_ms: int):
-        if target == "start":
-            self.start_ms = max(0, int(time_ms))
-            self.val_start.setText(_format_mmss_msec(self.start_ms))
-            if self.end_ms > 0 and self.start_ms > self.end_ms:
-                self.end_ms = self.start_ms
-                self.val_end.setText(_format_mmss_msec(self.end_ms))
-            return
-
-        if target == "end":
-            self.end_ms = max(0, int(time_ms))
-            self.val_end.setText(_format_mmss_msec(self.end_ms))
-            if self.end_ms > 0 and self.end_ms < self.start_ms:
-                self.start_ms = self.end_ms
-                self.val_start.setText(_format_mmss_msec(self.start_ms))
-
-    def _on_start_edit_finished(self):
-        self.start_ms = _parse_time_to_ms(self.val_start.text(), self.start_ms)
-        self.val_start.setText(_format_mmss_msec(self.start_ms))
-
-        if self.end_ms > 0 and self.start_ms > self.end_ms:
-            self.end_ms = self.start_ms
-            self.val_end.setText(_format_mmss_msec(self.end_ms))
-
-    def _on_end_edit_finished(self):
-        self.end_ms = _parse_time_to_ms(self.val_end.text(), self.end_ms)
-        self.val_end.setText(_format_mmss_msec(self.end_ms))
-
-        if self.end_ms > 0 and self.end_ms < self.start_ms:
-            self.start_ms = self.end_ms
-            self.val_start.setText(_format_mmss_msec(self.start_ms))
-
-    def _on_run_clicked(self):
-        self.runInferenceRequested.emit(self.start_ms, self.end_ms)
 
 
 class LocalizationAnnotationPanel(QWidget):
@@ -836,10 +736,14 @@ class LocalizationAnnotationPanel(QWidget):
             list_label=self.handEventsListLabel,
             parent=self,
         )
+        legacy_smart_page = getattr(self, "smartAnnotationTab", None)
         for idx in reversed(range(self.tabs.count())):
-            if self.tabs.widget(idx) is getattr(self, "smartAnnotationTab", None):
+            if self.tabs.widget(idx) is legacy_smart_page:
                 self.tabs.removeTab(idx)
                 break
+        if legacy_smart_page is not None:
+            legacy_smart_page.setParent(None)
+            legacy_smart_page.deleteLater()
 
         if self.tabs.count() <= 1:
             self.tabs.tabBar().hide()
@@ -848,21 +752,22 @@ class LocalizationAnnotationPanel(QWidget):
         self.btn_prev_event.clicked.connect(lambda: self.eventNavigateRequested.emit(-1))
         self.btn_next_event.clicked.connect(lambda: self.eventNavigateRequested.emit(1))
 
-        self.btn_shared_inference = QPushButton("Run Inference…", self)
-        self.btn_shared_inference.setObjectName("btnSharedInference")
-        self.layout().addWidget(self.btn_shared_inference)
-        self.btn_shared_inference.clicked.connect(self.sharedInferenceRequested.emit)
-        self.btn_accept_all_predictions = QPushButton("Accept All", self)
-        self.btn_reject_all_predictions = QPushButton("Reject All", self)
-        self.layout().addWidget(self.btn_accept_all_predictions)
-        self.layout().addWidget(self.btn_reject_all_predictions)
-        self.btn_accept_all_predictions.clicked.connect(self.acceptAllPredictionsRequested.emit)
-        self.btn_reject_all_predictions.clicked.connect(self.rejectAllPredictionsRequested.emit)
+        self.inference_review_bar = InferenceReviewBar(self)
+        self.layout().addWidget(self.inference_review_bar)
+        self.btn_shared_inference = self.inference_review_bar.run_button
+        self.btn_accept_all_predictions = self.inference_review_bar.accept_all_button
+        self.btn_reject_all_predictions = self.inference_review_bar.reject_all_button
+        self.inference_review_bar.runRequested.connect(self.sharedInferenceRequested.emit)
+        self.inference_review_bar.acceptAllRequested.connect(self.acceptAllPredictionsRequested.emit)
+        self.inference_review_bar.rejectAllRequested.connect(self.rejectAllPredictionsRequested.emit)
         self.set_prediction_actions_visible(False)
 
     def set_prediction_actions_visible(self, visible):
-        self.btn_accept_all_predictions.setVisible(bool(visible))
-        self.btn_reject_all_predictions.setVisible(bool(visible))
+        self.inference_review_bar.set_review_actions_visible(
+            visible,
+            allow_selected=False,
+            allow_bulk=True,
+        )
 
     def set_timeline_origin(self, origin_utc):
         self.table.set_timeline_origin(origin_utc)

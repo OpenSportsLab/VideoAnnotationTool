@@ -7,7 +7,15 @@ import httpx
 import pytest
 
 from inference_providers import LocalInferenceProvider, RemoteInferenceProvider
-from inference_settings import SHARED_MAPPINGS_KEY, UPLOAD_MANIFESTS_KEY
+from inference_settings import (
+    LOCAL_MODELS_KEY,
+    REMOTE_ENABLED_KEY,
+    SHARED_MAPPINGS_KEY,
+    UPLOAD_MANIFESTS_KEY,
+    load_last_model_choice,
+    load_local_models,
+    save_last_model_choice,
+)
 from inference_types import (
     InferenceInput,
     InferenceItem,
@@ -70,11 +78,184 @@ def test_local_provider_reports_missing_native_caption_apis():
     assert "DenseDescriptionModel" in dense.unavailable_reason
 
 
+def test_known_working_local_models_are_fresh_install_defaults(tmp_path):
+    models = load_local_models(MemorySettings())
+    assert [(model["task"], model["id"]) for model in models] == [
+        ("classification", "jeetv/snpro-classification-mvit"),
+        ("localization", "jeetv/snpro-snbas-2024"),
+    ]
+    assert models[0]["config_path"].endswith("config.yaml")
+    assert models[1]["config_path"].endswith("loc_config.yaml")
+    assert models[0].get("trusted_legacy", False) is False
+    assert models[1]["trusted_legacy"] is True
+
+    # Existing empty profiles are upgraded with the defaults.
+    assert load_local_models(MemorySettings({LOCAL_MODELS_KEY: "[]"})) == models
+
+    configured = load_local_models(MemorySettings({
+        LOCAL_MODELS_KEY: json.dumps([{
+            "task": "classification",
+            "id": "custom/classifier",
+            "display_name": "Custom",
+            "config_path": str(tmp_path / "custom.yaml"),
+        }])
+    }))
+    assert [model["id"] for model in configured] == [
+        "jeetv/snpro-classification-mvit",
+        "jeetv/snpro-snbas-2024",
+        "custom/classifier",
+    ]
+
+    untrusted_override = load_local_models(MemorySettings({
+        LOCAL_MODELS_KEY: json.dumps([{
+            "task": "localization",
+            "id": "jeetv/snpro-snbas-2024",
+            "weights": "someone/other-checkpoint",
+        }])
+    }))
+    localization = next(
+        model for model in untrusted_override if model["task"] == "localization"
+    )
+    assert localization["trusted_legacy"] is False
+
+
+def test_default_registry_does_not_duplicate_builtin_local_discovery():
+    provider = LocalInferenceProvider(
+        MemorySettings(),
+        base_dir=str(Path(__file__).parents[1] / "annotation_tool"),
+    )
+    classification = provider.list_models("classification")
+    localization = provider.list_models("localization")
+    assert [model.id for model in classification] == ["jeetv/snpro-classification-mvit"]
+    assert [model.id for model in localization] == ["jeetv/snpro-snbas-2024"]
+    assert localization[0].trusted_legacy is True
+
+
 def test_local_discovery_never_constructs_http_client(monkeypatch, tmp_path):
     monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("HTTP used for local inference")))
     controller = InferenceController(settings=MemorySettings(), base_dir=str(Path(__file__).parents[1] / "annotation_tool"))
     models = controller.discover_models("classification", "local", {"local_models": []})
     assert models and models[0].task == "classification"
+
+
+def test_combined_catalog_does_not_construct_http_client_when_remote_is_disabled(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("HTTP used while remote inference is disabled")
+        ),
+    )
+    controller = InferenceController(
+        settings=MemorySettings({REMOTE_ENABLED_KEY: False}),
+        base_dir=str(Path(__file__).parents[1] / "annotation_tool"),
+    )
+
+    choices, warning = controller.discover_model_catalog("classification")
+
+    assert choices
+    assert {choice.backend for choice in choices} == {"local"}
+    assert warning == ""
+
+
+def test_combined_catalog_keeps_local_models_when_remote_discovery_fails(monkeypatch):
+    controller = InferenceController(settings=MemorySettings())
+
+    class Provider:
+        def __init__(self, models=None, error=None):
+            self.models = list(models or [])
+            self.error = error
+
+        def list_models(self, _task):
+            if self.error:
+                raise self.error
+            return self.models
+
+        def close(self):
+            pass
+
+    local = Provider([
+        ModelDescriptor("same-id", "Local model", "classification"),
+        ModelDescriptor(
+            "unavailable", "Unavailable", "classification", available=False
+        ),
+    ])
+    remote = Provider(error=RuntimeError("server unavailable"))
+    monkeypatch.setattr(
+        controller,
+        "_provider",
+        lambda backend, _config=None: local if backend == "local" else remote,
+    )
+
+    choices, warning = controller.discover_model_catalog(
+        "classification", {"remote_enabled": True}
+    )
+
+    assert [(choice.backend, choice.descriptor.id) for choice in choices] == [
+        ("local", "same-id")
+    ]
+    assert "unavailable Local model" in warning
+    assert "server unavailable" in warning
+
+
+def test_settings_remote_catalog_uses_unsaved_configuration(monkeypatch, tmp_path):
+    controller = InferenceController(settings=MemorySettings())
+    captured = {}
+
+    class Provider:
+        def list_models(self, task):
+            return [ModelDescriptor(f"{task}-model", task, task)]
+
+        def close(self):
+            pass
+
+    def provider(backend, config=None):
+        captured["backend"] = backend
+        captured["config"] = dict(config or {})
+        return Provider()
+
+    monkeypatch.setattr(controller, "_provider", provider)
+    draft = {
+        "remote_enabled": True,
+        "server_url": "http://draft-server:9000",
+        "shared_mappings": [
+            {"local_root": str(tmp_path), "root_id": "draft-root"}
+        ],
+        "local_models": [],
+    }
+
+    models = controller.discover_remote_catalog(draft)
+
+    assert captured == {"backend": "remote", "config": draft}
+    assert {(model.task, model.id) for model in models} == {
+        (task, f"{task}-model")
+        for task in (
+            "classification",
+            "localization",
+            "description",
+            "dense_description",
+            "question_answer",
+        )
+    }
+
+
+def test_last_successful_model_choice_is_persisted_per_task():
+    settings = MemorySettings()
+
+    save_last_model_choice(settings, "classification", "local", "classifier")
+    save_last_model_choice(settings, "localization", "remote", "detector")
+
+    assert load_last_model_choice(settings, "classification") == (
+        "local",
+        "classifier",
+    )
+    assert load_last_model_choice(settings, "localization") == (
+        "remote",
+        "detector",
+    )
+    assert load_last_model_choice(settings, "description") is None
 
 
 def test_request_scoped_remote_mapping_does_not_use_saved_mapping(tmp_path):

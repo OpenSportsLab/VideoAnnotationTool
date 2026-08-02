@@ -2,8 +2,9 @@ import os
 
 from PyQt6 import uic
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+from PyQt6.QtWidgets import QLabel, QWidget
 
+from ui.inference_review_bar import InferenceReviewBar
 from utils import resource_path
 
 
@@ -33,37 +34,32 @@ class DescriptionAnnotationPanel(QWidget):
         self.caption_edit = self.descCaptionEdit
         self.caption_edit.textChanged.connect(self.captionTextChanged.emit)
 
-        inference_row = QHBoxLayout()
-        self.run_inference_button = QPushButton("Run Inference…", self)
-        self.confirm_inference_button = QPushButton("Confirm", self)
-        self.reject_inference_button = QPushButton("Reject", self)
-        self.inference_status_label = QLabel("", self)
         self.inference_candidate_label = QLabel("", self)
         self.inference_candidate_label.setWordWrap(True)
-        inference_row.addWidget(self.run_inference_button)
-        inference_row.addWidget(self.confirm_inference_button)
-        inference_row.addWidget(self.reject_inference_button)
-        self.verticalLayout.addLayout(inference_row)
-        self.verticalLayout.addWidget(self.inference_status_label)
         self.verticalLayout.addWidget(self.inference_candidate_label)
-        self.run_inference_button.clicked.connect(self.inferenceRequested.emit)
-        self.confirm_inference_button.clicked.connect(self.inferenceConfirmRequested.emit)
-        self.reject_inference_button.clicked.connect(self.inferenceRejectRequested.emit)
+        self.inference_review_bar = InferenceReviewBar(self)
+        self.verticalLayout.addWidget(self.inference_review_bar)
+        self.run_inference_button = self.inference_review_bar.run_button
+        self.confirm_inference_button = self.inference_review_bar.accept_button
+        self.reject_inference_button = self.inference_review_bar.reject_button
+        self.inference_status_label = self.inference_review_bar.status_label
+        self.inference_review_bar.runRequested.connect(self.inferenceRequested.emit)
+        self.inference_review_bar.acceptRequested.connect(self.inferenceConfirmRequested.emit)
+        self.inference_review_bar.rejectRequested.connect(self.inferenceRejectRequested.emit)
         self.set_smart_inference_state(False)
 
     def set_smart_inference_state(self, active: bool, confidence: float = 0.0, model_id: str = ""):
-        self.confirm_inference_button.setVisible(bool(active))
-        self.reject_inference_button.setVisible(bool(active))
+        self.inference_review_bar.set_review_actions_visible(bool(active))
         if active:
-            self.inference_status_label.setText(f"Smart prediction: {confidence * 100:.1f}% · {model_id}")
+            self.inference_review_bar.set_status(
+                f"Pending prediction · {confidence * 100:.1f}% · {model_id}"
+            )
         else:
-            self.inference_status_label.clear()
+            self.inference_review_bar.set_status()
             self.inference_candidate_label.clear()
 
     def set_pending_prediction(self, candidate=None):
         active = isinstance(candidate, dict)
-        self.confirm_inference_button.setText("Accept")
-        self.reject_inference_button.setText("Reject")
         self.set_smart_inference_state(
             active,
             float(candidate.get("confidence_score", 0.0) or 0.0) if active else 0.0,
@@ -74,7 +70,7 @@ class DescriptionAnnotationPanel(QWidget):
         )
 
     def set_inference_loading(self, loading: bool):
-        self.run_inference_button.setEnabled(not bool(loading))
+        self.inference_review_bar.set_running(loading)
 
     def set_caption_text(self, text: str):
         self.caption_edit.setPlainText(text or "")

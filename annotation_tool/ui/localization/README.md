@@ -1,7 +1,7 @@
 # Localization UI
 
 ## Role
-Provides the Localization right-panel plus adapters for spotting tabs, hand events, and smart events.
+Provides the Localization right-panel plus adapters for spotting tabs and event review.
 
 Includes one **Run Inference…** action and shared progress/cancellation controls.
 
@@ -17,12 +17,14 @@ Includes one **Run Inference…** action and shared progress/cancellation contro
 ### Adapter Classes
 - `_SpottingTabsAdapter`
 - `_TableAdapter`
-- `_SmartWidgetAdapter`
 - `_AnnotationManagementAdapter`
 
 ### Panel Signals
 - `tabSwitched(int)`
 - `eventNavigateRequested(int)`
+- `sharedInferenceRequested()`
+- `acceptAllPredictionsRequested()`
+- `rejectAllPredictionsRequested()`
 
 ### Table Adapter Signals
 - `annotationSelected(int)`
@@ -47,13 +49,13 @@ Includes one **Run Inference…** action and shared progress/cancellation contro
 - `_TableAdapter.set_timeline_origin(origin_utc)`
   - Supplies sample-scoped UTC display/edit context without coupling the panel
     to `MediaController`.
-- `_SmartWidgetAdapter`
-  - Emits smart inference range/confirm/clear requests.
+- `InferenceReviewBar` is the last widget in the panel layout and is the only
+  inference execution surface.
 
 ## Business Rules
 - Table edit emits old/new payloads; controller decides mutation validity.
 - Tabs adapter manages head/label UX including add/rename/delete requests.
-- Smart event actions are emitted as intent only; persistence remains in controller/history layer.
+- Pending event actions are emitted as intent only; persistence remains in controller/history layer.
 - Table row background color is derived from the same label-color mapping used for timeline markers.
 - A malformed annotation `timestamp_utc` displays relative `position_ms`; an
   invalid UTC edit is rejected without emitting a mutation.

@@ -8,20 +8,33 @@ workflow.
 
 ## Configure inference
 
-Open **Edit → Settings → Inference**, or expand **Advanced connection and
-model settings** in the run dialog. Both surfaces use the same configuration
-editor. Run-dialog changes are one-shot unless **Remember these settings as
-defaults** is checked.
+Open **Edit → Settings → Inference**. This is the only inference setup
+surface; the run dialog never edits models, servers, or mappings.
 
-- Choose the default **Local** or **Remote** backend.
-- For Remote, enter the server base URL and use **Test Connection**. The client
-  calls `/api/v1/capabilities` and reports the API version and shared-root IDs.
+- **Local Models** is an editable registry containing task, model ID, display
+  name, config YAML, and optional weights. Fresh installations start with
+  `jeetv/snpro-classification-mvit` for Classification and
+  `jeetv/snpro-snbas-2024` for Localization, using the checked-in
+  `config.yaml` and `loc_config.yaml` templates. Custom entries are added to
+  these defaults; an entry with the same task and model ID overrides its
+  default definition.
+  The official `jeetv/snpro-snbas-2024` checkpoint uses OpenSportsLib's legacy
+  checkpoint format, so that exact built-in artifact is explicitly trusted for
+  deserialization. Changing its weights value removes the trust opt-in;
+  arbitrary local checkpoints remain safe-by-default.
+- **Remote Server** has an explicit **Enable remote inference** switch. When it
+  is off, discovery and execution never construct an HTTP client. When it is
+  on, enter the base URL and use **Test Connection**. The client calls
+  `/api/v1/capabilities` and reports the API version and shared-root IDs.
+- **Refresh Models** reads the server-owned model catalog into a read-only
+  table. Remote models are configured by the server, not edited in the client.
 - Add a shared mapping when a local directory and a server storage root contain
   the same files. A file below that directory is sent as
   `shared://<root-id>/<relative-path>` and is not uploaded.
-- Add local models with a task, model ID, display name, config YAML, and
-  optional weights. Built-in Classification and Localization entries continue
-  to use the application config templates.
+
+Connection tests and catalog refreshes use the current unsaved form values.
+Only **Apply** or **OK** persists the setup; **Cancel** leaves saved settings
+unchanged.
 
 Remote v1 has no authentication. Localhost HTTP is allowed. An HTTP server on
 another host is marked as unauthenticated and unencrypted; use it only on a
@@ -29,19 +42,30 @@ trusted private network.
 
 ## Run inference
 
-Use the single **Run Inference…** button in any annotation mode. Choose Local
-or Remote, a compatible model and inputs, then fill in the task options shown
-by the dialog. Local executes OpenSportsLib directly and never contacts the
-configured server. Remote uses the `/api/v1` API.
+Use the single **Run Inference…** button in any annotation mode. Choose a
+compatible model and inputs, then fill in the task options shown by the dialog.
+The model list combines saved Local models and, when enabled, discovered Remote
+models. Entries are prefixed **Local —** or **Remote —**; selecting one chooses
+the provider automatically. Local executes OpenSportsLib directly and never
+contacts the configured server. Remote uses the `/api/v1` API.
 
-The run dialog discovers models for the current task, disables unavailable
-local model APIs, and lets you choose compatible sample inputs. Localization
-and Dense models may accept a time range. Localization range uploads are
-clipped locally when shared storage is unavailable, and returned positions are
-translated back to the original sample timeline.
+The dialog lists only runnable models for the current task. Setup problems are
+reported briefly and corrected in application Settings. It contains runtime
+options only: Classification scope, compatible inputs, language or question
+where applicable, and time ranges only for models that support ranges.
+Classification and Localization use the head already selected in their
+annotation panels. The last model that completes successfully is remembered
+separately for each task. Localization range uploads are clipped locally when
+shared storage is unavailable, and returned positions are translated back to
+the original sample timeline.
 
 Classification exposes current-sample and all-samples scope in this dialog; it
 does not have a separate batch-inference control.
+
+Every annotation panel uses the same footer: pending-result status and review
+actions appear immediately above a bottom-row **Run Inference…** button. There
+are no separate Smart, single-inference, or batch-inference buttons in the
+task-specific editors.
 
 ## Large files
 

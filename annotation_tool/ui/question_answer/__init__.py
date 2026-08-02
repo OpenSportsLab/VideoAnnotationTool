@@ -4,6 +4,7 @@ from PyQt6 import uic
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QMenu, QPushButton, QWidget
 
+from ui.inference_review_bar import InferenceReviewBar
 from utils import resource_path
 
 
@@ -44,16 +45,13 @@ class QuestionAnswerAnnotationPanel(QWidget):
         self.answer_list: QListWidget = self.answerList
         self.add_answer_button: QPushButton = self.addAnswerButton
 
-        self.run_inference_button = QPushButton("Run Inference…", self)
-        self.confirm_smart_button = QPushButton("Accept Prediction", self)
-        self.reject_smart_button = QPushButton("Reject Prediction", self)
-        self.accept_all_smart_button = QPushButton("Accept All", self)
-        self.reject_all_smart_button = QPushButton("Reject All", self)
-        self.answerButtonLayout.addWidget(self.run_inference_button)
-        self.answerButtonLayout.addWidget(self.confirm_smart_button)
-        self.answerButtonLayout.addWidget(self.reject_smart_button)
-        self.answerButtonLayout.addWidget(self.accept_all_smart_button)
-        self.answerButtonLayout.addWidget(self.reject_all_smart_button)
+        self.inference_review_bar = InferenceReviewBar(self)
+        self.qaMainLayout.addWidget(self.inference_review_bar)
+        self.run_inference_button = self.inference_review_bar.run_button
+        self.confirm_smart_button = self.inference_review_bar.accept_button
+        self.reject_smart_button = self.inference_review_bar.reject_button
+        self.accept_all_smart_button = self.inference_review_bar.accept_all_button
+        self.reject_all_smart_button = self.inference_review_bar.reject_all_button
 
         self._suspend_changes = False
 
@@ -70,13 +68,12 @@ class QuestionAnswerAnnotationPanel(QWidget):
         self.answer_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.answer_list.customContextMenuRequested.connect(self._on_answer_context_menu_requested)
         self.answer_list.itemDoubleClicked.connect(self._on_answer_item_double_clicked)
-        self.run_inference_button.clicked.connect(self.inferenceRequested.emit)
-        self.confirm_smart_button.clicked.connect(self.smartConfirmRequested.emit)
-        self.reject_smart_button.clicked.connect(self.smartRejectRequested.emit)
-        self.accept_all_smart_button.clicked.connect(self.smartAcceptAllRequested.emit)
-        self.reject_all_smart_button.clicked.connect(self.smartRejectAllRequested.emit)
-        self.accept_all_smart_button.setVisible(False)
-        self.reject_all_smart_button.setVisible(False)
+        self.inference_review_bar.runRequested.connect(self.inferenceRequested.emit)
+        self.inference_review_bar.acceptRequested.connect(self.smartConfirmRequested.emit)
+        self.inference_review_bar.rejectRequested.connect(self.smartRejectRequested.emit)
+        self.inference_review_bar.acceptAllRequested.connect(self.smartAcceptAllRequested.emit)
+        self.inference_review_bar.rejectAllRequested.connect(self.smartRejectAllRequested.emit)
+        self.inference_review_bar.set_review_actions_visible(False)
 
     def set_question_groups(self, groups, selected_group_index: int = 0, selected_answer_index: int = 0):
         valid_groups = []
@@ -159,6 +156,13 @@ class QuestionAnswerAnnotationPanel(QWidget):
 
         self.answer_list.setEnabled(editor_enabled and has_group)
         self.add_answer_button.setEnabled(editor_enabled and has_group)
+
+    def set_prediction_actions_visible(self, *, selected: bool, bulk: bool) -> None:
+        self.inference_review_bar.set_review_actions_visible(
+            bool(selected or bulk),
+            allow_selected=bool(selected),
+            allow_bulk=bool(bulk),
+        )
 
     def refresh_question_label(self, group: dict, index: int):
         item = self.question_list.item(index)

@@ -90,6 +90,13 @@ layouts stay pinned to the modality being synchronized.
 
 ### Right: Annotation Tabs
 
+All five editors end with the same inference footer. **Run Inference…** opens a
+runtime-only dialog with one task-compatible Local/Remote model list, inputs,
+and applicable task parameters. Server and model setup lives exclusively in
+**Edit → Settings → Inference**. Accept/Reject and bulk review actions appear
+in the footer only when pending predictions exist. Task-specific prediction
+rows remain inline in the editor above it.
+
 #### Classification (`CLS`)
 
 ![Classification Interface](assets/classification-UI.png)
@@ -97,7 +104,7 @@ layouts stay pinned to the modality being synchronized.
 - Edit label heads and labels
 - Supports single-label and multi-label heads
 - Manual edits are saved immediately on effective change
-- Smart inference per head with confirm/reject
+- Pending labels have inline Accept/Reject controls
 
 #### Localization (`LOC`)
 
@@ -108,7 +115,7 @@ layouts stay pinned to the modality being synchronized.
 - Event table supports edit, delete, confirm/reject smart events
 - Time shows full UTC when resolvable and relative time otherwise; media seeking
   still uses the projected timeline position
-- Smart inference with model + time-range prompts
+- Pending events are visually distinct and can be reviewed inline
 
 #### Description (`DESC`)
 

@@ -18,7 +18,13 @@ from urllib.parse import quote
 
 import httpx
 
-from inference_settings import load_local_models, load_shared_mappings, load_upload_manifests, save_upload_manifests
+from inference_settings import (
+    default_local_models,
+    load_local_models,
+    load_shared_mappings,
+    load_upload_manifests,
+    save_upload_manifests,
+)
 from inference_types import (
     InferenceError,
     InferenceRequest,
@@ -51,23 +57,6 @@ class LocalInferenceProvider:
         from opensportslib import model
 
         defaults = {
-            "classification": ModelDescriptor(
-                id="jeetv/snpro-classification-mvit",
-                display_name="SNPro Classification MViT",
-                task="classification",
-                accepted_input_types=("video",),
-                config_path=os.path.join(self.base_dir, "config.yaml"),
-                weights="jeetv/snpro-classification-mvit",
-            ),
-            "localization": ModelDescriptor(
-                id="jeetv/snpro-snbas-2024",
-                display_name="SNBAS 2024 Localization",
-                task="localization",
-                accepted_input_types=("video",),
-                supports_time_range=True,
-                config_path=os.path.join(self.base_dir, "loc_config.yaml"),
-                weights="jeetv/snpro-snbas-2024",
-            ),
             "description": ModelDescriptor(
                 id="opensportslib-description",
                 display_name="OpenSportsLib Description",
@@ -94,9 +83,14 @@ class LocalInferenceProvider:
                 supports_time_range=True,
             ),
         }
-        descriptors = []
+        descriptors_by_id = {}
+        for raw in default_local_models(self.base_dir):
+            if raw.get("task") == task:
+                descriptor = ModelDescriptor.from_dict(raw)
+                descriptors_by_id[descriptor.id] = descriptor
         if task in defaults:
-            descriptors.append(defaults[task])
+            descriptor = defaults[task]
+            descriptors_by_id[descriptor.id] = descriptor
         configured_models = self.local_models if self.local_models is not None else load_local_models(self.settings)
         for raw in configured_models:
             if raw.get("task") != task:
@@ -116,8 +110,8 @@ class LocalInferenceProvider:
                 data = descriptor.to_dict()
                 data.update(available=False, unavailable_reason=f"Installed OpenSportsLib has no {class_name} API.")
                 descriptor = ModelDescriptor.from_dict(data)
-            descriptors.append(descriptor)
-        return descriptors
+            descriptors_by_id[descriptor.id] = descriptor
+        return list(descriptors_by_id.values())
 
     def run(self, request: InferenceRequest, progress: ProgressCallback, cancel_event=None):
         descriptors = {model.id: model for model in self.list_models(request.task)}
@@ -210,6 +204,7 @@ class LocalInferenceProvider:
                 str(request.parameters.get("head") or "ball_action"),
                 list(request.parameters.get("labels") or []),
                 float(item.inputs[0].metadata.get("fps", 25.0) or 25.0),
+                trusted_legacy=descriptor.trusted_legacy,
             )
             worker.finished_signal.connect(captured.append)
             worker.error_signal.connect(errors.append)

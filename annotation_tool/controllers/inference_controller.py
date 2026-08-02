@@ -8,8 +8,20 @@ import threading
 from PyQt6.QtCore import QObject, QSettings, QThread, pyqtSignal
 
 from inference_providers import LocalInferenceProvider, RemoteInferenceProvider
-from inference_settings import BACKEND_KEY, DEFAULT_BACKEND, DEFAULT_SERVER_URL, SERVER_URL_KEY, normalize_server_url
-from inference_types import InferenceError, InferenceRequest
+from inference_settings import (
+    DEFAULT_SERVER_URL,
+    SERVER_URL_KEY,
+    load_local_models,
+    load_shared_mappings,
+    normalize_server_url,
+    remote_inference_enabled,
+)
+from inference_types import (
+    INFERENCE_TASKS,
+    InferenceError,
+    InferenceModelChoice,
+    InferenceRequest,
+)
 
 
 class _InferenceWorker(QThread):
@@ -60,9 +72,28 @@ class _ModelDiscoveryWorker(QThread):
                 close()
 
 
+class _CatalogDiscoveryWorker(QThread):
+    succeeded = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, operation):
+        super().__init__()
+        self.operation = operation
+
+    def run(self):
+        try:
+            self.succeeded.emit(self.operation())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class InferenceController(QObject):
     modelsDiscovered = pyqtSignal(str, str, object)
     discoveryFailed = pyqtSignal(str, str, str)
+    modelCatalogDiscovered = pyqtSignal(str, object, str)
+    modelCatalogFailed = pyqtSignal(str, str)
+    remoteCatalogDiscovered = pyqtSignal(object)
+    remoteCatalogFailed = pyqtSignal(str)
     inferenceStarted = pyqtSignal(str, str)
     inferenceProgress = pyqtSignal(str, str, int, int)
     inferenceCompleted = pyqtSignal(str, object)
@@ -77,16 +108,12 @@ class InferenceController(QObject):
         self.settings = settings or QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
         self.base_dir = base_dir or os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         self.worker: _InferenceWorker | None = None
-        self.discovery_worker: _ModelDiscoveryWorker | None = None
+        self.discovery_worker: QThread | None = None
         self._active_request_id = ""
 
-    def default_backend(self) -> str:
-        backend = str(self.settings.value(BACKEND_KEY, DEFAULT_BACKEND) or DEFAULT_BACKEND)
-        return backend if backend in {"local", "remote"} else DEFAULT_BACKEND
-
     def configuration_snapshot(self) -> dict:
-        from inference_settings import load_local_models, load_shared_mappings
         return {
+            "remote_enabled": remote_inference_enabled(self.settings),
             "server_url": normalize_server_url(str(self.settings.value(SERVER_URL_KEY, DEFAULT_SERVER_URL) or DEFAULT_SERVER_URL)),
             "shared_mappings": load_shared_mappings(self.settings),
             "local_models": load_local_models(self.settings),
@@ -102,7 +129,7 @@ class InferenceController(QObject):
         return RemoteInferenceProvider(url, self.settings, shared_mappings=mappings)
 
     def discover_models(self, task: str, backend: str | None = None, config=None):
-        selected_backend = backend or self.default_backend()
+        selected_backend = backend or "local"
         provider = self._provider(selected_backend, config)
         try:
             models = provider.list_models(task)
@@ -119,7 +146,7 @@ class InferenceController(QObject):
     def request_model_discovery(self, task: str, backend: str | None = None, config=None) -> bool:
         if self.discovery_worker is not None and self.discovery_worker.isRunning():
             return False
-        selected_backend = backend or self.default_backend()
+        selected_backend = backend or "local"
         worker = _ModelDiscoveryWorker(self._provider(selected_backend, config), task)
         worker.succeeded.connect(
             lambda models, b=selected_backend, t=task: self.modelsDiscovered.emit(b, t, models)
@@ -127,6 +154,92 @@ class InferenceController(QObject):
         worker.failed.connect(
             lambda message, b=selected_backend, t=task: self.discoveryFailed.emit(b, t, message)
         )
+        worker.finished.connect(lambda ref=worker: self._cleanup_discovery_worker(ref))
+        self.discovery_worker = worker
+        worker.start()
+        return True
+
+    def discover_model_catalog(self, task: str, config=None):
+        """Return runnable Local and enabled-Remote models for one task."""
+        snapshot = self.configuration_snapshot() if config is None else dict(config)
+        choices = []
+        warnings = []
+        local_provider = self._provider("local", snapshot)
+        try:
+            local_models = local_provider.list_models(task)
+            for descriptor in local_models:
+                if descriptor.available:
+                    choices.append(InferenceModelChoice("local", descriptor))
+            unavailable = sum(not descriptor.available for descriptor in local_models)
+            if unavailable:
+                warnings.append(f"{unavailable} unavailable Local model(s) omitted.")
+        except Exception as exc:
+            warnings.append(f"Local models: {exc}")
+        finally:
+            close = getattr(local_provider, "close", None)
+            if callable(close):
+                close()
+
+        remote_enabled = snapshot.get("remote_enabled", False)
+        if isinstance(remote_enabled, str):
+            remote_enabled = remote_enabled.strip().lower() in {"1", "true", "yes", "on"}
+        if bool(remote_enabled):
+            remote_provider = self._provider("remote", snapshot)
+            try:
+                remote_models = remote_provider.list_models(task)
+                for descriptor in remote_models:
+                    if descriptor.available:
+                        choices.append(InferenceModelChoice("remote", descriptor))
+                unavailable = sum(not descriptor.available for descriptor in remote_models)
+                if unavailable:
+                    warnings.append(f"{unavailable} unavailable Remote model(s) omitted.")
+            except Exception as exc:
+                warnings.append(f"Remote models: {exc}")
+            finally:
+                close = getattr(remote_provider, "close", None)
+                if callable(close):
+                    close()
+        return choices, " ".join(warnings)
+
+    def request_model_catalog(self, task: str) -> bool:
+        if self.discovery_worker is not None and self.discovery_worker.isRunning():
+            return False
+        snapshot = self.configuration_snapshot()
+        worker = _CatalogDiscoveryWorker(
+            lambda t=task, c=snapshot: self.discover_model_catalog(t, c)
+        )
+        worker.succeeded.connect(
+            lambda result, t=task: self.modelCatalogDiscovered.emit(
+                t, result[0], result[1]
+            )
+        )
+        worker.failed.connect(lambda message, t=task: self.modelCatalogFailed.emit(t, message))
+        worker.finished.connect(lambda ref=worker: self._cleanup_discovery_worker(ref))
+        self.discovery_worker = worker
+        worker.start()
+        return True
+
+    def discover_remote_catalog(self, config) -> list:
+        snapshot = dict(config or {})
+        provider = self._provider("remote", snapshot)
+        try:
+            models_by_key = {}
+            for task in INFERENCE_TASKS:
+                for descriptor in provider.list_models(task):
+                    models_by_key[(descriptor.task, descriptor.id)] = descriptor
+            return list(models_by_key.values())
+        finally:
+            provider.close()
+
+    def request_remote_catalog(self, config) -> bool:
+        if self.discovery_worker is not None and self.discovery_worker.isRunning():
+            return False
+        snapshot = dict(config or {})
+        worker = _CatalogDiscoveryWorker(
+            lambda c=snapshot: self.discover_remote_catalog(c)
+        )
+        worker.succeeded.connect(self.remoteCatalogDiscovered.emit)
+        worker.failed.connect(self.remoteCatalogFailed.emit)
         worker.finished.connect(lambda ref=worker: self._cleanup_discovery_worker(ref))
         self.discovery_worker = worker
         worker.start()

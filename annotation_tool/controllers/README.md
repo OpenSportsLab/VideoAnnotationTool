@@ -97,6 +97,23 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 ### `InferenceController`
 - Owns the one active shared inference operation and selects the local or
   remote provider from each typed request.
+- Aggregates runnable task models into provider-aware choices. Local discovery
+  always runs; Remote discovery runs only when explicitly enabled and failures
+  are non-fatal when Local choices remain available. Identical model IDs remain
+  distinct through their `(backend, model_id)` identity.
+- Application Settings is the sole setup surface. Run requests contain an
+  immutable snapshot of saved Local registry, Remote endpoint, enablement, and
+  shared mappings; the run dialog only chooses a model and runtime parameters.
+- The last successfully completed `(backend, model_id)` is stored per task and
+  used as the preferred choice on the next run when still available.
+- Fresh settings expose `jeetv/snpro-classification-mvit` and
+  `jeetv/snpro-snbas-2024` as the default local registry. Their canonical
+  definitions live in `inference_settings.default_local_models()`; local
+  discovery deduplicates configured overrides by model ID.
+- Only the canonical `jeetv/snpro-snbas-2024` weights opt into OpenSportsLib's
+  `trusted_legacy=True` checkpoint loading. The flag travels through
+  `ModelDescriptor` to `LocInferenceWorker`; changing the configured weights
+  disables it so custom artifacts retain safe deserialization.
 - Local adapters call public OpenSportsLib task classes. Missing native
   Description/Dense APIs are advertised as unavailable rather than emulated.
 - Remote execution resolves shared assets or resumable uploads, submits an

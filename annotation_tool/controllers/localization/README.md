@@ -1,7 +1,8 @@
 # Localization Controllers
 
 ## Role
-Implements Localization (action spotting) behavior, including schema management, event CRUD, and per-head smart inference workflows.
+Implements Localization (action spotting) behavior, including schema management,
+event CRUD, and transient prediction review.
 
 The shared local/remote path is owned by the central inference controller.
 Remote range inputs may be clipped before upload and returned positions are
@@ -13,11 +14,8 @@ offset back onto the original sample timeline.
 - Controller does not own dataset model state (`self.model` is not used).
 - Runtime sample/schema/action-list context is supplied through signal-slot wiring in `MainWindow.connect_signals()`.
 - Emits schema/event mutation intents to `HistoryManager`.
-- Uses `LocalizationInferenceManager` for smart inference execution.
-- Smart inference resolves a dedicated `annotation_tool/loc_config.yaml` template,
-  clips the requested time range for inference, and maps predictions back onto
-  the selected head. Clipping first attempts an FFmpeg stream copy, then retries
-  with H.264/AAC re-encoding when the source cannot be copied safely.
+- Local/Remote execution is owned by the central `InferenceController`; local
+  execution calls OpenSportsLib directly through its provider.
 - Emits media seek/marker/toggle intents instead of mutating media widgets directly.
 
 ## Public Surface
@@ -42,9 +40,6 @@ offset back onto the original sample timeline.
 - `markersUpdateRequested(object)`
 - `mediaTogglePlaybackRequested()`
 
-### Helper
-- `LocalizationInferenceManager`
-
 ## Key Functions and Responsibilities
 - `setup_connections()`
   - Wires spotting tabs/table actions to controller behavior.
@@ -60,8 +55,9 @@ offset back onto the original sample timeline.
   - `_on_label_add_req`, `_on_label_rename_req`, `_on_label_delete_req`
 - Event functions:
   - `_on_spotting_triggered`, `_on_annotation_modified`, `_on_delete_single_annotation`
-- Smart flows:
-  - `_on_head_smart_inference_requested`, `_on_inference_success`, `_on_confirm_single_annotation`, `_on_reject_single_annotation`
+- Prediction flows:
+  - `_request_shared_inference`, `apply_shared_inference_result`,
+    `_on_confirm_single_annotation`, `_on_reject_single_annotation`
 
 ## Business Rules
 - Schema operations enforce duplicate/name validity checks.
@@ -71,8 +67,7 @@ offset back onto the original sample timeline.
 - Inference results remain transient and are combined with canonical events only for display.
 - New, moved, and inferred events write `timestamp_utc` plus `position_ms` when
   a genuine sample origin is available; relative-only samples keep `position_ms`.
-- Smart inference startup passes the selected head labels and input fps into `LocalizationInferenceManager`; the worker should not rely on hardcoded `ball_action` schema classes from config.
-- If localization inference starts failing with `nvidia.dali` / `cupy` import errors on macOS, verify the environment is using the non-DALI OpenSportsLib build rather than `0.1.0`.
+- The shared run dialog supplies head, labels, range, model, and provider details.
 - Accepting adds a metadata-free event; rejecting is non-mutating. Manual edits invalidate pending rows.
 - Table confidence-cell confirmation prompt supports `Yes` (confirm), `No` (reject), `Cancel` (no-op).
 - Rejecting an inferred row deletes the smart-inferred event row.

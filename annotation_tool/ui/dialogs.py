@@ -18,14 +18,13 @@ from media_control_settings import (
     parse_seek_intervals,
 )
 from inference_settings import (
-    BACKEND_KEY,
-    DEFAULT_BACKEND,
     DEFAULT_SERVER_URL,
-    LOCAL_MODELS_KEY,
     SERVER_URL_KEY,
+    default_local_models,
     load_local_models,
     load_shared_mappings,
     normalize_server_url,
+    remote_inference_enabled,
 )
 from inference_types import INFERENCE_TASKS
 from explorer_settings import (
@@ -36,69 +35,75 @@ from explorer_settings import (
 )
 
 
-class InferenceConfigurationWidget(QWidget):
-    """Reusable editor for local/remote provider configuration."""
+class InferenceSetupWidget(QWidget):
+    """Settings-only editor for Local models and one Remote server."""
 
     testConnectionRequested = pyqtSignal(object)
+    remoteCatalogRefreshRequested = pyqtSignal(object)
     configurationChanged = pyqtSignal()
 
-    def __init__(self, config=None, *, collapsible=False, parent=None):
+    def __init__(self, config=None, parent=None):
         super().__init__(parent)
         config = dict(config or {})
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        form = QFormLayout()
-        root.addLayout(form)
-        self.backend_combo = QComboBox(self)
-        self.backend_combo.addItem("Local (OpenSportsLib)", "local")
-        self.backend_combo.addItem("Remote server", "remote")
-        self.backend_combo.setCurrentIndex(1 if config.get("backend") == "remote" else 0)
-        form.addRow("Backend:", self.backend_combo)
 
-        self.advanced_group = QGroupBox("Advanced connection and model settings", self)
-        self.advanced_group.setCheckable(bool(collapsible))
-        self.advanced_group.setChecked(not collapsible)
-        advanced = QVBoxLayout(self.advanced_group)
+        local_group = QGroupBox("Local Models", self)
+        local_layout = QVBoxLayout(local_group)
+        self.local_model_table = QTableWidget(0, 5, local_group)
+        self.local_model_table.setHorizontalHeaderLabels(["Task", "Model ID", "Display name", "Config YAML", "Weights"])
+        self.local_model_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        local_layout.addWidget(self.local_model_table)
+        model_buttons = QHBoxLayout()
+        self.add_local_model_button = QPushButton("Add Local Model", local_group)
+        self.remove_local_model_button = QPushButton("Remove Local Model", local_group)
+        model_buttons.addWidget(self.add_local_model_button)
+        model_buttons.addWidget(self.remove_local_model_button)
+        model_buttons.addStretch(1)
+        local_layout.addLayout(model_buttons)
+        root.addWidget(local_group)
+
+        self.remote_group = QGroupBox("Remote Server", self)
+        remote_layout = QVBoxLayout(self.remote_group)
+        self.remote_enabled_checkbox = QCheckBox("Enable remote inference", self.remote_group)
+        self.remote_enabled_checkbox.setChecked(bool(config.get("remote_enabled", False)))
+        remote_layout.addWidget(self.remote_enabled_checkbox)
         remote_form = QFormLayout()
-        advanced.addLayout(remote_form)
-        server_row = QWidget(self.advanced_group)
+        remote_layout.addLayout(remote_form)
+        server_row = QWidget(self.remote_group)
         server_layout = QHBoxLayout(server_row)
         server_layout.setContentsMargins(0, 0, 0, 0)
         self.server_url_edit = QLineEdit(str(config.get("server_url") or DEFAULT_SERVER_URL), server_row)
         self.test_button = QPushButton("Test Connection", server_row)
+        self.refresh_remote_models_button = QPushButton("Refresh Models", server_row)
         server_layout.addWidget(self.server_url_edit, 1)
         server_layout.addWidget(self.test_button)
+        server_layout.addWidget(self.refresh_remote_models_button)
         remote_form.addRow("Server URL:", server_row)
-        self.connection_status = QLabel("", self.advanced_group)
+        self.connection_status = QLabel("", self.remote_group)
         self.connection_status.setWordWrap(True)
-        advanced.addWidget(self.connection_status)
+        remote_layout.addWidget(self.connection_status)
 
-        advanced.addWidget(QLabel("Shared storage mappings", self.advanced_group))
-        self.mapping_table = QTableWidget(0, 2, self.advanced_group)
+        remote_layout.addWidget(QLabel("Discovered remote models", self.remote_group))
+        self.remote_model_table = QTableWidget(0, 3, self.remote_group)
+        self.remote_model_table.setHorizontalHeaderLabels(["Task", "Model ID", "Display name"])
+        self.remote_model_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.remote_model_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        remote_layout.addWidget(self.remote_model_table)
+
+        remote_layout.addWidget(QLabel("Shared storage mappings", self.remote_group))
+        self.mapping_table = QTableWidget(0, 2, self.remote_group)
         self.mapping_table.setHorizontalHeaderLabels(["Local directory", "Server root ID"])
         self.mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        advanced.addWidget(self.mapping_table)
+        remote_layout.addWidget(self.mapping_table)
         mapping_buttons = QHBoxLayout()
-        self.add_mapping_button = QPushButton("Add Mapping", self.advanced_group)
-        self.remove_mapping_button = QPushButton("Remove Mapping", self.advanced_group)
+        self.add_mapping_button = QPushButton("Add Mapping", self.remote_group)
+        self.remove_mapping_button = QPushButton("Remove Mapping", self.remote_group)
         mapping_buttons.addWidget(self.add_mapping_button)
         mapping_buttons.addWidget(self.remove_mapping_button)
         mapping_buttons.addStretch(1)
-        advanced.addLayout(mapping_buttons)
-
-        advanced.addWidget(QLabel("Local model registry", self.advanced_group))
-        self.local_model_table = QTableWidget(0, 5, self.advanced_group)
-        self.local_model_table.setHorizontalHeaderLabels(["Task", "Model ID", "Display name", "Config YAML", "Weights"])
-        self.local_model_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        advanced.addWidget(self.local_model_table)
-        model_buttons = QHBoxLayout()
-        self.add_local_model_button = QPushButton("Add Local Model", self.advanced_group)
-        self.remove_local_model_button = QPushButton("Remove Local Model", self.advanced_group)
-        model_buttons.addWidget(self.add_local_model_button)
-        model_buttons.addWidget(self.remove_local_model_button)
-        model_buttons.addStretch(1)
-        advanced.addLayout(model_buttons)
-        root.addWidget(self.advanced_group)
+        remote_layout.addLayout(mapping_buttons)
+        root.addWidget(self.remote_group)
 
         for mapping in config.get("shared_mappings", []):
             self.append_mapping(mapping.get("local_root", ""), mapping.get("root_id", ""))
@@ -109,15 +114,33 @@ class InferenceConfigurationWidget(QWidget):
         self.add_local_model_button.clicked.connect(lambda: self.append_local_model({"task": "classification"}))
         self.remove_local_model_button.clicked.connect(lambda: self._remove_row(self.local_model_table))
         self.test_button.clicked.connect(lambda: self.testConnectionRequested.emit(self.payload()))
-        self.backend_combo.currentIndexChanged.connect(self._changed)
+        self.refresh_remote_models_button.clicked.connect(
+            lambda: self.remoteCatalogRefreshRequested.emit(self.payload())
+        )
+        self.remote_enabled_checkbox.toggled.connect(self._update_remote_enabled)
         self.server_url_edit.textChanged.connect(self._changed)
+        self._update_remote_enabled()
+        self._changed()
+
+    def _update_remote_enabled(self, *_args):
+        enabled = self.remote_enabled_checkbox.isChecked()
+        for widget in (
+            self.server_url_edit,
+            self.test_button,
+            self.refresh_remote_models_button,
+            self.remote_model_table,
+            self.mapping_table,
+            self.add_mapping_button,
+            self.remove_mapping_button,
+        ):
+            widget.setEnabled(enabled)
         self._changed()
 
     def _changed(self, *_args):
         self.connection_status.clear()
         parsed = urlparse(self.server_url_edit.text().strip())
         if (
-            self.backend_combo.currentData() == "remote"
+            self.remote_enabled_checkbox.isChecked()
             and parsed.scheme == "http"
             and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
         ):
@@ -148,6 +171,20 @@ class InferenceConfigurationWidget(QWidget):
         self.connection_status.setText(str(text or ""))
         self.connection_status.setStyleSheet("color: #27823b;" if success else "color: #d9534f;")
 
+    def set_remote_catalog(self, models):
+        self.remote_model_table.setRowCount(0)
+        for descriptor in list(models or []):
+            row = self.remote_model_table.rowCount()
+            self.remote_model_table.insertRow(row)
+            for column, value in enumerate(
+                (descriptor.task, descriptor.id, descriptor.display_name)
+            ):
+                self.remote_model_table.setItem(row, column, QTableWidgetItem(str(value)))
+        self.set_connection_status(
+            f"Discovered {self.remote_model_table.rowCount()} remote model(s).",
+            True,
+        )
+
     def payload(self):
         mappings = []
         for row in range(self.mapping_table.rowCount()):
@@ -157,6 +194,10 @@ class InferenceConfigurationWidget(QWidget):
             if values[0]:
                 mappings.append({"local_root": os.path.abspath(os.path.expanduser(values[0])), "root_id": values[1]})
         models = []
+        builtin_models = {
+            (str(model.get("task") or ""), str(model.get("id") or "")): model
+            for model in default_local_models()
+        }
         for row in range(self.local_model_table.rowCount()):
             values = [str(self.local_model_table.item(row, col).text() if self.local_model_table.item(row, col) else "").strip() for col in range(5)]
             if not any(values):
@@ -164,8 +205,29 @@ class InferenceConfigurationWidget(QWidget):
             task, model_id, display_name, config_path, weights = values
             if task not in INFERENCE_TASKS or not model_id or not config_path:
                 raise ValueError("Each local model requires a valid task, model ID, and config YAML path.")
-            models.append({"task": task, "id": model_id, "display_name": display_name or model_id, "config_path": config_path, "weights": weights, "available": True, "accepted_input_types": ["video"]})
-        return {"backend": str(self.backend_combo.currentData()), "server_url": normalize_server_url(self.server_url_edit.text()), "shared_mappings": mappings, "local_models": models}
+            model = dict(builtin_models.get((task, model_id), {}))
+            model.update({
+                "task": task,
+                "id": model_id,
+                "display_name": display_name or model_id,
+                "config_path": config_path,
+                "weights": weights,
+                "available": True,
+                "accepted_input_types": ["video"],
+                "supports_time_range": task in {"localization", "dense_description"},
+            })
+            if model.get("trusted_legacy", False):
+                builtin_weights = str(
+                    builtin_models[(task, model_id)].get("weights") or model_id
+                )
+                model["trusted_legacy"] = (weights or model_id) == builtin_weights
+            models.append(model)
+        return {
+            "remote_enabled": self.remote_enabled_checkbox.isChecked(),
+            "server_url": normalize_server_url(self.server_url_edit.text()),
+            "shared_mappings": mappings,
+            "local_models": models,
+        }
 
 
 class ApplicationSettingsDialog(QDialog):
@@ -174,6 +236,7 @@ class ApplicationSettingsDialog(QDialog):
     mediaControlsApplyRequested = pyqtSignal(str, str, object, object)
     inferenceSettingsApplyRequested = pyqtSignal(object)
     inferenceTestRequested = pyqtSignal()
+    inferenceRemoteCatalogRequested = pyqtSignal()
     explorerPageSizeApplyRequested = pyqtSignal(int)
 
     def __init__(
@@ -258,23 +321,25 @@ class ApplicationSettingsDialog(QDialog):
         inference_page = QWidget(tabs)
         inference_layout = QVBoxLayout(inference_page)
         inference_config = {
-            "backend": str(settings.value(BACKEND_KEY, DEFAULT_BACKEND) if settings is not None else DEFAULT_BACKEND),
+            "remote_enabled": remote_inference_enabled(settings),
             "server_url": str(settings.value(SERVER_URL_KEY, DEFAULT_SERVER_URL) if settings is not None else DEFAULT_SERVER_URL),
             "shared_mappings": load_shared_mappings(settings),
             "local_models": load_local_models(settings),
         }
-        self.inference_configuration_widget = InferenceConfigurationWidget(inference_config, parent=inference_page)
-        inference_layout.addWidget(self.inference_configuration_widget)
-        self.inference_backend_combo = self.inference_configuration_widget.backend_combo
-        self.inference_server_url_edit = self.inference_configuration_widget.server_url_edit
-        self.inference_test_button = self.inference_configuration_widget.test_button
-        self.inference_connection_status = self.inference_configuration_widget.connection_status
-        self.shared_mapping_table = self.inference_configuration_widget.mapping_table
-        self.local_model_table = self.inference_configuration_widget.local_model_table
-        self.add_mapping_button = self.inference_configuration_widget.add_mapping_button
-        self.remove_mapping_button = self.inference_configuration_widget.remove_mapping_button
-        self.add_local_model_button = self.inference_configuration_widget.add_local_model_button
-        self.remove_local_model_button = self.inference_configuration_widget.remove_local_model_button
+        self.inference_setup_widget = InferenceSetupWidget(inference_config, parent=inference_page)
+        inference_layout.addWidget(self.inference_setup_widget)
+        self.inference_remote_enabled_checkbox = self.inference_setup_widget.remote_enabled_checkbox
+        self.inference_server_url_edit = self.inference_setup_widget.server_url_edit
+        self.inference_test_button = self.inference_setup_widget.test_button
+        self.inference_refresh_models_button = self.inference_setup_widget.refresh_remote_models_button
+        self.inference_connection_status = self.inference_setup_widget.connection_status
+        self.remote_model_table = self.inference_setup_widget.remote_model_table
+        self.shared_mapping_table = self.inference_setup_widget.mapping_table
+        self.local_model_table = self.inference_setup_widget.local_model_table
+        self.add_mapping_button = self.inference_setup_widget.add_mapping_button
+        self.remove_mapping_button = self.inference_setup_widget.remove_mapping_button
+        self.add_local_model_button = self.inference_setup_widget.add_local_model_button
+        self.remove_local_model_button = self.inference_setup_widget.remove_local_model_button
 
         tabs.addTab(inference_page, "Inference")
         self.resize(760, 620)
@@ -296,10 +361,13 @@ class ApplicationSettingsDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         self.playback_factors_edit.textChanged.connect(lambda _text: self.validation_label.clear())
         self.seek_intervals_edit.textChanged.connect(lambda _text: self.validation_label.clear())
-        self.inference_configuration_widget.testConnectionRequested.connect(lambda _config: self.inferenceTestRequested.emit())
+        self.inference_setup_widget.testConnectionRequested.connect(lambda _config: self.inferenceTestRequested.emit())
+        self.inference_setup_widget.remoteCatalogRefreshRequested.connect(
+            lambda _config: self.inferenceRemoteCatalogRequested.emit()
+        )
 
     def _append_mapping(self, local_root: str, root_id: str):
-        self.inference_configuration_widget.append_mapping(local_root, root_id)
+        self.inference_setup_widget.append_mapping(local_root, root_id)
 
     def _remove_selected_mapping(self):
         row = self.shared_mapping_table.currentRow()
@@ -307,7 +375,7 @@ class ApplicationSettingsDialog(QDialog):
             self.shared_mapping_table.removeRow(row)
 
     def _append_local_model(self, model: dict):
-        self.inference_configuration_widget.append_local_model(model)
+        self.inference_setup_widget.append_local_model(model)
 
     def _remove_selected_local_model(self):
         row = self.local_model_table.currentRow()
@@ -315,15 +383,25 @@ class ApplicationSettingsDialog(QDialog):
             self.local_model_table.removeRow(row)
 
     def set_inference_connection_status(self, text: str, success: bool):
-        self.inference_configuration_widget.set_connection_status(text, success)
+        self.inference_setup_widget.set_connection_status(text, success)
+
+    def set_remote_model_catalog(self, models):
+        self.inference_setup_widget.set_remote_catalog(models)
 
     def inference_payload(self) -> dict:
-        return self.inference_configuration_widget.payload()
+        return self.inference_setup_widget.payload()
 
     def _restore_defaults(self) -> None:
         self.playback_factors_edit.setText(DEFAULT_PLAYBACK_FACTORS)
         self.seek_intervals_edit.setText(DEFAULT_SEEK_INTERVALS)
         self.explorer_page_size_spin.setValue(DEFAULT_EXPLORER_PAGE_SIZE)
+        self.inference_remote_enabled_checkbox.setChecked(False)
+        self.inference_server_url_edit.setText(DEFAULT_SERVER_URL)
+        self.shared_mapping_table.setRowCount(0)
+        self.local_model_table.setRowCount(0)
+        for model in default_local_models():
+            self._append_local_model(model)
+        self.remote_model_table.setRowCount(0)
         self.validation_label.clear()
 
     def _apply(self, *, close_after: bool) -> None:
@@ -347,7 +425,7 @@ class ApplicationSettingsDialog(QDialog):
         self.inferenceSettingsApplyRequested.emit(inference_payload)
         parsed_server = urlparse(inference_payload["server_url"])
         if (
-            inference_payload["backend"] == "remote"
+            inference_payload["remote_enabled"]
             and parsed_server.scheme == "http"
             and parsed_server.hostname not in {"127.0.0.1", "localhost", "::1"}
         ):
@@ -363,24 +441,28 @@ class ApplicationSettingsDialog(QDialog):
 class InferenceRunDialog(QDialog):
     """Reusable task-aware model and input selection dialog."""
 
-    refreshModelsRequested = pyqtSignal(str, str)
-    testConnectionRequested = pyqtSignal(object)
+    refreshModelsRequested = pyqtSignal(str)
 
-    def __init__(self, task: str, inputs: list, context: dict | None = None, *, default_backend="local", provider_config=None, parent=None):
+    def __init__(
+        self,
+        task: str,
+        inputs: list,
+        context: dict | None = None,
+        *,
+        preferred_model=None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.task = str(task)
         self.inputs = list(inputs or [])
         self.context = dict(context or {})
+        self.preferred_model = tuple(preferred_model) if preferred_model else None
         self.setWindowTitle("Run Inference")
-        self.resize(720, 620)
+        self.resize(620, 520)
         layout = QVBoxLayout(self)
-        config = dict(provider_config or {})
-        config["backend"] = default_backend
-        self.configuration_widget = InferenceConfigurationWidget(config, collapsible=True, parent=self)
-        layout.addWidget(self.configuration_widget)
         form = QFormLayout()
+        self.runtime_form = form
         layout.addLayout(form)
-        self.backend_combo = self.configuration_widget.backend_combo
 
         model_row = QWidget(self)
         model_layout = QHBoxLayout(model_row)
@@ -391,11 +473,6 @@ class InferenceRunDialog(QDialog):
         model_layout.addWidget(self.refresh_models_button)
         form.addRow("Model:", model_row)
 
-        self.head_edit = QLineEdit(str(self.context.get("head") or ""), self)
-        self.head_edit.setVisible(self.task in {"classification", "localization"})
-        if self.task in {"classification", "localization"}:
-            form.addRow("Head:", self.head_edit)
-
         self.start_spin = QSpinBox(self)
         self.start_spin.setRange(0, 2_147_483_647)
         self.start_spin.setValue(int(self.context.get("start_ms", 0) or 0))
@@ -405,6 +482,8 @@ class InferenceRunDialog(QDialog):
         if self.task in {"localization", "dense_description"}:
             form.addRow("Start (ms):", self.start_spin)
             form.addRow("End (ms, 0 = end):", self.end_spin)
+            form.setRowVisible(self.start_spin, False)
+            form.setRowVisible(self.end_spin, False)
 
         self.language_edit = QLineEdit(str(self.context.get("language") or "en"), self)
         if self.task in {"description", "dense_description"}:
@@ -429,8 +508,6 @@ class InferenceRunDialog(QDialog):
         self.availability_label = QLabel("", self)
         self.availability_label.setWordWrap(True)
         layout.addWidget(self.availability_label)
-        self.remember_defaults_checkbox = QCheckBox("Remember these settings as defaults", self)
-        layout.addWidget(self.remember_defaults_checkbox)
         self.run_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
         self.run_buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Run")
         layout.addWidget(self.run_buttons)
@@ -438,8 +515,6 @@ class InferenceRunDialog(QDialog):
         self.run_buttons.accepted.connect(self._accept_if_valid)
         self.run_buttons.rejected.connect(self.reject)
         self.refresh_models_button.clicked.connect(self._request_refresh)
-        self.backend_combo.currentIndexChanged.connect(lambda _index: self._request_refresh())
-        self.configuration_widget.testConnectionRequested.connect(self.testConnectionRequested.emit)
         self.model_combo.currentIndexChanged.connect(self._update_model_availability)
 
         self.scope_combo = None
@@ -463,31 +538,30 @@ class InferenceRunDialog(QDialog):
             item.setCheckState(Qt.CheckState.Checked if not current_only or sample_id == current_id else Qt.CheckState.Unchecked)
 
     def _request_refresh(self):
-        self.refreshModelsRequested.emit(str(self.backend_combo.currentData()), self.task)
+        self.refreshModelsRequested.emit(self.task)
 
-    def set_models(self, models):
-        previous = str(self.model_combo.currentData() or "")
+    def set_models(self, choices, warning: str = ""):
+        current = self.model_combo.currentData()
+        previous = current.key if current is not None else self.preferred_model
         self.model_combo.clear()
-        for descriptor in list(models or []):
-            suffix = "" if descriptor.available else " (unavailable)"
-            self.model_combo.addItem(f"{descriptor.display_name}{suffix}", descriptor.id)
-            self.model_combo.setItemData(
-                self.model_combo.count() - 1,
-                descriptor,
-                Qt.ItemDataRole.UserRole + 1,
-            )
+        for choice in list(choices or []):
+            self.model_combo.addItem(choice.display_name, choice)
         if previous:
-            index = self.model_combo.findData(previous)
-            if index >= 0:
-                self.model_combo.setCurrentIndex(index)
+            for index in range(self.model_combo.count()):
+                choice = self.model_combo.itemData(index)
+                if choice is not None and choice.key == tuple(previous):
+                    self.model_combo.setCurrentIndex(index)
+                    break
+        self._catalog_warning = str(warning or "")
         self._update_model_availability()
 
     def _update_model_availability(self):
-        descriptor = self.model_combo.currentData(Qt.ItemDataRole.UserRole + 1)
-        available = bool(descriptor is not None and descriptor.available)
-        message = "" if descriptor is None else descriptor.unavailable_reason
+        choice = self.model_combo.currentData()
+        descriptor = choice.descriptor if choice is not None else None
+        available = descriptor is not None
+        message = getattr(self, "_catalog_warning", "")
         if descriptor is None:
-            message = "No compatible models were discovered."
+            message = "No runnable models are configured for this task. " + message
         self.availability_label.setText(message)
         self.run_buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(available)
         accepted_types = set(descriptor.accepted_input_types) if descriptor is not None else set()
@@ -502,15 +576,17 @@ class InferenceRunDialog(QDialog):
                 item.setCheckState(Qt.CheckState.Unchecked)
                 item.setFlags(flags & ~Qt.ItemFlag.ItemIsEnabled)
         supports_range = bool(descriptor is not None and descriptor.supports_time_range)
-        self.start_spin.setEnabled(supports_range)
-        self.end_spin.setEnabled(supports_range)
+        if self.task in {"localization", "dense_description"}:
+            self.runtime_form.setRowVisible(self.start_spin, supports_range)
+            self.runtime_form.setRowVisible(self.end_spin, supports_range)
 
     def _accept_if_valid(self):
         selected_inputs = self.selected_inputs()
         if not selected_inputs:
             self.availability_label.setText("Select at least one input.")
             return
-        descriptor = self.model_combo.currentData(Qt.ItemDataRole.UserRole + 1)
+        choice = self.model_combo.currentData()
+        descriptor = choice.descriptor if choice is not None else None
         is_batch = bool(self.context.get("batch_sample_ids")) or bool(self.scope_combo is not None and self.scope_combo.currentData() == "all")
         if descriptor is not None and not is_batch:
             if len(selected_inputs) < descriptor.min_inputs:
@@ -533,7 +609,12 @@ class InferenceRunDialog(QDialog):
         if self.task == "question_answer" and not self.question_edit.toPlainText().strip():
             self.availability_label.setText("Enter a question.")
             return
-        if self.end_spin.value() and self.end_spin.value() <= self.start_spin.value():
+        if (
+            descriptor is not None
+            and descriptor.supports_time_range
+            and self.end_spin.value()
+            and self.end_spin.value() <= self.start_spin.value()
+        ):
             self.availability_label.setText("End time must be greater than start time.")
             return
         self.accept()
@@ -547,18 +628,18 @@ class InferenceRunDialog(QDialog):
         return selected
 
     def payload(self) -> dict:
-        config = self.configuration_widget.payload()
+        choice = self.model_combo.currentData()
+        supports_range = bool(
+            choice is not None and choice.descriptor.supports_time_range
+        )
         return {
-            "backend": str(self.backend_combo.currentData()),
-            "model_id": str(self.model_combo.currentData() or ""),
+            "backend": choice.backend if choice is not None else "",
+            "model_id": choice.descriptor.id if choice is not None else "",
             "inputs": self.selected_inputs(),
-            "head": self.head_edit.text().strip(),
-            "start_ms": self.start_spin.value(),
-            "end_ms": self.end_spin.value(),
+            "start_ms": self.start_spin.value() if supports_range else 0,
+            "end_ms": self.end_spin.value() if supports_range else 0,
             "language": self.language_edit.text().strip() or "en",
             "question": self.question_edit.toPlainText().strip(),
-            "provider_config": config,
-            "remember_defaults": self.remember_defaults_checkbox.isChecked(),
             "scope": str(self.scope_combo.currentData()) if self.scope_combo is not None else "current",
         }
 
