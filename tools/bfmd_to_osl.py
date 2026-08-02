@@ -512,9 +512,9 @@ def main():
 
     # --- Upload ---
     if args.repo_id:
-        if args.public and not args.private:
-            print("[hf] WARNING: uploading as public. BFMD terms require non-commercial use.")
-        private = not args.public if args.public or not args.private else args.private
+        if args.public and args.private: sys.exit("Use only one of --public or --private.")
+        private = not args.public
+        if args.public: print("[hf] WARNING: uploading as public. BFMD terms forbid redistribution; prefer --private.")
         upload_to_hf(args.out_dir, args.repo_id, private=private)
     else:
         print("[hf] no --repo-id given; skipping upload.")
