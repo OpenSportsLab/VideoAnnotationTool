@@ -95,8 +95,9 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - Emits start/progress/completion/failure signals for UI wiring in `main_window.py`.
 
 ### `InferenceController`
-- Owns the one active shared inference operation and selects the local or
-  remote provider from each typed request.
+- Owns independent Local and Remote FIFO queues. Each lane has at most one
+  worker, the two lanes may overlap, and providers are instantiated only when
+  their requests reach the front.
 - Aggregates runnable task models into provider-aware choices. Local discovery
   always runs; Remote discovery runs only when explicitly enabled and failures
   are non-fatal when Local choices remain available. Identical model IDs remain
@@ -106,8 +107,12 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   shared mappings; the run dialog only chooses a model and runtime parameters.
 - The last successfully completed `(backend, model_id)` is stored per task and
   used as the preferred choice on the next run when still available.
-- Provider work runs in one `QThread`; `MainWindow` presents progress through a
-  non-modal status-bar widget and leaves navigation/editing enabled. A generic
+- `enqueue_inference()`, `cancel_request()`, `cancel_all()`, `queue_snapshot()`,
+  `queueChanged`, and `clear_queue_history()` form the queue interface.
+  Immutable `InferenceQueueEntry` snapshots drive a status summary and
+  non-modal detail panel. The latest 20 terminal entries remain session-only.
+- Provider work runs in one `QThread` per active lane; `MainWindow` leaves
+  navigation, editing, and further inference submission enabled. A generic
   post-provider cancellation check suppresses late Local results.
 - Result validation correlates by request `item_id`, then unique request
   `sample_id`, with positional fallback restricted to legacy Local OSL output.
@@ -115,8 +120,9 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   targets are invalid results.
 - `DatasetExplorerController.project_generation` increments on every reset.
   Main-window request state captures that generation and the complete
-  item-to-sample mapping, cancels on generation change, discards missing sample
-  targets, and never routes predictions through the current selection.
+  item-to-sample mapping, cancels both active jobs and all waiting jobs on
+  generation change, discards missing sample targets, and never routes
+  predictions through the current selection.
 - Fresh settings expose `jeetv/snpro-classification-mvit` and
   `jeetv/snpro-snbas-2024` as the default local registry. Their canonical
   definitions live in `inference_settings.default_local_models()`; local

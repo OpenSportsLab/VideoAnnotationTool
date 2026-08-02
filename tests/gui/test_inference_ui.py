@@ -13,6 +13,7 @@ from inference_types import (
     InferenceInput,
     InferenceItem,
     InferenceModelChoice,
+    InferenceQueueEntry,
     InferenceRequest,
     InferenceResult,
     ModelDescriptor,
@@ -223,21 +224,55 @@ def test_run_dialog_range_controls_follow_model_capability(qtbot):
 def test_status_bar_inference_activity_is_non_modal_and_cancellable(qtbot):
     widget = InferenceActivityWidget()
     qtbot.addWidget(widget)
-    widget.start("localization", "model", 1)
+    active = InferenceQueueEntry(
+        request_id="request",
+        backend="local",
+        task="localization",
+        model_id="model",
+        sample_ids=("sample",),
+        state="running",
+        message="Running inference",
+        current=2,
+        total=5,
+        queue_position=0,
+    )
+    queued = InferenceQueueEntry(
+        request_id="queued",
+        backend="local",
+        task="localization",
+        model_id="next-model",
+        sample_ids=("sample",),
+        state="queued",
+        queue_position=1,
+    )
+    widget.set_entries((active, queued))
 
     assert not widget.isHidden()
-    assert widget.progress.minimum() == 0
-    assert widget.progress.maximum() == 0
-    widget.update_progress("Running inference", 2, 5)
-    assert "model" in widget.label.text()
-    assert "Running inference" in widget.label.text()
-    assert widget.progress.value() == 2
-    assert widget.progress.maximum() == 5
+    assert "Local: Running 2/5, 1 queued" in widget.label.text()
+    assert widget.panel.isModal() is False
+    widget.show_panel()
+    assert widget.panel.local_table.rowCount() == 2
     with qtbot.waitSignal(widget.cancelRequested, timeout=500):
-        widget.cancel_button.click()
-    assert not widget.cancel_button.isEnabled()
+        widget.panel.local_table.cellWidget(0, 3).click()
 
-    widget.finish()
+    failed = InferenceQueueEntry(
+        request_id="failed",
+        backend="remote",
+        task="description",
+        model_id="remote-model",
+        sample_ids=("sample",),
+        state="failed",
+        message="Server failed",
+        error_code="server_error",
+        error_details={"job_id": "job-1"},
+    )
+    widget.set_entries((failed,))
+    assert widget.panel.recent_table.rowCount() == 1
+    assert "job-1" in widget.panel.recent_table.item(0, 3).text()
+    with qtbot.waitSignal(widget.clearHistoryRequested, timeout=500):
+        widget.panel.clear_history_button.click()
+
+    widget.set_entries(())
     assert widget.isHidden()
 
 
@@ -278,12 +313,12 @@ def test_inference_worker_does_not_block_gui_and_suppresses_cancelled_result(
     clicks = []
     button.clicked.connect(lambda: clicks.append(True))
 
-    assert controller.start_inference(request)
+    assert controller.enqueue_inference(request) is not None
     qtbot.waitUntil(entered.is_set, timeout=1000)
     button.click()
     assert clicks == [True]
     with qtbot.waitSignal(controller.inferenceCancelled, timeout=2000):
-        controller.cancel_inference()
+        controller.cancel_request(request.request_id)
         release.set()
     assert completed == []
     assert controller.shutdown()
@@ -405,7 +440,7 @@ def test_qa_result_stays_with_original_sample_after_navigation(qtbot):
 
 
 @pytest.mark.gui
-def test_main_window_inference_activity_keeps_ui_enabled_and_filters_deleted_samples(
+def test_main_window_filters_deleted_samples_from_completed_queue_job(
     window, synthetic_project_json
 ):
     project_path = synthetic_project_json("description", item_count=2)
@@ -424,19 +459,18 @@ def test_main_window_inference_activity_keeps_ui_enabled_and_filters_deleted_sam
         "model_id": "model",
         "invalidated": False,
     }
-    window._on_shared_inference_started(request_id, "description")
-
-    assert window._inference_activity_widget.isVisible()
     assert window.data_dock.isEnabled()
     assert window.editor_dock.isEnabled()
-    for panel in (
-        window.classification_panel,
-        window.localization_panel,
-        window.description_panel,
-        window.dense_panel,
-        window.qa_panel,
-    ):
-        assert not panel.inference_review_bar.run_button.isEnabled()
+    assert all(
+        panel.inference_review_bar.run_button.text() == "Run Inference…"
+        for panel in (
+            window.classification_panel,
+            window.localization_panel,
+            window.description_panel,
+            window.dense_panel,
+            window.qa_panel,
+        )
+    )
 
     window.dataset_explorer_controller.dataset_json["data"] = [samples[1]]
     window.dataset_explorer_controller._rebuild_runtime_index()
@@ -453,11 +487,6 @@ def test_main_window_inference_activity_keeps_ui_enabled_and_filters_deleted_sam
 
     assert sample_a not in window.desc_editor_controller._pending_predictions
     assert window.desc_editor_controller._pending_predictions[sample_b]["text"] == "Surviving"
-    assert not window._inference_activity_widget.isVisible()
-    assert (
-        window.description_panel.inference_review_bar.run_button.text()
-        == "Run Inference…"
-    )
 
 
 @pytest.mark.gui
@@ -478,8 +507,7 @@ def test_project_generation_change_invalidates_late_inference_result(
         "model_id": "model",
         "invalidated": False,
     }
-    window._on_shared_inference_started(request_id, "description")
-    monkeypatch.setattr(window.inference_controller, "cancel_inference", lambda: True)
+    monkeypatch.setattr(window.inference_controller, "cancel_all", lambda: 1)
 
     window.dataset_explorer_controller.reset(full_reset=True)
 

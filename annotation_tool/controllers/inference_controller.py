@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import threading
+import time
+from collections import deque
+from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, QSettings, QThread, pyqtSignal
 
@@ -20,8 +24,24 @@ from inference_types import (
     INFERENCE_TASKS,
     InferenceError,
     InferenceModelChoice,
+    InferenceQueueEntry,
     InferenceRequest,
 )
+
+
+@dataclass
+class _QueueRecord:
+    request: InferenceRequest
+    state: str = "queued"
+    message: str = "Queued"
+    current: int = 0
+    total: int = 0
+    submitted_at: float = 0.0
+    started_at: float = 0.0
+    finished_at: float = 0.0
+    error_code: str = ""
+    error_details: object = None
+    retryable: bool = False
 
 
 class _InferenceWorker(QThread):
@@ -101,6 +121,7 @@ class InferenceController(QObject):
     inferenceCompleted = pyqtSignal(str, object)
     inferenceFailed = pyqtSignal(str, str, str, bool, object)
     inferenceCancelled = pyqtSignal(str)
+    queueChanged = pyqtSignal(object)
 
     SETTINGS_ORG = "OpenSportsLab"
     SETTINGS_APP = "VideoAnnotationTool"
@@ -109,9 +130,14 @@ class InferenceController(QObject):
         super().__init__(parent)
         self.settings = settings or QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
         self.base_dir = base_dir or os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        self.worker: _InferenceWorker | None = None
+        self._queues = {"local": deque(), "remote": deque()}
+        self._workers = {"local": None, "remote": None}
+        self._active_records = {"local": None, "remote": None}
+        self._records = {}
+        self._seen_request_ids = set()
+        self._history = deque(maxlen=20)
+        self._shutting_down = False
         self.discovery_worker: QThread | None = None
-        self._active_request_id = ""
 
     def configuration_snapshot(self) -> dict:
         return {
@@ -254,55 +280,241 @@ class InferenceController(QObject):
         finally:
             provider.close()
 
-    def start_inference(self, request: InferenceRequest) -> bool:
-        if self.worker is not None and self.worker.isRunning():
-            return False
-        provider = self._provider(request.backend, request.provider_config)
-        worker = _InferenceWorker(provider, request)
-        worker.progress.connect(
-            lambda message, current, total, rid=request.request_id: self.inferenceProgress.emit(
-                rid, message, current, total
-            )
-        )
-        worker.succeeded.connect(
-            lambda result, rid=request.request_id: self.inferenceCompleted.emit(rid, result)
-        )
-        worker.failed.connect(
-            lambda message, code, retryable, details, rid=request.request_id: self._on_failed(
-                rid, message, code, retryable, details
-            )
-        )
-        worker.finished.connect(lambda ref=worker: self._cleanup_worker(ref))
-        self.worker = worker
-        self._active_request_id = request.request_id
-        self.inferenceStarted.emit(request.request_id, request.task)
-        worker.start()
-        return True
+    def enqueue_inference(
+        self, request: InferenceRequest
+    ) -> InferenceQueueEntry | None:
+        if self._shutting_down or request.request_id in self._seen_request_ids:
+            return None
+        record = _QueueRecord(request=copy.deepcopy(request), submitted_at=time.time())
+        self._seen_request_ids.add(request.request_id)
+        self._records[request.request_id] = record
+        self._queues[request.backend].append(record)
+        self._dispatch_next(request.backend)
+        self._emit_queue_changed()
+        return self._entry_for_record(record)
 
-    def _on_failed(self, request_id, message, code, retryable, details):
-        if code == "cancelled":
-            self.inferenceCancelled.emit(request_id)
+    def _dispatch_next(self, backend: str) -> None:
+        if self._shutting_down or self._workers[backend] is not None:
             return
-        self.inferenceFailed.emit(request_id, message, code, retryable, details)
+        queue = self._queues[backend]
+        while queue and self._workers[backend] is None and not self._shutting_down:
+            record = queue.popleft()
+            request = record.request
+            record.state = "running"
+            record.message = "Starting inference"
+            record.started_at = time.time()
+            self._active_records[backend] = record
+            try:
+                provider = self._provider(backend, request.provider_config)
+            except Exception as exc:
+                self._active_records[backend] = None
+                self._terminalize(
+                    record,
+                    "failed",
+                    str(exc),
+                    error_code="provider_initialization_failed",
+                )
+                self.inferenceFailed.emit(
+                    request.request_id,
+                    str(exc),
+                    "provider_initialization_failed",
+                    False,
+                    None,
+                )
+                continue
+            worker = _InferenceWorker(provider, request)
+            worker.progress.connect(
+                lambda message, current, total, b=backend, rid=request.request_id: self._on_worker_progress(
+                    b, rid, message, current, total
+                )
+            )
+            worker.succeeded.connect(
+                lambda result, b=backend, rid=request.request_id: self._on_worker_succeeded(
+                    b, rid, result
+                )
+            )
+            worker.failed.connect(
+                lambda message, code, retryable, details, b=backend, rid=request.request_id: self._on_worker_failed(
+                    b, rid, message, code, retryable, details
+                )
+            )
+            worker.finished.connect(
+                lambda b=backend, ref=worker: self._cleanup_worker(b, ref)
+            )
+            self._workers[backend] = worker
+            self.inferenceStarted.emit(request.request_id, request.task)
+            worker.start()
 
-    def cancel_inference(self) -> bool:
-        if self.worker is None or not self.worker.isRunning():
-            return False
-        self.worker.cancel()
-        return True
+    def _on_worker_progress(self, backend, request_id, message, current, total):
+        record = self._active_records.get(backend)
+        if record is None or record.request.request_id != request_id:
+            return
+        record.message = str(message or "")
+        record.current = max(0, int(current or 0))
+        record.total = max(0, int(total or 0))
+        self.inferenceProgress.emit(
+            request_id, record.message, record.current, record.total
+        )
+        self._emit_queue_changed()
+
+    def _on_worker_succeeded(self, backend, request_id, result):
+        record = self._active_records.get(backend)
+        if record is None or record.request.request_id != request_id:
+            return
+        self._terminalize(record, "succeeded", "Succeeded")
+        self.inferenceCompleted.emit(request_id, result)
+        self._emit_queue_changed()
+
+    def _on_worker_failed(self, backend, request_id, message, code, retryable, details):
+        record = self._active_records.get(backend)
+        if record is None or record.request.request_id != request_id:
+            return
+        state = "cancelled" if code == "cancelled" else "failed"
+        self._terminalize(
+            record,
+            state,
+            str(message or state.title()),
+            error_code=str(code or ""),
+            error_details=details,
+            retryable=bool(retryable),
+        )
+        if state == "cancelled":
+            self.inferenceCancelled.emit(request_id)
+        else:
+            self.inferenceFailed.emit(request_id, message, code, retryable, details)
+        self._emit_queue_changed()
+
+    def _terminalize(
+        self,
+        record,
+        state,
+        message,
+        *,
+        error_code="",
+        error_details=None,
+        retryable=False,
+    ):
+        record.state = state
+        record.message = str(message or "")
+        record.finished_at = time.time()
+        record.error_code = str(error_code or "")
+        record.error_details = error_details
+        record.retryable = bool(retryable)
+        self._records.pop(record.request.request_id, None)
+        self._history.append(record)
+
+    def cancel_request(self, request_id: str) -> bool:
+        request_id = str(request_id or "")
+        for backend in ("local", "remote"):
+            active = self._active_records[backend]
+            if active is not None and active.request.request_id == request_id:
+                if active.state not in {"running", "cancelling"}:
+                    return False
+                active.state = "cancelling"
+                active.message = "Cancelling inference"
+                worker = self._workers[backend]
+                if worker is not None:
+                    worker.cancel()
+                self._emit_queue_changed()
+                return True
+            queue = self._queues[backend]
+            for record in list(queue):
+                if record.request.request_id != request_id:
+                    continue
+                queue.remove(record)
+                self._terminalize(
+                    record,
+                    "cancelled",
+                    "Cancelled before execution",
+                    error_code="cancelled",
+                )
+                self.inferenceCancelled.emit(request_id)
+                self._emit_queue_changed()
+                return True
+        return False
+
+    def cancel_all(self) -> int:
+        cancelled = 0
+        for backend in ("local", "remote"):
+            for record in list(self._queues[backend]):
+                if self.cancel_request(record.request.request_id):
+                    cancelled += 1
+            active = self._active_records[backend]
+            if active is not None and self.cancel_request(active.request.request_id):
+                cancelled += 1
+        return cancelled
+
+    def queue_snapshot(self) -> tuple[InferenceQueueEntry, ...]:
+        entries = []
+        for backend in ("local", "remote"):
+            active = self._active_records[backend]
+            if active is not None and active.state in {"running", "cancelling"}:
+                entries.append(self._entry_for_record(active, queue_position=0))
+            entries.extend(
+                self._entry_for_record(record, queue_position=index)
+                for index, record in enumerate(self._queues[backend], start=1)
+            )
+        entries.extend(
+            self._entry_for_record(record, queue_position=-1)
+            for record in reversed(self._history)
+        )
+        return tuple(entries)
+
+    def _entry_for_record(self, record, queue_position=None):
+        if queue_position is None:
+            if record.state in {"running", "cancelling"}:
+                queue_position = 0
+            else:
+                try:
+                    queue_position = list(self._queues[record.request.backend]).index(record) + 1
+                except ValueError:
+                    queue_position = -1
+        request = record.request
+        return InferenceQueueEntry(
+            request_id=request.request_id,
+            backend=request.backend,
+            task=request.task,
+            model_id=request.model_id,
+            sample_ids=tuple(item.sample_id for item in request.items),
+            state=record.state,
+            message=record.message,
+            current=record.current,
+            total=record.total,
+            queue_position=int(queue_position),
+            submitted_at=record.submitted_at,
+            started_at=record.started_at,
+            finished_at=record.finished_at,
+            error_code=record.error_code,
+            error_details=record.error_details,
+            retryable=record.retryable,
+        )
+
+    def _emit_queue_changed(self):
+        self.queueChanged.emit(self.queue_snapshot())
+
+    def clear_queue_history(self) -> None:
+        self._history.clear()
+        self._emit_queue_changed()
 
     def has_running_inference(self) -> bool:
-        return bool(self.worker is not None and self.worker.isRunning())
+        return any(
+            worker is not None and worker.isRunning()
+            for worker in self._workers.values()
+        )
 
     def shutdown(self, wait_ms: int = 3000) -> bool:
+        self._shutting_down = True
+        self.cancel_all()
+        deadline = time.monotonic() + max(0, int(wait_ms)) / 1000.0
         if self.discovery_worker is not None and self.discovery_worker.isRunning():
-            if not self.discovery_worker.wait(wait_ms):
+            remaining = max(0, int((deadline - time.monotonic()) * 1000))
+            if not self.discovery_worker.wait(remaining):
                 return False
-        if self.worker is None:
-            return True
-        if self.worker.isRunning():
-            self.worker.cancel()
-            if not self.worker.wait(wait_ms):
+        for worker in tuple(self._workers.values()):
+            if worker is None or not worker.isRunning():
+                continue
+            remaining = max(0, int((deadline - time.monotonic()) * 1000))
+            if not worker.wait(remaining):
                 return False
         return True
 
@@ -311,8 +523,11 @@ class InferenceController(QObject):
             self.discovery_worker = None
         worker.deleteLater()
 
-    def _cleanup_worker(self, worker):
-        if self.worker is worker:
-            self.worker = None
-            self._active_request_id = ""
+    def _cleanup_worker(self, backend, worker):
+        if self._workers.get(backend) is worker:
+            self._workers[backend] = None
+            self._active_records[backend] = None
         worker.deleteLater()
+        if not self._shutting_down:
+            self._dispatch_next(backend)
+        self._emit_queue_changed()

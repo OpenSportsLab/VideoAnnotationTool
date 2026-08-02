@@ -193,7 +193,10 @@ class VideoAnnotationWindow(QMainWindow):
         self._inference_activity_widget = InferenceActivityWidget(self)
         self.statusBar().addPermanentWidget(self._inference_activity_widget, 1)
         self._inference_activity_widget.cancelRequested.connect(
-            self.inference_controller.cancel_inference
+            self.inference_controller.cancel_request
+        )
+        self._inference_activity_widget.clearHistoryRequested.connect(
+            self.inference_controller.clear_queue_history
         )
         self._pending_inference_requests = {}
         self._pending_prediction_samples_by_task = {}
@@ -433,11 +436,12 @@ class VideoAnnotationWindow(QMainWindow):
             controller.pendingPredictionsChanged.connect(
                 lambda sample_ids, task=task_name: self._on_pending_predictions_changed(task, sample_ids)
             )
-        self.inference_controller.inferenceStarted.connect(self._on_shared_inference_started)
-        self.inference_controller.inferenceProgress.connect(self._on_shared_inference_progress)
         self.inference_controller.inferenceCompleted.connect(self._on_shared_inference_completed)
         self.inference_controller.inferenceFailed.connect(self._on_shared_inference_failed)
         self.inference_controller.inferenceCancelled.connect(self._on_shared_inference_cancelled)
+        self.inference_controller.queueChanged.connect(
+            self._inference_activity_widget.set_entries
+        )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
             self._handle_media_route
         )
@@ -1210,40 +1214,23 @@ class VideoAnnotationWindow(QMainWindow):
             "model_id": payload["model_id"],
             "invalidated": False,
         }
-        if not self.inference_controller.start_inference(request):
+        entry = self.inference_controller.enqueue_inference(request)
+        if entry is None:
             self._pending_inference_requests.pop(request.request_id, None)
-            QMessageBox.information(self, "Inference", "Another inference is already running.")
-
-    def _on_shared_inference_started(self, request_id: str, task: str) -> None:
-        pending = self._pending_inference_requests.get(request_id, {})
-        self._inference_activity_widget.start(
-            task,
-            str(pending.get("model_id") or ""),
-            len(pending.get("sample_ids") or ()),
-        )
-        self._set_inference_running_state(True)
-
-    def _on_shared_inference_progress(self, request_id: str, message: str, current: int, total: int) -> None:
-        if request_id not in self._pending_inference_requests:
+            QMessageBox.information(self, "Inference", "The inference request could not be queued.")
             return
-        self._inference_activity_widget.update_progress(message, current, total)
-
-    def _set_inference_running_state(self, running: bool) -> None:
-        for panel in (
-            self.classification_panel,
-            self.localization_panel,
-            self.description_panel,
-            self.dense_panel,
-            self.qa_panel,
-        ):
-            panel.inference_review_bar.set_running(running)
-
-    def _finish_inference_activity(self) -> None:
-        self._inference_activity_widget.finish()
-        self._set_inference_running_state(False)
+        if entry.state == "queued":
+            self.show_temp_msg(
+                "Inference",
+                f"Added to the {entry.backend.title()} queue at position {entry.queue_position}.",
+                2500,
+            )
+        elif entry.state == "running":
+            self.show_temp_msg(
+                "Inference", f"Started {entry.backend.title()} inference.", 1800
+            )
 
     def _on_shared_inference_completed(self, request_id: str, result) -> None:
-        self._finish_inference_activity()
         pending = self._pending_inference_requests.pop(request_id, None)
         if not pending:
             return
@@ -1323,17 +1310,19 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.set_pending_prediction_samples(combined)
 
     def _on_shared_inference_failed(self, request_id, message, code, retryable, details) -> None:
-        self._finish_inference_activity()
         pending = self._pending_inference_requests.pop(request_id, None)
         if not pending or pending.get("invalidated"):
             return
         retry_text = " The operation may be retried." if retryable else ""
-        QMessageBox.critical(self, "Inference Error", f"{message}{retry_text}\n\nCode: {code}")
+        self.show_temp_msg(
+            "Inference Error",
+            f"{message}{retry_text} Code: {code}. See Inference Details.",
+            6000,
+        )
 
     def _on_shared_inference_cancelled(self, request_id: str) -> None:
-        self._finish_inference_activity()
         pending = self._pending_inference_requests.pop(request_id, None)
-        if not pending:
+        if not pending or pending.get("invalidated"):
             return
         self.show_temp_msg("Inference", "Inference cancelled.", 1500)
 
@@ -1342,10 +1331,7 @@ class VideoAnnotationWindow(QMainWindow):
             return
         for pending in self._pending_inference_requests.values():
             pending["invalidated"] = True
-        if self.inference_controller.cancel_inference():
-            self._inference_activity_widget.update_progress(
-                "Cancelling inference from the previous project…", 0, 0
-            )
+        self.inference_controller.cancel_all()
 
     def _save_and_apply_explorer_page_size(self, page_size: int) -> None:
         settings = getattr(self.dataset_explorer_controller, "settings", None)
@@ -1501,7 +1487,7 @@ class VideoAnnotationWindow(QMainWindow):
                 event.ignore()
                 return
             self._pending_inference_requests.clear()
-            self._finish_inference_activity()
+            self._inference_activity_widget.close_panel()
             if not self.classification_editor_controller.shutdown_background_tasks(wait_ms=2500):
                 self.show_temp_msg(
                     "Inference Running",

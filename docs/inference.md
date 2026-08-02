@@ -64,12 +64,20 @@ does not have a separate batch-inference control.
 
 ## Background execution
 
-Inference runs in a background worker. After submitting a run, the setup dialog
-closes and a compact task appears in the main-window status bar with current
-progress and **Cancel**. Dataset navigation, media playback, annotation editing,
-saving, and tab switching remain available. Because only one model job may run
-at once, every **Run Inference…** button is temporarily disabled until that job
-finishes or is cancelled.
+Inference uses two session-only FIFO queues: one for Local models and one for
+Remote models. Each queue runs one job at a time, while one Local and one Remote
+job may run concurrently. Additional **Run Inference…** actions remain available
+and append work to the selected model's provider queue. Local providers and
+Remote uploads/jobs are not created until their request reaches the front.
+
+The main-window status bar summarizes both lanes and their waiting counts.
+**Details** opens a non-modal queue panel showing each active and waiting job,
+progress, and per-job **Cancel**. Cancelling a waiting job removes it immediately;
+cancelling an active job remains `Cancelling` until its worker exits. The panel
+retains the latest 20 completed, failed, or cancelled jobs for the current
+application session, including failure codes, and provides **Clear History**.
+Dataset navigation, playback, editing, saving, and tab switching remain
+available throughout.
 
 Each request captures its original project generation, sample IDs, task head or
 question, and request-item IDs. Results are correlated back to those immutable
@@ -77,12 +85,14 @@ request items and never to the sample currently visible when the model finishes.
 Navigating from sample A to sample B therefore leaves A's predictions pending;
 they appear when A is selected again and its Smart Labelled status updates in
 the explorer. Removed or renamed sample targets are discarded rather than
-redirected. Opening, creating, or closing a project cancels active inference and
-suppresses late results from the previous project.
+redirected. Opening, creating, or closing a project cancels both active jobs,
+discards both waiting queues, and suppresses late results from the previous
+project.
 
 Remote jobs can usually be cancelled during upload or polling. Local
 OpenSportsLib calls may be indivisible, so cancellation can take effect only
 after the current library call returns; its late output is still suppressed.
+Queued Remote work is not submitted to the server before it becomes active.
 
 Every annotation panel uses the same footer: pending-result status and review
 actions appear immediately above a bottom-row **Run Inference…** button. There

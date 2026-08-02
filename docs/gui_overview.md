@@ -97,10 +97,12 @@ and applicable task parameters. Server and model setup lives exclusively in
 in the footer only when pending predictions exist. Task-specific prediction
 rows remain inline in the editor above it.
 
-While a model runs, a non-modal inference task in the status bar shows progress
-and **Cancel**. The annotation workspace remains interactive, and predictions
-stay associated with the sample from which the request was submitted even if
-another sample is selected before completion.
+The status bar summarizes independent Local and Remote inference queues.
+**Details** opens a non-modal panel with active progress, FIFO waiting jobs,
+per-job cancellation, and recent outcomes. One Local and one Remote job may run
+at the same time, and more runs can be queued without blocking the annotation
+workspace. Predictions stay associated with the sample from which each request
+was submitted even if another sample is selected before completion.
 
 #### Classification (`CLS`)
 

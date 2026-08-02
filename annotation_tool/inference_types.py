@@ -94,6 +94,28 @@ class InferenceModelChoice:
         return f"{provider} — {self.descriptor.display_name}"
 
 
+@dataclass(frozen=True)
+class InferenceQueueEntry:
+    """Immutable presentation snapshot for one queued or recent inference job."""
+
+    request_id: str
+    backend: str
+    task: str
+    model_id: str
+    sample_ids: tuple[str, ...]
+    state: str
+    message: str = ""
+    current: int = 0
+    total: int = 0
+    queue_position: int = -1
+    submitted_at: float = 0.0
+    started_at: float = 0.0
+    finished_at: float = 0.0
+    error_code: str = ""
+    error_details: Any = None
+    retryable: bool = False
+
+
 @dataclass
 class InferenceInput:
     path: str
@@ -141,6 +163,8 @@ class InferenceRequest:
     def __post_init__(self):
         if self.task not in INFERENCE_TASKS:
             raise ValueError(f"Unsupported inference task: {self.task!r}")
+        if self.backend not in {"local", "remote"}:
+            raise ValueError(f"Unsupported inference backend: {self.backend!r}")
         if not str(self.model_id or "").strip():
             raise ValueError("Inference model id cannot be empty.")
         if not self.items:
