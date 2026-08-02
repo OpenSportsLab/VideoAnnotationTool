@@ -37,7 +37,6 @@ import os
 import subprocess
 import sys
 from datetime import date
-from glob import glob
 from pathlib import Path
 
 FPS = 30.0
