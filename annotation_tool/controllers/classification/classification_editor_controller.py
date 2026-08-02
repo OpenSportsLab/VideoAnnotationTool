@@ -67,10 +67,10 @@ class ClassificationEditorController(QObject):
         self.inferenceRunRequested.emit("classification", {"head": str(head)})
 
     def apply_shared_inference_result(self, result, context=None):
-        default_head = str((context or {}).get("head") or self.classification_panel.get_current_head() or self._preferred_head or "action")
+        default_head = str((context or {}).get("head") or "action")
         for item in result.items:
             labels = item.get("labels", {})
-            sample_id = str(item.get("sample_id") or self.current_sample_id)
+            sample_id = str(item.get("sample_id") or "")
             if not isinstance(labels, dict) or not sample_id:
                 continue
             for head, raw in labels.items():
@@ -287,7 +287,7 @@ class ClassificationEditorController(QObject):
         self.reject_all_predictions()
 
     def _on_inference_cancel_requested(self):
-        self._emit_status("Inference", "Use the shared progress dialog to cancel inference.", 1200)
+        self._emit_status("Inference", "Use the status-bar task to cancel inference.", 1200)
 
     def display_manual_annotation(self):
         data = self._manual_payload_to_panel(self._current_sample_snapshot.get("labels"))

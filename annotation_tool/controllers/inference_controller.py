@@ -41,6 +41,8 @@ class _InferenceWorker(QThread):
     def run(self):
         try:
             result = self.provider.run(self.request, self.progress.emit, self.cancel_event)
+            if self.cancel_event.is_set():
+                raise InferenceError("Inference cancelled.", code="cancelled")
             self.succeeded.emit(result)
         except InferenceError as exc:
             self.failed.emit(str(exc), exc.code, exc.retryable, exc.details)

@@ -62,6 +62,28 @@ the original sample timeline.
 Classification exposes current-sample and all-samples scope in this dialog; it
 does not have a separate batch-inference control.
 
+## Background execution
+
+Inference runs in a background worker. After submitting a run, the setup dialog
+closes and a compact task appears in the main-window status bar with current
+progress and **Cancel**. Dataset navigation, media playback, annotation editing,
+saving, and tab switching remain available. Because only one model job may run
+at once, every **Run Inference…** button is temporarily disabled until that job
+finishes or is cancelled.
+
+Each request captures its original project generation, sample IDs, task head or
+question, and request-item IDs. Results are correlated back to those immutable
+request items and never to the sample currently visible when the model finishes.
+Navigating from sample A to sample B therefore leaves A's predictions pending;
+they appear when A is selected again and its Smart Labelled status updates in
+the explorer. Removed or renamed sample targets are discarded rather than
+redirected. Opening, creating, or closing a project cancels active inference and
+suppresses late results from the previous project.
+
+Remote jobs can usually be cancelled during upload or polling. Local
+OpenSportsLib calls may be indivisible, so cancellation can take effect only
+after the current library call returns; its late output is still suppressed.
+
 Every annotation panel uses the same footer: pending-result status and review
 actions appear immediately above a bottom-row **Run Inference…** button. There
 are no separate Smart, single-inference, or batch-inference buttons in the
@@ -127,7 +149,11 @@ Jobs receive `idempotency_key`, `model_id`, `task`, `schema`, `parameters`, and
 and `retryable`; polling may return `Retry-After`.
 
 Successful result items use the task-native field: `labels`, `events`,
-`captions`, `dense_captions`, or `answer`.
+`captions`, `dense_captions`, or `answer`. Remote results must return the
+request's `item_id` (or a unique request `sample_id` for compatibility). The
+server returns exactly one result item per request item. The client rejects
+missing, excess, unknown, and duplicate result targets and replaces result-owned
+sample IDs with the canonical request mapping.
 
 The Flask application should be a control plane behind a production WSGI
 server/reverse proxy. Model execution belongs in durable workers. Large media

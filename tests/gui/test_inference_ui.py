@@ -1,12 +1,19 @@
+import threading
+
 import pytest
 from PyQt6.QtWidgets import QAbstractItemView, QPushButton
 
+from controllers.classification import ClassificationEditorController
 from controllers.dense_description import DenseEditorController
 from controllers.description import DescEditorController
+from controllers.inference_controller import InferenceController
+from controllers.localization import LocalizationEditorController
 from controllers.question_answer import QAEditorController
 from inference_types import (
     InferenceInput,
+    InferenceItem,
     InferenceModelChoice,
+    InferenceRequest,
     InferenceResult,
     ModelDescriptor,
 )
@@ -17,6 +24,7 @@ from ui.classification import ClassificationAnnotationPanel
 from ui.localization import LocalizationAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
 from ui.inference_review_bar import InferenceReviewBar
+from ui.inference_activity_widget import InferenceActivityWidget
 
 
 @pytest.mark.gui
@@ -212,6 +220,281 @@ def test_run_dialog_range_controls_follow_model_capability(qtbot):
 
 
 @pytest.mark.gui
+def test_status_bar_inference_activity_is_non_modal_and_cancellable(qtbot):
+    widget = InferenceActivityWidget()
+    qtbot.addWidget(widget)
+    widget.start("localization", "model", 1)
+
+    assert not widget.isHidden()
+    assert widget.progress.minimum() == 0
+    assert widget.progress.maximum() == 0
+    widget.update_progress("Running inference", 2, 5)
+    assert "model" in widget.label.text()
+    assert "Running inference" in widget.label.text()
+    assert widget.progress.value() == 2
+    assert widget.progress.maximum() == 5
+    with qtbot.waitSignal(widget.cancelRequested, timeout=500):
+        widget.cancel_button.click()
+    assert not widget.cancel_button.isEnabled()
+
+    widget.finish()
+    assert widget.isHidden()
+
+
+@pytest.mark.gui
+def test_inference_worker_does_not_block_gui_and_suppresses_cancelled_result(
+    qtbot, monkeypatch, tmp_path
+):
+    controller = InferenceController()
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingProvider:
+        def run(self, request, progress, _cancel_event):
+            entered.set()
+            progress("Running model", 0, 0)
+            release.wait(2)
+            return InferenceResult(
+                request.request_id,
+                request.task,
+                request.model_id,
+                ({"sample_id": "sample", "captions": [{"text": "Late"}]},),
+            )
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(controller, "_provider", lambda *_args, **_kwargs: BlockingProvider())
+    request = InferenceRequest(
+        task="description",
+        model_id="model",
+        backend="local",
+        items=[InferenceItem("sample", [InferenceInput(str(tmp_path / "clip.mp4"))])],
+    )
+    completed = []
+    controller.inferenceCompleted.connect(lambda *_args: completed.append(True))
+    button = QPushButton("Still interactive")
+    qtbot.addWidget(button)
+    clicks = []
+    button.clicked.connect(lambda: clicks.append(True))
+
+    assert controller.start_inference(request)
+    qtbot.waitUntil(entered.is_set, timeout=1000)
+    button.click()
+    assert clicks == [True]
+    with qtbot.waitSignal(controller.inferenceCancelled, timeout=2000):
+        controller.cancel_inference()
+        release.set()
+    assert completed == []
+    assert controller.shutdown()
+
+
+@pytest.mark.gui
+def test_classification_result_stays_with_original_sample_after_navigation(qtbot):
+    panel = ClassificationAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = ClassificationEditorController(panel)
+    controller.setup_connections()
+    controller.on_schema_context_changed({
+        "action": {"type": "single_label", "labels": ["pass", "shot"]}
+    })
+    sample_a = {"id": "sample-a", "inputs": [{"path": "a.mp4", "type": "video"}]}
+    sample_b = {"id": "sample-b", "inputs": [{"path": "b.mp4", "type": "video"}]}
+    controller.on_selected_sample_changed(sample_b)
+    result = InferenceResult(
+        "request", "classification", "model",
+        ({"sample_id": "sample-a", "labels": {"action": {"label": "shot"}}},),
+    )
+
+    controller.apply_shared_inference_result(result, {"head": "action"})
+
+    assert ("sample-a", "action") in controller._pending_predictions
+    assert ("sample-b", "action") not in controller._pending_predictions
+    controller.on_selected_sample_changed(sample_a)
+    _confidence, accept, reject = panel.get_head_row_smart_widgets("action", "shot")
+    assert not accept.isHidden()
+    assert not reject.isHidden()
+
+
+@pytest.mark.gui
+def test_localization_result_stays_with_original_sample_after_navigation(qtbot):
+    panel = LocalizationAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = LocalizationEditorController(panel)
+    controller.setup_connections()
+    controller.on_schema_context_changed({
+        "ball_action": {"type": "single_label", "labels": ["pass"]}
+    })
+    sample_a = {"id": "sample-a", "inputs": [{"path": "a.mp4", "type": "video"}], "events": []}
+    sample_b = {"id": "sample-b", "inputs": [{"path": "b.mp4", "type": "video"}], "events": []}
+    controller.on_selected_sample_changed(sample_b)
+    result = InferenceResult(
+        "request", "localization", "model",
+        ({"sample_id": "sample-a", "events": [{"label": "pass", "position_ms": 100}]},),
+    )
+
+    controller.apply_shared_inference_result(result, {"head": "ball_action"})
+
+    assert panel.table.model.rowCount() == 0
+    assert len(controller._pending_predictions["sample-a"]) == 1
+    controller.on_selected_sample_changed(sample_a)
+    assert panel.table.model.rowCount() == 1
+
+
+@pytest.mark.gui
+def test_description_result_stays_with_original_sample_after_navigation(qtbot):
+    panel = DescriptionAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = DescEditorController(panel)
+    controller.setup_connections()
+    sample_a = {"id": "sample-a", "inputs": [{"path": "a.mp4"}], "captions": []}
+    sample_b = {"id": "sample-b", "inputs": [{"path": "b.mp4"}], "captions": []}
+    controller.on_selected_sample_changed(sample_b)
+    result = InferenceResult(
+        "request", "description", "model",
+        ({"sample_id": "sample-a", "captions": [{"text": "Original sample"}]},),
+    )
+
+    controller.apply_shared_inference_result(result)
+
+    assert panel.inference_candidate_label.text() == ""
+    controller.on_selected_sample_changed(sample_a)
+    assert panel.inference_candidate_label.text() == "Candidate: Original sample"
+
+
+@pytest.mark.gui
+def test_dense_result_stays_with_original_sample_after_navigation(qtbot):
+    panel = DenseAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = DenseEditorController(panel)
+    controller.setup_connections()
+    sample_a = {"id": "sample-a", "inputs": [{"path": "a.mp4"}], "dense_captions": []}
+    sample_b = {"id": "sample-b", "inputs": [{"path": "b.mp4"}], "dense_captions": []}
+    controller.on_selected_sample_changed(sample_b, "b.mp4")
+    result = InferenceResult(
+        "request", "dense_description", "model",
+        ({"sample_id": "sample-a", "dense_captions": [{"text": "Original", "position_ms": 100}]},),
+    )
+
+    controller.apply_shared_inference_result(result)
+
+    assert panel.dense_model.rowCount() == 0
+    controller.on_selected_sample_changed(sample_a, "a.mp4")
+    assert panel.dense_model.rowCount() == 1
+
+
+@pytest.mark.gui
+def test_qa_result_stays_with_original_sample_after_navigation(qtbot):
+    panel = QuestionAnswerAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = QAEditorController(panel)
+    controller.setup_connections()
+    sample_a = {"id": "sample-a", "inputs": [{"path": "a.mp4"}], "answers": []}
+    sample_b = {"id": "sample-b", "inputs": [{"path": "b.mp4"}], "answers": []}
+    controller.on_selected_sample_changed(sample_b)
+    result = InferenceResult(
+        "request", "question_answer", "model",
+        ({"sample_id": "sample-a", "answer": {"text": "Original answer"}},),
+    )
+
+    controller.apply_shared_inference_result(result, {"question": "What happened?"})
+
+    assert controller._answer_groups == []
+    controller.on_selected_sample_changed(sample_a)
+    assert controller._answer_groups[0]["answers"][0]["text"] == "Original answer"
+
+
+@pytest.mark.gui
+def test_main_window_inference_activity_keeps_ui_enabled_and_filters_deleted_samples(
+    window, synthetic_project_json
+):
+    project_path = synthetic_project_json("description", item_count=2)
+    assert window.dataset_explorer_controller.open_project_from_path(str(project_path))
+    samples = window.dataset_explorer_controller.dataset_json["data"]
+    sample_a, sample_b = str(samples[0]["id"]), str(samples[1]["id"])
+    window.desc_editor_controller.on_selected_sample_changed(samples[1])
+    request_id = "background-request"
+    window._pending_inference_requests[request_id] = {
+        "task": "description",
+        "sample_ids": (sample_a, sample_b),
+        "request_items": {"item-a": sample_a, "item-b": sample_b},
+        "project_generation": window.dataset_explorer_controller.project_generation,
+        "context": {"language": "en"},
+        "backend": "local",
+        "model_id": "model",
+        "invalidated": False,
+    }
+    window._on_shared_inference_started(request_id, "description")
+
+    assert window._inference_activity_widget.isVisible()
+    assert window.data_dock.isEnabled()
+    assert window.editor_dock.isEnabled()
+    for panel in (
+        window.classification_panel,
+        window.localization_panel,
+        window.description_panel,
+        window.dense_panel,
+        window.qa_panel,
+    ):
+        assert not panel.inference_review_bar.run_button.isEnabled()
+
+    window.dataset_explorer_controller.dataset_json["data"] = [samples[1]]
+    window.dataset_explorer_controller._rebuild_runtime_index()
+    result = InferenceResult(
+        request_id,
+        "description",
+        "model",
+        (
+                {"item_id": "item-a", "sample_id": sample_a, "captions": [{"text": "Removed"}]},
+                {"item_id": "item-b", "sample_id": sample_b, "captions": [{"text": "Surviving"}]},
+        ),
+    )
+    window._on_shared_inference_completed(request_id, result)
+
+    assert sample_a not in window.desc_editor_controller._pending_predictions
+    assert window.desc_editor_controller._pending_predictions[sample_b]["text"] == "Surviving"
+    assert not window._inference_activity_widget.isVisible()
+    assert (
+        window.description_panel.inference_review_bar.run_button.text()
+        == "Run Inference…"
+    )
+
+
+@pytest.mark.gui
+def test_project_generation_change_invalidates_late_inference_result(
+    window, synthetic_project_json, monkeypatch
+):
+    project_path = synthetic_project_json("description")
+    assert window.dataset_explorer_controller.open_project_from_path(str(project_path))
+    sample_id = str(window.dataset_explorer_controller.dataset_json["data"][0]["id"])
+    request_id = "old-project-request"
+    window._pending_inference_requests[request_id] = {
+        "task": "description",
+        "sample_ids": (sample_id,),
+        "request_items": {"item": sample_id},
+        "project_generation": window.dataset_explorer_controller.project_generation,
+        "context": {"language": "en"},
+        "backend": "local",
+        "model_id": "model",
+        "invalidated": False,
+    }
+    window._on_shared_inference_started(request_id, "description")
+    monkeypatch.setattr(window.inference_controller, "cancel_inference", lambda: True)
+
+    window.dataset_explorer_controller.reset(full_reset=True)
+
+    assert window._pending_inference_requests[request_id]["invalidated"] is True
+    late_result = InferenceResult(
+        request_id,
+        "description",
+        "model",
+        ({"item_id": "item", "sample_id": sample_id, "captions": [{"text": "Late"}]},),
+    )
+    window._on_shared_inference_completed(request_id, late_result)
+    assert window.desc_editor_controller._pending_predictions == {}
+
+
+@pytest.mark.gui
 def test_description_smart_result_apply_confirm_and_reject_are_single_mutations(qtbot):
     panel = DescriptionAnnotationPanel()
     qtbot.addWidget(panel)
@@ -226,7 +509,7 @@ def test_description_smart_result_apply_confirm_and_reject_are_single_mutations(
     controller.captionsUpdateRequested.connect(lambda sample_id, value: mutations.append((sample_id, value)))
     result = InferenceResult(
         "request", "description", "caption-model",
-        ({"captions": [{"lang": "en", "text": "Predicted", "confidence_score": 0.8}]},),
+        ({"sample_id": "sample", "captions": [{"lang": "en", "text": "Predicted", "confidence_score": 0.8}]},),
     )
     controller.apply_shared_inference_result(result)
     assert mutations == []
@@ -258,7 +541,7 @@ def test_dense_smart_result_batches_predictions_and_selected_confirm(qtbot):
     controller.denseEventsSetRequested.connect(lambda sample_id, value: mutations.append((sample_id, value)))
     result = InferenceResult(
         "request", "dense_description", "dense-model",
-        ({"dense_captions": [
+        ({"sample_id": "sample", "dense_captions": [
             {"position_ms": 100, "lang": "en", "text": "First", "confidence_score": 0.9},
             {"position_ms": 200, "lang": "en", "text": "Second", "confidence_score": 0.7},
         ]},),
@@ -288,9 +571,9 @@ def test_qa_smart_answer_object_round_trip_and_confirm(qtbot):
     controller.qaAnswersUpdateRequested.connect(lambda sample_id, value: mutations.append((sample_id, value)))
     result = InferenceResult(
         "request", "question_answer", "vqa-model",
-        ({"answer": {"text": "A shot.", "confidence_score": 0.75}},),
+        ({"sample_id": "sample", "answer": {"text": "A shot.", "confidence_score": 0.75}},),
     )
-    controller.apply_shared_inference_result(result)
+    controller.apply_shared_inference_result(result, {"question": "What happened?"})
     assert mutations == []
     smart = controller._answer_groups[0]["answers"][-1]
     assert smart["text"] == "A shot."

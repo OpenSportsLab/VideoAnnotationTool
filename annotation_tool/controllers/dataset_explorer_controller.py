@@ -257,6 +257,7 @@ class DatasetExplorerController(QObject):
     removeItemMutationRequested = pyqtSignal(str, str)
     ballH5AssociationMutationRequested = pyqtSignal(str, str, str)
     settingsChanged = pyqtSignal(object)
+    projectGenerationChanged = pyqtSignal(int)
 
     SETTINGS_ORG = "OpenSportsLab"
     SETTINGS_APP = "VideoAnnotationTool"
@@ -288,6 +289,7 @@ class DatasetExplorerController(QObject):
         self.settings = QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
 
         self.dataset_json = {}
+        self._project_generation = 0
         self._pending_prediction_sample_ids = set()
         self.current_json_path = None
         self.project_root = None
@@ -330,6 +332,10 @@ class DatasetExplorerController(QObject):
     def settings(self, value):
         self._settings = value
         self.settingsChanged.emit(value)
+
+    @property
+    def project_generation(self) -> int:
+        return self._project_generation
 
     # ------------------------------------------------------------------
     # Compatibility properties
@@ -436,6 +442,8 @@ class DatasetExplorerController(QObject):
         self.tree_model.renameRequested.connect(self.sampleRenameRequested.emit)
 
     def reset(self, full_reset: bool = False):
+        self._project_generation += 1
+        self.projectGenerationChanged.emit(self._project_generation)
         self.current_json_path = None
         self.project_root = None
         self.current_working_directory = None

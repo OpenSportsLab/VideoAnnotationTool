@@ -59,7 +59,7 @@ class DenseEditorController(QObject):
 
     def apply_shared_inference_result(self, result, context=None):
         for item in result.items:
-            sample_id = str(item.get("sample_id") or self.current_sample_id)
+            sample_id = str(item.get("sample_id") or "")
             predictions = item.get("dense_captions")
             if not sample_id or not isinstance(predictions, list):
                 continue

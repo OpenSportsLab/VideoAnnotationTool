@@ -629,9 +629,13 @@ class LocalizationEditorController(QObject):
         )
 
     def apply_shared_inference_result(self, result, context=None):
-        target_head = str((context or {}).get("head") or self.current_head or "")
+        target_head = str((context or {}).get("head") or "")
+        if not target_head:
+            return
         for item in result.items:
-            sample_id = str(item.get("sample_id") or self.current_sample_id)
+            sample_id = str(item.get("sample_id") or "")
+            if not sample_id:
+                continue
             pending = []
             for raw in list(item.get("events") or []):
                 if not isinstance(raw, dict):

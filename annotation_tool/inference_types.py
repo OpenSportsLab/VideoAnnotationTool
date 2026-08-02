@@ -216,6 +216,12 @@ def validate_result_payload(request: InferenceRequest, payload: Any) -> Inferenc
         raw_items = payload.get("data")
     if not isinstance(raw_items, list):
         raise InferenceError("Inference result is missing an items array.", code="invalid_result")
+    if len(raw_items) != len(request.items):
+        raise InferenceError(
+            "Inference result item count does not match the request "
+            f"({len(raw_items)} returned for {len(request.items)} requested).",
+            code="invalid_result",
+        )
 
     required_field = {
         "classification": "labels",
@@ -224,7 +230,12 @@ def validate_result_payload(request: InferenceRequest, payload: Any) -> Inferenc
         "dense_description": "dense_captions",
         "question_answer": "answer",
     }[request.task]
+    request_by_item_id = {item.item_id: item for item in request.items}
+    request_by_sample_id: dict[str, list[InferenceItem]] = {}
+    for request_item in request.items:
+        request_by_sample_id.setdefault(request_item.sample_id, []).append(request_item)
     normalized = []
+    used_item_ids = set()
     for index, raw in enumerate(raw_items):
         if not isinstance(raw, dict):
             raise InferenceError(f"Result item {index} must be an object.", code="invalid_result")
@@ -239,8 +250,35 @@ def validate_result_payload(request: InferenceRequest, payload: Any) -> Inferenc
                 raise InferenceError(
                     f"Result item {index} is missing {required_field!r}.", code="invalid_result"
                 )
-        item.setdefault("item_id", request.items[index].item_id if index < len(request.items) else "")
-        item.setdefault("sample_id", request.items[index].sample_id if index < len(request.items) else str(item.get("id") or ""))
+        raw_item_id = str(item.get("item_id") or "")
+        raw_sample_id = str(item.get("sample_id") or "")
+        request_item = request_by_item_id.get(raw_item_id) if raw_item_id else None
+        if raw_item_id and request_item is None:
+            raise InferenceError(
+                f"Result item {index} has unknown request item ID {raw_item_id!r}.",
+                code="invalid_result",
+            )
+        if request_item is None and raw_sample_id:
+            sample_matches = request_by_sample_id.get(raw_sample_id, [])
+            if len(sample_matches) == 1:
+                request_item = sample_matches[0]
+        if request_item is None and request.backend == "local" and index < len(request.items):
+            request_item = request.items[index]
+        if request_item is None:
+            raise InferenceError(
+                f"Result item {index} cannot be correlated to an inference request item.",
+                code="invalid_result",
+            )
+        if request_item.item_id in used_item_ids:
+            raise InferenceError(
+                f"Result item {index} duplicates request item {request_item.item_id!r}.",
+                code="invalid_result",
+            )
+        used_item_ids.add(request_item.item_id)
+        # Never trust result-owned target identifiers. The immutable request is
+        # the sole authority for where a prediction belongs.
+        item["item_id"] = request_item.item_id
+        item["sample_id"] = request_item.sample_id
         normalized.append(item)
 
     return InferenceResult(

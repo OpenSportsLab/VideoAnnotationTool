@@ -97,6 +97,11 @@ and applicable task parameters. Server and model setup lives exclusively in
 in the footer only when pending predictions exist. Task-specific prediction
 rows remain inline in the editor above it.
 
+While a model runs, a non-modal inference task in the status bar shows progress
+and **Cancel**. The annotation workspace remains interactive, and predictions
+stay associated with the sample from which the request was submitted even if
+another sample is selected before completion.
+
 #### Classification (`CLS`)
 
 ![Classification Interface](assets/classification-UI.png)

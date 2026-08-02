@@ -75,10 +75,10 @@ class QAEditorController(QObject):
 
     def apply_shared_inference_result(self, result, context=None):
         question = str((context or {}).get("question") or "").strip()
-        if not question and self._valid_group_index(self._selected_group_index):
-            question = str(self._answer_groups[self._selected_group_index].get("question") or "").strip()
+        if not question:
+            return
         for item in result.items:
-            sample_id = str(item.get("sample_id") or self.current_sample_id)
+            sample_id = str(item.get("sample_id") or "")
             raw = item.get("answer")
             if isinstance(raw, dict):
                 text = str(raw.get("text") or raw.get("answer") or "").strip()

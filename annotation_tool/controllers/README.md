@@ -106,6 +106,17 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   shared mappings; the run dialog only chooses a model and runtime parameters.
 - The last successfully completed `(backend, model_id)` is stored per task and
   used as the preferred choice on the next run when still available.
+- Provider work runs in one `QThread`; `MainWindow` presents progress through a
+  non-modal status-bar widget and leaves navigation/editing enabled. A generic
+  post-provider cancellation check suppresses late Local results.
+- Result validation correlates by request `item_id`, then unique request
+  `sample_id`, with positional fallback restricted to legacy Local OSL output.
+  Canonical request IDs overwrite result-owned IDs; unknown and duplicate
+  targets are invalid results.
+- `DatasetExplorerController.project_generation` increments on every reset.
+  Main-window request state captures that generation and the complete
+  item-to-sample mapping, cancels on generation change, discards missing sample
+  targets, and never routes predictions through the current selection.
 - Fresh settings expose `jeetv/snpro-classification-mvit` and
   `jeetv/snpro-snbas-2024` as the default local registry. Their canonical
   definitions live in `inference_settings.default_local_models()`; local

@@ -17,6 +17,7 @@ from inference_settings import (
     save_last_model_choice,
 )
 from inference_types import (
+    InferenceError,
     InferenceInput,
     InferenceItem,
     InferenceRequest,
@@ -62,10 +63,93 @@ def _request(task, path, *, model_id="model"):
 )
 def test_result_validation_accepts_all_task_native_shapes(tmp_path, task, field, value):
     request = _request(task, tmp_path / "video.mp4")
-    result = validate_result_payload(request, {"items": [{field: value}]})
+    result = validate_result_payload(
+        request,
+        {"items": [{"item_id": request.items[0].item_id, field: value}]},
+    )
     assert result.task == task
     assert result.items[0][field] == value
     assert result.items[0]["sample_id"] == "sample"
+
+
+def test_result_validation_correlates_reordered_items_and_overwrites_server_ids(tmp_path):
+    request = InferenceRequest(
+        task="description",
+        model_id="model",
+        backend="remote",
+        items=[
+            InferenceItem("sample-a", [InferenceInput(str(tmp_path / "a.mp4"))]),
+            InferenceItem("sample-b", [InferenceInput(str(tmp_path / "b.mp4"))]),
+        ],
+    )
+    first, second = request.items
+
+    result = validate_result_payload(request, {"items": [
+        {
+            "item_id": second.item_id,
+            "sample_id": "incorrect-server-id",
+            "captions": [{"text": "B"}],
+        },
+        {
+            "item_id": first.item_id,
+            "sample_id": "also-incorrect",
+            "captions": [{"text": "A"}],
+        },
+    ]})
+
+    assert [item["sample_id"] for item in result.items] == ["sample-b", "sample-a"]
+    assert [item["item_id"] for item in result.items] == [second.item_id, first.item_id]
+
+
+def test_result_validation_supports_unique_sample_id_and_local_positional_fallback(tmp_path):
+    remote = _request("description", tmp_path / "remote.mp4")
+    by_sample = validate_result_payload(
+        remote,
+        {"items": [{"sample_id": "sample", "captions": [{"text": "Remote"}]}]},
+    )
+    assert by_sample.items[0]["item_id"] == remote.items[0].item_id
+
+    local = InferenceRequest(
+        task="description",
+        model_id="model",
+        backend="local",
+        items=[InferenceItem("local-sample", [InferenceInput(str(tmp_path / "local.mp4"))])],
+    )
+    positional = validate_result_payload(
+        local,
+        {"data": [{"id": "legacy-osl-id", "captions": [{"text": "Local"}]}]},
+    )
+    assert positional.items[0]["sample_id"] == "local-sample"
+
+
+@pytest.mark.parametrize("items", [
+    [],
+    [{"item_id": "unknown", "captions": [{"text": "Unknown"}]}],
+])
+def test_result_validation_rejects_missing_or_unknown_remote_items(tmp_path, items):
+    request = _request("description", tmp_path / "video.mp4")
+    with pytest.raises(InferenceError) as error:
+        validate_result_payload(request, {"items": items})
+    assert getattr(error.value, "code", "") == "invalid_result"
+
+
+def test_result_validation_rejects_duplicate_request_item(tmp_path):
+    request = InferenceRequest(
+        task="description",
+        model_id="model",
+        backend="remote",
+        items=[
+            InferenceItem("sample-a", [InferenceInput(str(tmp_path / "a.mp4"))]),
+            InferenceItem("sample-b", [InferenceInput(str(tmp_path / "b.mp4"))]),
+        ],
+    )
+    duplicate_id = request.items[0].item_id
+    with pytest.raises(InferenceError) as error:
+        validate_result_payload(request, {"items": [
+            {"item_id": duplicate_id, "captions": [{"text": "One"}]},
+            {"item_id": duplicate_id, "captions": [{"text": "Duplicate"}]},
+        ]})
+    assert error.value.code == "invalid_result"
 
 
 def test_local_provider_reports_missing_native_caption_apis():
@@ -303,22 +387,27 @@ def test_remote_provider_prefers_shared_mapping_and_polls_job(tmp_path):
     })
     submitted = {}
 
-    def handler(request: httpx.Request):
-        if request.url.path.endswith("/capabilities"):
+    inference_request = _request("description", video)
+
+    def handler(http_request: httpx.Request):
+        if http_request.url.path.endswith("/capabilities"):
             return httpx.Response(200, json={"version": "1", "poll_interval_seconds": 0.01})
-        if request.url.path.endswith("/jobs") and request.method == "POST":
-            submitted.update(json.loads(request.content))
+        if http_request.url.path.endswith("/jobs") and http_request.method == "POST":
+            submitted.update(json.loads(http_request.content))
             return httpx.Response(200, json={"id": "job-1"})
-        if request.url.path.endswith("/jobs/job-1"):
+        if http_request.url.path.endswith("/jobs/job-1"):
             return httpx.Response(200, json={
                 "status": "succeeded",
-                "result": {"items": [{"captions": [{"lang": "en", "text": "Caption"}]}]},
+                "result": {"items": [{
+                    "item_id": inference_request.items[0].item_id,
+                    "captions": [{"lang": "en", "text": "Caption"}],
+                }]},
             })
-        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+        raise AssertionError(f"Unexpected request: {http_request.method} {http_request.url}")
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = RemoteInferenceProvider("http://server", settings, client=client)
-    result = provider.run(_request("description", video), lambda *_args: None, threading.Event())
+    result = provider.run(inference_request, lambda *_args: None, threading.Event())
 
     assert result.items[0]["captions"][0]["text"] == "Caption"
     asset = submitted["items"][0]["inputs"][0]["asset"]
@@ -331,6 +420,8 @@ def test_remote_provider_streams_multipart_and_persists_completed_asset(tmp_path
     settings = MemorySettings()
     uploaded = {}
     completed_body = {}
+
+    inference_request = _request("description", video)
 
     def handler(request: httpx.Request):
         path = request.url.path
@@ -359,13 +450,16 @@ def test_remote_provider_streams_multipart_and_persists_completed_asset(tmp_path
         if path.endswith("/jobs/job-1"):
             return httpx.Response(200, json={
                 "status": "succeeded",
-                "result": {"items": [{"captions": [{"text": "Done", "lang": "en"}]}]},
+                "result": {"items": [{
+                    "item_id": inference_request.items[0].item_id,
+                    "captions": [{"text": "Done", "lang": "en"}],
+                }]},
             })
         raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     provider = RemoteInferenceProvider("http://server", settings, client=client)
-    provider.run(_request("description", video), lambda *_args: None, threading.Event())
+    provider.run(inference_request, lambda *_args: None, threading.Event())
 
     assert uploaded == {1: b"0123", 2: b"4567", 3: b"89"}
     assert [part["number"] for part in completed_body["parts"]] == [1, 2, 3]

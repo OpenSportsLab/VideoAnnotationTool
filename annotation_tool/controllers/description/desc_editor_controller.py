@@ -110,7 +110,7 @@ class DescEditorController(QObject):
         for item in result.items:
             captions = item.get("captions")
             candidate = copy.deepcopy(captions[0]) if isinstance(captions, list) and captions else None
-            sample_id = str(item.get("sample_id") or self.current_sample_id)
+            sample_id = str(item.get("sample_id") or "")
             if not isinstance(candidate, dict) or not sample_id or not str(candidate.get("text") or "").strip():
                 continue
             candidate.setdefault("lang", "en")

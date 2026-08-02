@@ -40,6 +40,7 @@ from ui.description import DescriptionAnnotationPanel
 from ui.dense_description import DenseAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
 from ui.dialogs import ApplicationSettingsDialog, BusyStatusDialog, HfDownloadDialog, HfUploadDialog, InferenceRunDialog
+from ui.inference_activity_widget import InferenceActivityWidget
 
 from media_control_settings import (
     PLAYBACK_FACTORS_KEY,
@@ -54,7 +55,12 @@ from inference_settings import (
     load_last_model_choice,
     save_last_model_choice,
 )
-from inference_types import InferenceItem, InferenceRequest, resolve_sample_inputs
+from inference_types import (
+    InferenceItem,
+    InferenceRequest,
+    InferenceResult,
+    resolve_sample_inputs,
+)
 from explorer_settings import EXPLORER_PAGE_SIZE_KEY, load_explorer_page_size
 
 from utils import create_checkmark_icon, resource_path
@@ -184,7 +190,11 @@ class VideoAnnotationWindow(QMainWindow):
             base_dir=os.path.abspath(os.path.dirname(__file__)),
             parent=self,
         )
-        self._inference_busy_dialog = None
+        self._inference_activity_widget = InferenceActivityWidget(self)
+        self.statusBar().addPermanentWidget(self._inference_activity_widget, 1)
+        self._inference_activity_widget.cancelRequested.connect(
+            self.inference_controller.cancel_inference
+        )
         self._pending_inference_requests = {}
         self._pending_prediction_samples_by_task = {}
         self._hf_busy_dialog = None
@@ -497,6 +507,9 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.dataset_explorer_controller.settingsChanged.connect(
             lambda _settings: self._restore_mute_state_from_settings()
+        )
+        self.dataset_explorer_controller.projectGenerationChanged.connect(
+            self._on_project_generation_changed
         )
         self.dataset_explorer_controller.settingsChanged.connect(
             lambda _settings: self._restore_view_state_from_settings()
@@ -1187,45 +1200,63 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self._pending_inference_requests[request.request_id] = {
             "task": task,
-            "sample_id": current_sample_id,
+            "sample_ids": tuple(item.sample_id for item in request.items),
+            "request_items": {
+                item.item_id: item.sample_id for item in request.items
+            },
+            "project_generation": self.dataset_explorer_controller.project_generation,
             "context": copy.deepcopy(parameters),
             "backend": payload["backend"],
             "model_id": payload["model_id"],
+            "invalidated": False,
         }
         if not self.inference_controller.start_inference(request):
             self._pending_inference_requests.pop(request.request_id, None)
             QMessageBox.information(self, "Inference", "Another inference is already running.")
 
     def _on_shared_inference_started(self, request_id: str, task: str) -> None:
-        dialog = BusyStatusDialog(
-            "Inference",
-            f"Starting {task.replace('_', ' ')} inference…",
-            self,
-            show_cancel=True,
+        pending = self._pending_inference_requests.get(request_id, {})
+        self._inference_activity_widget.start(
+            task,
+            str(pending.get("model_id") or ""),
+            len(pending.get("sample_ids") or ()),
         )
-        dialog.cancelRequested.connect(self.inference_controller.cancel_inference)
-        self._inference_busy_dialog = dialog
-        dialog.show()
+        self._set_inference_running_state(True)
 
     def _on_shared_inference_progress(self, request_id: str, message: str, current: int, total: int) -> None:
-        if self._inference_busy_dialog is None:
+        if request_id not in self._pending_inference_requests:
             return
-        suffix = f" ({current}/{total})" if total else ""
-        self._inference_busy_dialog.set_message(f"{message}{suffix}")
-        if total > 0:
-            self._inference_busy_dialog._progress.setRange(0, total)
-            self._inference_busy_dialog._progress.setValue(max(0, min(current, total)))
+        self._inference_activity_widget.update_progress(message, current, total)
 
-    def _close_inference_busy_dialog(self):
-        if self._inference_busy_dialog is not None:
-            self._inference_busy_dialog.hide()
-            self._inference_busy_dialog.deleteLater()
-            self._inference_busy_dialog = None
+    def _set_inference_running_state(self, running: bool) -> None:
+        for panel in (
+            self.classification_panel,
+            self.localization_panel,
+            self.description_panel,
+            self.dense_panel,
+            self.qa_panel,
+        ):
+            panel.inference_review_bar.set_running(running)
+
+    def _finish_inference_activity(self) -> None:
+        self._inference_activity_widget.finish()
+        self._set_inference_running_state(False)
 
     def _on_shared_inference_completed(self, request_id: str, result) -> None:
-        self._close_inference_busy_dialog()
+        self._finish_inference_activity()
         pending = self._pending_inference_requests.pop(request_id, None)
         if not pending:
+            return
+        if (
+            pending.get("invalidated")
+            or pending.get("project_generation")
+            != self.dataset_explorer_controller.project_generation
+        ):
+            self.show_temp_msg(
+                "Inference",
+                "Discarded results from the previous project.",
+                3000,
+            )
             return
         save_last_model_choice(
             getattr(self.dataset_explorer_controller, "settings", None),
@@ -1233,6 +1264,32 @@ class VideoAnnotationWindow(QMainWindow):
             pending.get("backend", ""),
             pending.get("model_id", ""),
         )
+        request_items = dict(pending.get("request_items") or {})
+        surviving_items = tuple(
+            item
+            for item in result.items
+            if request_items.get(str(item.get("item_id") or ""))
+            == str(item.get("sample_id") or "")
+            and self.dataset_explorer_controller.get_sample(
+                str(item.get("sample_id") or "")
+            )
+            is not None
+        )
+        discarded_count = len(result.items) - len(surviving_items)
+        if not surviving_items:
+            self.show_temp_msg(
+                "Inference",
+                "Results were discarded because their original sample no longer exists.",
+                3500,
+            )
+            return
+        if surviving_items != result.items:
+            result = InferenceResult(
+                request_id=result.request_id,
+                task=result.task,
+                model_id=result.model_id,
+                items=surviving_items,
+            )
         handlers = {
             "classification": self.classification_editor_controller.apply_shared_inference_result,
             "localization": self.localization_editor_controller.apply_shared_inference_result,
@@ -1244,6 +1301,17 @@ class VideoAnnotationWindow(QMainWindow):
             handlers[pending["task"]](result, pending.get("context", {}))
         except Exception as exc:
             QMessageBox.critical(self, "Inference Result Error", str(exc))
+            return
+        sample_ids = tuple(
+            str(item.get("sample_id") or "") for item in surviving_items
+        )
+        if len(sample_ids) == 1:
+            message = f"Predictions are ready for sample {sample_ids[0]}."
+        else:
+            message = f"Predictions are ready for {len(sample_ids)} samples."
+        if discarded_count:
+            message += f" {discarded_count} removed sample result(s) were discarded."
+        self.show_temp_msg("Inference", message, 3500)
 
     def _on_pending_predictions_changed(self, task: str, sample_ids) -> None:
         task = str(task)
@@ -1255,15 +1323,29 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.set_pending_prediction_samples(combined)
 
     def _on_shared_inference_failed(self, request_id, message, code, retryable, details) -> None:
-        self._close_inference_busy_dialog()
-        self._pending_inference_requests.pop(request_id, None)
+        self._finish_inference_activity()
+        pending = self._pending_inference_requests.pop(request_id, None)
+        if not pending or pending.get("invalidated"):
+            return
         retry_text = " The operation may be retried." if retryable else ""
         QMessageBox.critical(self, "Inference Error", f"{message}{retry_text}\n\nCode: {code}")
 
     def _on_shared_inference_cancelled(self, request_id: str) -> None:
-        self._close_inference_busy_dialog()
-        self._pending_inference_requests.pop(request_id, None)
+        self._finish_inference_activity()
+        pending = self._pending_inference_requests.pop(request_id, None)
+        if not pending:
+            return
         self.show_temp_msg("Inference", "Inference cancelled.", 1500)
+
+    def _on_project_generation_changed(self, _generation: int) -> None:
+        if not self._pending_inference_requests:
+            return
+        for pending in self._pending_inference_requests.values():
+            pending["invalidated"] = True
+        if self.inference_controller.cancel_inference():
+            self._inference_activity_widget.update_progress(
+                "Cancelling inference from the previous project…", 0, 0
+            )
 
     def _save_and_apply_explorer_page_size(self, page_size: int) -> None:
         settings = getattr(self.dataset_explorer_controller, "settings", None)
@@ -1418,6 +1500,8 @@ class VideoAnnotationWindow(QMainWindow):
                 )
                 event.ignore()
                 return
+            self._pending_inference_requests.clear()
+            self._finish_inference_activity()
             if not self.classification_editor_controller.shutdown_background_tasks(wait_ms=2500):
                 self.show_temp_msg(
                     "Inference Running",
