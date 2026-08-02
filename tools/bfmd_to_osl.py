@@ -21,12 +21,12 @@ REQUIREMENTS
   pip install yt-dlp opencv-python  (ffmpeg on PATH for video trimming)
 
 USAGE
-  python bfmd_to_osl_v2.py --data-root BFMD_data --out-dir bfmd_osl \\
+  python bfmd_to_osl.py --data-root BFMD_data --out-dir bfmd_osl \\
     --download-videos --trim-clips
   # Downloads full matches, extracts 11,301 16-frame clips, writes JSONs
   # Then upload (annotations + videos only, never redistributed):
   export HF_TOKEN=...
-  python bfmd_to_osl_v2.py --data-root BFMD_data --out-dir bfmd_osl \\
+  python bfmd_to_osl.py --data-root BFMD_data --out-dir bfmd_osl \\
     --repo-id your-org/bfmd-osl --private
 """
 
