@@ -19,6 +19,30 @@ MODE_TO_TAB_INDEX = {
 
 
 @pytest.mark.gui
+def test_batch_range_lists_are_populated_only_when_controls_open(
+    window,
+    monkeypatch,
+    synthetic_project_json,
+):
+    project_json_path = synthetic_project_json("classification", item_count=3)
+    monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.QFileDialog.getOpenFileName",
+        lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
+    )
+
+    window.dataset_explorer_controller.import_annotations()
+    panel = window.classification_panel
+    assert panel.spin_start.count() == 0
+    assert panel.spin_end.count() == 0
+
+    panel._toggle_batch_widget()
+
+    assert panel.spin_start.count() == 3
+    assert panel.spin_end.count() == 3
+
+
+@pytest.mark.gui
 def test_classification_train_tab_is_hidden(
     window,
     monkeypatch,
@@ -271,7 +295,6 @@ def test_classification_annotate_save_reload_edit_labels_and_persist(
 
     # assert window.tree_model.rowCount() == 0
     # assert window.dataset_explorer_controller.action_item_data == []
-    # assert window.dataset_explorer_controller.action_item_map == {}
     # assert window.classification_panel.manual_box.isEnabled() is False
 
 
@@ -350,10 +373,8 @@ def test_classification_smart_inference_persists_confidence_and_confirm_strips_i
     assert isinstance(sample, dict)
     assert sample["labels"]["action"]["label"] == "shot"
     assert sample["labels"]["action"]["confidence_score"] == pytest.approx(0.87)
-    tree_item = window.dataset_explorer_controller.action_item_map[
-        window.dataset_explorer_controller.get_path_by_id("clip_1")
-    ]
-    assert tree_item.text() == "clip_1 (conf:0.87)"
+    tree_index = window.tree_model.index_for_sample_id("clip_1", expose=True)
+    assert tree_index.data() == "clip_1 (conf:0.87)"
 
     smart_widgets = window.classification_panel.get_head_row_smart_widgets("action", "shot")
     assert smart_widgets is not None
@@ -370,7 +391,7 @@ def test_classification_smart_inference_persists_confidence_and_confirm_strips_i
     assert isinstance(sample, dict)
     assert sample["labels"]["action"]["label"] == "shot"
     assert "confidence_score" not in sample["labels"]["action"]
-    assert tree_item.text() == "clip_1"
+    assert window.tree_model.index_for_sample_id("clip_1", expose=True).data() == "clip_1"
 
 
 @pytest.mark.gui
@@ -679,6 +700,3 @@ def test_classification_schema_label_delete_allows_removing_last_label(
 
 #     window.dataset_explorer_panel.filter_combo.setCurrentIndex(1)
 #     qtbot.wait(50)
-
-#     assert window.dataset_explorer_panel.tree.isRowHidden(0, first_index.parent()) is False
-#     assert window.dataset_explorer_panel.tree.isRowHidden(1, second_index.parent()) is True

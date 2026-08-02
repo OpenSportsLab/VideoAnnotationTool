@@ -8,6 +8,7 @@ import copy
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QMessageBox
 
@@ -461,9 +462,7 @@ def test_history_contract_dataset_explorer_mutations(window, monkeypatch, qtbot,
 
     def _rename_first_sample():
         idx = window.tree_model.index(0, 0)
-        item = window.tree_model.itemFromIndex(idx)
-        assert item is not None
-        item.setText("clip_1_history")
+        assert window.tree_model.setData(idx, "clip_1_history", Qt.ItemDataRole.EditRole)
 
     _assert_mutating_action_creates_single_history_entry(window, qtbot, _rename_first_sample)
 
@@ -604,10 +603,8 @@ def test_history_contract_noop_edits_do_not_touch_stack(window, monkeypatch, qtb
 
     def _rename_same_id():
         idx = window.tree_model.index(0, 0)
-        item = window.tree_model.itemFromIndex(idx)
-        assert item is not None
-        same_id = str(item.data(window.tree_model.DataIdRole) or item.text())
-        item.setText(same_id)
+        same_id = str(idx.data(window.tree_model.DataIdRole) or idx.data())
+        assert not window.tree_model.setData(idx, same_id, Qt.ItemDataRole.EditRole)
 
     _assert_non_mutating_action_keeps_history_unchanged(window, qtbot, _rename_same_id)
 

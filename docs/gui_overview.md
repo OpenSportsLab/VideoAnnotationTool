@@ -22,6 +22,8 @@ they are not written to dataset JSON.
 The **Edit → Settings…** dialog contains application-wide preferences. On its
 **Media Controls** page, comma-separated playback factors and seek intervals
 change the two media-control rows immediately when **Apply** or **OK** is used.
+On **Dataset Explorer**, **Samples per page** controls the bounded tree window
+(500 by default, configurable from 100 to 2,000) and applies immediately.
 These preferences are stored in application settings and are never added to a
 dataset JSON file.
 
@@ -35,6 +37,15 @@ dataset JSON file.
   - Known header fields (editable)
   - Unknown/custom root keys (read-only)
   - Raw JSON preview
+
+Large datasets show one correctly sorted bounded window (500 samples by default).
+Use the page number field or its `‹` and `›` buttons directly beneath the sample
+list to jump directly or move one page. You can also scroll down again at the bottom
+to open the next window, or scroll up at the top to return to the previous one.
+The range below the tree shows the current sample positions.
+Paging does not stop an active off-page sample; selecting another visible sample
+replaces it normally. Filters apply to the complete dataset, not only the current
+page. The raw JSON text is generated only when its inspector tab is opened.
 
 Selecting a sample row preserves playback state: playing streams continue and
 paused or stopped streams do not start. A sample row has no focused modality,

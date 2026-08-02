@@ -2,6 +2,7 @@ import pytest
 from PyQt6.QtCore import Qt
 
 from media_control_settings import PLAYBACK_FACTORS_KEY, SEEK_INTERVALS_KEY
+from explorer_settings import EXPLORER_PAGE_SIZE_KEY
 from ui.dialogs import ApplicationSettingsDialog
 from ui.media_player import MediaCenterPanel
 
@@ -56,10 +57,12 @@ def test_media_panel_builds_symmetric_seek_buttons_in_one_row(qtbot):
 
 @pytest.mark.gui
 def test_settings_dialog_validates_applies_normalizes_and_restores_defaults(qtbot):
-    dialog = ApplicationSettingsDialog("2,4", "1,5")
+    dialog = ApplicationSettingsDialog("2,4", "1,5", 750)
     qtbot.addWidget(dialog)
     applied = []
+    page_sizes = []
     dialog.mediaControlsApplyRequested.connect(lambda *values: applied.append(values))
+    dialog.explorerPageSizeApplyRequested.connect(page_sizes.append)
 
     dialog.playback_factors_edit.setText("2,")
     qtbot.mouseClick(dialog.apply_button, Qt.MouseButton.LeftButton)
@@ -68,13 +71,16 @@ def test_settings_dialog_validates_applies_normalizes_and_restores_defaults(qtbo
 
     dialog.playback_factors_edit.setText(" 8, 2, 4 ")
     dialog.seek_intervals_edit.setText(" 5, 1, 10 ")
+    dialog.explorer_page_size_spin.setValue(900)
     qtbot.mouseClick(dialog.apply_button, Qt.MouseButton.LeftButton)
     assert applied[-1][:2] == ("2,4,8", "1,5,10")
+    assert page_sizes == [900]
     assert dialog.result() == 0
 
     qtbot.mouseClick(dialog.restore_defaults_button, Qt.MouseButton.LeftButton)
     assert dialog.playback_factors_edit.text() == "2,4"
     assert dialog.seek_intervals_edit.text() == "1,5"
+    assert dialog.explorer_page_size_spin.value() == 500
     assert len(applied) == 1
 
 
@@ -96,6 +102,19 @@ def test_window_persists_and_restores_media_controls(window):
         0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0
     )
     assert window._seek_intervals_seconds == (1.0, 5.0, 10.0)
+
+
+@pytest.mark.gui
+def test_window_persists_and_restores_explorer_page_size(window):
+    window._save_and_apply_explorer_page_size(750)
+    settings = window.dataset_explorer_controller.settings
+    assert settings.value(EXPLORER_PAGE_SIZE_KEY) in (750, "750")
+    assert window.tree_model.page_size() == 750
+
+    settings.setValue(EXPLORER_PAGE_SIZE_KEY, 300)
+    settings.sync()
+    window._restore_explorer_settings_from_settings()
+    assert window.tree_model.page_size() == 300
 
 
 @pytest.mark.gui

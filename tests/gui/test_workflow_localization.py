@@ -296,6 +296,8 @@ def test_localization_annotate_save_reload_edit_time_and_persist(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
     assert window.tree_model.rowCount() == 1
 
@@ -616,6 +618,8 @@ def test_localization_clear_workspace_resets_panel_and_model(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
     assert window.tree_model.rowCount() == 1
     assert window.dataset_explorer_controller.json_loaded is True
@@ -656,6 +660,8 @@ def test_localization_add_label_uses_signal_pause_resume_flow(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
 
     first_index = window.tree_model.index(0, 0)
@@ -721,6 +727,8 @@ def test_localization_event_navigation_seeks_frames_npy_sample(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
 
     first_index = window.tree_model.index(0, 0)
@@ -775,6 +783,8 @@ def test_localization_event_navigation_seeks_tracking_parquet_sample(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["localization"]
 
     first_index = window.tree_model.index(0, 0)
@@ -832,10 +842,8 @@ def test_localization_inference_persists_confidence_and_confirm_strips_it(
         and int(evt.get("position_ms", 0)) == 4321
     )
     assert inferred.get("confidence_score") == pytest.approx(0.64)
-    tree_item = window.dataset_explorer_controller.action_item_map[
-        window.dataset_explorer_controller.get_path_by_id("clip_1")
-    ]
-    assert tree_item.text() == "clip_1 (conf:0.64)"
+    tree_index = window.tree_model.index_for_sample_id("clip_1", expose=True)
+    assert tree_index.data() == "clip_1 (conf:0.64)"
 
     row = next(
         i
@@ -856,7 +864,7 @@ def test_localization_inference_persists_confidence_and_confirm_strips_it(
         and int(evt.get("position_ms", 0)) == 4321
     )
     assert "confidence_score" not in confirmed
-    assert tree_item.text() == "clip_1"
+    assert window.tree_model.index_for_sample_id("clip_1", expose=True).data() == "clip_1"
 
 
 @pytest.mark.gui

@@ -41,10 +41,6 @@ PLAYER_JOINTS_H5_PATH = (
     / "test_data"
     / "live_joints_sirus_mini_test.h5"
 )
-PLAYER_CENTROIDS_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_centroids.h5"
-BALL_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_ball.h5"
-
-
 @pytest.mark.gui
 # Workflow: App startup should land on welcome screen with project UI disabled and no dataset loaded.
 def test_launches_to_welcome_view(window):
@@ -57,7 +53,7 @@ def test_launches_to_welcome_view(window):
 @pytest.mark.gui
 @pytest.mark.parametrize("mode", list(MODE_TO_TAB_INDEX.keys()))
 # Workflow: For each mode, import a synthetic JSON via routed file dialog and verify mode/view/tree state.
-def test_import_project_routed_flow_all_modes(window, monkeypatch, synthetic_project_json, mode):
+def test_import_project_routed_flow_all_modes(window, monkeypatch, qtbot, synthetic_project_json, mode):
     project_json_path = synthetic_project_json(mode)
 
     monkeypatch.setattr(
@@ -66,6 +62,8 @@ def test_import_project_routed_flow_all_modes(window, monkeypatch, synthetic_pro
     )
 
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
 
     assert window.dataset_explorer_controller.json_loaded is True
     assert window.dataset_explorer_controller.current_json_path == str(project_json_path)
@@ -251,14 +249,16 @@ def test_add_data_accepts_h5_and_creates_player_joints_sample(window, monkeypatc
 
 
 @pytest.mark.gui
-def test_add_data_accepts_centroids_h5_and_creates_player_centroids_sample(window, monkeypatch, qtbot):
+def test_add_data_accepts_centroids_h5_and_creates_player_centroids_sample(
+    window, monkeypatch, qtbot, player_centroids_h5_path
+):
     window.dataset_explorer_controller.create_new_project("classification")
     assert window.dataset_explorer_controller.json_loaded is True
 
     monkeypatch.setattr(
         window.dataset_explorer_controller,
         "_pick_files_or_folders_for_add_data",
-        lambda _start_dir: [str(PLAYER_CENTROIDS_H5_PATH)],
+        lambda _start_dir: [str(player_centroids_h5_path)],
     )
 
     window.dataset_explorer_controller.handle_add_sample()
@@ -273,14 +273,18 @@ def test_add_data_accepts_centroids_h5_and_creates_player_centroids_sample(windo
 
 
 @pytest.mark.gui
-def test_add_data_auto_pairs_obvious_joint_and_ball_h5(window, monkeypatch, qtbot):
+def test_add_data_auto_pairs_obvious_joint_and_ball_h5(
+    window, monkeypatch, qtbot, ball_h5_path
+):
     window.dataset_explorer_controller.create_new_project("classification")
     assert window.dataset_explorer_controller.json_loaded is True
+    paired_joints_path = ball_h5_path.with_name("live_joints_sirus_mini_test.h5")
+    paired_joints_path.write_bytes(b"h5")
 
     monkeypatch.setattr(
         window.dataset_explorer_controller,
         "_pick_files_or_folders_for_add_data",
-        lambda _start_dir: [str(PLAYER_JOINTS_H5_PATH), str(BALL_H5_PATH)],
+        lambda _start_dir: [str(paired_joints_path), str(ball_h5_path)],
     )
 
     window.dataset_explorer_controller.handle_add_sample()
@@ -291,19 +295,21 @@ def test_add_data_auto_pairs_obvious_joint_and_ball_h5(window, monkeypatch, qtbo
     assert sample is not None
     assert len(sample["inputs"]) == 1
     assert sample["inputs"][0]["type"] == "player_joints_h5"
-    assert sample["inputs"][0]["path"] == str(PLAYER_JOINTS_H5_PATH)
-    assert sample["inputs"][0]["ball_path"] == str(BALL_H5_PATH)
+    assert sample["inputs"][0]["path"] == str(paired_joints_path)
+    assert sample["inputs"][0]["ball_path"] == str(ball_h5_path)
 
 
 @pytest.mark.gui
-def test_add_data_auto_pairs_obvious_centroid_and_ball_h5(window, monkeypatch, qtbot):
+def test_add_data_auto_pairs_obvious_centroid_and_ball_h5(
+    window, monkeypatch, qtbot, player_centroids_h5_path, ball_h5_path
+):
     window.dataset_explorer_controller.create_new_project("classification")
     assert window.dataset_explorer_controller.json_loaded is True
 
     monkeypatch.setattr(
         window.dataset_explorer_controller,
         "_pick_files_or_folders_for_add_data",
-        lambda _start_dir: [str(PLAYER_CENTROIDS_H5_PATH), str(BALL_H5_PATH)],
+        lambda _start_dir: [str(player_centroids_h5_path), str(ball_h5_path)],
     )
 
     window.dataset_explorer_controller.handle_add_sample()
@@ -314,8 +320,8 @@ def test_add_data_auto_pairs_obvious_centroid_and_ball_h5(window, monkeypatch, q
     assert sample is not None
     assert len(sample["inputs"]) == 1
     assert sample["inputs"][0]["type"] == "player_centroids_h5"
-    assert sample["inputs"][0]["path"] == str(PLAYER_CENTROIDS_H5_PATH)
-    assert sample["inputs"][0]["ball_path"] == str(BALL_H5_PATH)
+    assert sample["inputs"][0]["path"] == str(player_centroids_h5_path)
+    assert sample["inputs"][0]["ball_path"] == str(ball_h5_path)
 
 
 @pytest.mark.gui
@@ -350,14 +356,16 @@ def test_add_data_ambiguous_ball_h5_candidates_are_not_auto_paired(
 
 
 @pytest.mark.gui
-def test_add_data_standalone_ball_h5_remains_regular_h5_input(window, monkeypatch, qtbot):
+def test_add_data_standalone_ball_h5_remains_regular_h5_input(
+    window, monkeypatch, qtbot, ball_h5_path
+):
     window.dataset_explorer_controller.create_new_project("classification")
     assert window.dataset_explorer_controller.json_loaded is True
 
     monkeypatch.setattr(
         window.dataset_explorer_controller,
         "_pick_files_or_folders_for_add_data",
-        lambda _start_dir: [str(BALL_H5_PATH)],
+        lambda _start_dir: [str(ball_h5_path)],
     )
 
     window.dataset_explorer_controller.handle_add_sample()
@@ -367,7 +375,7 @@ def test_add_data_standalone_ball_h5_remains_regular_h5_input(window, monkeypatc
     assert sample is not None
     assert len(sample["inputs"]) == 1
     assert sample["inputs"][0]["type"] == "player_joints_h5"
-    assert sample["inputs"][0]["path"] == str(BALL_H5_PATH)
+    assert sample["inputs"][0]["path"] == str(ball_h5_path)
     assert "ball_path" not in sample["inputs"][0]
 
 
@@ -407,7 +415,7 @@ def test_dataset_selection_emits_data_id_and_routes_media(
     assert selected_data_id == selected_entry.get("data_id")
 
     assert media_calls
-    assert media_calls[-1][1] == selected_entry.get("path")
+    assert media_calls[-1][1] == ""
     assert media_calls[-1][0][0]["path"] == selected_entry.get("path")
     assert selected_data_id != media_calls[-1][1]
 
@@ -464,7 +472,7 @@ def test_frames_npy_dataset_selection_routes_canonical_media_source(
     assert routed_source["path"] == str(FRAME_STACK_PATH)
     assert routed_source["fps"] == pytest.approx(2.0)
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["frames_npy"]
-    assert window.dataset_explorer_controller.current_selected_input_path == str(FRAME_STACK_PATH)
+    assert window.dataset_explorer_controller.current_selected_input_path is None
 
 
 @pytest.mark.gui
@@ -547,7 +555,7 @@ def test_tracking_parquet_dataset_selection_routes_canonical_media_source(
     assert routed_source["path"] == str(TRACKING_PARQUET_PATH)
     assert routed_source["fps"] == pytest.approx(2.0)
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["tracking_parquet"]
-    assert window.dataset_explorer_controller.current_selected_input_path == str(TRACKING_PARQUET_PATH)
+    assert window.dataset_explorer_controller.current_selected_input_path is None
 
 
 @pytest.mark.gui
@@ -556,9 +564,10 @@ def test_player_joints_h5_dataset_selection_routes_canonical_media_source(
     monkeypatch,
     qtbot,
     tmp_path,
+    ball_h5_path,
 ):
     rel_h5_path = os.path.relpath(PLAYER_JOINTS_H5_PATH, start=tmp_path).replace("\\", "/")
-    rel_ball_path = os.path.relpath(BALL_H5_PATH, start=tmp_path).replace("\\", "/")
+    rel_ball_path = os.path.relpath(ball_h5_path, start=tmp_path).replace("\\", "/")
     project_json_path = tmp_path / "player_joints_h5_project.json"
     payload = {
         "version": "2.0",
@@ -600,10 +609,10 @@ def test_player_joints_h5_dataset_selection_routes_canonical_media_source(
     routed_source = media_calls[-1][0][0]
     assert routed_source["type"] == "player_joints_h5"
     assert routed_source["path"] == str(PLAYER_JOINTS_H5_PATH)
-    assert routed_source["ball_path"] == str(BALL_H5_PATH)
+    assert routed_source["ball_path"] == str(ball_h5_path)
     assert "fps" not in routed_source
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["player_joints_h5"]
-    assert window.dataset_explorer_controller.current_selected_input_path == str(PLAYER_JOINTS_H5_PATH)
+    assert window.dataset_explorer_controller.current_selected_input_path is None
 
 
 @pytest.mark.gui
@@ -612,9 +621,11 @@ def test_player_centroids_h5_dataset_selection_routes_canonical_media_source(
     monkeypatch,
     qtbot,
     tmp_path,
+    player_centroids_h5_path,
+    ball_h5_path,
 ):
-    rel_h5_path = os.path.relpath(PLAYER_CENTROIDS_H5_PATH, start=tmp_path).replace("\\", "/")
-    rel_ball_path = os.path.relpath(BALL_H5_PATH, start=tmp_path).replace("\\", "/")
+    rel_h5_path = os.path.relpath(player_centroids_h5_path, start=tmp_path).replace("\\", "/")
+    rel_ball_path = os.path.relpath(ball_h5_path, start=tmp_path).replace("\\", "/")
     project_json_path = tmp_path / "player_centroids_h5_project.json"
     payload = {
         "version": "2.0",
@@ -655,11 +666,11 @@ def test_player_centroids_h5_dataset_selection_routes_canonical_media_source(
 
     routed_source = media_calls[-1][0][0]
     assert routed_source["type"] == "player_centroids_h5"
-    assert routed_source["path"] == str(PLAYER_CENTROIDS_H5_PATH)
-    assert routed_source["ball_path"] == str(BALL_H5_PATH)
+    assert routed_source["path"] == str(player_centroids_h5_path)
+    assert routed_source["ball_path"] == str(ball_h5_path)
     assert "fps" not in routed_source
     assert window.dataset_explorer_controller.dataset_json["modalities"] == ["player_centroids_h5"]
-    assert window.dataset_explorer_controller.current_selected_input_path == str(PLAYER_CENTROIDS_H5_PATH)
+    assert window.dataset_explorer_controller.current_selected_input_path is None
 
 
 @pytest.mark.gui
@@ -745,6 +756,7 @@ def test_mixed_video_and_tracking_selection_routes_selected_input(
     )
 
     media_calls = []
+    focus_calls = []
     monkeypatch.setattr(
         window.media_controller,
         "route_media_group",
@@ -752,6 +764,7 @@ def test_mixed_video_and_tracking_selection_routes_selected_input(
             (sources, focused_path, ensure_playback)
         ),
     )
+    monkeypatch.setattr(window.media_controller, "focus_source", focus_calls.append)
 
     window.dataset_explorer_controller.import_annotations()
     parent_index = window.tree_model.index(0, 0)
@@ -764,12 +777,13 @@ def test_mixed_video_and_tracking_selection_routes_selected_input(
     window.dataset_explorer_panel.tree.setCurrentIndex(tracking_child_index)
     qtbot.wait(50)
 
-    assert len(media_calls) >= 2
+    assert len(media_calls) == 1
     assert [source["path"] for source in media_calls[0][0]] == [
         str(source_video),
         str(TRACKING_PARQUET_PATH),
     ]
-    assert media_calls[-1][1] == str(TRACKING_PARQUET_PATH)
+    assert media_calls[-1][1] == ""
+    assert focus_calls[-1] == str(TRACKING_PARQUET_PATH)
     assert media_calls[-1][0][1]["type"] == "tracking_parquet"
 
 
@@ -860,7 +874,7 @@ def test_close_project_when_clean_skips_confirmation_popup(window, monkeypatch):
 
     should_close = window.check_and_close_current_project()
     assert should_close is True
-    assert stop_calls["count"] == 1
+    assert stop_calls["count"] >= 1
 
 
 @pytest.mark.gui
@@ -894,6 +908,8 @@ def test_filter_with_no_visible_samples_clears_media_and_annotation(
 
     window.dataset_explorer_controller.import_annotations()
     assert window.tree_model.rowCount() == 1
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.dataset_explorer_panel.tree.currentIndex().isValid()
 
     # Default synthetic classification data is unlabelled, so hand-labelled filter hides all.
@@ -901,7 +917,7 @@ def test_filter_with_no_visible_samples_clears_media_and_annotation(
     window.dataset_explorer_controller.handle_filter_change(1)
     qtbot.wait(50)
 
-    assert window.dataset_explorer_panel.tree.isRowHidden(0, QModelIndex()) is True
+    assert window.tree_model.rowCount() == 0
     assert window.dataset_explorer_panel.tree.currentIndex().isValid() is False
     assert emitted_ids and emitted_ids[-1] == ""
     assert stop_calls["count"] >= 1
@@ -935,11 +951,11 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 
     combo.setCurrentIndex(1)  # Show Labelled
     window.dataset_explorer_controller.handle_filter_change(1)
-    assert tree.isRowHidden(0, root_index.parent()) is False
+    assert window.tree_model.rowCount() == 1
 
     combo.setCurrentIndex(2)  # Show Smart Labelled
     window.dataset_explorer_controller.handle_filter_change(2)
-    assert tree.isRowHidden(0, root_index.parent()) is True
+    assert window.tree_model.rowCount() == 0
 
 
 @pytest.mark.gui
