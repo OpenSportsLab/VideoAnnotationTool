@@ -4,23 +4,35 @@ import json
 import re
 
 from PyQt6 import uic
-from PyQt6.QtCore import QAbstractItemModel, QEvent, Qt, QModelIndex, QTimer, pyqtSignal
+from PyQt6.QtCore import (
+    QAbstractItemModel,
+    QEvent,
+    QModelIndex,
+    QSignalBlocker,
+    Qt,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QHeaderView,
+    QHBoxLayout,
     QLabel,
     QMenu,
     QMessageBox,
     QPlainTextEdit,
+    QSpinBox,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from utils import resource_path
+from explorer_settings import DEFAULT_EXPLORER_PAGE_SIZE, normalize_explorer_page_size
 
 
 def _natural_sort_text(value) -> str:
@@ -40,7 +52,7 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
     renameRequested = pyqtSignal(str, str)
     pageChanged = pyqtSignal(int, int, int)
 
-    PAGE_SIZE = 500
+    DEFAULT_PAGE_SIZE = DEFAULT_EXPLORER_PAGE_SIZE
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -52,6 +64,7 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
         self._path_nodes = {}
         self._filter_index = 0
         self._page_number = 0
+        self._page_size = self.DEFAULT_PAGE_SIZE
 
     def clear(self):
         self.beginResetModel()
@@ -123,8 +136,8 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
         }
 
     def _page_bounds(self):
-        start = self._page_number * self.PAGE_SIZE
-        return start, min(start + self.PAGE_SIZE, len(self._projected_entries))
+        start = self._page_number * self._page_size
+        return start, min(start + self._page_size, len(self._projected_entries))
 
     def _rebuild_page_children(self):
         self._children_by_id = {}
@@ -147,7 +160,10 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
 
     def page_count(self):
         total = len(self._projected_entries)
-        return (total + self.PAGE_SIZE - 1) // self.PAGE_SIZE
+        return (total + self._page_size - 1) // self._page_size
+
+    def page_size(self):
+        return self._page_size
 
     def page_number(self):
         return self._page_number
@@ -171,6 +187,19 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
         self._emit_page_changed()
         return True
 
+    def set_page_size(self, page_size: int):
+        target_size = normalize_explorer_page_size(page_size)
+        if target_size == self._page_size:
+            return False
+        old_start, _old_end = self._page_bounds()
+        self.beginResetModel()
+        self._page_size = target_size
+        self._page_number = old_start // self._page_size
+        self._rebuild_page_children()
+        self.endResetModel()
+        self._emit_page_changed()
+        return True
+
     def next_page(self):
         return self.set_page(self._page_number + 1)
 
@@ -179,7 +208,7 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
 
     def page_for_sample_id(self, sample_id: str):
         row = self._projected_row_by_id.get(str(sample_id or ""))
-        return None if row is None else row // self.PAGE_SIZE
+        return None if row is None else row // self._page_size
 
     def ensure_sample_visible(self, sample_id: str):
         page_number = self.page_for_sample_id(sample_id)
@@ -196,7 +225,7 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
         if not 0 <= projected_row < len(self._projected_entries):
             return QModelIndex()
         if expose:
-            self.set_page(projected_row // self.PAGE_SIZE)
+            self.set_page(projected_row // self._page_size)
         start, end = self._page_bounds()
         if not start <= projected_row < end:
             return QModelIndex()
@@ -350,6 +379,7 @@ class DatasetExplorerPanel(QWidget):
     addDataRequested = pyqtSignal()
     sampleNavigateRequested = pyqtSignal(int)
     pageNavigateRequested = pyqtSignal(int)
+    pageRequested = pyqtSignal(int)
     headerDraftChanged = pyqtSignal(dict)
     confidenceSortToggled = pyqtSignal(bool)
 
@@ -396,6 +426,9 @@ class DatasetExplorerPanel(QWidget):
         self.btn_add_data.clicked.connect(self.addDataRequested.emit)
         self.btn_prev_sample.clicked.connect(lambda: self.sampleNavigateRequested.emit(-1))
         self.btn_next_sample.clicked.connect(lambda: self.sampleNavigateRequested.emit(1))
+        self.btn_prev_page.clicked.connect(lambda: self._request_adjacent_page(-1))
+        self.btn_next_page.clicked.connect(lambda: self._request_adjacent_page(1))
+        self.page_number_spin.valueChanged.connect(self._request_page_from_spin)
         self._set_context_menu_enabled(enable_context_menu)
 
     def _configure_widgets(self, tree_title, filter_items, clear_text):
@@ -426,18 +459,78 @@ class DatasetExplorerPanel(QWidget):
         self.page_range_label.setObjectName("dataset_page_range_label")
         self.page_range_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.verticalLayout_tab_data.insertWidget(2, self.page_range_label)
+        self._configure_pagination_controls()
         self.json_raw_text.setReadOnly(True)
         self.json_raw_text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._configure_header_tables()
 
+    def _configure_pagination_controls(self):
+        self.pagination_layout = QHBoxLayout()
+        self.pagination_layout.setObjectName("datasetPaginationLayout")
+
+        self.btn_prev_page = QToolButton(self)
+        self.btn_prev_page.setObjectName("btn_prev_page")
+        self.btn_prev_page.setText("‹")
+        self.btn_prev_page.setToolTip("Previous Page")
+
+        page_label = QLabel("Page", self)
+        page_label.setObjectName("dataset_page_label")
+
+        self.page_number_spin = QSpinBox(self)
+        self.page_number_spin.setObjectName("page_number_spin")
+        self.page_number_spin.setRange(0, 0)
+        self.page_number_spin.setValue(0)
+        self.page_number_spin.setKeyboardTracking(False)
+        self.page_number_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_number_spin.setMaximumWidth(72)
+
+        self.page_count_label = QLabel("of 0", self)
+        self.page_count_label.setObjectName("dataset_page_count_label")
+
+        self.btn_next_page = QToolButton(self)
+        self.btn_next_page.setObjectName("btn_next_page")
+        self.btn_next_page.setText("›")
+        self.btn_next_page.setToolTip("Next Page")
+
+        self.pagination_layout.addStretch(1)
+        self.pagination_layout.addWidget(self.btn_prev_page)
+        self.pagination_layout.addWidget(page_label)
+        self.pagination_layout.addWidget(self.page_number_spin)
+        self.pagination_layout.addWidget(self.page_count_label)
+        self.pagination_layout.addWidget(self.btn_next_page)
+        self.pagination_layout.addStretch(1)
+        self.verticalLayout_tab_data.insertLayout(2, self.pagination_layout)
+        self._sync_pagination_controls()
+
+    def _sync_pagination_controls(self):
+        page_count = self.tree_model.page_count()
+        current_page = self.tree_model.page_number() + 1 if page_count else 0
+        blocker = QSignalBlocker(self.page_number_spin)
+        if page_count:
+            self.page_number_spin.setRange(1, page_count)
+            self.page_number_spin.setValue(current_page)
+        else:
+            self.page_number_spin.setRange(0, 0)
+            self.page_number_spin.setValue(0)
+        del blocker
+        self.page_count_label.setText(f"of {page_count:,}")
+        self.page_number_spin.setEnabled(page_count > 1)
+        self.btn_prev_page.setEnabled(current_page > 1)
+        self.btn_next_page.setEnabled(0 < current_page < page_count)
+
+    def _request_page_from_spin(self, page_number: int):
+        if self.tree_model.page_count() > 0:
+            self.pageRequested.emit(int(page_number) - 1)
+
+    def _request_adjacent_page(self, step: int):
+        self.pageRequested.emit(self.tree_model.page_number() + (1 if step > 0 else -1))
+
     def _update_page_range(self, first: int, last: int, total: int):
+        self._sync_pagination_controls()
         if total <= 0:
             self.page_range_label.setText("No samples")
             return
-        suffix = " · scroll for more" if total > self.tree_model.PAGE_SIZE else ""
-        self.page_range_label.setText(
-            f"Showing {first:,}–{last:,} of {total:,}{suffix}"
-        )
+        self.page_range_label.setText(f"Showing {first:,}–{last:,} of {total:,}")
 
     def eventFilter(self, watched, event):
         if watched is self.tree.viewport() and event.type() == QEvent.Type.Wheel:

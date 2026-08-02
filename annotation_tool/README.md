@@ -89,6 +89,9 @@ Localization and Dense Description tables show resolvable annotations as `YYYY-M
 - Application media-control preferences use `QSettings`, are parsed by
   `media_control_settings.py`, and are applied/wired only by `MainWindow`;
   they never enter `DatasetExplorerController.dataset_json`.
+- Dataset Explorer page size uses `QSettings`, is normalized by
+  `explorer_settings.py`, and is applied through the explorer controller without
+  mutating dataset JSON or routing media.
 
 ## Key Tests
 - Architecture/wiring: `tests/gui/test_signal_decoupling_contract.py`

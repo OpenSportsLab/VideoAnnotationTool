@@ -26,7 +26,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `import_annotations()`, `open_project_from_path()`, `load_project()`: open/normalize/load dataset.
 - `save_project()`, `export_project()`: write dataset JSON to disk.
 - `populate_tree()`, `handle_filter_change()`: build the runtime projection and
-  establish its bounded 500-sample page.
+  establish its bounded page.
 - `_on_selection_changed()`, `_route_media_for_selection()`, `_focus_media_for_selection()`: selection context plus preserve-state route, ordinary route, or focus-only media intent emission.
 - `handle_add_sample()`, `handle_remove_item()`, `handle_clear_workspace()`: explorer mutation intent emission (`handle_add_sample()` accepts files/folders in one picker; files map to single-input samples, folders expand recursively to multi-input samples).
 - `restore_dataset_json_from_history()`: apply history snapshot restore.
@@ -112,10 +112,14 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - Runtime sample/path indexes are constant-time. Status refreshes update model
   data by sample ID; they must not scan the complete dataset or recreate the
   tree unless confidence sorting changes row order.
-- Large trees expose one fixed 500-sample page. Boundary wheel actions replace
+- Large trees expose one bounded page (500 samples by default, configured through
+  application settings). Boundary wheel actions replace
   that page instead of accumulating rows. The controller guards page resets so
   an off-page active sample retains annotation and playback state; returning to
   its page restores the tree highlight without routing media again.
+- Boundary scrolling uses relative `pageNavigateRequested` intents and retains
+  direction-specific scroll placement. The bottom controls use zero-based
+  absolute `pageRequested` intents and position direct destinations at the top.
 - Raw JSON preview serialization is dirty-tracked and runs only while the JSON
   inspector tab is active. Editor action-list signals contain only sample ID,
   name, and path; batch range widgets populate from that cache on first use.

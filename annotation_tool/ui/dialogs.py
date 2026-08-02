@@ -15,17 +15,25 @@ from media_control_settings import (
     parse_playback_factors,
     parse_seek_intervals,
 )
+from explorer_settings import (
+    DEFAULT_EXPLORER_PAGE_SIZE,
+    MAX_EXPLORER_PAGE_SIZE,
+    MIN_EXPLORER_PAGE_SIZE,
+    normalize_explorer_page_size,
+)
 
 
 class ApplicationSettingsDialog(QDialog):
-    """Extensible application settings dialog, initially for media controls."""
+    """Extensible application settings dialog."""
 
     mediaControlsApplyRequested = pyqtSignal(str, str, object, object)
+    explorerPageSizeApplyRequested = pyqtSignal(int)
 
     def __init__(
         self,
         playback_factors: str,
         seek_intervals: str,
+        explorer_page_size: int = DEFAULT_EXPLORER_PAGE_SIZE,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -72,6 +80,32 @@ class ApplicationSettingsDialog(QDialog):
         media_layout.addStretch(1)
         tabs.addTab(media_page, "Media Controls")
 
+        explorer_page = QWidget(tabs)
+        explorer_layout = QVBoxLayout(explorer_page)
+        explorer_form = QFormLayout()
+        explorer_layout.addLayout(explorer_form)
+        self.explorer_page_size_spin = QSpinBox(explorer_page)
+        self.explorer_page_size_spin.setObjectName("explorerPageSizeSpin")
+        self.explorer_page_size_spin.setRange(
+            MIN_EXPLORER_PAGE_SIZE,
+            MAX_EXPLORER_PAGE_SIZE,
+        )
+        self.explorer_page_size_spin.setSingleStep(100)
+        self.explorer_page_size_spin.setValue(
+            normalize_explorer_page_size(explorer_page_size)
+        )
+        self.explorer_page_size_spin.setSuffix(" samples")
+        explorer_form.addRow("Samples per page:", self.explorer_page_size_spin)
+        explorer_help = QLabel(
+            "Controls the maximum number of top-level samples shown in the "
+            "Dataset Explorer. Smaller pages reduce view work for very large datasets.",
+            explorer_page,
+        )
+        explorer_help.setWordWrap(True)
+        explorer_layout.addWidget(explorer_help)
+        explorer_layout.addStretch(1)
+        tabs.addTab(explorer_page, "Dataset Explorer")
+
         self.buttons = QDialogButtonBox(self)
         self.restore_defaults_button = self.buttons.addButton(
             "Restore Defaults", QDialogButtonBox.ButtonRole.ResetRole
@@ -93,6 +127,7 @@ class ApplicationSettingsDialog(QDialog):
     def _restore_defaults(self) -> None:
         self.playback_factors_edit.setText(DEFAULT_PLAYBACK_FACTORS)
         self.seek_intervals_edit.setText(DEFAULT_SEEK_INTERVALS)
+        self.explorer_page_size_spin.setValue(DEFAULT_EXPLORER_PAGE_SIZE)
         self.validation_label.clear()
 
     def _apply(self, *, close_after: bool) -> None:
@@ -112,6 +147,7 @@ class ApplicationSettingsDialog(QDialog):
             factors.values,
             intervals.values,
         )
+        self.explorerPageSizeApplyRequested.emit(self.explorer_page_size_spin.value())
         if close_after:
             self.accept()
 

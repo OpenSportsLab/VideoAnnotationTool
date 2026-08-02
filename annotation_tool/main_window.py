@@ -44,6 +44,7 @@ from media_control_settings import (
     SEEK_INTERVALS_KEY,
     load_media_control_settings,
 )
+from explorer_settings import EXPLORER_PAGE_SIZE_KEY, load_explorer_page_size
 
 from utils import create_checkmark_icon, resource_path
 
@@ -466,6 +467,9 @@ class VideoAnnotationWindow(QMainWindow):
             lambda _settings: self._restore_media_controls_from_settings()
         )
         self.dataset_explorer_controller.settingsChanged.connect(
+            lambda _settings: self._restore_explorer_settings_from_settings()
+        )
+        self.dataset_explorer_controller.settingsChanged.connect(
             self.localization_editor_controller.set_settings
         )
         self.localization_editor_controller.set_settings(self.dataset_explorer_controller.settings)
@@ -489,6 +493,7 @@ class VideoAnnotationWindow(QMainWindow):
         center_panel.set_mute_button_state(self.media_controller.is_muted())
         self._restore_mute_state_from_settings()
         self._restore_media_controls_from_settings()
+        self._restore_explorer_settings_from_settings()
         # Dense add should always pause playback first; no auto-resume behavior.
         self.dense_panel.addEventRequested.connect(self.media_controller.pause)
         # Snapshot runtime media position on dense actions.
@@ -950,10 +955,27 @@ class VideoAnnotationWindow(QMainWindow):
         dialog = ApplicationSettingsDialog(
             self._playback_factor_text,
             self._seek_interval_text,
+            self.tree_model.page_size(),
             parent=self,
         )
         dialog.mediaControlsApplyRequested.connect(self._save_and_apply_media_controls)
+        dialog.explorerPageSizeApplyRequested.connect(
+            self._save_and_apply_explorer_page_size
+        )
         dialog.exec()
+
+    def _save_and_apply_explorer_page_size(self, page_size: int) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is not None:
+            settings.setValue(EXPLORER_PAGE_SIZE_KEY, int(page_size))
+            settings.sync()
+        self.dataset_explorer_controller.set_explorer_page_size(page_size)
+
+    def _restore_explorer_settings_from_settings(self) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        self.dataset_explorer_controller.set_explorer_page_size(
+            load_explorer_page_size(settings)
+        )
 
     def _save_and_apply_media_controls(
         self,

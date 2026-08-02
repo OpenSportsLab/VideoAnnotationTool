@@ -71,25 +71,25 @@ def test_large_dataset_exposes_only_bounded_sorted_pages(
     sample_count = 62_159
     assert controller.load_project(_large_dataset(sample_count), str(tmp_path / "large.json"))
     assert rebuild_calls["count"] == 1
-    assert panel.tree_model.rowCount() == panel.tree_model.PAGE_SIZE
+    assert panel.tree_model.rowCount() == panel.tree_model.page_size()
     assert panel.tree_model.index(0, 0).data() == "clip_1"
     assert panel.tree_model.index(1, 0).data() == "clip_2"
     assert emitted_summaries and "sample_ref" not in emitted_summaries[-1][0]
-    assert panel.page_range_label.text() == "Showing 1–500 of 62,159 · scroll for more"
+    assert panel.page_range_label.text() == "Showing 1–500 of 62,159"
 
     heartbeat_rows = []
     QTimer.singleShot(0, lambda: heartbeat_rows.append(panel.tree_model.rowCount()))
     qtbot.waitUntil(lambda: bool(heartbeat_rows), timeout=1000)
-    assert heartbeat_rows == [panel.tree_model.PAGE_SIZE]
+    assert heartbeat_rows == [panel.tree_model.page_size()]
     qtbot.wait(50)
-    assert panel.tree_model.rowCount() == panel.tree_model.PAGE_SIZE
+    assert panel.tree_model.rowCount() == panel.tree_model.page_size()
 
     assert panel.tree_model.next_page()
     assert panel.tree_model.index(0, 0).data() == "clip_501"
     assert panel.tree_model.index(1, 0).data() == "clip_502"
 
     assert panel.tree_model.set_page(panel.tree_model.page_count() - 1)
-    assert panel.tree_model.rowCount() == sample_count % panel.tree_model.PAGE_SIZE
+    assert panel.tree_model.rowCount() == sample_count % panel.tree_model.page_size()
     assert panel.tree_model.index(0, 0).data() == "clip_62001"
 
 
@@ -102,7 +102,7 @@ def test_bounded_page_filter_and_reset(
     assert controller.load_project(_large_dataset(), str(tmp_path / "large.json"))
 
     controller.handle_filter_change(1, selection_fallback="clear_selection")
-    assert panel.tree_model.rowCount() == panel.tree_model.PAGE_SIZE
+    assert panel.tree_model.rowCount() == panel.tree_model.page_size()
     assert panel.tree_model.index(0, 0).data() == "clip_1"
     assert panel.tree_model.index(1, 0).data() == "clip_3"
 
@@ -129,18 +129,18 @@ def test_visible_sample_routes_media_without_exposing_later_pages(
     )
 
     assert controller.load_project(dataset, str(tmp_path / "large.json"))
-    assert panel.tree_model.rowCount() == panel.tree_model.PAGE_SIZE
+    assert panel.tree_model.rowCount() == panel.tree_model.page_size()
 
     second_index = panel.tree_model.index(1, 0)
     QTimer.singleShot(0, lambda: panel.tree.setCurrentIndex(second_index))
     qtbot.waitUntil(lambda: bool(routed), timeout=1000)
 
     visible_when_routed, sources, focused_path = routed[-1]
-    assert visible_when_routed == panel.tree_model.PAGE_SIZE
+    assert visible_when_routed == panel.tree_model.page_size()
     assert sources[0]["path"].endswith("clips/2.mp4")
     assert focused_path == ""
     qtbot.wait(50)
-    assert panel.tree_model.rowCount() == panel.tree_model.PAGE_SIZE
+    assert panel.tree_model.rowCount() == panel.tree_model.page_size()
 
 
 def _send_boundary_wheel(widget, delta):
@@ -203,6 +203,83 @@ def test_boundary_wheel_changes_page_and_preserves_off_page_playback(
     assert stops == []
 
 
+def test_direct_pagination_controls_jump_and_track_page_state(
+    explorer_panel_and_controller,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    dataset = _large_dataset(sample_count=1_200)
+    for index, sample in enumerate(dataset["data"]):
+        sample["inputs"] = [{"type": "video", "path": f"clips/{index + 1}.mp4"}]
+    routes = []
+    controller.mediaSelectionRouteRequested.connect(lambda *args: routes.append(args))
+    assert controller.load_project(dataset, str(tmp_path / "large.json"))
+    panel.tree.setCurrentIndex(panel.tree_model.index(0, 0))
+    route_count = len(routes)
+
+    assert panel.verticalLayout_tab_data.itemAt(1).widget() is panel.tree
+    assert panel.verticalLayout_tab_data.itemAt(2).layout() is panel.pagination_layout
+    assert panel.verticalLayout_tab_data.itemAt(3).widget() is panel.page_range_label
+
+    assert panel.page_number_spin.value() == 1
+    assert panel.page_number_spin.maximum() == 3
+    assert panel.page_count_label.text() == "of 3"
+    assert not panel.btn_prev_page.isEnabled()
+    assert panel.btn_next_page.isEnabled()
+
+    qtbot.mouseClick(panel.btn_next_page, Qt.MouseButton.LeftButton)
+    assert panel.tree_model.page_number() == 1
+    assert panel.page_number_spin.value() == 2
+    assert panel.btn_prev_page.isEnabled()
+    assert panel.btn_next_page.isEnabled()
+    assert not panel.tree.currentIndex().isValid()
+    assert controller.current_selected_sample_id == "clip_1"
+    assert len(routes) == route_count
+
+    panel.page_number_spin.setFocus()
+    panel.page_number_spin.selectAll()
+    qtbot.keyClicks(panel.page_number_spin, "3")
+    assert panel.tree_model.page_number() == 1
+    qtbot.keyClick(panel.page_number_spin, Qt.Key.Key_Return)
+    assert panel.tree_model.page_number() == 2
+    assert panel.tree_model.rowCount() == 200
+    assert panel.page_number_spin.value() == 3
+    assert panel.btn_prev_page.isEnabled()
+    assert not panel.btn_next_page.isEnabled()
+    assert panel.page_range_label.text() == "Showing 1,001–1,200 of 1,200"
+    assert len(routes) == route_count
+
+    qtbot.mouseClick(panel.btn_prev_page, Qt.MouseButton.LeftButton)
+    assert panel.tree_model.page_number() == 1
+    assert panel.page_number_spin.value() == 2
+    qtbot.mouseClick(panel.btn_prev_page, Qt.MouseButton.LeftButton)
+    assert panel.tree_model.page_number() == 0
+    assert panel.tree.currentIndex().data() == "clip_1"
+    assert len(routes) == route_count
+
+
+def test_pagination_controls_disable_for_empty_and_single_page(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    assert controller.load_project(_large_dataset(sample_count=12), str(tmp_path / "small.json"))
+    assert panel.page_number_spin.value() == 1
+    assert panel.page_number_spin.maximum() == 1
+    assert panel.page_count_label.text() == "of 1"
+    assert not panel.page_number_spin.isEnabled()
+    assert not panel.btn_prev_page.isEnabled()
+    assert not panel.btn_next_page.isEnabled()
+
+    controller.reset(full_reset=True)
+    assert panel.page_number_spin.value() == 0
+    assert panel.page_count_label.text() == "of 0"
+    assert not panel.page_number_spin.isEnabled()
+    assert not panel.btn_prev_page.isEnabled()
+    assert not panel.btn_next_page.isEnabled()
+
+
 def test_next_sample_navigation_crosses_page_boundary_once(
     explorer_panel_and_controller,
     tmp_path,
@@ -241,7 +318,34 @@ def test_filter_restores_eligible_selection_on_its_matching_page(
     assert panel.tree_model.page_number() == 1
     assert panel.tree.currentIndex().data() == "clip_1001"
     assert controller.current_selected_sample_id == "clip_1001"
-    assert panel.page_range_label.text() == "Showing 501–600 of 600 · scroll for more"
+    assert panel.page_range_label.text() == "Showing 501–600 of 600"
+
+
+def test_page_size_change_keeps_active_sample_visible_without_rerouting(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    panel, controller = explorer_panel_and_controller
+    dataset = _large_dataset(sample_count=1_200)
+    for index, sample in enumerate(dataset["data"]):
+        sample["inputs"] = [{"type": "video", "path": f"clips/{index + 1}.mp4"}]
+    routes = []
+    controller.mediaSelectionRouteRequested.connect(lambda *args: routes.append(args))
+    assert controller.load_project(dataset, str(tmp_path / "large.json"))
+    panel.tree.setCurrentIndex(controller._top_level_index_for_sample("clip_1001"))
+    route_count = len(routes)
+
+    assert controller.set_explorer_page_size(250)
+
+    assert panel.tree_model.page_size() == 250
+    assert panel.tree_model.page_number() == 4
+    assert panel.tree_model.rowCount() == 200
+    assert panel.tree.currentIndex().data() == "clip_1001"
+    assert controller.current_selected_sample_id == "clip_1001"
+    assert len(routes) == route_count
+    assert panel.page_range_label.text() == "Showing 1,001–1,200 of 1,200"
+    assert panel.page_number_spin.value() == 5
+    assert panel.page_number_spin.maximum() == 5
 
 
 def test_write_promotes_and_reprojects_absolute_temporal_annotations(

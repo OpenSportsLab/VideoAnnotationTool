@@ -26,11 +26,15 @@ Provides the left dock dataset explorer tree, header inspector tables, and explo
 - `addDataRequested()`
 - `sampleNavigateRequested(int)`
 - `pageNavigateRequested(int)`
+- `pageRequested(int)`
 - `headerDraftChanged(dict)`
 
 ## Key Functions and Responsibilities
 - `DatasetExplorerTreeModel.set_entries(...)`
-  - Resets the filtered/sorted projection and exposes its first 500-sample page.
+  - Resets the filtered/sorted projection and exposes its first bounded page.
+- `set_page_size(...)`
+  - Applies the validated application preference while retaining the current
+    projection position; the default is 500 and the supported range is 100–2,000.
 - `set_page(...)`, `next_page()`, `previous_page()`, `visible_range()`
   - Replace the visible slice without accumulating Qt rows.
 - `index_for_sample_id(...)`, `index_for_path(...)`, `ensure_sample_visible(...)`
@@ -50,8 +54,11 @@ Provides the left dock dataset explorer tree, header inspector tables, and explo
 - Header draft updates are staged via signal; controller decides persistence.
 - Tree model is view data only. Inline `setData()` emits a rename intent;
   canonical JSON mutation remains in history/controller layers.
-- The tree exposes at most 500 top-level rows. Scrolling beyond the bottom or
+- The tree exposes at most the configured page size. Scrolling beyond the bottom or
   top boundary requests the adjacent page; no page is loaded automatically.
+- The pagination row directly beneath the tree emits a zero-based absolute `pageRequested` value
+  from its one-based page field and buttons. Model notifications update the field
+  under signal blocking so view synchronization never requests another page.
 - Paging is a view-only reset. The controller suppresses the transient invalid
   Qt selection so off-page annotation and playback state remain active.
 - Filtering builds a new projection rather than hiding thousands of view rows.
@@ -70,7 +77,7 @@ Provides the left dock dataset explorer tree, header inspector tables, and explo
   - runtime entries, filter projection, lightweight row refresh, and lazy raw
     JSON refresh.
 - Outbound to controller:
-  - add/remove/navigation/header-draft intents.
+  - add/remove/sample navigation/relative or absolute page/header-draft intents.
 
 ## Tests
 - `tests/gui/test_dataset_explorer_focused.py`

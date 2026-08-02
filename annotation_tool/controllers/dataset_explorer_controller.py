@@ -425,6 +425,7 @@ class DatasetExplorerController(QObject):
             self.panel.confidenceSortToggled.connect(self._on_confidence_sort_toggled)
         self.panel.sampleNavigateRequested.connect(self.navigate_samples)
         self.panel.pageNavigateRequested.connect(self.handle_page_navigation)
+        self.panel.pageRequested.connect(self.handle_page_request)
         self.panel.headerDraftChanged.connect(self._on_header_draft_changed)
         if hasattr(self.panel, "header_tabs"):
             self.panel.header_tabs.currentChanged.connect(self._on_explorer_tab_changed)
@@ -1930,7 +1931,7 @@ class DatasetExplorerController(QObject):
 
         if not 0 <= target_row < total:
             return
-        target_page = target_row // self.tree_model.PAGE_SIZE
+        target_page = target_row // self.tree_model.page_size()
         self._set_tree_page(target_page, restore_active=False)
         next_idx = self.tree_model.index_for_projected_row(target_row)
         if next_idx.isValid():
@@ -1965,6 +1966,22 @@ class DatasetExplorerController(QObject):
             self._restore_active_page_highlight()
         return changed
 
+    def set_explorer_page_size(self, page_size: int):
+        preferred_sample_id = str(self.current_selected_sample_id or "")
+        preferred_input_path = self.current_selected_input_path
+        changed = self._run_with_tree_page_guard(
+            lambda: self.tree_model.set_page_size(page_size)
+        )
+        if not changed:
+            return False
+        if preferred_sample_id:
+            self._run_with_tree_page_guard(
+                lambda: self.tree_model.ensure_sample_visible(preferred_sample_id)
+            )
+            self.current_selected_input_path = preferred_input_path
+            self._restore_active_page_highlight()
+        return True
+
     def handle_page_navigation(self, step: int):
         direction = 1 if step > 0 else -1
         target_page = self.tree_model.page_number() + direction
@@ -1976,6 +1993,12 @@ class DatasetExplorerController(QObject):
             QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_bar.minimum()))
         else:
             QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_bar.maximum()))
+
+    def handle_page_request(self, page_number: int):
+        if not self._set_tree_page(page_number):
+            return
+        scroll_bar = self.panel.tree.verticalScrollBar()
+        QTimer.singleShot(0, lambda: scroll_bar.setValue(scroll_bar.minimum()))
 
     def handle_filter_change(self, index, selection_fallback: str = "first_visible"):
         preferred_sample_id = self.current_selected_sample_id
