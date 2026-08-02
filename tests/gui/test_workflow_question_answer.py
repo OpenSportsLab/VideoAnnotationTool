@@ -32,6 +32,8 @@ def test_question_answer_selection_loads_media_and_answer_list(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
 
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["question_answer"]
     assert window.tree_model.rowCount() == 1
@@ -67,6 +69,8 @@ def test_question_answer_annotate_save_reload_edit_and_persist(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["question_answer"]
 
     first_index = window.tree_model.index(0, 0)

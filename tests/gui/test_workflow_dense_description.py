@@ -55,6 +55,8 @@ def test_dense_description_annotate_save_reload_edit_and_persist(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["dense_description"]
     assert window.tree_model.rowCount() == 1
 
@@ -159,6 +161,8 @@ def test_dense_description_remove_selected_item_resets_panel_state(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["dense_description"]
     assert window.tree_model.rowCount() == 1
 
@@ -200,6 +204,8 @@ def test_dense_description_clear_workspace_resets_panel_and_model(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["dense_description"]
     assert window.tree_model.rowCount() == 1
     assert window.dataset_explorer_controller.json_loaded is True

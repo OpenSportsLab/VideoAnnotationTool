@@ -491,6 +491,7 @@ class ClassificationAnnotationPanel(QWidget):
 
     annotation_saved = pyqtSignal(dict)
     batch_run_requested = pyqtSignal(int, int)
+    batch_controls_opened = pyqtSignal()
 
     hand_clear_requested = pyqtSignal()
     sharedInferenceRequested = pyqtSignal()
@@ -571,6 +572,9 @@ class ClassificationAnnotationPanel(QWidget):
         self.confirm_btn.setVisible(False)
         self.confirm_btn.setEnabled(False)
         self.clear_sel_btn.clicked.connect(self.on_clear_clicked)
+        self.btn_batch_infer.clicked.connect(self._toggle_batch_widget)
+        self.btn_run_batch.clicked.connect(self._on_run_batch_clicked)
+        self.batch_input_widget.setVisible(False)
 
         self._remove_disabled_tabs()
 
@@ -746,7 +750,10 @@ class ClassificationAnnotationPanel(QWidget):
         self.btn_stop_train.setEnabled(False)
 
     def _toggle_batch_widget(self):
-        self.batch_input_widget.setVisible(not self.batch_input_widget.isVisible())
+        showing = not self.batch_input_widget.isVisible()
+        self.batch_input_widget.setVisible(showing)
+        if showing:
+            self.batch_controls_opened.emit()
 
     def _on_run_batch_clicked(self):
         start_idx = self.spin_start.currentIndex()

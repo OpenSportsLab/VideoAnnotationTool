@@ -36,6 +36,8 @@ def test_description_selection_loads_media_and_refreshes_editor(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     assert window.tree_model.rowCount() == 1
 
@@ -57,14 +59,15 @@ def test_description_selection_loads_media_and_refreshes_editor(
     qtbot.wait(50)
 
     assert len(load_calls) == 1
-    assert Path(load_calls[0][1]).name == "test_video_1.mp4"
+    assert load_calls[0][1] == ""
+    assert Path(load_calls[0][0][0]["path"]).name == "test_video_1.mp4"
     assert window.description_panel.caption_edit.toPlainText().strip() == "A short test caption."
 
 
 @pytest.mark.gui
-# Workflow: In Description mode, selecting a multiview parent item should route media
-# to the first child file instead of trying to open the parent directory path.
-def test_description_multiview_parent_selection_loads_first_child_media(
+# Workflow: Selecting a multiview parent routes the full media group while
+# leaving input focus clear.
+def test_description_multiview_parent_selection_loads_group_without_input_focus(
     window,
     monkeypatch,
     qtbot,
@@ -128,6 +131,8 @@ def test_description_multiview_parent_selection_loads_first_child_media(
     )
 
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     assert window.tree_model.rowCount() == 1
 
@@ -140,7 +145,8 @@ def test_description_multiview_parent_selection_loads_first_child_media(
     qtbot.wait(50)
 
     assert load_calls
-    assert Path(load_calls[-1][1]).resolve() == view_a.resolve()
+    assert load_calls[-1][1] == ""
+    assert Path(load_calls[-1][0][0]["path"]).resolve() == view_a.resolve()
     assert {Path(source["path"]).resolve() for source in load_calls[-1][0]} == {
         view_a.resolve(),
         view_b.resolve(),
@@ -166,6 +172,8 @@ def test_description_annotate_save_reload_edit_and_persist(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     assert window.tree_model.rowCount() == 1
 
@@ -252,6 +260,8 @@ def test_description_remove_selected_item_clears_editor_state(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     assert window.tree_model.rowCount() == 1
 
@@ -295,6 +305,8 @@ def test_description_clear_workspace_resets_editor_and_model(
         lambda *args, **kwargs: (str(project_json_path), "JSON Files (*.json)"),
     )
     window.dataset_explorer_controller.import_annotations()
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
     assert window.right_tabs.currentIndex() == MODE_TO_TAB_INDEX["description"]
     assert window.tree_model.rowCount() == 1
     assert window.dataset_explorer_controller.json_loaded is True

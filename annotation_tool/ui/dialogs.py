@@ -28,6 +28,12 @@ from inference_settings import (
     normalize_server_url,
 )
 from inference_types import INFERENCE_TASKS
+from explorer_settings import (
+    DEFAULT_EXPLORER_PAGE_SIZE,
+    MAX_EXPLORER_PAGE_SIZE,
+    MIN_EXPLORER_PAGE_SIZE,
+    normalize_explorer_page_size,
+)
 
 
 class InferenceConfigurationWidget(QWidget):
@@ -163,16 +169,18 @@ class InferenceConfigurationWidget(QWidget):
 
 
 class ApplicationSettingsDialog(QDialog):
-    """Extensible application settings dialog, initially for media controls."""
+    """Extensible application settings dialog."""
 
     mediaControlsApplyRequested = pyqtSignal(str, str, object, object)
     inferenceSettingsApplyRequested = pyqtSignal(object)
     inferenceTestRequested = pyqtSignal()
+    explorerPageSizeApplyRequested = pyqtSignal(int)
 
     def __init__(
         self,
         playback_factors: str,
         seek_intervals: str,
+        explorer_page_size: int = DEFAULT_EXPLORER_PAGE_SIZE,
         settings: QSettings | None = None,
         parent=None,
     ) -> None:
@@ -219,6 +227,32 @@ class ApplicationSettingsDialog(QDialog):
         media_layout.addWidget(self.validation_label)
         media_layout.addStretch(1)
         tabs.addTab(media_page, "Media Controls")
+
+        explorer_page = QWidget(tabs)
+        explorer_layout = QVBoxLayout(explorer_page)
+        explorer_form = QFormLayout()
+        explorer_layout.addLayout(explorer_form)
+        self.explorer_page_size_spin = QSpinBox(explorer_page)
+        self.explorer_page_size_spin.setObjectName("explorerPageSizeSpin")
+        self.explorer_page_size_spin.setRange(
+            MIN_EXPLORER_PAGE_SIZE,
+            MAX_EXPLORER_PAGE_SIZE,
+        )
+        self.explorer_page_size_spin.setSingleStep(100)
+        self.explorer_page_size_spin.setValue(
+            normalize_explorer_page_size(explorer_page_size)
+        )
+        self.explorer_page_size_spin.setSuffix(" samples")
+        explorer_form.addRow("Samples per page:", self.explorer_page_size_spin)
+        explorer_help = QLabel(
+            "Controls the maximum number of top-level samples shown in the "
+            "Dataset Explorer. Smaller pages reduce view work for very large datasets.",
+            explorer_page,
+        )
+        explorer_help.setWordWrap(True)
+        explorer_layout.addWidget(explorer_help)
+        explorer_layout.addStretch(1)
+        tabs.addTab(explorer_page, "Dataset Explorer")
 
         self._settings = settings
         inference_page = QWidget(tabs)
@@ -289,6 +323,7 @@ class ApplicationSettingsDialog(QDialog):
     def _restore_defaults(self) -> None:
         self.playback_factors_edit.setText(DEFAULT_PLAYBACK_FACTORS)
         self.seek_intervals_edit.setText(DEFAULT_SEEK_INTERVALS)
+        self.explorer_page_size_spin.setValue(DEFAULT_EXPLORER_PAGE_SIZE)
         self.validation_label.clear()
 
     def _apply(self, *, close_after: bool) -> None:
@@ -320,6 +355,7 @@ class ApplicationSettingsDialog(QDialog):
                 "Warning: this server is unauthenticated and unencrypted. Use it only on a trusted network.",
                 False,
             )
+        self.explorerPageSizeApplyRequested.emit(self.explorer_page_size_spin.value())
         if close_after:
             self.accept()
 

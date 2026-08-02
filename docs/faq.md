@@ -21,6 +21,11 @@ Playback factors and relative-seek intervals from **Edit → Settings…** are
 application-wide `QSettings` preferences. They are not saved in or exported
 with dataset JSON.
 
+## Where is the Dataset Explorer page size stored?
+
+The value from **Edit → Settings… → Dataset Explorer** is an application-wide
+`QSettings` preference. It defaults to 500 and is not part of dataset JSON.
+
 ## Why is HF upload disabled?
 
 Upload is available only when a dataset JSON is currently opened from disk (not unsaved in-memory only).

@@ -34,10 +34,6 @@ PLAYER_JOINTS_H5_PATH = (
     / "test_data"
     / "live_joints_sirus_mini_test.h5"
 )
-PLAYER_CENTROIDS_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_centroids.h5"
-BALL_H5_PATH = Path(__file__).resolve().parents[2] / "test_data" / "live_ball.h5"
-
-
 def _write_minimal_player_joints_h5(path: Path, timestamps: list[bytes]):
     row_count = len(timestamps)
     with h5py.File(path, "w") as h5_file:
@@ -582,20 +578,23 @@ def test_player_joints_h5_load_keeps_h5_datasets_lazy_and_closes_on_stop(
 
 
 @pytest.mark.gui
-def test_player_joints_h5_normalized_source_preserves_ball_path(media_panel_and_controller):
+def test_player_joints_h5_normalized_source_preserves_ball_path(
+    media_panel_and_controller,
+    ball_h5_path,
+):
     _panel, controller = media_panel_and_controller
 
     source = controller._normalize_media_source(
         {
             "type": "player_joints_h5",
             "path": str(PLAYER_JOINTS_H5_PATH),
-            "ball_path": str(BALL_H5_PATH),
+            "ball_path": str(ball_h5_path),
         }
     )
 
     assert source["type"] == "player_joints_h5"
     assert source["path"] == str(PLAYER_JOINTS_H5_PATH)
-    assert source["ball_path"] == str(BALL_H5_PATH)
+    assert source["ball_path"] == str(ball_h5_path)
     assert "fps" not in source
 
 
@@ -947,7 +946,11 @@ def test_player_joints_h5_inconsistent_lengths_reports_clear_error(
 
 
 @pytest.mark.gui
-def test_player_centroids_h5_controller_load_play_pause_seek_and_rate(media_panel_and_controller, qtbot):
+def test_player_centroids_h5_controller_load_play_pause_seek_and_rate(
+    media_panel_and_controller,
+    qtbot,
+    player_centroids_h5_path,
+):
     panel, controller = media_panel_and_controller
 
     durations = []
@@ -955,7 +958,9 @@ def test_player_centroids_h5_controller_load_play_pause_seek_and_rate(media_pane
     controller.durationChanged.connect(durations.append)
     controller.playbackStateChanged.connect(states.append)
 
-    controller.load_and_play({"type": "player_centroids_h5", "path": str(PLAYER_CENTROIDS_H5_PATH)})
+    controller.load_and_play(
+        {"type": "player_centroids_h5", "path": str(player_centroids_h5_path)}
+    )
 
     qtbot.waitUntil(lambda: panel.frame_widget.pixmap() is not None, timeout=6000)
     qtbot.waitUntil(lambda: controller.current_position_ms() > 0, timeout=1500)
@@ -1132,6 +1137,7 @@ def test_player_centroids_h5_invalid_schema_reports_clear_error(
 def test_player_centroids_h5_missing_dependency_reports_clear_error(
     media_panel_and_controller,
     monkeypatch,
+    player_centroids_h5_path,
 ):
     _panel, controller = media_panel_and_controller
     errors = []
@@ -1143,7 +1149,9 @@ def test_player_centroids_h5_missing_dependency_reports_clear_error(
         lambda error_details, **kwargs: errors.append((kwargs, error_details)),
     )
 
-    controller.load_and_play({"type": "player_centroids_h5", "path": str(PLAYER_CENTROIDS_H5_PATH)})
+    controller.load_and_play(
+        {"type": "player_centroids_h5", "path": str(player_centroids_h5_path)}
+    )
 
     assert errors
     assert errors[-1][0]["title"] == "H5 Dependency Missing"

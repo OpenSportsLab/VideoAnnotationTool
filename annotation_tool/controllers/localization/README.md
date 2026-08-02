@@ -14,7 +14,10 @@ offset back onto the original sample timeline.
 - Runtime sample/schema/action-list context is supplied through signal-slot wiring in `MainWindow.connect_signals()`.
 - Emits schema/event mutation intents to `HistoryManager`.
 - Uses `LocalizationInferenceManager` for smart inference execution.
-- Smart inference resolves a dedicated `annotation_tool/loc_config.yaml` template, clips the requested time range for inference, and maps predictions back onto the selected head.
+- Smart inference resolves a dedicated `annotation_tool/loc_config.yaml` template,
+  clips the requested time range for inference, and maps predictions back onto
+  the selected head. Clipping first attempts an FFmpeg stream copy, then retries
+  with H.264/AAC re-encoding when the source cannot be copied safely.
 - Emits media seek/marker/toggle intents instead of mutating media widgets directly.
 
 ## Public Surface

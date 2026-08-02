@@ -4,23 +4,35 @@ import json
 import re
 
 from PyQt6 import uic
-from PyQt6.QtCore import Qt, QModelIndex, pyqtSignal
-from PyQt6.QtGui import QStandardItem, QStandardItemModel
+from PyQt6.QtCore import (
+    QAbstractItemModel,
+    QEvent,
+    QModelIndex,
+    QSignalBlocker,
+    Qt,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QHeaderView,
+    QHBoxLayout,
+    QLabel,
     QMenu,
     QMessageBox,
     QPlainTextEdit,
+    QSpinBox,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from utils import resource_path
+from explorer_settings import DEFAULT_EXPLORER_PAGE_SIZE, normalize_explorer_page_size
 
 
 def _natural_sort_text(value) -> str:
@@ -28,10 +40,8 @@ def _natural_sort_text(value) -> str:
     return "".join(part.zfill(12) if part.isdigit() else part for part in parts)
 
 
-class DatasetExplorerTreeModel(QStandardItemModel):
-    """
-    Internal tree model used by DatasetExplorerPanel.
-    """
+class DatasetExplorerTreeModel(QAbstractItemModel):
+    """Data-backed model exposing one bounded page of samples and inputs."""
 
     FilePathRole = Qt.ItemDataRole.UserRole
     DataIdRole = Qt.ItemDataRole.UserRole + 1
@@ -39,57 +49,316 @@ class DatasetExplorerTreeModel(QStandardItemModel):
     InputTypeRole = Qt.ItemDataRole.UserRole + 3
     BallPathRole = Qt.ItemDataRole.UserRole + 4
 
+    renameRequested = pyqtSignal(str, str)
+    pageChanged = pyqtSignal(int, int, int)
+
+    DEFAULT_PAGE_SIZE = DEFAULT_EXPLORER_PAGE_SIZE
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.configure_columns()
+        self._all_entries = []
+        self._projected_entries = []
+        self._entry_by_id = {}
+        self._children_by_id = {}
+        self._projected_row_by_id = {}
+        self._path_nodes = {}
+        self._filter_index = 0
+        self._page_number = 0
+        self._page_size = self.DEFAULT_PAGE_SIZE
 
-    def configure_columns(self):
-        self.setColumnCount(1)
-        self.setSortRole(self.SortRole)
+    def clear(self):
+        self.beginResetModel()
+        self._all_entries = []
+        self._projected_entries = []
+        self._entry_by_id = {}
+        self._children_by_id = {}
+        self._projected_row_by_id = {}
+        self._path_nodes = {}
+        self._page_number = 0
+        self.endResetModel()
+        self.pageChanged.emit(0, 0, 0)
 
-    def add_entry(
-        self,
-        name: str,
-        path: str,
-        source_files: list = None,
-        media_sources: list = None,
-        icon=None,
-        data_id: str = None,
-        confidence_score: float = None,
-    ) -> QStandardItem:
-        display_name = self.entry_display_name(name, confidence_score)
-        item = QStandardItem(display_name)
-        item.setEditable(True)
-        item.setData(path, self.FilePathRole)
-        item.setData(data_id, self.DataIdRole)
-        item.setData(_natural_sort_text(name), self.SortRole)
+    def set_entries(self, entries, filter_index=0):
+        self.beginResetModel()
+        self._all_entries = list(entries or [])
+        self._filter_index = int(filter_index)
+        self._rebuild_indexes()
+        self._rebuild_projection()
+        self._page_number = 0
+        self._rebuild_page_children()
+        self.endResetModel()
+        self._emit_page_changed()
 
-        if icon:
-            item.setIcon(icon)
+    def set_filter(self, filter_index: int):
+        filter_index = int(filter_index)
+        self._filter_index = filter_index
+        self.set_entries(self._all_entries, filter_index)
 
-        if source_files:
-            media_sources = list(media_sources or [])
-            for index, src in enumerate(source_files):
-                media_source = media_sources[index] if index < len(media_sources) and isinstance(media_sources[index], dict) else {}
-                ball_path = str(media_source.get("ball_path") or "")
-                child_name = os.path.basename(src) or str(src)
-                if ball_path:
-                    child_name = f"{child_name}  (ball: {os.path.basename(ball_path) or ball_path})"
-                child = QStandardItem(child_name)
-                child.setEditable(False)
-                child.setData(src, self.FilePathRole)
-                child.setData(data_id, self.DataIdRole)
-                child.setData(str(media_source.get("type") or ""), self.InputTypeRole)
-                child.setData(ball_path, self.BallPathRole)
-                child.setData(_natural_sort_text(child_name), self.SortRole)
-                tooltip = str(src)
-                if ball_path:
-                    tooltip = f"{tooltip}\nBall H5: {ball_path}"
-                child.setToolTip(tooltip)
-                item.appendRow(child)
+    def _rebuild_indexes(self):
+        self._entry_by_id = {}
+        self._children_by_id = {}
+        self._path_nodes = {}
+        for entry in self._all_entries:
+            sample_id = str(entry.get("data_id") or entry.get("id") or "")
+            if not sample_id:
+                continue
+            entry["_node_kind"] = "sample"
+            entry["_sample_id"] = sample_id
+            self._entry_by_id[sample_id] = entry
+            parent_path = str(entry.get("path") or "")
+            if parent_path:
+                self._path_nodes.setdefault(parent_path, (sample_id, None))
+            valid_child_row = 0
+            for media_source in entry.get("media_sources") or []:
+                if not isinstance(media_source, dict):
+                    continue
+                child_path = str(media_source.get("path") or "")
+                if child_path:
+                    self._path_nodes.setdefault(child_path, (sample_id, valid_child_row))
+                valid_child_row += 1
 
-        self.appendRow(item)
-        return item
+    def _entry_matches_filter(self, entry) -> bool:
+        hand = bool(entry.get("hand_labelled"))
+        smart = bool(entry.get("smart_labelled"))
+        if self._filter_index == 1:
+            return hand
+        if self._filter_index == 2:
+            return smart
+        if self._filter_index == 3:
+            return not (hand or smart)
+        return True
+
+    def _rebuild_projection(self):
+        self._projected_entries = [entry for entry in self._all_entries if self._entry_matches_filter(entry)]
+        self._projected_row_by_id = {
+            str(entry.get("_sample_id") or ""): row
+            for row, entry in enumerate(self._projected_entries)
+        }
+
+    def _page_bounds(self):
+        start = self._page_number * self._page_size
+        return start, min(start + self._page_size, len(self._projected_entries))
+
+    def _rebuild_page_children(self):
+        self._children_by_id = {}
+        start, end = self._page_bounds()
+        for entry in self._projected_entries[start:end]:
+            sample_id = str(entry.get("_sample_id") or "")
+            child_nodes = []
+            for media_source in entry.get("media_sources") or []:
+                if not isinstance(media_source, dict):
+                    continue
+                child_node = dict(media_source)
+                child_node["_node_kind"] = "input"
+                child_node["_sample_id"] = sample_id
+                child_node["_child_row"] = len(child_nodes)
+                child_nodes.append(child_node)
+            self._children_by_id[sample_id] = child_nodes
+
+    def _emit_page_changed(self):
+        self.pageChanged.emit(*self.visible_range())
+
+    def page_count(self):
+        total = len(self._projected_entries)
+        return (total + self._page_size - 1) // self._page_size
+
+    def page_size(self):
+        return self._page_size
+
+    def page_number(self):
+        return self._page_number
+
+    def visible_range(self):
+        total = len(self._projected_entries)
+        if total == 0:
+            return 0, 0, 0
+        start, end = self._page_bounds()
+        return start + 1, end, total
+
+    def set_page(self, page_number: int):
+        page_count = self.page_count()
+        target = min(max(0, int(page_number)), max(0, page_count - 1))
+        if target == self._page_number:
+            return False
+        self.beginResetModel()
+        self._page_number = target
+        self._rebuild_page_children()
+        self.endResetModel()
+        self._emit_page_changed()
+        return True
+
+    def set_page_size(self, page_size: int):
+        target_size = normalize_explorer_page_size(page_size)
+        if target_size == self._page_size:
+            return False
+        old_start, _old_end = self._page_bounds()
+        self.beginResetModel()
+        self._page_size = target_size
+        self._page_number = old_start // self._page_size
+        self._rebuild_page_children()
+        self.endResetModel()
+        self._emit_page_changed()
+        return True
+
+    def next_page(self):
+        return self.set_page(self._page_number + 1)
+
+    def previous_page(self):
+        return self.set_page(self._page_number - 1)
+
+    def page_for_sample_id(self, sample_id: str):
+        row = self._projected_row_by_id.get(str(sample_id or ""))
+        return None if row is None else row // self._page_size
+
+    def ensure_sample_visible(self, sample_id: str):
+        page_number = self.page_for_sample_id(sample_id)
+        if page_number is None:
+            return False
+        self.set_page(page_number)
+        return True
+
+    def projected_row_for_sample_id(self, sample_id: str):
+        return self._projected_row_by_id.get(str(sample_id or ""))
+
+    def index_for_projected_row(self, projected_row: int, expose=False):
+        projected_row = int(projected_row)
+        if not 0 <= projected_row < len(self._projected_entries):
+            return QModelIndex()
+        if expose:
+            self.set_page(projected_row // self._page_size)
+        start, end = self._page_bounds()
+        if not start <= projected_row < end:
+            return QModelIndex()
+        return self.index(projected_row - start, 0)
+
+    def rowCount(self, parent=QModelIndex()):
+        if not parent.isValid():
+            start, end = self._page_bounds()
+            return end - start
+        node = parent.internalPointer()
+        if isinstance(node, dict) and node.get("_node_kind") == "sample":
+            return len(self._children_by_id.get(str(node.get("_sample_id") or ""), []))
+        return 0
+
+    def columnCount(self, _parent=QModelIndex()):
+        return 1
+
+    def index(self, row, column, parent=QModelIndex()):
+        if row < 0 or column != 0:
+            return QModelIndex()
+        if not parent.isValid():
+            start, end = self._page_bounds()
+            if row >= end - start:
+                return QModelIndex()
+            return self.createIndex(row, column, self._projected_entries[start + row])
+        parent_node = parent.internalPointer()
+        if not isinstance(parent_node, dict) or parent_node.get("_node_kind") != "sample":
+            return QModelIndex()
+        children = self._children_by_id.get(str(parent_node.get("_sample_id") or ""), [])
+        if row >= len(children):
+            return QModelIndex()
+        return self.createIndex(row, column, children[row])
+
+    def parent(self, index):
+        if not index.isValid():
+            return QModelIndex()
+        node = index.internalPointer()
+        if not isinstance(node, dict) or node.get("_node_kind") != "input":
+            return QModelIndex()
+        sample_id = str(node.get("_sample_id") or "")
+        row = self._projected_row_by_id.get(sample_id)
+        start, end = self._page_bounds()
+        if row is None or not start <= row < end:
+            return QModelIndex()
+        entry = self._entry_by_id.get(sample_id)
+        return self.createIndex(row - start, 0, entry) if entry is not None else QModelIndex()
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        node = index.internalPointer()
+        if not isinstance(node, dict):
+            return None
+        is_sample = node.get("_node_kind") == "sample"
+        sample_id = str(node.get("_sample_id") or "")
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
+            if is_sample:
+                return str(node.get("display_name") or node.get("name") or sample_id)
+            path = str(node.get("path") or "")
+            ball_path = str(node.get("ball_path") or "")
+            child_name = os.path.basename(path) or path
+            if ball_path:
+                child_name = f"{child_name}  (ball: {os.path.basename(ball_path) or ball_path})"
+            return child_name
+        if role == Qt.ItemDataRole.DecorationRole and is_sample:
+            return node.get("status_icon")
+        if role == Qt.ItemDataRole.ToolTipRole and not is_sample:
+            path = str(node.get("path") or "")
+            ball_path = str(node.get("ball_path") or "")
+            return f"{path}\nBall H5: {ball_path}" if ball_path else path
+        if role == self.FilePathRole:
+            return node.get("path")
+        if role == self.DataIdRole:
+            return sample_id
+        if role == self.SortRole:
+            return node.get("sort_text") or _natural_sort_text(self.data(index, Qt.ItemDataRole.DisplayRole))
+        if role == self.InputTypeRole and not is_sample:
+            return str(node.get("type") or "")
+        if role == self.BallPathRole and not is_sample:
+            return str(node.get("ball_path") or "")
+        return None
+
+    def flags(self, index):
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        node = index.internalPointer()
+        if isinstance(node, dict) and node.get("_node_kind") == "sample":
+            flags |= Qt.ItemFlag.ItemIsEditable
+        return flags
+
+    def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
+        if role != Qt.ItemDataRole.EditRole or not index.isValid() or index.parent().isValid():
+            return False
+        old_sample_id = str(index.data(self.DataIdRole) or "")
+        requested_id = str(value or "").strip()
+        marker = " (conf:"
+        if requested_id.endswith(")") and marker in requested_id:
+            requested_id = requested_id.rsplit(marker, 1)[0].strip()
+        if not requested_id or requested_id == old_sample_id:
+            return False
+        QTimer.singleShot(0, lambda: self.renameRequested.emit(old_sample_id, requested_id))
+        return True
+
+    def sort(self, column, order=Qt.SortOrder.AscendingOrder):
+        if column != 0:
+            return
+        reverse = order == Qt.SortOrder.DescendingOrder
+        entries = sorted(self._all_entries, key=lambda item: item.get("sort_text") or "", reverse=reverse)
+        self.set_entries(entries, self._filter_index)
+
+    def index_for_sample_id(self, sample_id: str, expose=False):
+        row = self._projected_row_by_id.get(str(sample_id or ""))
+        if row is None:
+            return QModelIndex()
+        if expose:
+            self.ensure_sample_visible(sample_id)
+        return self.index_for_projected_row(row)
+
+    def index_for_path(self, path: str, expose=False):
+        node_ref = self._path_nodes.get(str(path or ""))
+        if node_ref is None:
+            return QModelIndex()
+        sample_id, child_row = node_ref
+        parent_index = self.index_for_sample_id(sample_id, expose=expose)
+        if not parent_index.isValid() or child_row is None:
+            return parent_index
+        return self.index(child_row, 0, parent_index)
+
+    def refresh_sample(self, sample_id: str):
+        index = self.index_for_sample_id(sample_id)
+        if index.isValid():
+            self.dataChanged.emit(index, index)
 
     @staticmethod
     def entry_display_name(name: str, confidence_score: float = None) -> str:
@@ -109,6 +378,8 @@ class DatasetExplorerPanel(QWidget):
     clearBallH5Requested = pyqtSignal(QModelIndex)
     addDataRequested = pyqtSignal()
     sampleNavigateRequested = pyqtSignal(int)
+    pageNavigateRequested = pyqtSignal(int)
+    pageRequested = pyqtSignal(int)
     headerDraftChanged = pyqtSignal(dict)
     confidenceSortToggled = pyqtSignal(bool)
 
@@ -151,9 +422,13 @@ class DatasetExplorerPanel(QWidget):
         self._suspend_header_signals = False
 
         self._configure_widgets(tree_title, filter_items, clear_text)
+        self.tree_model.pageChanged.connect(self._update_page_range)
         self.btn_add_data.clicked.connect(self.addDataRequested.emit)
         self.btn_prev_sample.clicked.connect(lambda: self.sampleNavigateRequested.emit(-1))
         self.btn_next_sample.clicked.connect(lambda: self.sampleNavigateRequested.emit(1))
+        self.btn_prev_page.clicked.connect(lambda: self._request_adjacent_page(-1))
+        self.btn_next_page.clicked.connect(lambda: self._request_adjacent_page(1))
+        self.page_number_spin.valueChanged.connect(self._request_page_from_spin)
         self._set_context_menu_enabled(enable_context_menu)
 
     def _configure_widgets(self, tree_title, filter_items, clear_text):
@@ -173,15 +448,109 @@ class DatasetExplorerPanel(QWidget):
         self.bottomLayout.setStretch(1, 1)
 
         self.tree.setHeaderHidden(True)
-        self.tree.setSortingEnabled(True)
+        self.tree.setSortingEnabled(False)
         header = self.tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setStretchLastSection(True)
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tree.viewport().installEventFilter(self)
+        self.page_range_label = QLabel("No samples", self)
+        self.page_range_label.setObjectName("dataset_page_range_label")
+        self.page_range_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.verticalLayout_tab_data.insertWidget(2, self.page_range_label)
+        self._configure_pagination_controls()
         self.json_raw_text.setReadOnly(True)
         self.json_raw_text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._configure_header_tables()
+
+    def _configure_pagination_controls(self):
+        self.pagination_layout = QHBoxLayout()
+        self.pagination_layout.setObjectName("datasetPaginationLayout")
+
+        self.btn_prev_page = QToolButton(self)
+        self.btn_prev_page.setObjectName("btn_prev_page")
+        self.btn_prev_page.setText("‹")
+        self.btn_prev_page.setToolTip("Previous Page")
+
+        page_label = QLabel("Page", self)
+        page_label.setObjectName("dataset_page_label")
+
+        self.page_number_spin = QSpinBox(self)
+        self.page_number_spin.setObjectName("page_number_spin")
+        self.page_number_spin.setRange(0, 0)
+        self.page_number_spin.setValue(0)
+        self.page_number_spin.setKeyboardTracking(False)
+        self.page_number_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_number_spin.setMaximumWidth(72)
+
+        self.page_count_label = QLabel("of 0", self)
+        self.page_count_label.setObjectName("dataset_page_count_label")
+
+        self.btn_next_page = QToolButton(self)
+        self.btn_next_page.setObjectName("btn_next_page")
+        self.btn_next_page.setText("›")
+        self.btn_next_page.setToolTip("Next Page")
+
+        self.pagination_layout.addStretch(1)
+        self.pagination_layout.addWidget(self.btn_prev_page)
+        self.pagination_layout.addWidget(page_label)
+        self.pagination_layout.addWidget(self.page_number_spin)
+        self.pagination_layout.addWidget(self.page_count_label)
+        self.pagination_layout.addWidget(self.btn_next_page)
+        self.pagination_layout.addStretch(1)
+        self.verticalLayout_tab_data.insertLayout(2, self.pagination_layout)
+        self._sync_pagination_controls()
+
+    def _sync_pagination_controls(self):
+        page_count = self.tree_model.page_count()
+        current_page = self.tree_model.page_number() + 1 if page_count else 0
+        blocker = QSignalBlocker(self.page_number_spin)
+        if page_count:
+            self.page_number_spin.setRange(1, page_count)
+            self.page_number_spin.setValue(current_page)
+        else:
+            self.page_number_spin.setRange(0, 0)
+            self.page_number_spin.setValue(0)
+        del blocker
+        self.page_count_label.setText(f"of {page_count:,}")
+        self.page_number_spin.setEnabled(page_count > 1)
+        self.btn_prev_page.setEnabled(current_page > 1)
+        self.btn_next_page.setEnabled(0 < current_page < page_count)
+
+    def _request_page_from_spin(self, page_number: int):
+        if self.tree_model.page_count() > 0:
+            self.pageRequested.emit(int(page_number) - 1)
+
+    def _request_adjacent_page(self, step: int):
+        self.pageRequested.emit(self.tree_model.page_number() + (1 if step > 0 else -1))
+
+    def _update_page_range(self, first: int, last: int, total: int):
+        self._sync_pagination_controls()
+        if total <= 0:
+            self.page_range_label.setText("No samples")
+            return
+        self.page_range_label.setText(f"Showing {first:,}–{last:,} of {total:,}")
+
+    def eventFilter(self, watched, event):
+        if watched is self.tree.viewport() and event.type() == QEvent.Type.Wheel:
+            delta = event.angleDelta().y() or event.pixelDelta().y()
+            scroll_bar = self.tree.verticalScrollBar()
+            if (
+                delta < 0
+                and scroll_bar.value() >= scroll_bar.maximum()
+                and self.tree_model.page_number() + 1 < self.tree_model.page_count()
+            ):
+                self.pageNavigateRequested.emit(1)
+                return True
+            if (
+                delta > 0
+                and scroll_bar.value() <= scroll_bar.minimum()
+                and self.tree_model.page_number() > 0
+            ):
+                self.pageNavigateRequested.emit(-1)
+                return True
+        return super().eventFilter(watched, event)
 
     def _configure_header_tables(self):
         self._configure_single_header_table(self.table_header_known, editable=True)

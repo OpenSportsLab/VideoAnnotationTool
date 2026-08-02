@@ -48,6 +48,7 @@ from media_control_settings import (
 )
 from inference_settings import BACKEND_KEY, LOCAL_MODELS_KEY, SERVER_URL_KEY, SHARED_MAPPINGS_KEY
 from inference_types import InferenceItem, InferenceRequest, resolve_sample_inputs
+from explorer_settings import EXPLORER_PAGE_SIZE_KEY, load_explorer_page_size
 
 from utils import create_checkmark_icon, resource_path
 
@@ -258,7 +259,6 @@ class VideoAnnotationWindow(QMainWindow):
         
         # Also clear the tree model
         self.tree_model.clear()
-        self.dataset_explorer_controller.action_item_map.clear()
         self.main_window_title = "Action Classifier"
         self.setWindowTitle("Action Classifier")
 
@@ -449,10 +449,10 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.mediaResetRequested.connect(self.media_controller.reset_viewers)
         self.dataset_explorer_controller.statusMessageRequested.connect(self.show_temp_msg)
         self.dataset_explorer_controller.saveStateRefreshRequested.connect(self.update_save_export_button_state)
-        self.dataset_explorer_controller.schemaRefreshRequested.connect(self._refresh_schema_panels)
-        self.dataset_explorer_controller.batchDropdownSyncRequested.connect(
-            self.classification_editor_controller.sync_batch_inference_dropdowns
+        self.dataset_explorer_controller.saveStateRefreshRequested.connect(
+            self.dataset_explorer_controller._refresh_json_preview
         )
+        self.dataset_explorer_controller.schemaRefreshRequested.connect(self._refresh_schema_panels)
         self.dataset_explorer_controller.classificationActionListChanged.connect(
             self.classification_editor_controller.on_action_items_changed
         )
@@ -498,6 +498,9 @@ class VideoAnnotationWindow(QMainWindow):
             lambda _settings: self._restore_media_controls_from_settings()
         )
         self.dataset_explorer_controller.settingsChanged.connect(
+            lambda _settings: self._restore_explorer_settings_from_settings()
+        )
+        self.dataset_explorer_controller.settingsChanged.connect(
             self.localization_editor_controller.set_settings
         )
         self.localization_editor_controller.set_settings(self.dataset_explorer_controller.settings)
@@ -521,6 +524,7 @@ class VideoAnnotationWindow(QMainWindow):
         center_panel.set_mute_button_state(self.media_controller.is_muted())
         self._restore_mute_state_from_settings()
         self._restore_media_controls_from_settings()
+        self._restore_explorer_settings_from_settings()
         # Dense add should always pause playback first; no auto-resume behavior.
         self.dense_panel.addEventRequested.connect(self.media_controller.pause)
         # Snapshot runtime media position on dense actions.
@@ -634,6 +638,9 @@ class VideoAnnotationWindow(QMainWindow):
         # --- History manager request signals ---
         self.history_manager.allItemStatusRefreshRequested.connect(self.dataset_explorer_controller.refresh_all_item_statuses)
         self.history_manager.saveStateRefreshRequested.connect(self.update_save_export_button_state)
+        self.history_manager.saveStateRefreshRequested.connect(
+            self.dataset_explorer_controller._refresh_json_preview
+        )
         self.history_manager.statusMessageRequested.connect(self.show_temp_msg)
         self.history_manager.filterRefreshRequested.connect(self.dataset_explorer_controller.handle_filter_change)
         self.history_manager.refreshUiAfterUndoRedoRequested.connect(self.refresh_ui_after_undo_redo)
@@ -983,10 +990,14 @@ class VideoAnnotationWindow(QMainWindow):
         dialog = ApplicationSettingsDialog(
             self._playback_factor_text,
             self._seek_interval_text,
+            self.dataset_explorer_controller.tree_model.page_size(),
             settings=settings,
             parent=self,
         )
         dialog.mediaControlsApplyRequested.connect(self._save_and_apply_media_controls)
+        dialog.explorerPageSizeApplyRequested.connect(
+            self._save_and_apply_explorer_page_size
+        )
         dialog.inferenceSettingsApplyRequested.connect(self._save_inference_settings)
         dialog.inferenceTestRequested.connect(lambda: self._test_inference_connection(dialog))
         dialog.exec()
@@ -1204,7 +1215,11 @@ class VideoAnnotationWindow(QMainWindow):
             QMessageBox.critical(self, "Inference Result Error", str(exc))
 
     def _on_pending_predictions_changed(self, task: str, sample_ids) -> None:
-        self._pending_prediction_samples_by_task[str(task)] = {str(value) for value in sample_ids or [] if str(value)}
+        task = str(task)
+        pending_sample_ids = {str(value) for value in sample_ids or [] if str(value)}
+        if self._pending_prediction_samples_by_task.get(task, set()) == pending_sample_ids:
+            return
+        self._pending_prediction_samples_by_task[task] = pending_sample_ids
         combined = set().union(*self._pending_prediction_samples_by_task.values()) if self._pending_prediction_samples_by_task else set()
         self.dataset_explorer_controller.set_pending_prediction_samples(combined)
 
@@ -1218,6 +1233,19 @@ class VideoAnnotationWindow(QMainWindow):
         self._close_inference_busy_dialog()
         self._pending_inference_requests.pop(request_id, None)
         self.show_temp_msg("Inference", "Inference cancelled.", 1500)
+
+    def _save_and_apply_explorer_page_size(self, page_size: int) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is not None:
+            settings.setValue(EXPLORER_PAGE_SIZE_KEY, int(page_size))
+            settings.sync()
+        self.dataset_explorer_controller.set_explorer_page_size(page_size)
+
+    def _restore_explorer_settings_from_settings(self) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        self.dataset_explorer_controller.set_explorer_page_size(
+            load_explorer_page_size(settings)
+        )
 
     def _save_and_apply_media_controls(
         self,
@@ -1750,8 +1778,6 @@ class VideoAnnotationWindow(QMainWindow):
         self.action_redo.setEnabled(len(self.dataset_explorer_controller.redo_stack) > 0)
         if hasattr(self, "action_hf_upload"):
             self.action_hf_upload.setEnabled(can_hf_upload)
-        if hasattr(self, "dataset_explorer_controller"):
-            self.dataset_explorer_controller._refresh_json_preview()
 
     def show_temp_msg(self, title: str, msg: str, duration: int = 1500, **kwargs) -> None:
         one_line = " ".join(str(msg).splitlines()).strip()
@@ -1809,9 +1835,6 @@ class VideoAnnotationWindow(QMainWindow):
         if idx.parent().isValid(): return idx.parent().data(self.tree_model.FilePathRole)
         return idx.data(self.tree_model.FilePathRole)
 
-    def sync_batch_inference_dropdowns(self) -> None:
-        self.classification_editor_controller.sync_batch_inference_dropdowns()
-
     def populate_action_tree(self) -> None:
         """Loads data from the app state into the UI model tree."""
         self.dataset_explorer_controller.populate_tree()
@@ -1838,6 +1861,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.classification_editor_controller._connect_dynamic_type_buttons()
 
     def refresh_ui_after_undo_redo(self, action_path: str, filter_selection_fallback: str = "first_visible") -> None:
+        self.dataset_explorer_controller._json_preview_dirty = True
         self.dataset_explorer_controller.refresh_all_item_statuses()
         self.dataset_explorer_controller.handle_filter_change(
             self.dataset_explorer_panel.filter_combo.currentIndex(),
@@ -1845,13 +1869,11 @@ class VideoAnnotationWindow(QMainWindow):
         )
 
         if action_path:
-            item = self.dataset_explorer_controller.action_item_map.get(action_path)
-            if item:
-                idx = item.index()
-                if idx.isValid() and not self.dataset_explorer_panel.tree.isRowHidden(idx.row(), QModelIndex()):
-                    if self.dataset_explorer_panel.tree.currentIndex() != idx:
-                        self.dataset_explorer_panel.tree.setCurrentIndex(idx)
+            idx = self.dataset_explorer_controller._index_for_path(action_path)
+            if idx.isValid() and self.dataset_explorer_panel.tree.currentIndex() != idx:
+                self.dataset_explorer_panel.tree.setCurrentIndex(idx)
 
         self.dataset_explorer_controller.reemit_current_selection()
+        self.dataset_explorer_controller._refresh_json_preview()
 
         self.update_save_export_button_state()

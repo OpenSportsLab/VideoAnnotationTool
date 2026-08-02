@@ -25,6 +25,18 @@ python tools/convert_legacy_vqa_to_grouped.py \
   --output-json grouped_vqa.json
 ```
 
+## Large Dataset Is Still Populating
+
+Datasets with thousands of samples keep the left explorer bounded to the page
+size configured under **Edit → Settings… → Dataset Explorer** (500 by default).
+The range below the tree shows which samples are visible. Scroll down again at
+the bottom for the next page or up at the top for the previous page. The bottom
+page field and arrow buttons also support direct navigation. Filtering rebuilds
+pages from all matching samples; it does not discard data. The JSON
+inspector and classification batch-range lists are intentionally prepared only
+when opened so they do not delay project loading. An active sample can continue
+playing while its row is off-page.
+
 ## Media Files Are Missing After Loading
 
 Relative paths in `data[].inputs[].path` are resolved from the directory that
