@@ -8,6 +8,10 @@ Provides the central grouped media/timeline panel used across all annotation mod
 - `MediaCenterPanel` dynamically creates one `MediaViewerPane` per sample input.
 - Each pane owns its `QMediaPlayer`, `QAudioOutput`, `QVideoWidget`, and raster-preview surface.
 - Playback business policy (routing/restart guards/backend selection/error dialogs) remains in `MediaController`.
+- `configure_playback_controls(speed_rates, seek_intervals)` rebuilds the two
+  single-row button layouts. `speed_buttons` and signed-second `seek_buttons`
+  are the value-keyed widget collections; rebuilding emits no media intent and
+  must not change position or playback state.
 
 ## Public Surface
 ### Main Classes
@@ -89,6 +93,9 @@ Provides the central grouped media/timeline panel used across all annotation mod
 ## Conventions
 - Keep widget logic and presentation in this module.
 - Keep playback decision logic in `MediaController`; backend-specific parsing/rendering lives under `controllers/media/`.
+- Application settings provide already-validated rates and intervals through
+  `MainWindow`; the panel owns only dynamic widget construction and intent
+  emission. `1x` and Play/Pause remain mandatory.
 
 ## Interactions
 - Inbound from controller:

@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt, QModelIndex, QTimer
 from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QLabel, QDockWidget, QMainWindow, QMessageBox, QStackedWidget, QTabWidget
 
-from app_info import APP_DISPLAY_NAME, APP_VERSION, SHORTCUTS_HELP_TEXT
+from app_info import APP_DISPLAY_NAME, APP_VERSION, build_shortcuts_help_text
 from controllers.classification import ClassificationEditorController
 from controllers.hf_transfer_controller import HfTransferController
 from opensportslib.tools.hf_transfer import (
@@ -37,7 +37,13 @@ from ui.localization import LocalizationAnnotationPanel
 from ui.description import DescriptionAnnotationPanel
 from ui.dense_description import DenseAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
-from ui.dialogs import BusyStatusDialog, HfDownloadDialog, HfUploadDialog
+from ui.dialogs import ApplicationSettingsDialog, BusyStatusDialog, HfDownloadDialog, HfUploadDialog
+
+from media_control_settings import (
+    PLAYBACK_FACTORS_KEY,
+    SEEK_INTERVALS_KEY,
+    load_media_control_settings,
+)
 
 from utils import create_checkmark_icon, resource_path
 
@@ -170,6 +176,10 @@ class VideoAnnotationWindow(QMainWindow):
         self._updating_view_state = False
         self._data_dock_preferred_visible = True
         self._editor_dock_preferred_visible = True
+        self._playback_factor_text = "2,4"
+        self._seek_interval_text = "1,5"
+        self._speed_rates = (0.25, 0.5, 1.0, 2.0, 4.0)
+        self._seek_intervals_seconds = (1.0, 5.0)
 
         # Coalesce repeated status-triggered filter refreshes to avoid UI stalls
         # during rapid annotation mutations.
@@ -453,6 +463,9 @@ class VideoAnnotationWindow(QMainWindow):
             lambda _settings: self._restore_view_state_from_settings()
         )
         self.dataset_explorer_controller.settingsChanged.connect(
+            lambda _settings: self._restore_media_controls_from_settings()
+        )
+        self.dataset_explorer_controller.settingsChanged.connect(
             self.localization_editor_controller.set_settings
         )
         self.localization_editor_controller.set_settings(self.dataset_explorer_controller.settings)
@@ -475,6 +488,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.media_controller.muteStateChanged.connect(self._save_mute_state_to_settings)
         center_panel.set_mute_button_state(self.media_controller.is_muted())
         self._restore_mute_state_from_settings()
+        self._restore_media_controls_from_settings()
         # Dense add should always pause playback first; no auto-resume behavior.
         self.dense_panel.addEventRequested.connect(self.media_controller.pause)
         # Snapshot runtime media position on dense actions.
@@ -708,6 +722,12 @@ class VideoAnnotationWindow(QMainWindow):
         self.action_redo.triggered.connect(self.history_manager.perform_redo)
         edit_menu.addAction(self.action_redo)
 
+        edit_menu.addSeparator()
+        self.action_settings = QAction("Settings…", self)
+        self.action_settings.setMenuRole(QAction.MenuRole.PreferencesRole)
+        self.action_settings.triggered.connect(self._open_settings_dialog)
+        edit_menu.addAction(self.action_settings)
+
         view_menu = menu_bar.addMenu("&View")
 
         self.action_show_dataset_explorer = QAction("Dataset Explorer", self)
@@ -901,21 +921,107 @@ class VideoAnnotationWindow(QMainWindow):
         QShortcut(QKeySequence(Qt.Key.Key_Right), self).activated.connect(
             lambda: self.media_controller.step_frame(1)
         )
-        QShortcut(QKeySequence("Ctrl+Left"), self).activated.connect(
-            lambda: self.media_controller.seek_relative(-1000)
+        self.shortcut_seek_back_primary = QShortcut(QKeySequence("Ctrl+Left"), self)
+        self.shortcut_seek_fwd_primary = QShortcut(QKeySequence("Ctrl+Right"), self)
+        self.shortcut_seek_back_secondary = QShortcut(QKeySequence("Ctrl+Shift+Left"), self)
+        self.shortcut_seek_fwd_secondary = QShortcut(QKeySequence("Ctrl+Shift+Right"), self)
+        self.shortcut_seek_back_primary.activated.connect(
+            lambda: self._seek_by_configured_interval(0, -1)
         )
-        QShortcut(QKeySequence("Ctrl+Right"), self).activated.connect(
-            lambda: self.media_controller.seek_relative(1000)
+        self.shortcut_seek_fwd_primary.activated.connect(
+            lambda: self._seek_by_configured_interval(0, 1)
         )
-        QShortcut(QKeySequence("Ctrl+Shift+Left"), self).activated.connect(
-            lambda: self.media_controller.seek_relative(-5000)
+        self.shortcut_seek_back_secondary.activated.connect(
+            lambda: self._seek_by_configured_interval(1, -1)
         )
-        QShortcut(QKeySequence("Ctrl+Shift+Right"), self).activated.connect(
-            lambda: self.media_controller.seek_relative(5000)
+        self.shortcut_seek_fwd_secondary.activated.connect(
+            lambda: self._seek_by_configured_interval(1, 1)
         )
+        self._update_media_shortcut_state()
 
     def _show_shortcuts_popup(self) -> None:
-        QMessageBox.information(self, "Shortcuts", SHORTCUTS_HELP_TEXT)
+        QMessageBox.information(
+            self,
+            "Shortcuts",
+            build_shortcuts_help_text(self._seek_intervals_seconds),
+        )
+
+    def _open_settings_dialog(self) -> None:
+        dialog = ApplicationSettingsDialog(
+            self._playback_factor_text,
+            self._seek_interval_text,
+            parent=self,
+        )
+        dialog.mediaControlsApplyRequested.connect(self._save_and_apply_media_controls)
+        dialog.exec()
+
+    def _save_and_apply_media_controls(
+        self,
+        factor_text: str,
+        interval_text: str,
+        speed_rates,
+        seek_intervals,
+    ) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is not None:
+            settings.setValue(PLAYBACK_FACTORS_KEY, factor_text)
+            settings.setValue(SEEK_INTERVALS_KEY, interval_text)
+            settings.sync()
+        self._apply_media_controls(
+            factor_text,
+            interval_text,
+            speed_rates,
+            seek_intervals,
+        )
+
+    def _restore_media_controls_from_settings(self) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is None:
+            return
+        factors, intervals = load_media_control_settings(settings)
+        self._apply_media_controls(
+            factors.normalized_text,
+            intervals.normalized_text,
+            factors.values,
+            intervals.values,
+        )
+
+    def _apply_media_controls(
+        self,
+        factor_text: str,
+        interval_text: str,
+        speed_rates,
+        seek_intervals,
+    ) -> None:
+        rates = tuple(float(value) for value in speed_rates)
+        intervals = tuple(float(value) for value in seek_intervals)
+        active_rate = self.media_controller.playback_rate()
+
+        self._playback_factor_text = factor_text
+        self._seek_interval_text = interval_text
+        self._speed_rates = rates
+        self._seek_intervals_seconds = intervals
+        self.center_panel.configure_playback_controls(rates, intervals)
+
+        if not any(abs(active_rate - rate) < 0.0005 for rate in rates):
+            self.media_controller.set_playback_rate(1.0)
+        self._update_media_shortcut_state()
+
+    def _seek_by_configured_interval(self, index: int, direction: int) -> None:
+        if index >= len(self._seek_intervals_seconds):
+            return
+        delta_ms = round(self._seek_intervals_seconds[index] * 1000) * int(direction)
+        self.media_controller.seek_relative(delta_ms)
+
+    def _update_media_shortcut_state(self) -> None:
+        if not hasattr(self, "shortcut_seek_back_primary"):
+            return
+        has_primary = bool(self._seek_intervals_seconds)
+        has_secondary = len(self._seek_intervals_seconds) > 1
+        self.shortcut_seek_back_primary.setEnabled(has_primary)
+        self.shortcut_seek_fwd_primary.setEnabled(has_primary)
+        self.shortcut_seek_back_secondary.setEnabled(has_secondary)
+        self.shortcut_seek_fwd_secondary.setEnabled(has_secondary)
 
     def _show_info_popup(self) -> None:
         try:

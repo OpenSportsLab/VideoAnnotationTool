@@ -955,6 +955,7 @@ def test_menu_bar_contains_file_data_edit_view_help_menus(window):
     assert menu_names[:5] == ["File", "Data", "Edit", "View", "Help"]
     assert hasattr(window, "action_hf_download")
     assert hasattr(window, "action_hf_upload")
+    assert window.action_settings.text() == "Settings…"
     assert window.action_hf_upload.isEnabled() is False
     assert window.viewer_layout_actions[window.center_panel.viewer_layout()].isChecked() is True
 

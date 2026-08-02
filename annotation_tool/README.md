@@ -86,6 +86,9 @@ Localization and Dense Description tables show resolvable annotations as `YYYY-M
 - Mutation contract: push history only on effective diff (no-op edits do not add stack entries).
 - Media routing/business decisions are centralized in `MediaController`.
 - UI modules remain presentation-focused.
+- Application media-control preferences use `QSettings`, are parsed by
+  `media_control_settings.py`, and are applied/wired only by `MainWindow`;
+  they never enter `DatasetExplorerController.dataset_json`.
 
 ## Key Tests
 - Architecture/wiring: `tests/gui/test_signal_decoupling_contract.py`
