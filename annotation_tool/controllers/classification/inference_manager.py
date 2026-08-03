@@ -98,7 +98,9 @@ class InferenceWorker(QThread):
         self.video_path = video_path
         self.label_map = label_map or {}
         self.target_head = str(target_head or "action")
-        self.pretrained_model = str(pretrained_model or "jeetv/snpro-classification-mvit")
+        self.pretrained_model = str(
+            pretrained_model or "OpenSportsLab/OSL-cls-action-mvitv2"
+        )
 
     def _map_label(self, raw_label: str) -> str:
         raw_label = str(raw_label or "").strip()
@@ -234,7 +236,9 @@ class BatchInferenceWorker(QThread):
         self.json_path = json_path
         self.target_clips = list(target_clips or [])
         self.label_map = dict(label_map or {})
-        self.pretrained_model = str(pretrained_model or "jeetv/snpro-classification-mvit")
+        self.pretrained_model = str(
+            pretrained_model or "OpenSportsLab/OSL-cls-action-mvitv2"
+        )
 
     def _map_label(self, raw_label):
         raw_label = str(raw_label or "").strip()
@@ -331,7 +335,7 @@ class InferenceManager(QObject):
     SETTINGS_ORG = "OpenSportsLab"
     SETTINGS_APP = "VideoAnnotationTool"
     SETTINGS_MODEL_KEY = "classification/last_inference_model"
-    DEFAULT_MODEL = "jeetv/snpro-classification-mvit"
+    DEFAULT_MODEL = "OpenSportsLab/OSL-cls-action-mvitv2"
 
     def __init__(self, classification_controller):
         super().__init__()

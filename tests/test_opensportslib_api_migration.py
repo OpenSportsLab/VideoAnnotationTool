@@ -249,7 +249,7 @@ def test_localization_worker_forwards_explicit_legacy_checkpoint_trust(
         start_ms=0,
         end_ms=0,
         config_path=str(config_path),
-        model_id="jeetv/snpro-snbas-2024",
+        model_id="OpenSportsLab/OSL-loc-snbas-2025-e2e",
         head_name="ball_action",
         labels=["pass"],
         input_fps=25.0,

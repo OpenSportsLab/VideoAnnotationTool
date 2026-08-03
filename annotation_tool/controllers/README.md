@@ -17,7 +17,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `media_controller.py`: grouped media playback, UTC alignment, synchronization, and mute routing.
 - `media/`: internal playback backends used by `MediaController` (`video`, `frames_npy`, `tracking_parquet`).
 - `welcome_controller.py`: welcome-page routing.
-- `hf_transfer_controller.py`: threaded Hugging Face download/upload orchestration for GUI menu actions.
+- `hf_transfer_controller.py`: threaded Hugging Face dataset transfer and local-model cache orchestration for GUI actions.
 - `inference_controller.py`: canonical local/remote model discovery, execution,
   progress, cancellation, and worker lifecycle owner.
 - `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`: mode controllers.
@@ -92,6 +92,11 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 ### `HfTransferController`
 - `start_download(...)`: execute Hugging Face dataset download in a worker thread.
 - `start_upload(...)`: execute Hugging Face dataset upload from local dataset JSON inputs in a worker thread.
+- `start_model_import(...)`: inspect and cache one OpenSportsLib model repository
+  through `_HfModelWorker`. Its started/progress/completed/failed/cancelled
+  signals are routed by `MainWindow` to the active Settings draft; Settings
+  widgets never hold the controller. `shutdown()` interrupts and waits for all
+  dataset and model workers.
 - Emits start/progress/completion/failure signals for UI wiring in `main_window.py`.
 
 ### `InferenceController`
@@ -130,14 +135,24 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   item-to-sample mapping, cancels both active jobs and all waiting jobs on
   generation change, discards missing sample targets, and never routes
   predictions through the current selection.
-- Fresh settings expose `jeetv/snpro-classification-mvit` and
-  `jeetv/snpro-snbas-2024` as the default local registry. Their canonical
-  definitions live in `inference_settings.default_local_models()`; local
-  discovery deduplicates configured overrides by model ID.
-- Only the canonical `jeetv/snpro-snbas-2024` weights opt into OpenSportsLib's
-  `trusted_legacy=True` checkpoint loading. The flag travels through
-  `ModelDescriptor` to `LocInferenceWorker`; changing the configured weights
-  disables it so custom artifacts retain safe deserialization.
+- The local registry is authoritative and may be empty; local discovery never
+  injects built-in model descriptors. The three curated OpenSportsLab IDs live
+  only in `KNOWN_HF_LOCAL_MODEL_IDS` as editable import-dialog suggestions. An
+  explicit Hugging Face import pins cache paths and hidden
+  repository/revision/checkpoint metadata in the draft registry.
+  `RETIRED_LOCAL_MODEL_IDS` filters the two legacy `jeetv` defaults from older
+  persisted settings during registry loading. `_is_obsolete_seeded_model()`
+  also removes former OpenSportsLab seed rows while preserving explicit imports
+  whose weights point into the Hugging Face cache.
+- `hf_model_import.resolve_hf_local_model()` performs deterministic repository
+  inspection, configuration/task validation, checkpoint selection, cache
+  downloads, and cancellation checks. The request-scoped `force_download`
+  option is forwarded to both `hf_hub_download` calls and is not persisted as
+  model metadata. Only the two exact official
+  localization repositories in `TRUSTED_LEGACY_HF_MODEL_IDS` may carry
+  `trusted_legacy=True` through `ModelDescriptor` to `LocInferenceWorker`.
+  Registry serialization revalidates that allowlist and revokes trust after a
+  relevant manual edit.
 - Local adapters call public OpenSportsLib task classes. Missing native
   Description/Dense APIs are advertised as unavailable rather than emulated.
 - Remote execution resolves shared assets or resumable uploads, submits an

@@ -1,8 +1,10 @@
+import json
 import os
 import threading
 
 import pytest
 from PyQt6.QtGui import QAction
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QAbstractItemView, QPushButton
 
 from controllers.classification import ClassificationEditorController
@@ -11,6 +13,7 @@ from controllers.description import DescEditorController
 from controllers.inference_controller import InferenceController
 from controllers.localization import LocalizationEditorController
 from controllers.question_answer import QAEditorController
+from inference_settings import LOCAL_MODELS_KEY
 from inference_types import (
     InferenceInput,
     InferenceItem,
@@ -23,7 +26,7 @@ from inference_types import (
 )
 from ui.dense_description import DenseAnnotationPanel
 from ui.description import DescriptionAnnotationPanel
-from ui.dialogs import ApplicationSettingsDialog, InferenceRunDialog
+from ui.dialogs import ApplicationSettingsDialog, HfLocalModelDialog, InferenceRunDialog
 from ui.classification import ClassificationAnnotationPanel
 from ui.localization import LocalizationAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
@@ -130,14 +133,205 @@ def test_remote_setup_controls_are_settings_only_and_follow_enablement(qtbot):
 
 
 @pytest.mark.gui
-def test_fresh_settings_show_known_working_local_model_defaults(qtbot):
+def test_fresh_settings_registry_is_empty(qtbot):
     dialog = ApplicationSettingsDialog("2,4", "1,5")
     qtbot.addWidget(dialog)
     payload = dialog.inference_payload()
-    assert [(model["task"], model["id"]) for model in payload["local_models"]] == [
-        ("classification", "jeetv/snpro-classification-mvit"),
-        ("localization", "jeetv/snpro-snbas-2024"),
+    assert payload["local_models"] == []
+    dialog._append_local_model({
+        "task": "classification",
+        "id": "custom/model",
+        "display_name": "Custom",
+        "config_path": "/tmp/config.yaml",
+    })
+    dialog._restore_defaults()
+    assert dialog.inference_payload()["local_models"] == []
+
+
+@pytest.mark.gui
+def test_hf_model_dialog_has_known_suggestions_and_payload(qtbot):
+    dialog = HfLocalModelDialog()
+    qtbot.addWidget(dialog)
+    suggestions = [
+        dialog.repository_combo.itemText(index)
+        for index in range(dialog.repository_combo.count())
     ]
+    assert suggestions == [
+        "OpenSportsLab/OSL-cls-action-mvitv2",
+        "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+        "OpenSportsLab/OSL-loc-snbas-2023-e2e",
+    ]
+    dialog.repository_combo.setCurrentText("owner/custom-model")
+    dialog.revision_edit.setText("v2")
+    dialog.token_edit.setText("hf_secret")
+    assert not dialog.force_download_checkbox.isChecked()
+    dialog.force_download_checkbox.setChecked(True)
+    assert dialog.payload() == {
+        "repo_id": "owner/custom-model",
+        "revision": "v2",
+        "token": "hf_secret",
+        "force_download": True,
+    }
+
+
+@pytest.mark.gui
+def test_settings_routes_hf_model_intents_as_signals(qtbot):
+    dialog = ApplicationSettingsDialog("2,4", "1,5")
+    qtbot.addWidget(dialog)
+    requested = []
+    cancelled = []
+    dialog.inferenceHfModelRequested.connect(requested.append)
+    dialog.inferenceHfModelCancelRequested.connect(lambda: cancelled.append(True))
+    payload = {
+        "repo_id": "owner/model",
+        "revision": "main",
+        "token": None,
+        "force_download": True,
+    }
+    dialog.inference_setup_widget.huggingFaceModelRequested.emit(payload)
+    dialog.inference_setup_widget.huggingFaceModelCancelRequested.emit()
+    assert requested == [payload]
+    assert cancelled == [True]
+
+
+@pytest.mark.gui
+def test_hf_downloaded_model_upserts_and_preserves_hidden_metadata(qtbot, tmp_path):
+    dialog = ApplicationSettingsDialog("2,4", "1,5")
+    qtbot.addWidget(dialog)
+    dialog.set_hf_model_import_busy(True, "Downloading…")
+    assert not dialog.ok_button.isEnabled()
+    assert not dialog.apply_button.isEnabled()
+    descriptor = {
+        "task": "localization",
+        "id": "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+        "display_name": "Downloaded 2025",
+        "config_path": str(tmp_path / "config.yaml"),
+        "weights": str(tmp_path / "model.pt"),
+        "hf_repo_id": "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+        "hf_revision": "main",
+        "hf_checkpoint_filename": "model.pt",
+        "trusted_legacy": True,
+    }
+    before = dialog.local_model_table.rowCount()
+    dialog.add_downloaded_hf_model(descriptor)
+    assert dialog.ok_button.isEnabled()
+    assert dialog.apply_button.isEnabled()
+    assert dialog.restore_defaults_button.isEnabled()
+    assert dialog.local_model_table.rowCount() == before + 1
+    dialog.add_downloaded_hf_model({**descriptor, "display_name": "Updated 2025"})
+    assert dialog.local_model_table.rowCount() == before + 1
+    model = next(
+        model
+        for model in dialog.inference_payload()["local_models"]
+        if model["id"] == descriptor["id"]
+    )
+    assert model["weights"] == descriptor["weights"]
+    assert model["hf_revision"] == "main"
+    assert model["hf_checkpoint_filename"] == "model.pt"
+    assert model["trusted_legacy"] is True
+
+    row = next(
+        row
+        for row in range(dialog.local_model_table.rowCount())
+        if dialog.local_model_table.item(row, 1).text() == descriptor["id"]
+    )
+    dialog.local_model_table.item(row, 4).setText(str(tmp_path / "other.pt"))
+    edited = next(
+        model
+        for model in dialog.inference_payload()["local_models"]
+        if model["id"] == descriptor["id"]
+    )
+    assert edited["trusted_legacy"] is False
+
+
+@pytest.mark.gui
+def test_arbitrary_hf_model_never_receives_legacy_trust(qtbot, tmp_path):
+    dialog = ApplicationSettingsDialog("2,4", "1,5")
+    qtbot.addWidget(dialog)
+    dialog.add_downloaded_hf_model({
+        "task": "localization",
+        "id": "someone/legacy-model",
+        "display_name": "Untrusted",
+        "config_path": str(tmp_path / "config.yaml"),
+        "weights": str(tmp_path / "model.pt"),
+        "hf_repo_id": "someone/legacy-model",
+        "hf_revision": "main",
+        "hf_checkpoint_filename": "model.pt",
+        "trusted_legacy": True,
+    })
+    model = next(
+        model
+        for model in dialog.inference_payload()["local_models"]
+        if model["id"] == "someone/legacy-model"
+    )
+    assert model["trusted_legacy"] is False
+
+
+@pytest.mark.gui
+def test_downloaded_model_is_staged_until_settings_apply(qtbot, tmp_path):
+    descriptor = {
+        "task": "classification",
+        "id": "owner/downloaded",
+        "display_name": "Downloaded",
+        "config_path": str(tmp_path / "config.yaml"),
+        "weights": str(tmp_path / "model.safetensors"),
+        "hf_repo_id": "owner/downloaded",
+        "hf_revision": "main",
+        "hf_checkpoint_filename": "model.safetensors",
+    }
+    cancelled = ApplicationSettingsDialog("2,4", "1,5")
+    qtbot.addWidget(cancelled)
+    cancelled_payloads = []
+    cancelled.inferenceSettingsApplyRequested.connect(cancelled_payloads.append)
+    cancelled.add_downloaded_hf_model(descriptor)
+    cancelled.reject()
+    assert cancelled_payloads == []
+
+    applied = ApplicationSettingsDialog("2,4", "1,5")
+    qtbot.addWidget(applied)
+    applied_payloads = []
+    applied.inferenceSettingsApplyRequested.connect(applied_payloads.append)
+    applied.add_downloaded_hf_model(descriptor)
+    applied._apply(close_after=False)
+    assert any(
+        model["id"] == "owner/downloaded"
+        for model in applied_payloads[-1]["local_models"]
+    )
+
+
+@pytest.mark.gui
+def test_removing_any_local_model_persists_as_an_empty_registry(qtbot, tmp_path):
+    settings = QSettings(
+        str(tmp_path / "inference.ini"), QSettings.Format.IniFormat
+    )
+    model = {
+        "task": "classification",
+        "id": "OpenSportsLab/OSL-cls-action-mvitv2",
+        "display_name": "OSL Classification",
+        "config_path": str(tmp_path / "config.yaml"),
+        "weights": str(tmp_path / "model.pth.tar"),
+        "hf_repo_id": "OpenSportsLab/OSL-cls-action-mvitv2",
+        "hf_revision": "main",
+    }
+    settings.setValue(LOCAL_MODELS_KEY, json.dumps([model]))
+
+    dialog = ApplicationSettingsDialog("2,4", "1,5", settings=settings)
+    qtbot.addWidget(dialog)
+    assert dialog.local_model_table.rowCount() == 1
+    dialog.local_model_table.selectRow(0)
+    dialog.remove_local_model_button.click()
+    assert dialog.inference_payload()["local_models"] == []
+    dialog.inferenceSettingsApplyRequested.connect(
+        lambda payload: settings.setValue(
+            LOCAL_MODELS_KEY, json.dumps(payload["local_models"])
+        )
+    )
+    dialog._apply(close_after=False)
+
+    reopened = ApplicationSettingsDialog("2,4", "1,5", settings=settings)
+    qtbot.addWidget(reopened)
+    assert reopened.local_model_table.rowCount() == 0
+    assert reopened.inference_payload()["local_models"] == []
 
 
 @pytest.mark.gui

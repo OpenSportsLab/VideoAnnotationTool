@@ -12,16 +12,38 @@ Open **Edit → Settings → Inference**. This is the only inference setup
 surface; the run dialog never edits models, servers, or mappings.
 
 - **Local Models** is an editable registry containing task, model ID, display
-  name, config YAML, and optional weights. Fresh installations start with
-  `jeetv/snpro-classification-mvit` for Classification and
-  `jeetv/snpro-snbas-2024` for Localization, using the checked-in
-  `config.yaml` and `loc_config.yaml` templates. Custom entries are added to
-  these defaults; an entry with the same task and model ID overrides its
-  default definition.
-  The official `jeetv/snpro-snbas-2024` checkpoint uses OpenSportsLib's legacy
-  checkpoint format, so that exact built-in artifact is explicitly trusted for
-  deserialization. Changing its weights value removes the trust opt-in;
-  arbitrary local checkpoints remain safe-by-default.
+  name, config YAML, and optional weights. Fresh installations start with an
+  empty registry. Every model is explicitly added and every row can be removed;
+  saving an empty registry keeps it empty when Settings is reopened. **Restore
+  Defaults** also clears the registry. Retired `jeetv` entries persisted by
+  earlier application versions are filtered during loading. The former
+  automatically seeded OpenSportsLab rows are also migrated out when they still
+  use repository IDs as lazy weights; explicitly imported cache-backed rows are
+  retained.
+- **Add from Hugging Face…** accepts a repository ID, revision, and optional
+  token override. Its editable repository field proposes
+  [`OpenSportsLab/OSL-cls-action-mvitv2`](https://huggingface.co/OpenSportsLab/OSL-cls-action-mvitv2),
+  [`OpenSportsLab/OSL-loc-snbas-2025-e2e`](https://huggingface.co/OpenSportsLab/OSL-loc-snbas-2025-e2e), and
+  [`OpenSportsLab/OSL-loc-snbas-2023-e2e`](https://huggingface.co/OpenSportsLab/OSL-loc-snbas-2023-e2e), but accepts other repositories.
+  Blank tokens use the normal Hugging Face login or `HF_TOKEN`.
+  Enable **Force re-download cached files** to pass `force_download=True` for
+  both files, replacing/re-fetching cached configuration and checkpoint data
+  that may have been modified locally.
+  The application inspects the repository for an OpenSportsLib `config.yaml`,
+  `config.yml`, or `config.json`, selects an unambiguous supported checkpoint,
+  and downloads both into the standard Hugging Face cache in a background
+  worker. Inline progress and **Cancel Download** keep Settings responsive.
+  Cancellation is best-effort during a single Hugging Face file operation, but
+  a cancelled result is never inserted. The downloaded row is only a Settings
+  draft until **Apply** or **OK**; **Cancel** discards it. **Add Manually**
+  remains available for paths already on disk.
+- The official `OpenSportsLab/OSL-loc-snbas-2025-e2e` and
+  `OpenSportsLab/OSL-loc-snbas-2023-e2e` localization checkpoints use a legacy
+  pickle format. Only these exact allowlisted repository identities may opt
+  into OpenSportsLib's unsafe legacy deserialization. Changing a model ID,
+  repository, revision, or weights path revokes that opt-in; arbitrary Hugging
+  Face and manual checkpoints always remain safe-by-default. Only import legacy
+  artifacts from sources you trust.
 - **Remote Server** has an explicit **Enable remote inference** switch. When it
   is off, discovery and execution never construct an HTTP client. When it is
   on, enter the base URL and use **Test Connection**. The client calls

@@ -1,0 +1,19 @@
+{
+  "version": "2.0",
+  "task": "action_classification",
+  "date": "2026-08-03",
+  "metadata": {
+    "type": "predictions"
+  },
+  "data": [
+    {
+      "id": "test_action_0",
+      "labels": {
+        "action": {
+          "label": "Tackling",
+          "confidence": 0.8907222151756287
+        }
+      }
+    }
+  ]
+}

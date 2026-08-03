@@ -19,7 +19,6 @@ from urllib.parse import quote
 import httpx
 
 from inference_settings import (
-    default_local_models,
     load_local_models,
     load_shared_mappings,
     load_upload_manifests,
@@ -84,10 +83,6 @@ class LocalInferenceProvider:
             ),
         }
         descriptors_by_id = {}
-        for raw in default_local_models(self.base_dir):
-            if raw.get("task") == task:
-                descriptor = ModelDescriptor.from_dict(raw)
-                descriptors_by_id[descriptor.id] = descriptor
         if task in defaults:
             descriptor = defaults[task]
             descriptors_by_id[descriptor.id] = descriptor

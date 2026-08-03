@@ -49,6 +49,8 @@ from media_control_settings import (
 )
 from inference_settings import (
     LOCAL_MODELS_KEY,
+    LOCAL_MODELS_SCHEMA_VERSION,
+    LOCAL_MODELS_SCHEMA_VERSION_KEY,
     REMOTE_ENABLED_KEY,
     SERVER_URL_KEY,
     SHARED_MAPPINGS_KEY,
@@ -214,6 +216,7 @@ class VideoAnnotationWindow(QMainWindow):
         self._active_hf_transfer_kind: str | None = None
         self._last_hf_download_payload: dict | None = None
         self._last_hf_upload_payload: dict | None = None
+        self._active_hf_model_settings_dialog = None
         self._last_restored_mute_state: bool | None = None
         self._workspace_visible = False
         self._updating_view_state = False
@@ -751,6 +754,22 @@ class VideoAnnotationWindow(QMainWindow):
         self.hf_transfer_controller.uploadFailed.connect(self._on_hf_upload_failed)
         self.hf_transfer_controller.uploadCancelled.connect(self._on_hf_upload_cancelled)
 
+        self.hf_transfer_controller.modelImportStarted.connect(
+            self._on_hf_model_import_started
+        )
+        self.hf_transfer_controller.modelImportProgress.connect(
+            self._on_hf_model_import_progress
+        )
+        self.hf_transfer_controller.modelImportCompleted.connect(
+            self._on_hf_model_import_completed
+        )
+        self.hf_transfer_controller.modelImportFailed.connect(
+            self._on_hf_model_import_failed
+        )
+        self.hf_transfer_controller.modelImportCancelled.connect(
+            self._on_hf_model_import_cancelled
+        )
+
     def _setup_menu_bar(self) -> None:
         from PyQt6.QtGui import QActionGroup
         menu_bar = self.menuBar()
@@ -1078,11 +1097,20 @@ class VideoAnnotationWindow(QMainWindow):
         dialog.inferenceRemoteCatalogRequested.connect(
             lambda: self._refresh_remote_model_catalog(dialog)
         )
+        dialog.inferenceHfModelRequested.connect(
+            lambda payload: self._start_hf_model_import(dialog, payload)
+        )
+        dialog.inferenceHfModelCancelRequested.connect(
+            self.hf_transfer_controller.cancel_model_import
+        )
         catalog_slot = lambda models: dialog.set_remote_model_catalog(models)
         catalog_error_slot = lambda message: dialog.set_inference_connection_status(message, False)
         self.inference_controller.remoteCatalogDiscovered.connect(catalog_slot)
         self.inference_controller.remoteCatalogFailed.connect(catalog_error_slot)
         dialog.exec()
+        if self._active_hf_model_settings_dialog is dialog:
+            self.hf_transfer_controller.cancel_model_import()
+            self._active_hf_model_settings_dialog = None
         try:
             self.inference_controller.remoteCatalogDiscovered.disconnect(catalog_slot)
             self.inference_controller.remoteCatalogFailed.disconnect(catalog_error_slot)
@@ -1097,7 +1125,58 @@ class VideoAnnotationWindow(QMainWindow):
         settings.setValue(SERVER_URL_KEY, str(payload.get("server_url") or ""))
         settings.setValue(SHARED_MAPPINGS_KEY, json.dumps(list(payload.get("shared_mappings") or [])))
         settings.setValue(LOCAL_MODELS_KEY, json.dumps(list(payload.get("local_models") or [])))
+        settings.setValue(LOCAL_MODELS_SCHEMA_VERSION_KEY, LOCAL_MODELS_SCHEMA_VERSION)
         settings.sync()
+
+    def _start_hf_model_import(self, dialog, payload: dict) -> None:
+        if self._active_hf_model_settings_dialog is not None:
+            dialog.set_hf_model_import_progress(
+                "Another Hugging Face model download is already running."
+            )
+            return
+        self._active_hf_model_settings_dialog = dialog
+        if not self.hf_transfer_controller.start_model_import(payload):
+            self._active_hf_model_settings_dialog = None
+
+    def _on_hf_model_import_started(self, message: str) -> None:
+        dialog = self._active_hf_model_settings_dialog
+        if dialog is not None:
+            dialog.set_hf_model_import_busy(True, message)
+
+    def _on_hf_model_import_progress(
+        self, message: str, current: int, total: int
+    ) -> None:
+        dialog = self._active_hf_model_settings_dialog
+        if dialog is not None:
+            dialog.set_hf_model_import_progress(message, current, total)
+
+    def _on_hf_model_import_completed(self, descriptor: dict) -> None:
+        dialog = self._active_hf_model_settings_dialog
+        self._active_hf_model_settings_dialog = None
+        if dialog is not None:
+            dialog.add_downloaded_hf_model(descriptor)
+        self.show_temp_msg(
+            "Hugging Face Model",
+            f"Added {descriptor.get('id', 'model')} to the Settings draft.",
+            4000,
+        )
+
+    def _on_hf_model_import_failed(self, error: str) -> None:
+        dialog = self._active_hf_model_settings_dialog
+        self._active_hf_model_settings_dialog = None
+        if dialog is not None:
+            dialog.set_hf_model_import_busy(False, f"Model import failed: {error}")
+            QMessageBox.warning(dialog, "Hugging Face Model Import Failed", error)
+        self.show_temp_msg("Hugging Face Model Import Failed", error, 5000)
+
+    def _on_hf_model_import_cancelled(self, message: str) -> None:
+        dialog = self._active_hf_model_settings_dialog
+        self._active_hf_model_settings_dialog = None
+        if dialog is not None:
+            dialog.set_hf_model_import_busy(
+                False, message or "Model download cancelled."
+            )
+        self.show_temp_msg("Hugging Face Model", "Model download cancelled.", 3000)
 
     def _refresh_remote_model_catalog(self, dialog) -> None:
         try:
@@ -1620,6 +1699,14 @@ class VideoAnnotationWindow(QMainWindow):
                 self.show_temp_msg(
                     "Inference Running",
                     "Localization inference is still running. Please wait and close again.",
+                    2500,
+                )
+                event.ignore()
+                return
+            if not self.hf_transfer_controller.shutdown(wait_ms=3000):
+                self.show_temp_msg(
+                    "Hugging Face Transfer",
+                    "A Hugging Face transfer is still stopping. Please wait and close again.",
                     2500,
                 )
                 event.ignore()

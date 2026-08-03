@@ -8,6 +8,7 @@ from opensportslib.tools.hf_transfer import (
     upload_dataset_as_parquet_to_hf,
     upload_dataset_inputs_from_json_to_hf,
 )
+from hf_model_import import HfModelImportCancelled, resolve_hf_local_model
 
 
 class _HfDownloadWorker(QThread):
@@ -83,6 +84,32 @@ class _HfUploadWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class _HfModelWorker(QThread):
+    progress = pyqtSignal(str, int, int)
+    completed = pyqtSignal(dict)
+    failed = pyqtSignal(str)
+    cancelled = pyqtSignal(str)
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        super().__init__()
+        self._config = dict(config)
+
+    def run(self) -> None:
+        try:
+            result = resolve_hf_local_model(
+                self._config,
+                progress_cb=self.progress.emit,
+                is_cancelled=self.isInterruptionRequested,
+            )
+            if self.isInterruptionRequested():
+                raise HfModelImportCancelled("Model download cancelled.")
+            self.completed.emit(result)
+        except HfModelImportCancelled as exc:
+            self.cancelled.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class HfTransferController(QObject):
     downloadStarted = pyqtSignal(str)
     downloadProgress = pyqtSignal(str)
@@ -96,10 +123,17 @@ class HfTransferController(QObject):
     uploadFailed = pyqtSignal(str)
     uploadCancelled = pyqtSignal(str)
 
+    modelImportStarted = pyqtSignal(str)
+    modelImportProgress = pyqtSignal(str, int, int)
+    modelImportCompleted = pyqtSignal(dict)
+    modelImportFailed = pyqtSignal(str)
+    modelImportCancelled = pyqtSignal(str)
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._download_worker: _HfDownloadWorker | None = None
         self._upload_worker: _HfUploadWorker | None = None
+        self._model_worker: _HfModelWorker | None = None
 
     def start_download(self, config: dict[str, Any]) -> bool:
         if self._download_worker and self._download_worker.isRunning():
@@ -135,6 +169,23 @@ class HfTransferController(QObject):
         worker.start()
         return True
 
+    def start_model_import(self, config: dict[str, Any]) -> bool:
+        if self._model_worker and self._model_worker.isRunning():
+            self.modelImportFailed.emit("A Hugging Face model download is already running.")
+            return False
+
+        worker = _HfModelWorker(config)
+        self._model_worker = worker
+        worker.progress.connect(self.modelImportProgress)
+        worker.completed.connect(self.modelImportCompleted)
+        worker.failed.connect(self.modelImportFailed)
+        worker.cancelled.connect(self.modelImportCancelled)
+        worker.finished.connect(lambda: self._cleanup_model_worker(worker))
+
+        self.modelImportStarted.emit("Inspecting Hugging Face model repository…")
+        worker.start()
+        return True
+
     def cancel_download(self) -> bool:
         if not self._download_worker or not self._download_worker.isRunning():
             return False
@@ -149,6 +200,32 @@ class HfTransferController(QObject):
         self._upload_worker.requestInterruption()
         return True
 
+    def cancel_model_import(self) -> bool:
+        if not self._model_worker or not self._model_worker.isRunning():
+            return False
+        self.modelImportProgress.emit(
+            "Cancellation requested for model download…", 0, 0
+        )
+        self._model_worker.requestInterruption()
+        return True
+
+    def shutdown(self, wait_ms: int = 3000) -> bool:
+        workers = [
+            worker
+            for worker in (
+                self._download_worker,
+                self._upload_worker,
+                self._model_worker,
+            )
+            if worker is not None and worker.isRunning()
+        ]
+        for worker in workers:
+            worker.requestInterruption()
+        for worker in workers:
+            if not worker.wait(max(0, int(wait_ms))):
+                return False
+        return True
+
     def _cleanup_download_worker(self, worker: _HfDownloadWorker) -> None:
         if self._download_worker is worker:
             self._download_worker = None
@@ -157,4 +234,9 @@ class HfTransferController(QObject):
     def _cleanup_upload_worker(self, worker: _HfUploadWorker) -> None:
         if self._upload_worker is worker:
             self._upload_worker = None
+        worker.deleteLater()
+
+    def _cleanup_model_worker(self, worker: _HfModelWorker) -> None:
+        if self._model_worker is worker:
+            self._model_worker = None
         worker.deleteLater()

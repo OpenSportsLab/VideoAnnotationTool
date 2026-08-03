@@ -104,7 +104,9 @@ class LocInferenceWorker(QThread):
         self.start_ms = start_ms
         self.end_ms = end_ms
         self.config_path = config_path
-        self.model_id = str(model_id or "jeetv/snpro-snbas-2024")
+        self.model_id = str(
+            model_id or "OpenSportsLab/OSL-loc-snbas-2025-e2e"
+        )
         self.target_head = str(head_name or "ball_action")
         self.labels = [str(label) for label in list(labels or []) if str(label).strip()]
         self.input_fps = float(input_fps or 25.0)

@@ -13,10 +13,33 @@ SERVER_URL_KEY = "inference/server_url"
 REMOTE_ENABLED_KEY = "inference/remote_enabled"
 SHARED_MAPPINGS_KEY = "inference/shared_mappings"
 LOCAL_MODELS_KEY = "inference/local_models"
+LOCAL_MODELS_SCHEMA_VERSION_KEY = "inference/local_models_schema_version"
+LOCAL_MODELS_SCHEMA_VERSION = 2
 UPLOAD_MANIFESTS_KEY = "inference/upload_manifests"
 
 DEFAULT_SERVER_URL = "http://127.0.0.1:5000"
 LAST_MODEL_KEY_PREFIX = "inference/last_model"
+
+KNOWN_HF_LOCAL_MODEL_IDS = (
+    "OpenSportsLab/OSL-cls-action-mvitv2",
+    "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+    "OpenSportsLab/OSL-loc-snbas-2023-e2e",
+)
+
+# Filter defaults persisted by releases that shipped these retired models.
+RETIRED_LOCAL_MODEL_IDS = frozenset(
+    {
+        "jeetv/snpro-classification-mvit",
+        "jeetv/snpro-snbas-2024",
+    }
+)
+
+TRUSTED_LEGACY_HF_MODEL_IDS = frozenset(
+    {
+        "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+        "OpenSportsLab/OSL-loc-snbas-2023-e2e",
+    }
+)
 
 
 def _setting_bool(value, default: bool = False) -> bool:
@@ -61,33 +84,34 @@ def save_last_model_choice(settings, task: str, backend: str, model_id: str) -> 
     settings.sync()
 
 
-def default_local_models(base_dir: str = "") -> list[dict[str, Any]]:
-    """Known-working OpenSportsLib models shown on a fresh installation."""
-    config_root = os.path.abspath(base_dir or os.path.dirname(__file__))
-    return [
-        {
-            "task": "classification",
-            "id": "jeetv/snpro-classification-mvit",
-            "display_name": "SNPro Classification MViT",
-            "config_path": os.path.join(config_root, "config.yaml"),
-            "weights": "jeetv/snpro-classification-mvit",
-            "available": True,
-            "accepted_input_types": ["video"],
-        },
-        {
-            "task": "localization",
-            "id": "jeetv/snpro-snbas-2024",
-            "display_name": "SNBAS 2024 Localization",
-            "config_path": os.path.join(config_root, "loc_config.yaml"),
-            "weights": "jeetv/snpro-snbas-2024",
-            "available": True,
-            "accepted_input_types": ["video"],
-            "supports_time_range": True,
-            # This official legacy-format checkpoint predates PyTorch's safe
-            # weights-only format. Never apply this opt-in to arbitrary models.
-            "trusted_legacy": True,
-        },
-    ]
+def trusted_legacy_allowed(model: dict[str, Any]) -> bool:
+    """Return whether a registry entry may opt into pickle deserialization."""
+    if str(model.get("task") or "") != "localization":
+        return False
+    model_id = str(model.get("id") or "").strip()
+    repo_id = str(model.get("hf_repo_id") or "").strip()
+    revision = str(model.get("hf_revision") or "main").strip() or "main"
+    weights = str(model.get("weights") or "").strip()
+    if not repo_id and weights == model_id:
+        repo_id = model_id
+    return bool(
+        model.get("trusted_legacy", False)
+        and model_id == repo_id
+        and repo_id in TRUSTED_LEGACY_HF_MODEL_IDS
+        and revision == "main"
+    )
+
+
+def _is_obsolete_seeded_model(model: dict[str, Any]) -> bool:
+    """Identify model rows automatically inserted by earlier releases."""
+    model_id = str(model.get("id") or "").strip()
+    weights = str(model.get("weights") or "").strip()
+    repo_id = str(model.get("hf_repo_id") or model_id).strip()
+    return bool(
+        model_id in KNOWN_HF_LOCAL_MODEL_IDS
+        and repo_id == model_id
+        and weights == model_id
+    )
 
 
 def _json_setting(settings, key: str, default):
@@ -132,33 +156,37 @@ def load_mapping_payload(mappings) -> list[dict[str, str]]:
 
 def load_local_models(settings) -> list[dict[str, Any]]:
     configured = _json_setting(settings, LOCAL_MODELS_KEY, [])
-    builtin_by_key = {
-        (model["task"], model["id"]): model for model in default_local_models()
-    }
-    models = [*builtin_by_key.values(), *(configured if isinstance(configured, list) else [])]
+    try:
+        schema_version = int(
+            settings.value(LOCAL_MODELS_SCHEMA_VERSION_KEY, 0)
+            if settings is not None
+            else 0
+        )
+    except (TypeError, ValueError):
+        schema_version = 0
+    migrate_old_seeds = schema_version < LOCAL_MODELS_SCHEMA_VERSION
+    models = configured if isinstance(configured, list) else []
     out_by_key = {}
     for model in models:
         if not isinstance(model, dict):
             continue
         task = str(model.get("task") or "")
         model_id = str(model.get("id") or "").strip()
+        if model_id in RETIRED_LOCAL_MODEL_IDS or (
+            migrate_old_seeds and _is_obsolete_seeded_model(model)
+        ):
+            continue
         if task in INFERENCE_TASKS and model_id:
             key = (task, model_id)
             merged = {**out_by_key.get(key, {}), **dict(model)}
-            builtin = builtin_by_key.get(key)
-            if builtin and "trusted_legacy" not in model:
-                configured_weights = str(merged.get("weights") or model_id)
-                builtin_weights = str(builtin.get("weights") or model_id)
-                merged["trusted_legacy"] = bool(
-                    builtin.get("trusted_legacy", False)
-                    and configured_weights == builtin_weights
-                )
+            merged["trusted_legacy"] = trusted_legacy_allowed(merged)
             out_by_key[key] = merged
     return list(out_by_key.values())
 
 
 def save_local_models(settings, models) -> None:
     settings.setValue(LOCAL_MODELS_KEY, json.dumps(list(models or [])))
+    settings.setValue(LOCAL_MODELS_SCHEMA_VERSION_KEY, LOCAL_MODELS_SCHEMA_VERSION)
 
 
 def load_upload_manifests(settings) -> dict[str, Any]:

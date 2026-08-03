@@ -99,7 +99,7 @@ def test_localization_smart_inference_passes_head_context_to_manager(
     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
     qtbot.wait(50)
 
-    responses = iter([("jeetv/snpro-snbas-2024", True), ("00:00.000", True), ("00:05.000", True)])
+    responses = iter([("OpenSportsLab/OSL-loc-snbas-2025-e2e", True), ("00:00.000", True), ("00:05.000", True)])
     monkeypatch.setattr(
         "controllers.localization.localization_editor_controller.QInputDialog.getText",
         lambda *args, **kwargs: next(responses),
@@ -127,7 +127,7 @@ def test_localization_smart_inference_passes_head_context_to_manager(
     assert captured["video_path"] == window.localization_editor_controller.current_video_path
     assert captured["start_ms"] == 0
     assert captured["end_ms"] == 5000
-    assert captured["model_id"] == "jeetv/snpro-snbas-2024"
+    assert captured["model_id"] == "OpenSportsLab/OSL-loc-snbas-2025-e2e"
     assert captured["head_name"] == "ball_action"
     assert captured["labels"] == window.dataset_explorer_controller.label_definitions["ball_action"]["labels"]
     assert captured["input_fps"] == pytest.approx(25.0)
@@ -157,7 +157,11 @@ def test_localization_inference_loading_cue_toggles_controls(
     controller = window.localization_editor_controller
     panel = window.localization_panel
 
-    monkeypatch.setattr(controller, "_prompt_model_id", lambda: "jeetv/snpro-snbas-2024")
+    monkeypatch.setattr(
+        controller,
+        "_prompt_model_id",
+        lambda: "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+    )
     monkeypatch.setattr(controller, "_prompt_inference_range", lambda: (0, 5000))
 
     captured = {}

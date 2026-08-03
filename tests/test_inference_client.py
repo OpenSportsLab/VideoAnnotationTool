@@ -9,6 +9,8 @@ import pytest
 from inference_providers import LocalInferenceProvider, RemoteInferenceProvider
 from inference_settings import (
     LOCAL_MODELS_KEY,
+    LOCAL_MODELS_SCHEMA_VERSION,
+    LOCAL_MODELS_SCHEMA_VERSION_KEY,
     REMOTE_ENABLED_KEY,
     SHARED_MAPPINGS_KEY,
     UPLOAD_MANIFESTS_KEY,
@@ -162,19 +164,58 @@ def test_local_provider_reports_missing_native_caption_apis():
     assert "DenseDescriptionModel" in dense.unavailable_reason
 
 
-def test_known_working_local_models_are_fresh_install_defaults(tmp_path):
-    models = load_local_models(MemorySettings())
-    assert [(model["task"], model["id"]) for model in models] == [
-        ("classification", "jeetv/snpro-classification-mvit"),
-        ("localization", "jeetv/snpro-snbas-2024"),
-    ]
-    assert models[0]["config_path"].endswith("config.yaml")
-    assert models[1]["config_path"].endswith("loc_config.yaml")
-    assert models[0].get("trusted_legacy", False) is False
-    assert models[1]["trusted_legacy"] is True
+def test_local_model_registry_is_saved_only_and_filters_retired_entries(tmp_path):
+    assert load_local_models(MemorySettings()) == []
+    assert load_local_models(MemorySettings({LOCAL_MODELS_KEY: "[]"})) == []
+    migrated = load_local_models(MemorySettings({
+        LOCAL_MODELS_KEY: json.dumps([
+            {
+                "task": "classification",
+                "id": "jeetv/snpro-classification-mvit",
+                "config_path": "/tmp/old-classification.yaml",
+            },
+            {
+                "task": "localization",
+                "id": "jeetv/snpro-snbas-2024",
+                "config_path": "/tmp/old-localization.yaml",
+            },
+        ])
+    }))
+    assert migrated == []
 
-    # Existing empty profiles are upgraded with the defaults.
-    assert load_local_models(MemorySettings({LOCAL_MODELS_KEY: "[]"})) == models
+    former_opensportslab_defaults = load_local_models(MemorySettings({
+        LOCAL_MODELS_KEY: json.dumps([
+            {
+                "task": "classification",
+                "id": "OpenSportsLab/OSL-cls-action-mvitv2",
+                "config_path": "/app/config.yaml",
+                "weights": "OpenSportsLab/OSL-cls-action-mvitv2",
+                "hf_repo_id": "OpenSportsLab/OSL-cls-action-mvitv2",
+            },
+            {
+                "task": "localization",
+                "id": "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+                "config_path": "/app/loc_config.yaml",
+                "weights": "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+                "hf_repo_id": "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+            },
+        ])
+    }))
+    assert former_opensportslab_defaults == []
+
+    explicitly_saved_lazy_model = load_local_models(MemorySettings({
+        LOCAL_MODELS_SCHEMA_VERSION_KEY: LOCAL_MODELS_SCHEMA_VERSION,
+        LOCAL_MODELS_KEY: json.dumps([{
+            "task": "classification",
+            "id": "OpenSportsLab/OSL-cls-action-mvitv2",
+            "config_path": "/custom/config.yaml",
+            "weights": "OpenSportsLab/OSL-cls-action-mvitv2",
+            "hf_repo_id": "OpenSportsLab/OSL-cls-action-mvitv2",
+        }]),
+    }))
+    assert [model["id"] for model in explicitly_saved_lazy_model] == [
+        "OpenSportsLab/OSL-cls-action-mvitv2"
+    ]
 
     configured = load_local_models(MemorySettings({
         LOCAL_MODELS_KEY: json.dumps([{
@@ -185,15 +226,13 @@ def test_known_working_local_models_are_fresh_install_defaults(tmp_path):
         }])
     }))
     assert [model["id"] for model in configured] == [
-        "jeetv/snpro-classification-mvit",
-        "jeetv/snpro-snbas-2024",
         "custom/classifier",
     ]
 
     untrusted_override = load_local_models(MemorySettings({
         LOCAL_MODELS_KEY: json.dumps([{
             "task": "localization",
-            "id": "jeetv/snpro-snbas-2024",
+            "id": "OpenSportsLab/OSL-loc-snbas-2025-e2e",
             "weights": "someone/other-checkpoint",
         }])
     }))
@@ -202,24 +241,47 @@ def test_known_working_local_models_are_fresh_install_defaults(tmp_path):
     )
     assert localization["trusted_legacy"] is False
 
+    untrusted_revision = load_local_models(MemorySettings({
+        LOCAL_MODELS_KEY: json.dumps([{
+            "task": "localization",
+            "id": "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+            "hf_repo_id": "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+            "hf_revision": "experimental",
+            "trusted_legacy": True,
+        }])
+    }))
+    localization_2025 = next(
+        model
+        for model in untrusted_revision
+        if model["id"] == "OpenSportsLab/OSL-loc-snbas-2025-e2e"
+    )
+    assert localization_2025["trusted_legacy"] is False
 
-def test_default_registry_does_not_duplicate_builtin_local_discovery():
+
+def test_local_discovery_uses_only_explicit_registry_entries(tmp_path):
+    settings = MemorySettings({
+        LOCAL_MODELS_KEY: json.dumps([{
+            "task": "classification",
+            "id": "custom/classifier",
+            "display_name": "Custom",
+            "config_path": str(tmp_path / "config.yaml"),
+        }])
+    })
     provider = LocalInferenceProvider(
-        MemorySettings(),
+        settings,
         base_dir=str(Path(__file__).parents[1] / "annotation_tool"),
     )
     classification = provider.list_models("classification")
     localization = provider.list_models("localization")
-    assert [model.id for model in classification] == ["jeetv/snpro-classification-mvit"]
-    assert [model.id for model in localization] == ["jeetv/snpro-snbas-2024"]
-    assert localization[0].trusted_legacy is True
+    assert [model.id for model in classification] == ["custom/classifier"]
+    assert localization == []
 
 
 def test_local_discovery_never_constructs_http_client(monkeypatch, tmp_path):
     monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("HTTP used for local inference")))
     controller = InferenceController(settings=MemorySettings(), base_dir=str(Path(__file__).parents[1] / "annotation_tool"))
     models = controller.discover_models("classification", "local", {"local_models": []})
-    assert models and models[0].task == "classification"
+    assert models == []
 
 
 def test_combined_catalog_does_not_construct_http_client_when_remote_is_disabled(
@@ -233,7 +295,15 @@ def test_combined_catalog_does_not_construct_http_client_when_remote_is_disabled
         ),
     )
     controller = InferenceController(
-        settings=MemorySettings({REMOTE_ENABLED_KEY: False}),
+        settings=MemorySettings({
+            REMOTE_ENABLED_KEY: False,
+            LOCAL_MODELS_KEY: json.dumps([{
+                "task": "classification",
+                "id": "custom/classifier",
+                "display_name": "Custom",
+                "config_path": "/tmp/custom.yaml",
+            }]),
+        }),
         base_dir=str(Path(__file__).parents[1] / "annotation_tool"),
     )
 

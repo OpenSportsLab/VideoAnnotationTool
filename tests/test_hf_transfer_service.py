@@ -2,7 +2,12 @@ import pytest
 
 import opensportslib.tools.hf_transfer as hf_transfer
 from controllers import hf_transfer_controller
-from controllers.hf_transfer_controller import _HfDownloadWorker, _HfUploadWorker
+from controllers.hf_transfer_controller import (
+    _HfDownloadWorker,
+    _HfModelWorker,
+    _HfUploadWorker,
+)
+from hf_model_import import HfModelImportCancelled
 
 
 def test_controller_module_uses_opensportslib_transfer_functions():
@@ -167,3 +172,45 @@ def test_upload_worker_emits_failed_for_generic_error(monkeypatch):
     worker.run()
 
     assert failed_messages == ["boom"]
+
+
+def test_model_worker_routes_progress_and_completion(monkeypatch):
+    calls = {}
+
+    def fake_resolve(config, *, progress_cb, is_cancelled):
+        calls["config"] = config
+        calls["is_cancelled"] = is_cancelled
+        progress_cb("Downloading model…", 2, 3)
+        return {"id": "owner/model", "task": "classification"}
+
+    monkeypatch.setattr(hf_transfer_controller, "resolve_hf_local_model", fake_resolve)
+    worker = _HfModelWorker(
+        {"repo_id": "owner/model", "revision": "v1", "token": "hf_test"}
+    )
+    progress = []
+    completed = []
+    worker.progress.connect(lambda *args: progress.append(args))
+    worker.completed.connect(completed.append)
+    worker.run()
+    assert calls["config"]["revision"] == "v1"
+    assert callable(calls["is_cancelled"])
+    assert progress == [("Downloading model…", 2, 3)]
+    assert completed == [{"id": "owner/model", "task": "classification"}]
+
+
+def test_model_worker_suppresses_cancelled_completion(monkeypatch):
+    monkeypatch.setattr(
+        hf_transfer_controller,
+        "resolve_hf_local_model",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            HfModelImportCancelled("Model download cancelled.")
+        ),
+    )
+    worker = _HfModelWorker({"repo_id": "owner/model"})
+    cancelled = []
+    completed = []
+    worker.cancelled.connect(cancelled.append)
+    worker.completed.connect(completed.append)
+    worker.run()
+    assert cancelled == ["Model download cancelled."]
+    assert completed == []

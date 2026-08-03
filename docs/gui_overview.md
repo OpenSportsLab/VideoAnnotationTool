@@ -25,7 +25,10 @@ change the two media-control rows immediately when **Apply** or **OK** is used.
 
 The **Inference** settings tab selects Local or Remote execution, configures the
 server URL, tests `/api/v1/capabilities`, maps local directories to advertised
-server storage roots, and manages local model config/weights entries. See
+server storage roots, and manages local model config/weights entries. **Add
+from Hugging Face…** downloads a validated OpenSportsLib configuration and
+checkpoint in the background and stages the cached paths until Settings is
+applied; **Add Manually** retains direct path entry. See
 [Local and Remote Inference](inference.md).
 
 On **Dataset Explorer**, **Samples per page** controls the bounded tree window

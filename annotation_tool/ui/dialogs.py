@@ -19,12 +19,13 @@ from media_control_settings import (
 )
 from inference_settings import (
     DEFAULT_SERVER_URL,
+    KNOWN_HF_LOCAL_MODEL_IDS,
     SERVER_URL_KEY,
-    default_local_models,
     load_local_models,
     load_shared_mappings,
     normalize_server_url,
     remote_inference_enabled,
+    trusted_legacy_allowed,
 )
 from inference_types import INFERENCE_TASKS
 from explorer_settings import (
@@ -35,11 +36,81 @@ from explorer_settings import (
 )
 
 
+class HfLocalModelDialog(QDialog):
+    """Collect the repository coordinates for a local model import."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Local Model from Hugging Face")
+        self.setModal(True)
+        self.resize(520, 180)
+        root = QVBoxLayout(self)
+        form = QFormLayout()
+        root.addLayout(form)
+        self.repository_combo = QComboBox(self)
+        self.repository_combo.setEditable(True)
+        self.repository_combo.addItems(KNOWN_HF_LOCAL_MODEL_IDS)
+        self.repository_combo.setCurrentText("")
+        self.repository_combo.setPlaceholderText("owner/model-name")
+        form.addRow("Repository ID:", self.repository_combo)
+        self.revision_edit = QLineEdit("main", self)
+        form.addRow("Revision:", self.revision_edit)
+        self.token_edit = QLineEdit(self)
+        self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.token_edit.setPlaceholderText("Optional; blank uses HF login or HF_TOKEN")
+        form.addRow("Token override:", self.token_edit)
+        self.force_download_checkbox = QCheckBox(
+            "Force re-download cached files", self
+        )
+        self.force_download_checkbox.setToolTip(
+            "Re-fetch both the configuration and checkpoint even when they "
+            "already exist in the Hugging Face cache."
+        )
+        form.addRow("", self.force_download_checkbox)
+        note = QLabel(
+            "The model configuration and checkpoint will be downloaded into the "
+            "standard Hugging Face cache.",
+            self,
+        )
+        note.setWordWrap(True)
+        root.addWidget(note)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self._validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def payload(self):
+        repo_id = self.repository_combo.currentText().strip()
+        revision = self.revision_edit.text().strip() or "main"
+        if not repo_id or "/" not in repo_id or repo_id.startswith("/") or repo_id.endswith("/"):
+            raise ValueError("Enter a repository ID such as owner/model-name.")
+        return {
+            "repo_id": repo_id,
+            "revision": revision,
+            "token": self.token_edit.text().strip() or None,
+            "force_download": self.force_download_checkbox.isChecked(),
+        }
+
+    def _validate_and_accept(self):
+        try:
+            self.payload()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Hugging Face Model", str(exc))
+            return
+        self.accept()
+
+
 class InferenceSetupWidget(QWidget):
     """Settings-only editor for Local models and one Remote server."""
 
     testConnectionRequested = pyqtSignal(object)
     remoteCatalogRefreshRequested = pyqtSignal(object)
+    huggingFaceModelRequested = pyqtSignal(object)
+    huggingFaceModelCancelRequested = pyqtSignal()
     configurationChanged = pyqtSignal()
 
     def __init__(self, config=None, parent=None):
@@ -55,12 +126,26 @@ class InferenceSetupWidget(QWidget):
         self.local_model_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         local_layout.addWidget(self.local_model_table)
         model_buttons = QHBoxLayout()
-        self.add_local_model_button = QPushButton("Add Local Model", local_group)
+        self.add_local_model_button = QPushButton("Add Manually", local_group)
+        self.add_hf_model_button = QPushButton("Add from Hugging Face…", local_group)
         self.remove_local_model_button = QPushButton("Remove Local Model", local_group)
         model_buttons.addWidget(self.add_local_model_button)
+        model_buttons.addWidget(self.add_hf_model_button)
         model_buttons.addWidget(self.remove_local_model_button)
         model_buttons.addStretch(1)
         local_layout.addLayout(model_buttons)
+        transfer_row = QHBoxLayout()
+        self.local_model_status = QLabel("", local_group)
+        self.local_model_status.setWordWrap(True)
+        self.local_model_progress = QProgressBar(local_group)
+        self.local_model_progress.setRange(0, 3)
+        self.local_model_progress.hide()
+        self.cancel_hf_model_button = QPushButton("Cancel Download", local_group)
+        self.cancel_hf_model_button.hide()
+        transfer_row.addWidget(self.local_model_status, 1)
+        transfer_row.addWidget(self.local_model_progress)
+        transfer_row.addWidget(self.cancel_hf_model_button)
+        local_layout.addLayout(transfer_row)
         root.addWidget(local_group)
 
         self.remote_group = QGroupBox("Remote Server", self)
@@ -112,6 +197,8 @@ class InferenceSetupWidget(QWidget):
         self.add_mapping_button.clicked.connect(lambda: self.append_mapping("", ""))
         self.remove_mapping_button.clicked.connect(lambda: self._remove_row(self.mapping_table))
         self.add_local_model_button.clicked.connect(lambda: self.append_local_model({"task": "classification"}))
+        self.add_hf_model_button.clicked.connect(self._request_hf_model)
+        self.cancel_hf_model_button.clicked.connect(self.huggingFaceModelCancelRequested)
         self.remove_local_model_button.clicked.connect(lambda: self._remove_row(self.local_model_table))
         self.test_button.clicked.connect(lambda: self.testConnectionRequested.emit(self.payload()))
         self.refresh_remote_models_button.clicked.connect(
@@ -164,8 +251,65 @@ class InferenceSetupWidget(QWidget):
     def append_local_model(self, model):
         row = self.local_model_table.rowCount()
         self.local_model_table.insertRow(row)
-        for column, value in enumerate((model.get("task", "classification"), model.get("id", ""), model.get("display_name", ""), model.get("config_path", ""), model.get("weights", ""))):
-            self.local_model_table.setItem(row, column, QTableWidgetItem(str(value or "")))
+        self._set_local_model_row(row, model)
+
+    def _set_local_model_row(self, row, model):
+        values = (
+            model.get("task", "classification"),
+            model.get("id", ""),
+            model.get("display_name", ""),
+            model.get("config_path", ""),
+            model.get("weights", ""),
+        )
+        for column, value in enumerate(values):
+            item = QTableWidgetItem(str(value or ""))
+            if column == 0:
+                metadata = dict(model)
+                metadata["_registry_source"] = {
+                    "id": str(model.get("id") or ""),
+                    "hf_repo_id": str(model.get("hf_repo_id") or ""),
+                    "hf_revision": str(model.get("hf_revision") or ""),
+                    "weights": str(model.get("weights") or ""),
+                }
+                item.setData(Qt.ItemDataRole.UserRole, metadata)
+            self.local_model_table.setItem(row, column, item)
+
+    def upsert_local_model(self, model):
+        key = (str(model.get("task") or ""), str(model.get("id") or ""))
+        for row in range(self.local_model_table.rowCount()):
+            current = tuple(
+                str(self.local_model_table.item(row, col).text() if self.local_model_table.item(row, col) else "").strip()
+                for col in (0, 1)
+            )
+            if current == key:
+                self.local_model_table.removeRow(row)
+                self.local_model_table.insertRow(row)
+                self._set_local_model_row(row, model)
+                self.local_model_table.selectRow(row)
+                return
+        self.append_local_model(model)
+        self.local_model_table.selectRow(self.local_model_table.rowCount() - 1)
+
+    def _request_hf_model(self):
+        dialog = HfLocalModelDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.huggingFaceModelRequested.emit(dialog.payload())
+
+    def set_model_import_busy(self, busy, message=""):
+        busy = bool(busy)
+        self.add_hf_model_button.setEnabled(not busy)
+        self.local_model_progress.setVisible(busy)
+        self.cancel_hf_model_button.setVisible(busy)
+        if message:
+            self.local_model_status.setText(str(message))
+
+    def set_model_import_progress(self, message, current=0, total=0):
+        self.local_model_status.setText(str(message or ""))
+        if total > 0:
+            self.local_model_progress.setRange(0, int(total))
+            self.local_model_progress.setValue(max(0, min(int(current), int(total))))
+        else:
+            self.local_model_progress.setRange(0, 0)
 
     def set_connection_status(self, text, success):
         self.connection_status.setText(str(text or ""))
@@ -194,10 +338,6 @@ class InferenceSetupWidget(QWidget):
             if values[0]:
                 mappings.append({"local_root": os.path.abspath(os.path.expanduser(values[0])), "root_id": values[1]})
         models = []
-        builtin_models = {
-            (str(model.get("task") or ""), str(model.get("id") or "")): model
-            for model in default_local_models()
-        }
         for row in range(self.local_model_table.rowCount()):
             values = [str(self.local_model_table.item(row, col).text() if self.local_model_table.item(row, col) else "").strip() for col in range(5)]
             if not any(values):
@@ -205,7 +345,10 @@ class InferenceSetupWidget(QWidget):
             task, model_id, display_name, config_path, weights = values
             if task not in INFERENCE_TASKS or not model_id or not config_path:
                 raise ValueError("Each local model requires a valid task, model ID, and config YAML path.")
-            model = dict(builtin_models.get((task, model_id), {}))
+            first_item = self.local_model_table.item(row, 0)
+            metadata = first_item.data(Qt.ItemDataRole.UserRole) if first_item else None
+            model = dict(metadata if isinstance(metadata, dict) else {})
+            source = dict(model.pop("_registry_source", {}) or {})
             model.update({
                 "task": task,
                 "id": model_id,
@@ -216,11 +359,16 @@ class InferenceSetupWidget(QWidget):
                 "accepted_input_types": ["video"],
                 "supports_time_range": task in {"localization", "dense_description"},
             })
-            if model.get("trusted_legacy", False):
-                builtin_weights = str(
-                    builtin_models[(task, model_id)].get("weights") or model_id
+            if source and any(
+                (
+                    model_id != source.get("id", ""),
+                    str(model.get("hf_repo_id") or "") != source.get("hf_repo_id", ""),
+                    str(model.get("hf_revision") or "") != source.get("hf_revision", ""),
+                    weights != source.get("weights", ""),
                 )
-                model["trusted_legacy"] = (weights or model_id) == builtin_weights
+            ):
+                model["trusted_legacy"] = False
+            model["trusted_legacy"] = trusted_legacy_allowed(model)
             models.append(model)
         return {
             "remote_enabled": self.remote_enabled_checkbox.isChecked(),
@@ -237,6 +385,8 @@ class ApplicationSettingsDialog(QDialog):
     inferenceSettingsApplyRequested = pyqtSignal(object)
     inferenceTestRequested = pyqtSignal()
     inferenceRemoteCatalogRequested = pyqtSignal()
+    inferenceHfModelRequested = pyqtSignal(object)
+    inferenceHfModelCancelRequested = pyqtSignal()
     explorerPageSizeApplyRequested = pyqtSignal(int)
 
     def __init__(
@@ -339,6 +489,7 @@ class ApplicationSettingsDialog(QDialog):
         self.add_mapping_button = self.inference_setup_widget.add_mapping_button
         self.remove_mapping_button = self.inference_setup_widget.remove_mapping_button
         self.add_local_model_button = self.inference_setup_widget.add_local_model_button
+        self.add_hf_model_button = self.inference_setup_widget.add_hf_model_button
         self.remove_local_model_button = self.inference_setup_widget.remove_local_model_button
 
         tabs.addTab(inference_page, "Inference")
@@ -365,6 +516,12 @@ class ApplicationSettingsDialog(QDialog):
         self.inference_setup_widget.remoteCatalogRefreshRequested.connect(
             lambda _config: self.inferenceRemoteCatalogRequested.emit()
         )
+        self.inference_setup_widget.huggingFaceModelRequested.connect(
+            self.inferenceHfModelRequested
+        )
+        self.inference_setup_widget.huggingFaceModelCancelRequested.connect(
+            self.inferenceHfModelCancelRequested
+        )
 
     def _append_mapping(self, local_root: str, root_id: str):
         self.inference_setup_widget.append_mapping(local_root, root_id)
@@ -388,6 +545,21 @@ class ApplicationSettingsDialog(QDialog):
     def set_remote_model_catalog(self, models):
         self.inference_setup_widget.set_remote_catalog(models)
 
+    def set_hf_model_import_busy(self, busy, message=""):
+        self.inference_setup_widget.set_model_import_busy(busy, message)
+        self.apply_button.setEnabled(not busy)
+        self.ok_button.setEnabled(not busy)
+        self.restore_defaults_button.setEnabled(not busy)
+
+    def set_hf_model_import_progress(self, message, current=0, total=0):
+        self.inference_setup_widget.set_model_import_progress(message, current, total)
+
+    def add_downloaded_hf_model(self, model):
+        self.inference_setup_widget.upsert_local_model(model)
+        self.set_hf_model_import_busy(
+            False, f"Added {model.get('id', 'model')} to this Settings draft."
+        )
+
     def inference_payload(self) -> dict:
         return self.inference_setup_widget.payload()
 
@@ -399,8 +571,6 @@ class ApplicationSettingsDialog(QDialog):
         self.inference_server_url_edit.setText(DEFAULT_SERVER_URL)
         self.shared_mapping_table.setRowCount(0)
         self.local_model_table.setRowCount(0)
-        for model in default_local_models():
-            self._append_local_model(model)
         self.remote_model_table.setRowCount(0)
         self.validation_label.clear()
 
