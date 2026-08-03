@@ -46,17 +46,21 @@ confirming a row keeps the event and removes only the confidence marker.
 
 ## Description
 
-Use `DESC` for one clip-level caption.
+Use `DESC` for one or more ordered clip-level captions.
 
 1. Select a sample and open `DESC`.
-2. Enter or edit the caption text.
-3. Wait for autosave or save the project.
+2. Select a caption from the list, or click **Add Caption**.
+3. Edit its optional variant, language, and caption text.
+4. Wait for autosave or save the project. Use **Delete Caption** to remove the
+   selected row.
 
-The text is stored in `captions[]`. Manual description edits currently write an
-English caption entry with `lang` set to `en`.
+Each row is stored in `captions[]`. New rows start with `lang` set to `en`.
+Editing a row preserves its position and any optional fields not shown by the
+editor. This supports variant sets such as `auto`, `clean`, and `refined`.
 
 **Run Inference…** discovers local or remote captioning models. A returned
-caption remains unchanged while the candidate is reviewed; rejecting is non-mutating.
+caption remains unchanged while the candidate is reviewed. Accepting appends it
+to the caption list; rejecting is non-mutating.
 
 ## Dense Description
 

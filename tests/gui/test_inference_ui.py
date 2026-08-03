@@ -959,7 +959,10 @@ def test_description_smart_result_apply_confirm_and_reject_are_single_mutations(
     assert panel.inference_candidate_label.text() == "Candidate: Predicted"
     controller.confirm_smart_inference()
     assert len(mutations) == 1
-    assert mutations[-1][1] == [{"lang": "en", "text": "Predicted"}]
+    assert mutations[-1][1] == [
+        {"lang": "en", "text": "Manual"},
+        {"lang": "en", "text": "Predicted"},
+    ]
 
     controller.on_selected_sample_changed({
         "id": "sample", "inputs": [{"path": "clip.mp4"}],

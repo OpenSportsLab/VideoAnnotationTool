@@ -150,7 +150,8 @@ active upload.
 
 - Classification shows the proposed label beside its head.
 - Localization and Dense Description show visually distinct pending rows.
-- Description previews the candidate without replacing the editable caption.
+- Description previews the candidate without changing the caption list; acceptance
+  appends a new caption and rejection is non-mutating.
 - Q/A shows a pending answer under the selected or newly entered question.
 
 Predictions remain in session memory until accepted. They do not dirty the

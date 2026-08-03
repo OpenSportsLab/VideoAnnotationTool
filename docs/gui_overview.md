@@ -135,8 +135,9 @@ completion does not switch the active annotation or head tab.
 
 ![Description Interface](assets/description-UI.png)
 
-- Clip-level text editor for captions
-- Autosaves after short idle delay when text changes
+- Ordered caption list with selected-row variant, language, and text editor
+- Add/delete controls and autosave after a short idle delay
+- Existing optional caption metadata is preserved when visible fields change
 
 #### Dense Description (`DENSE`)
 

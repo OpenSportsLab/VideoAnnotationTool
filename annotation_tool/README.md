@@ -77,7 +77,7 @@ Choose **Apply** when the selected frame matches the frozen panes. The tool stor
 For temporal annotations, a valid `timestamp_utc` is authoritative and `position_ms` is a compatibility value projected relative to the resolved sample timeline origin. New or edited annotations write both fields when UTC is available. Save/export promotes legacy `position_ms` annotations when a genuine sample UTC origin can be resolved. Relative-only samples continue to use `position_ms`; malformed timestamps are preserved and fall back to it.
 
 Localization and Dense Description tables show resolvable annotations as `YYYY-MM-DD HH:MM:SS.mmm UTC`. Their Time cells accept ISO-compatible UTC edits; rows without usable UTC retain the relative `MM:SS.mmm` editor.
-- Caption list (Description): `[ { "lang": str, "text": str, ...optional } ]`
+- Caption list (Description): `[ { "variant": str?, "lang": str, "text": str, ...optional } ]`
 - Q/A list: `[ { "question": str, "answers": [str, ...] } ]`
 
 ## Conventions

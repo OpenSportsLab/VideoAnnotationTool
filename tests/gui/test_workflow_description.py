@@ -65,6 +65,151 @@ def test_description_selection_loads_media_and_refreshes_editor(
 
 
 @pytest.mark.gui
+def test_description_multi_caption_list_edits_and_round_trips(
+    window,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    project_json_path = tmp_path / "multi_caption_project.json"
+    project_json_path.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "task": "video_captioning",
+                "dataset_name": "multi_caption",
+                "data": [
+                    {
+                        "id": "clip_1",
+                        "inputs": [{"path": "clip.mp4", "type": "video"}],
+                        "captions": [
+                            {
+                                "lang": "en",
+                                "text": "Automatic caption",
+                                "variant": "auto",
+                                "source": "model-a",
+                            },
+                            {
+                                "lang": "en",
+                                "text": "Clean caption",
+                                "variant": "clean",
+                                "reviewed": True,
+                            },
+                            {"lang": "en", "text": "Refined caption", "variant": "refined"},
+                        ],
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        window.media_controller, "route_media_group", lambda *args, **kwargs: None
+    )
+    assert window.dataset_explorer_controller.open_project_from_path(str(project_json_path))
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
+
+    panel = window.description_panel
+    assert panel.descCaptionsList.count() == 3
+    assert "auto" in panel.descCaptionsList.item(0).text()
+    assert "clean" in panel.descCaptionsList.item(1).text()
+    assert panel.descVariantEdit.text() == "auto"
+    assert panel.descLanguageEdit.text() == "en"
+    assert panel.caption_edit.toPlainText() == "Automatic caption"
+
+    panel.descCaptionsList.setCurrentRow(1)
+    panel.descVariantEdit.setText("edited-clean")
+    panel.descLanguageEdit.setText("fr")
+    panel.caption_edit.setPlainText("Edited clean caption")
+    qtbot.wait(350)
+
+    captions = window.dataset_explorer_controller.dataset_json["data"][0]["captions"]
+    assert [caption["variant"] for caption in captions] == ["auto", "edited-clean", "refined"]
+    assert captions[1]["lang"] == "fr"
+    assert captions[1]["text"] == "Edited clean caption"
+    assert captions[1]["reviewed"] is True
+    assert captions[0]["source"] == "model-a"
+
+    window.dataset_explorer_controller.save_project()
+    saved = json.loads(project_json_path.read_text(encoding="utf-8"))
+    assert saved["data"][0]["captions"] == captions
+
+    window.dataset_explorer_controller.close_project()
+    assert window.dataset_explorer_controller.open_project_from_path(str(project_json_path))
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
+    window.description_panel.descCaptionsList.setCurrentRow(1)
+    assert window.description_panel.descVariantEdit.text() == "edited-clean"
+    assert window.description_panel.descLanguageEdit.text() == "fr"
+    assert window.description_panel.caption_edit.toPlainText() == "Edited clean caption"
+
+
+@pytest.mark.gui
+def test_description_caption_add_delete_and_selection_flush(
+    window, monkeypatch, qtbot, synthetic_project_json
+):
+    project_json_path = synthetic_project_json("description", item_count=2)
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "check_and_close_current_project",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        window.media_controller, "route_media_group", lambda *args, **kwargs: None
+    )
+    assert window.dataset_explorer_controller.open_project_from_path(str(project_json_path))
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
+
+    panel = window.description_panel
+    controller = window.desc_editor_controller
+    undo_before = len(window.dataset_explorer_controller.undo_stack)
+    controller.add_caption()
+    assert panel.descCaptionsList.count() == 2
+    assert panel.get_selected_caption_index() == 1
+    assert len(window.dataset_explorer_controller.undo_stack) == undo_before + 1
+
+    panel.caption_edit.setPlainText("Second caption")
+    panel.descCaptionsList.setCurrentRow(0)
+    captions = window.dataset_explorer_controller.dataset_json["data"][0]["captions"]
+    assert captions[1] == {"lang": "en", "text": "Second caption"}
+
+    panel.descCaptionsList.setCurrentRow(1)
+    undo_before = len(window.dataset_explorer_controller.undo_stack)
+    controller.delete_selected_caption()
+    assert panel.descCaptionsList.count() == 1
+    assert len(window.dataset_explorer_controller.undo_stack) == undo_before + 1
+
+    panel.caption_edit.setPlainText("Flushed before sample switch")
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(1, 0))
+    first_sample = window.dataset_explorer_controller.dataset_json["data"][0]
+    assert first_sample["captions"][0]["text"] == "Flushed before sample switch"
+
+
+@pytest.mark.gui
+def test_description_delete_final_caption_clears_detail_editor(
+    window, monkeypatch, qtbot, synthetic_project_json
+):
+    project_json_path = synthetic_project_json("description")
+    monkeypatch.setattr(
+        window.media_controller, "route_media_group", lambda *args, **kwargs: None
+    )
+    assert window.dataset_explorer_controller.open_project_from_path(str(project_json_path))
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
+
+    assert window.desc_editor_controller.delete_selected_caption() is True
+    panel = window.description_panel
+    assert panel.descCaptionsList.count() == 0
+    assert panel.get_selected_caption_index() == -1
+    assert panel.caption_edit.toPlainText() == ""
+    assert panel.captionDetailWidget.isEnabled() is False
+    assert "captions" not in window.dataset_explorer_controller.dataset_json["data"][0]
+
+
+@pytest.mark.gui
 # Workflow: Selecting a multiview parent routes the full media group while
 # leaving input focus clear.
 def test_description_multiview_parent_selection_loads_group_without_input_focus(

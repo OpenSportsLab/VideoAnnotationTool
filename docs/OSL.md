@@ -297,15 +297,27 @@ same optional `confidence_score` convention as classification.
 
 ### Description
 
-Description annotations live in `captions`. The app writes one English caption
-for manual description edits, but additional caption fields are preserved.
+Description annotations live in the ordered `captions` list. The Description
+editor exposes `variant`, `lang`, and `text`; additional caption fields are
+preserved. New rows default to English.
 
 ```json
 {
   "captions": [
     {
       "lang": "en",
-      "text": "A player receives the pass and shoots from the edge of the box."
+      "text": "The player receives the pass and shoots.",
+      "variant": "auto"
+    },
+    {
+      "lang": "en",
+      "text": "[PLAYER] receives the pass and shoots.",
+      "variant": "clean"
+    },
+    {
+      "lang": "en",
+      "text": "[PLAYER] controls the pass before shooting.",
+      "variant": "refined"
     }
   ]
 }

@@ -21,18 +21,24 @@ class DescEditorController(QObject):
         self.current_sample_id = ""
         self.current_action_path = None
         self._current_sample_snapshot = {}
+        self._selected_caption_index = -1
         self._suspend_autosave = False
         self._active_mode_index = 0
         self._autosave_timer = QTimer(self.description_panel)
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.setInterval(250)
         self._autosave_timer.timeout.connect(self.save_current_annotation)
-        self._pre_smart_captions = None
         self._pending_predictions = {}
 
     def setup_connections(self):
         """Connect Description editor UI signals to controller actions."""
         self.description_panel.captionTextChanged.connect(self._on_caption_text_changed)
+        self.description_panel.captionMetadataChanged.connect(self._on_caption_text_changed)
+        self.description_panel.captionSelectionChanged.connect(
+            self._on_caption_selection_changed
+        )
+        self.description_panel.captionAddRequested.connect(self.add_caption)
+        self.description_panel.captionDeleteRequested.connect(self.delete_selected_caption)
         self.description_panel.inferenceConfirmRequested.connect(self.confirm_smart_inference)
         self.description_panel.inferenceRejectRequested.connect(self.reject_smart_inference)
 
@@ -55,9 +61,10 @@ class DescEditorController(QObject):
         self.current_sample_id = ""
         self.current_action_path = None
         self._current_sample_snapshot = {}
-        self._set_editor_text("")
+        self._selected_caption_index = -1
+        self.description_panel.set_captions([], -1)
+        self._set_editor_fields()
         self.description_panel.set_caption_editor_enabled(False)
-        self._pre_smart_captions = None
         self._pending_predictions.clear()
         self.pendingPredictionsChanged.emit(set())
         self.description_panel.set_smart_inference_state(False)
@@ -66,24 +73,34 @@ class DescEditorController(QObject):
         """
         Refresh Description editor content for selected tree item.
         """
-        self._pre_smart_captions = None
-        if not isinstance(sample, dict):
+        incoming_sample_id = (
+            str(sample.get("id") or "") if isinstance(sample, dict) else ""
+        )
+        if self.current_sample_id and incoming_sample_id != self.current_sample_id:
+            self.save_current_annotation()
+        else:
             self._autosave_timer.stop()
+
+        if not isinstance(sample, dict):
             self.current_sample_id = ""
             self.current_action_path = None
-            self._set_editor_text("")
             self._current_sample_snapshot = {}
+            self._selected_caption_index = -1
+            self.description_panel.set_captions([], -1)
+            self._set_editor_fields()
             self.description_panel.set_caption_editor_enabled(False)
             if self._is_active_mode():
                 self.clearMarkersRequested.emit()
             return
 
-        self.current_sample_id = str(sample.get("id") or "")
+        previous_sample_id = self.current_sample_id
+        self.current_sample_id = incoming_sample_id
         if not self.current_sample_id:
-            self._autosave_timer.stop()
             self.current_action_path = None
-            self._set_editor_text("")
             self._current_sample_snapshot = {}
+            self._selected_caption_index = -1
+            self.description_panel.set_captions([], -1)
+            self._set_editor_fields()
             self.description_panel.set_caption_editor_enabled(False)
             if self._is_active_mode():
                 self.clearMarkersRequested.emit()
@@ -95,13 +112,22 @@ class DescEditorController(QObject):
         if self._is_active_mode():
             self.clearMarkersRequested.emit()
 
-        self._load_and_format_text(sample)
+        preferred_row = (
+            self._selected_caption_index
+            if previous_sample_id == self.current_sample_id
+            else 0
+        )
+        self._load_captions(sample, preferred_row)
         pending = self._pending_predictions.get(self.current_sample_id)
         if pending:
             self.description_panel.set_pending_prediction(pending)
             return
         smart = next(
-            (caption for caption in sample.get("captions", []) if isinstance(caption, dict) and "confidence_score" in caption),
+            (
+                caption
+                for caption in sample.get("captions", [])
+                if isinstance(caption, dict) and "confidence_score" in caption
+            ),
             None,
         )
         self.description_panel.set_smart_inference_state(
@@ -117,7 +143,11 @@ class DescEditorController(QObject):
             captions = item.get("captions")
             candidate = copy.deepcopy(captions[0]) if isinstance(captions, list) and captions else None
             sample_id = str(item.get("sample_id") or "")
-            if not isinstance(candidate, dict) or not sample_id or not str(candidate.get("text") or "").strip():
+            if (
+                not isinstance(candidate, dict)
+                or not sample_id
+                or not str(candidate.get("text") or "").strip()
+            ):
                 continue
             candidate.setdefault("lang", "en")
             candidate["confidence_score"] = float(candidate.get("confidence_score", 1.0) or 0.0)
@@ -133,11 +163,13 @@ class DescEditorController(QObject):
             accepted = copy.deepcopy(pending)
             accepted.pop("confidence_score", None)
             accepted.pop("inference_model_id", None)
-            captions = [accepted]
-            if captions != self._current_sample_snapshot.get("captions", []):
-                self.captionsUpdateRequested.emit(self.current_sample_id, captions)
-                self._current_sample_snapshot["captions"] = copy.deepcopy(captions)
-                self._load_and_format_text(self._current_sample_snapshot)
+            captions = copy.deepcopy(self._current_sample_snapshot.get("captions", []))
+            if not isinstance(captions, list):
+                captions = []
+            captions.append(accepted)
+            self.captionsUpdateRequested.emit(self.current_sample_id, captions)
+            self._current_sample_snapshot["captions"] = copy.deepcopy(captions)
+            self._load_captions(self._current_sample_snapshot, len(captions) - 1)
             self.description_panel.set_pending_prediction(None)
             self.pendingPredictionsChanged.emit(set(self._pending_predictions))
             return
@@ -153,7 +185,7 @@ class DescEditorController(QObject):
             return
         self.captionsUpdateRequested.emit(self.current_sample_id, captions)
         self._current_sample_snapshot["captions"] = copy.deepcopy(captions)
-        self._pre_smart_captions = None
+        self._load_captions(self._current_sample_snapshot, self._selected_caption_index)
         self.description_panel.set_smart_inference_state(False)
 
     def reject_smart_inference(self):
@@ -161,46 +193,47 @@ class DescEditorController(QObject):
             self.description_panel.set_pending_prediction(None)
             self.pendingPredictionsChanged.emit(set(self._pending_predictions))
             return
-        if not self.current_sample_id:
-            return
-        captions = copy.deepcopy(self._pre_smart_captions if self._pre_smart_captions is not None else [])
-        self.captionsUpdateRequested.emit(self.current_sample_id, captions)
-        self._current_sample_snapshot["captions"] = copy.deepcopy(captions)
-        self._pre_smart_captions = None
-        self._load_and_format_text(self._current_sample_snapshot)
+        # Persisted smart captions have no reversible pre-inference snapshot.
+        # Rejecting them must not discard existing caption rows.
         self.description_panel.set_smart_inference_state(False)
 
-    def _load_and_format_text(self, data):
-        """
-        Format text for display.
-        - If captions contain "question", show Q/A blocks.
-        - Otherwise show caption text as-is.
-        - If no captions, fallback to metadata.questions template.
-        """
+    def _load_captions(self, data, preferred_row: int = 0):
         captions = data.get("captions", [])
-        formatted_blocks = []
-
+        if not isinstance(captions, list):
+            captions = []
         if captions:
-            for cap in captions:
-                text = cap.get("text", "")
-                question = cap.get("question", "")
-                if question:
-                    formatted_blocks.append(f'Q: "{question}"\nA: "{text}"')
-                else:
-                    formatted_blocks.append(text)
-            full_text = "\n\n".join(formatted_blocks)
+            selected_row = min(max(int(preferred_row), 0), len(captions) - 1)
         else:
-            metadata = data.get("metadata", {})
-            for question in metadata.get("questions", []):
-                formatted_blocks.append(f'Q: "{question}"\nA: ""')
-            full_text = "\n\n".join(formatted_blocks)
+            selected_row = -1
+        self._selected_caption_index = selected_row
+        self.description_panel.set_captions(captions, selected_row)
+        self._load_selected_caption_fields()
 
-        self._set_editor_text(full_text)
+    def _load_selected_caption_fields(self):
+        captions = self._current_sample_snapshot.get("captions", [])
+        row = self._selected_caption_index
+        caption = (
+            captions[row]
+            if isinstance(captions, list) and 0 <= row < len(captions)
+            else None
+        )
+        if not isinstance(caption, dict):
+            self._set_editor_fields()
+            self.description_panel.set_caption_detail_enabled(False)
+            return
+        self._set_editor_fields(
+            variant=str(caption.get("variant") or ""),
+            lang=str(caption.get("lang") or ""),
+            text=str(caption.get("text") or ""),
+        )
+        self.description_panel.set_caption_detail_enabled(True)
 
-    def _set_editor_text(self, text: str):
+    def _set_editor_fields(self, *, variant: str = "", lang: str = "", text: str = ""):
         self._suspend_autosave = True
         try:
-            self.description_panel.set_caption_text(text)
+            self.description_panel.set_caption_fields(
+                variant=variant, lang=lang, text=text
+            )
         finally:
             self._suspend_autosave = False
 
@@ -213,6 +246,41 @@ class DescEditorController(QObject):
             self.description_panel.set_pending_prediction(None)
         self._autosave_timer.start()
 
+    def _on_caption_selection_changed(self, row: int):
+        row = int(row)
+        if row == self._selected_caption_index:
+            return
+        self.save_current_annotation()
+        self._selected_caption_index = row
+        self._load_selected_caption_fields()
+
+    def add_caption(self):
+        if not self.current_sample_id:
+            return False
+        self.save_current_annotation()
+        captions = copy.deepcopy(self._current_sample_snapshot.get("captions", []))
+        if not isinstance(captions, list):
+            captions = []
+        captions.append({"lang": "en", "text": ""})
+        self.captionsUpdateRequested.emit(self.current_sample_id, copy.deepcopy(captions))
+        self._current_sample_snapshot["captions"] = copy.deepcopy(captions)
+        self._load_captions(self._current_sample_snapshot, len(captions) - 1)
+        return True
+
+    def delete_selected_caption(self):
+        if not self.current_sample_id:
+            return False
+        self.save_current_annotation()
+        captions = copy.deepcopy(self._current_sample_snapshot.get("captions", []))
+        row = self._selected_caption_index
+        if not isinstance(captions, list) or not 0 <= row < len(captions):
+            return False
+        captions.pop(row)
+        self.captionsUpdateRequested.emit(self.current_sample_id, copy.deepcopy(captions))
+        self._current_sample_snapshot["captions"] = copy.deepcopy(captions)
+        self._load_captions(self._current_sample_snapshot, min(row, len(captions) - 1))
+        return True
+
     def save_current_annotation(self):
         """
         Persist current Description editor text into the selected sample captions.
@@ -220,9 +288,29 @@ class DescEditorController(QObject):
         if not self.current_sample_id:
             return False
 
-        text_content = self.description_panel.get_caption_text()
+        self._autosave_timer.stop()
         old_captions = copy.deepcopy(self._current_sample_snapshot.get("captions", []))
-        new_captions = [{"lang": "en", "text": text_content}]
+        row = self._selected_caption_index
+        if not isinstance(old_captions, list) or not 0 <= row < len(old_captions):
+            return False
+        old_caption = old_captions[row]
+        if not isinstance(old_caption, dict):
+            return False
+
+        fields = self.description_panel.get_caption_fields()
+        new_caption = copy.deepcopy(old_caption)
+        variant = str(fields.get("variant") or "").strip()
+        lang = str(fields.get("lang") or "").strip()
+        text = str(fields.get("text") or "")
+        if variant:
+            new_caption["variant"] = variant
+        else:
+            new_caption.pop("variant", None)
+        if lang or "lang" in old_caption:
+            new_caption["lang"] = lang
+        new_caption["text"] = text
+        new_captions = copy.deepcopy(old_captions)
+        new_captions[row] = new_caption
         if old_captions == new_captions:
             return False
 
@@ -231,6 +319,7 @@ class DescEditorController(QObject):
             copy.deepcopy(new_captions),
         )
         self._current_sample_snapshot["captions"] = copy.deepcopy(new_captions)
+        self.description_panel.update_caption_summary(row, new_caption)
         return True
 
     def _is_active_mode(self) -> bool:

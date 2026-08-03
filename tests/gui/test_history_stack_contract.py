@@ -322,6 +322,42 @@ def test_history_contract_description_mutation(window, monkeypatch, qtbot, synth
 
     _assert_mutating_action_creates_single_history_entry(window, qtbot, _edit_caption)
 
+    _assert_mutating_action_creates_single_history_entry(
+        window,
+        qtbot,
+        window.desc_editor_controller.add_caption,
+    )
+
+    def _delete_last_caption():
+        panel = window.description_panel
+        panel.descCaptionsList.setCurrentRow(panel.descCaptionsList.count() - 1)
+        window.desc_editor_controller.delete_selected_caption()
+
+    _assert_mutating_action_creates_single_history_entry(window, qtbot, _delete_last_caption)
+
+    result = InferenceResult(
+        "description-request",
+        "description",
+        "caption-model",
+        ({"sample_id": "clip_1", "captions": [{"lang": "en", "text": "Predicted"}]},),
+    )
+    _assert_non_mutating_action_keeps_history_unchanged(
+        window,
+        qtbot,
+        lambda: window.desc_editor_controller.apply_shared_inference_result(result),
+    )
+    _assert_non_mutating_action_keeps_history_unchanged(
+        window,
+        qtbot,
+        window.desc_editor_controller.reject_smart_inference,
+    )
+    window.desc_editor_controller.apply_shared_inference_result(result)
+    _assert_mutating_action_creates_single_history_entry(
+        window,
+        qtbot,
+        window.desc_editor_controller.confirm_smart_inference,
+    )
+
 
 @pytest.mark.gui
 def test_history_contract_dense_mutations(window, monkeypatch, qtbot, synthetic_project_json):

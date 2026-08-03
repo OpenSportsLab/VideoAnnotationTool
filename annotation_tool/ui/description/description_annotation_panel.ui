@@ -24,15 +24,103 @@
       <string notr="true">font-weight: bold; color: #ccc;</string>
      </property>
      <property name="text">
-      <string>Description / Caption:</string>
+      <string>Captions:</string>
      </property>
     </widget>
    </item>
    <item>
+    <widget class="QListWidget" name="descCaptionsList">
+     <property name="maximumHeight">
+      <number>150</number>
+     </property>
+     <property name="alternatingRowColors">
+      <bool>true</bool>
+     </property>
+     <property name="selectionMode">
+      <enum>QAbstractItemView::SelectionMode::SingleSelection</enum>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="captionActionsLayout">
+     <item>
+      <widget class="QPushButton" name="descAddCaptionBtn">
+       <property name="text">
+        <string>Add Caption</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="descDeleteCaptionBtn">
+       <property name="text">
+        <string>Delete Caption</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QWidget" name="captionDetailWidget" native="true">
+     <layout class="QVBoxLayout" name="captionDetailLayout">
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <item>
+       <layout class="QFormLayout" name="captionMetadataLayout">
+        <item row="0" column="0">
+         <widget class="QLabel" name="descVariantLabel">
+          <property name="text">
+           <string>Variant:</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="QLineEdit" name="descVariantEdit">
+          <property name="placeholderText">
+           <string>Optional variant</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QLabel" name="descLanguageLabel">
+          <property name="text">
+           <string>Language:</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QLineEdit" name="descLanguageEdit">
+          <property name="placeholderText">
+           <string>en</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <widget class="QLabel" name="descTextLabel">
+        <property name="text">
+         <string>Caption:</string>
+        </property>
+       </widget>
+      </item>
+      <item>
     <widget class="QTextEdit" name="descCaptionEdit">
      <property name="placeholderText">
       <string>Type description here...</string>
      </property>
+    </widget>
+      </item>
+     </layout>
     </widget>
    </item>
   </layout>
