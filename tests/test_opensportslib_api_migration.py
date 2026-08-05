@@ -10,11 +10,14 @@ from controllers.localization import loc_inference as localization_inference_mod
 
 def test_classification_inference_helper_uses_class_model_and_weights(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(classification_inference_module, "_cuda_is_available", lambda: False)
     calls = {}
 
     class _FakeClassificationModel:
         def __init__(self, config):
             calls["config"] = config
+            with open(config, encoding="utf-8") as handle:
+                calls["runtime_config"] = yaml.safe_load(handle)
 
         def infer(self, **kwargs):
             calls["infer_kwargs"] = kwargs
@@ -35,7 +38,7 @@ def test_classification_inference_helper_uses_class_model_and_weights(monkeypatc
 
     base_config_path = tmp_path / "base_config.yaml"
     base_config_path.write_text(
-        "SYSTEM:\n  log_dir: ./logs\n  save_dir: ./temp_workspace/checkpoints\n",
+        "SYSTEM:\n  log_dir: ./logs\n  save_dir: ./temp_workspace/checkpoints\n  device: auto\n  GPU: 2\n  gpu_id: 0\n",
         encoding="utf-8",
     )
     temp_data = {"data": [{"id": "sample_1"}]}
@@ -52,8 +55,52 @@ def test_classification_inference_helper_uses_class_model_and_weights(monkeypatc
     assert calls["infer_kwargs"]["use_wandb"] is False
     assert calls["infer_kwargs"]["test_set"].endswith(".json")
     assert "pretrained" not in calls["infer_kwargs"]
+    assert calls["runtime_config"]["SYSTEM"]["device"] == "cpu"
+    assert calls["runtime_config"]["SYSTEM"]["GPU"] == -1
     assert metrics == {}
     assert pred_data["data"][0]["id"] == "sample_1"
+
+
+def test_classification_inference_keeps_auto_device_when_cuda_is_available(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(classification_inference_module, "_cuda_is_available", lambda: True)
+    calls = {}
+
+    class _FakeClassificationModel:
+        def __init__(self, config):
+            with open(config, encoding="utf-8") as handle:
+                calls["runtime_config"] = yaml.safe_load(handle)
+
+        def infer(self, **_kwargs):
+            return {"data": []}
+
+    monkeypatch.setattr(
+        classification_inference_module,
+        "model",
+        types.SimpleNamespace(ClassificationModel=_FakeClassificationModel),
+    )
+    config_path = tmp_path / "classification.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "SYSTEM": {
+                    "device": "auto",
+                    "gpu": {"count": 1, "id": 0},
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    classification_inference_module._run_opensportslib_inference(
+        str(config_path), {"data": []}, "infer", "OpenSportsLab/classifier"
+    )
+
+    assert calls["runtime_config"]["SYSTEM"]["device"] == "auto"
+    assert calls["runtime_config"]["SYSTEM"]["gpu"] == {"count": 1, "id": 0}
 
 
 def test_train_worker_uses_class_model_and_explicit_split_paths(monkeypatch, tmp_path):
@@ -210,6 +257,149 @@ def test_localization_worker_uses_class_model_weights_and_position_fallback(monk
             "confidence_score": 0.75,
         }
     ]
+
+
+def test_localization_runtime_config_falls_back_from_dali_to_opencv_on_cpu(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(localization_inference_module, "_cuda_is_available", lambda: False)
+    monkeypatch.setattr(localization_inference_module, "_dali_is_available", lambda: False)
+    config_path = tmp_path / "loc_config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "dali": True,
+                "DATA": {
+                    "classes": ["pass"],
+                    "test": {
+                        "type": "VideoGameWithDaliVideo",
+                        "dataloader": {"batch_size": 1},
+                    },
+                },
+                "MODEL": {},
+                "SYSTEM": {"device": "auto", "GPU": 4, "gpu_id": 0},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    worker = localization_inference_module.LocInferenceWorker(
+        video_path=str(tmp_path / "clip.mp4"),
+        start_ms=0,
+        end_ms=0,
+        config_path=str(config_path),
+        model_id="OpenSportsLab/localizer",
+        head_name="action",
+        labels=["pass"],
+        input_fps=25.0,
+    )
+
+    runtime_path, _labels = worker._build_runtime_config(
+        str(tmp_path), str(tmp_path / "input.json")
+    )
+    with open(runtime_path, encoding="utf-8") as handle:
+        runtime = yaml.safe_load(handle)
+
+    assert runtime["SYSTEM"]["device"] == "cpu"
+    assert runtime["SYSTEM"]["GPU"] == -1
+    assert runtime["dali"] is False
+    assert runtime["DATA"]["test"]["type"] == "VideoGameWithOpencvVideo"
+
+
+def test_localization_runtime_config_keeps_dali_when_cuda_and_dali_are_available(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(localization_inference_module, "_cuda_is_available", lambda: True)
+    monkeypatch.setattr(localization_inference_module, "_dali_is_available", lambda: True)
+    config_path = tmp_path / "loc_config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "dali": True,
+                "DATA": {
+                    "classes": ["pass"],
+                    "test": {"type": "VideoGameWithDaliVideo", "dataloader": {}},
+                },
+                "MODEL": {},
+                "SYSTEM": {"device": "auto", "GPU": 1, "gpu_id": 0},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    worker = localization_inference_module.LocInferenceWorker(
+        video_path=str(tmp_path / "clip.mp4"),
+        start_ms=0,
+        end_ms=0,
+        config_path=str(config_path),
+        model_id="OpenSportsLab/localizer",
+        head_name="action",
+        labels=["pass"],
+        input_fps=25.0,
+    )
+
+    runtime_path, _labels = worker._build_runtime_config(
+        str(tmp_path), str(tmp_path / "input.json")
+    )
+    with open(runtime_path, encoding="utf-8") as handle:
+        runtime = yaml.safe_load(handle)
+
+    assert runtime["SYSTEM"]["device"] == "auto"
+    assert runtime["dali"] is True
+    assert runtime["DATA"]["test"]["type"] == "VideoGameWithDaliVideo"
+
+
+def test_localization_runtime_config_handles_canonical_dali_config_without_dali(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(localization_inference_module, "_cuda_is_available", lambda: True)
+    monkeypatch.setattr(localization_inference_module, "_dali_is_available", lambda: False)
+    config_path = tmp_path / "loc_config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "VERSION": 2,
+                "DATA": {
+                    "common": {
+                        "runtime": {"loader_backend": "dali"},
+                        "splits": {
+                            "test": {
+                                "type": "VideoGameWithDaliVideo",
+                                "dataloader": {},
+                            }
+                        },
+                    }
+                },
+                "MODEL": {},
+                "SYSTEM": {"device": "auto", "gpu": {"count": 1, "id": 0}},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    worker = localization_inference_module.LocInferenceWorker(
+        video_path=str(tmp_path / "clip.mp4"),
+        start_ms=0,
+        end_ms=0,
+        config_path=str(config_path),
+        model_id="OpenSportsLab/localizer",
+        head_name="action",
+        labels=["pass"],
+        input_fps=25.0,
+    )
+
+    runtime_path, _labels = worker._build_runtime_config(
+        str(tmp_path), str(tmp_path / "input.json")
+    )
+    with open(runtime_path, encoding="utf-8") as handle:
+        runtime = yaml.safe_load(handle)
+
+    assert runtime["SYSTEM"]["device"] == "auto"
+    assert runtime["DATA"]["common"]["runtime"]["loader_backend"] == "opencv"
+    assert (
+        runtime["DATA"]["common"]["splits"]["test"]["type"]
+        == "VideoGameWithOpencvVideo"
+    )
 
 
 def test_localization_worker_forwards_explicit_legacy_checkpoint_trust(

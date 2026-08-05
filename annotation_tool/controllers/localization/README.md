@@ -16,6 +16,10 @@ offset back onto the original sample timeline.
 - Emits schema/event mutation intents to `HistoryManager`.
 - Local/Remote execution is owned by the central `InferenceController`; local
   execution calls OpenSportsLib directly through its provider.
+- Local execution resolves device and loader capabilities in a temporary
+  config. Missing CUDA selects CPU, and CPU or missing DALI changes DALI video
+  datasets to their OpenCV equivalents without editing the registered model
+  config.
 - Emits media seek/marker/toggle intents instead of mutating media widgets directly.
 
 ## Public Surface
@@ -68,6 +72,8 @@ offset back onto the original sample timeline.
 - New, moved, and inferred events write `timestamp_utc` plus `position_ms` when
   a genuine sample origin is available; relative-only samples keep `position_ms`.
 - The shared run dialog supplies head, labels, range, model, and provider details.
+- Runtime fallback supports both legacy (`dali`, `DATA.test.type`) and canonical
+  (`DATA.common.runtime.loader_backend`) OpenSportsLib configuration shapes.
 - Accepting adds a metadata-free event; rejecting is non-mutating. Manual edits invalidate pending rows.
 - Table confidence-cell confirmation prompt supports `Yes` (confirm), `No` (reject), `Cancel` (no-op).
 - Rejecting an inferred row deletes the smart-inferred event row.

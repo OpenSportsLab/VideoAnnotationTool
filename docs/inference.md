@@ -72,6 +72,24 @@ models. Entries are prefixed **Local —** or **Remote —**; selecting one choo
 the provider automatically. Local executes OpenSportsLib directly and never
 contacts the configured server. Remote uses the `/api/v1` API.
 
+Local Classification and Localization resolve their device in a temporary
+per-job configuration; the cached or manually selected model config is never
+edited. An `auto` or CUDA configuration falls back to CPU when CUDA is
+unavailable. For Localization, if CPU is selected or NVIDIA DALI is
+unavailable, DALI dataset types are also replaced with their OpenCV
+equivalents. This permits CPU inference with repositories whose training
+configuration defaults to CUDA or DALI.
+
+Local VQA likewise uses a temporary writable output directory and resolves
+`auto`/CUDA to CPU when necessary. OpenSportsLib 0.3 `answer_text` results are
+normalized into the annotation tool's answer field. X-VARS LoRA repositories
+contain adapters rather than every base artifact: local inference also requires
+the `base_model_videoChatGPT` directory and `14_model.pth.tar`. If the published
+config contains stale absolute paths, place these artifacts beside its local
+`config.yaml` or point a local config copy at them. Missing dependencies are
+reported as `local_model_dependency_missing`; publisher paths such as
+`/home/vorajv` are never used as writable output locations.
+
 The dialog lists only runnable models for the current task. Setup problems are
 reported briefly and corrected in application Settings. It contains runtime
 options only: Classification scope, compatible inputs, language or question
