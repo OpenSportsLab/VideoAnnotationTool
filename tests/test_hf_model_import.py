@@ -1,8 +1,7 @@
 from types import SimpleNamespace
 
-import pytest
-
 import hf_model_import
+import pytest
 from hf_model_import import (
     HfModelImportCancelled,
     parse_opensportslib_task,
@@ -41,6 +40,7 @@ def test_config_selection_prefers_root_and_accepts_one_nested_config():
     [
         ("config.yaml", "TASK: classification\nDATA: {}\nMODEL: {}\n", "classification"),
         ("config.yml", "task: localization\nDATA: {}\nMODEL: {}\n", "localization"),
+        ("config.yaml", "TASK: VQA\nDATA: {}\nMODEL: {}\n", "question_answer"),
         ("config.json", '{"TASK": "question_answer", "DATA": {}, "MODEL": {}}', "question_answer"),
     ],
 )

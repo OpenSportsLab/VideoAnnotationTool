@@ -551,3 +551,15 @@ python tools/download_osl_hf.py \
 done
 done
 ```
+
+
+# Test Inference APIs (local)
+
+```
+python tools/test-inference.py   --task classification   --hf-model OpenSportsLab/OSL-cls-action-mvitv2   --test-set /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-butta.json   --output /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-butta-pred.json --force-download
+python tools/test-inference.py   --task localization   --hf-model OpenSportsLab/OSL-loc-snbas-2025-e2e   --test-set /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-butta.json   --output /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-butta-loc-pred.json --force-download
+python tools/test-inference.py   --task localization   --hf-model OpenSportsLab/OSL-loc-snbas-2025-e2e   --test-set /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-butta.json   --output /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-butta-loc-pred.json --force-download
+python tools/test-inference.py   --task vqa   --hf-model OpenSportsLab/OSL-VQA-XFOUL-XVARS-lora   --test-set /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-butta.json   --question "Is this a foul, and why?"   --output /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-vqa-qwen25-pred.json
+python tools/test-inference.py   --task vqa   --hf-model OpenSportsLab/OSL-VQA-XFOUL-qwen2.5-7B-VL-lora   --test-set /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-butta.json   --question "Is this a foul, and why?"   --output /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-vqa-qwen25-pred.json
+python tools/test-inference.py   --task vqa   --hf-model OpenSportsLab/OSL-VQA-XFOUL-qwen3-8B-VL-lora   --test-set /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-butta.json   --question "Is this a foul, and why?"   --output /Users/giancos/git/VideoAnnotationTool/test_data/MVFouls/test/annotations_test-vqa-qwen25-pred.json
+```

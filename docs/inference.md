@@ -80,6 +80,62 @@ unavailable, DALI dataset types are also replaced with their OpenCV
 equivalents. This permits CPU inference with repositories whose training
 configuration defaults to CUDA or DALI.
 
+For command-line model checks, `tools/test-inference.py` applies the same basic
+principle: it writes a disposable runtime YAML instead of editing the supplied
+or Hugging Face-cached config. The runtime YAML replaces publisher-specific
+test-data, output, and dataloader-worker defaults. The directory containing the
+test JSON is always the data root for relative input paths, and test workers are
+fixed at zero. The config's device and GPU fields are preserved so
+OpenSportsLib dev4 remains the sole device-resolution authority. The tool also
+leaves local-checkpoint authentication to OpenSportsLib and always disables
+W&B for this minimal inference workflow. Every run requires either `--config`
+or `--hf-model`, plus `--output`; batch runs also require `--test-set`.
+
+Instead of passing cached paths explicitly, `--hf-model owner/repository`
+inspects the Hugging Face model repository and downloads its supported
+OpenSportsLib config and checkpoint into the standard Hugging Face cache before
+running inference. `--hf-revision` selects a branch, tag, or commit;
+`--force-download` refreshes both cached artifacts. Private or gated models can
+use `--hf-token`, although `HF_TOKEN` or a saved Hugging Face login avoids
+putting a token in shell history. `--hf-model` cannot be combined with
+`--config` or `--weights`, and the downloaded config task must match `--task`.
+
+For VQA, `--question` is required and is applied to every sample in
+`--test-set`. The script writes a temporary annotation file containing that
+question for each sample, then makes one `VQAModel.infer(test_set=...)` call so
+the model is loaded only once. OpenSportsLib uses the first video input in each
+sample; relative paths are resolved from the directory containing the original
+JSON. Existing answers in the source JSON are not modified on disk.
+
+For example:
+
+```bash
+python tools/test-inference.py \
+  --task classification \
+  --hf-model OpenSportsLab/OSL-cls-action-mvitv2 \
+  --force-download \
+  --test-set /path/to/annotations_test.json \
+  --output /path/to/annotations_test-pred.json
+```
+
+For example, run the Qwen 2.5 VQA adapter with:
+
+```bash
+python tools/test-inference.py \
+  --task vqa \
+  --hf-model OpenSportsLab/OSL-VQA-XFOUL-qwen2.5-7B-VL-lora \
+  --test-set /path/to/annotations_test.json \
+  --question "Is this a foul, and why?" \
+  --output /path/to/annotations_test-vqa-pred.json
+```
+
+The same command supports
+`OpenSportsLab/OSL-VQA-XFOUL-qwen3-8B-VL-lora` and
+`OpenSportsLab/OSL-VQA-XFOUL-XVARS-lora`. The X-VARS adapter additionally
+requires its separately published base Video-ChatGPT bundle and visual encoder
+checkpoint; update a local config or place those artifacts beside its cached
+config as described below.
+
 Local VQA likewise uses a temporary writable output directory and resolves
 `auto`/CUDA to CPU when necessary. OpenSportsLib 0.3 `answer_text` results are
 normalized into the annotation tool's answer field. X-VARS LoRA repositories

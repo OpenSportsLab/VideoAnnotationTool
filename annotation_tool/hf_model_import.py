@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import PurePosixPath
-from typing import Any, Callable
+from typing import Any
 
 import yaml
 from huggingface_hub import HfApi, hf_hub_download
-
 from inference_settings import TRUSTED_LEGACY_HF_MODEL_IDS
 from inference_types import INFERENCE_TASKS
-
 
 CONFIG_FILENAMES = ("config.yaml", "config.yml", "config.json")
 CHECKPOINT_SUFFIXES = (".safetensors", ".pth.tar", ".pth", ".pt", ".bin")
@@ -114,8 +113,10 @@ def parse_opensportslib_task(config_path: str) -> str:
     except Exception as exc:
         raise ValueError(f"Could not parse OpenSportsLib configuration: {exc}") from exc
     if not isinstance(payload, dict):
-        raise ValueError("OpenSportsLib configuration must contain a mapping/object.")
+        raise TypeError("OpenSportsLib configuration must contain a mapping/object.")
     task = str(payload.get("TASK") or payload.get("task") or "").strip().lower()
+    if task == "vqa":
+        task = "question_answer"
     if task not in INFERENCE_TASKS:
         supported = ", ".join(sorted(INFERENCE_TASKS))
         raise ValueError(
@@ -125,7 +126,7 @@ def parse_opensportslib_task(config_path: str) -> str:
     if not isinstance(payload.get("DATA"), dict) or not isinstance(
         payload.get("MODEL"), dict
     ):
-        raise ValueError(
+        raise TypeError(
             "OpenSportsLib configuration must contain DATA and MODEL mappings."
         )
     return task
