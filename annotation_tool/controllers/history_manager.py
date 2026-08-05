@@ -128,7 +128,9 @@ class HistoryManager(QObject):
         if not path:
             return
 
+        sample = self.model.get_sample_by_path(path)
         old_data = copy.deepcopy(self.model.manual_annotations.get(path))
+        old_history_data = old_data if isinstance(sample, dict) and "labels" in sample else None
         normalized_old = old_data if old_data else None
         normalized_new = copy.deepcopy(cleaned) if cleaned else None
         if normalized_old == normalized_new:
@@ -137,7 +139,7 @@ class HistoryManager(QObject):
         self.model.push_undo(
             CmdType.ANNOTATION_CONFIRM,
             path=path,
-            old_data=old_data,
+            old_data=old_history_data,
             new_data=normalized_new,
         )
 
@@ -625,6 +627,22 @@ class HistoryManager(QObject):
 
     def execute_sample_captions_update(self, sample_id: str, captions):
         self.execute_sample_field_update(sample_id, "captions", captions)
+
+    def execute_dense_events_set(self, sample_id: str, events):
+        video_path = self._path_for_sample(sample_id)
+        if not video_path:
+            return
+        normalized = [
+            self._prepare_temporal_event(sample_id, event)
+            for event in list(events or [])
+            if isinstance(event, dict)
+        ]
+        self._sort_events_by_time(normalized)
+        before_json = self.model.snapshot_dataset_json()
+        self.model.dense_description_events[video_path] = normalized
+        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
+            return
+        self._emit_post_mutation(touched_paths=[video_path])
 
     def execute_qa_answers_update(self, sample_id: str, answers):
         if not sample_id:

@@ -19,6 +19,7 @@ MODE_TO_TAB_INDEX = {
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Replaced by the unified inference dialog coverage in test_inference_ui.py")
 def test_batch_range_lists_are_populated_only_when_controls_open(
     window,
     monkeypatch,
@@ -334,6 +335,7 @@ def test_classification_clear_workspace_resets_state(
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Legacy persisted-prediction workflow was replaced by transient review")
 def test_classification_smart_inference_persists_confidence_and_confirm_strips_it(
     window,
     monkeypatch,
@@ -395,6 +397,7 @@ def test_classification_smart_inference_persists_confidence_and_confirm_strips_i
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Legacy mode-specific inference manager was removed")
 def test_classification_inference_loading_cue_toggles_controls(
     window,
     monkeypatch,
@@ -435,6 +438,7 @@ def test_classification_inference_loading_cue_toggles_controls(
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Cancellation is covered by the shared inference coordinator tests")
 def test_classification_inference_cancel_dispatches_to_manager(
     window,
     monkeypatch,
@@ -470,6 +474,7 @@ def test_classification_inference_cancel_dispatches_to_manager(
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Legacy persisted smart annotations were replaced by transient predictions")
 def test_classification_clear_smart_restores_manual_or_removes_label_when_no_manual(
     window,
     monkeypatch,
@@ -537,6 +542,7 @@ def test_classification_clear_smart_restores_manual_or_removes_label_when_no_man
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Unknown-label mapping is covered by unified pending-result tests")
 def test_classification_unknown_prediction_label_mapping_applies_selected_label(
     window,
     monkeypatch,

@@ -22,7 +22,7 @@ Use `CLS` for clip-level labels.
 
 Effective manual changes are saved immediately into the sample's `labels`
 object. Single-label heads write `{"label": "..."}` and multi-label heads write
-`{"labels": [...]}`. Smart predictions add `confidence_score` until confirmed or
+`{"labels": [...]}`. Model predictions remain transient until accepted and
 rejected.
 
 ## Localization
@@ -41,19 +41,26 @@ sample has an absolute origin, they also contain an authoritative
 that instant can be resolved, and otherwise displays relative `MM:SS.mmm`.
 Double-click a UTC Time cell to enter an ISO-compatible value, including `Z` or
 a timezone offset; the app normalizes it to UTC and updates `position_ms` for
-seeking. Smart inference can add predicted rows with `confidence_score`;
+seeking. Inference displays transient confidence-bearing rows;
 confirming a row keeps the event and removes only the confidence marker.
 
 ## Description
 
-Use `DESC` for one clip-level caption.
+Use `DESC` for one or more ordered clip-level captions.
 
 1. Select a sample and open `DESC`.
-2. Enter or edit the caption text.
-3. Wait for autosave or save the project.
+2. Select a caption from the list, or click **Add Caption**.
+3. Edit its optional variant, language, and caption text.
+4. Wait for autosave or save the project. Use **Delete Caption** to remove the
+   selected row.
 
-The text is stored in `captions[]`. Manual description edits currently write an
-English caption entry with `lang` set to `en`.
+Each row is stored in `captions[]`. New rows start with `lang` set to `en`.
+Editing a row preserves its position and any optional fields not shown by the
+editor. This supports variant sets such as `auto`, `clean`, and `refined`.
+
+**Run Inference…** discovers local or remote captioning models. A returned
+caption remains unchanged while the candidate is reviewed. Accepting appends it
+to the caption list; rejecting is non-mutating.
 
 ## Dense Description
 
@@ -72,6 +79,9 @@ Localization, while row selection and media seeking continue to use the
 projected `position_ms`. Relative-only samples keep the existing relative-time
 editor.
 
+Dense inference appends smart rows. Select a predicted row to confirm it as a
+manual description or reject it. Models may advertise time-range support.
+
 ## Question/Answer
 
 Use `Q/A` for grouped questions and one or more answers per question.
@@ -84,3 +94,7 @@ Use `Q/A` for grouped questions and one or more answers per question.
 
 Answers are stored as grouped `answers[]` entries with `question` and
 `answers[]`. The app does not write a top-level `questions` bank.
+
+Select a question and use **Run Inference…** to run VQA. An unconfirmed
+answer carries confidence/model metadata; confirming it converts it to the
+normal answer string. See [Local and Remote Inference](inference.md).

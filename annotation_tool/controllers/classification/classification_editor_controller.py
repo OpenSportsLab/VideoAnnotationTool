@@ -1,11 +1,8 @@
 import copy
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
-from utils import natural_sort_key
-
-from .inference_manager import InferenceManager
 from .train_manager import TrainManager
 
 
@@ -26,6 +23,8 @@ class ClassificationEditorController(QObject):
     schemaHeadRemoveRequested = pyqtSignal(str)
     schemaLabelAddRequested = pyqtSignal(str, str)
     schemaLabelRemoveRequested = pyqtSignal(str, str)
+    inferenceRunRequested = pyqtSignal(str, object)
+    pendingPredictionsChanged = pyqtSignal(object)
 
     def __init__(self, classification_panel):
         super().__init__()
@@ -33,7 +32,6 @@ class ClassificationEditorController(QObject):
         self._active_mode_index = 0
         self._action_items_cache = []
         self._action_path_by_sample_id = {}
-        self._batch_action_list_dirty = True
         self._schema_definitions = {}
         self._preferred_head = None
 
@@ -42,8 +40,8 @@ class ClassificationEditorController(QObject):
         self._current_sample_snapshot = {}
 
         # Helper services remain separate, but are now owned by this controller.
-        self.inference_manager = InferenceManager(self)
         self.train_manager = TrainManager(self)
+        self._pending_predictions = {}
 
     # ---------------------------------------------------------------------
     # Lifecycle / Wiring
@@ -55,31 +53,69 @@ class ClassificationEditorController(QObject):
         self.classification_panel.head_rename_requested.connect(self.handle_rename_label_head)
         self.classification_panel.head_delete_requested.connect(self.handle_remove_label_head)
         self.classification_panel.head_selected.connect(self._on_head_selected)
-        self.classification_panel.head_smart_infer_requested.connect(self.inference_manager.start_head_inference)
         self.classification_panel.head_smart_confirm_requested.connect(self.confirm_smart_annotation_head)
         self.classification_panel.head_smart_reject_requested.connect(self.reject_smart_annotation_head)
-        self.classification_panel.confirm_infer_requested.connect(self.save_manual_annotation)
-        self.classification_panel.inferenceCancelRequested.connect(self._on_inference_cancel_requested)
-        self.classification_panel.batch_controls_opened.connect(self.sync_batch_inference_dropdowns)
+        self.classification_panel.acceptAllPredictionsRequested.connect(self.accept_all_predictions)
+        self.classification_panel.rejectAllPredictionsRequested.connect(self.reject_all_predictions)
+
+    def request_inference(self):
+        if not self.current_sample_id:
+            QMessageBox.warning(self.classification_panel, "Inference", "Please select a sample first.")
+            return
+        head = self.classification_panel.get_current_head() or self._preferred_head or "action"
+        self.inferenceRunRequested.emit("classification", {"head": str(head)})
+
+    def apply_shared_inference_result(self, result, context=None):
+        default_head = str((context or {}).get("head") or "action")
+        for item in result.items:
+            labels = item.get("labels", {})
+            sample_id = str(item.get("sample_id") or "")
+            if not isinstance(labels, dict) or not sample_id:
+                continue
+            for head, raw in labels.items():
+                payload = raw if isinstance(raw, dict) else {"label": raw}
+                label = str(payload.get("label") or "")
+                if not label:
+                    continue
+                target_head = str(head or default_head)
+                options = [str(value) for value in self._schema_definitions.get(target_head, {}).get("labels", [])]
+                if options and label not in options:
+                    mapped, ok = QInputDialog.getItem(
+                        self.classification_panel,
+                        "Map Predicted Label",
+                        f"Map '{label}' to:",
+                        ["<Skip Prediction>", *options],
+                        0,
+                        False,
+                    )
+                    if not ok or mapped == "<Skip Prediction>":
+                        continue
+                    label = str(mapped)
+                self._pending_predictions[(sample_id, target_head)] = {
+                    "label": label,
+                    "confidence_score": float(payload.get("confidence_score", payload.get("confidence", 1.0)) or 0.0),
+                    "inference_model_id": result.model_id,
+                }
+        self._display_pending_predictions()
 
     def on_mode_changed(self, index: int):
         self._active_mode_index = index
 
     def shutdown_background_tasks(self, wait_ms: int = 2500) -> bool:
-        return self.inference_manager.shutdown_threads(wait_ms=wait_ms)
+        return True
 
     def reset_ui(self):
         self.classification_panel.clear_dynamic_labels()
         self.classification_panel.manual_box.setEnabled(False)
         self._action_items_cache = []
         self._action_path_by_sample_id = {}
-        self._batch_action_list_dirty = True
-        self.classification_panel.update_action_list([])
         self.current_sample_id = ""
         self.current_action_path = None
         self._current_sample_snapshot = {}
         self._preferred_head = None
         self.classification_panel.reset_smart_inference()
+        self._pending_predictions.clear()
+        self.pendingPredictionsChanged.emit(set())
         self.classification_panel.reset_train_ui()
 
     def setup_dynamic_ui(self):
@@ -95,20 +131,8 @@ class ClassificationEditorController(QObject):
         self.setup_dynamic_ui()
         self.display_manual_annotation()
 
-    def sync_batch_inference_dropdowns(self):
-        if not self._batch_action_list_dirty:
-            return
-        sorted_list = sorted(
-            list(self._action_items_cache or []),
-            key=lambda data: natural_sort_key(data.get("name", "")),
-        )
-        action_names = [data.get("name", "") for data in sorted_list if data.get("name")]
-        self.classification_panel.update_action_list(action_names)
-        self._batch_action_list_dirty = False
-
     def on_action_items_changed(self, action_items: list):
         self._action_items_cache = list(action_items or [])
-        self._batch_action_list_dirty = True
         self._action_path_by_sample_id = {}
         for item in self._action_items_cache:
             if not isinstance(item, dict):
@@ -140,7 +164,9 @@ class ClassificationEditorController(QObject):
             # Manual annotations now persist immediately on value changes.
             group.value_changed.connect(self._on_manual_label_value_changed)
 
-    def _on_manual_label_value_changed(self, *_args):
+    def _on_manual_label_value_changed(self, head=None, *_args):
+        if head:
+            self._pending_predictions.pop((self.current_sample_id, str(head)), None)
         self.save_manual_annotation(show_feedback=False)
 
     # ---------------------------------------------------------------------
@@ -169,19 +195,61 @@ class ClassificationEditorController(QObject):
         self.current_action_path = path
         self._current_sample_snapshot = copy.deepcopy(sample)
         self.display_manual_annotation()
+        self._display_pending_predictions()
         self.classification_panel.manual_box.setEnabled(True)
 
     # ---------------------------------------------------------------------
     # Classification Annotation + Schema
     # ---------------------------------------------------------------------
     def confirm_smart_annotation_as_manual(self):
-        self.inference_manager.confirm_smart_annotation_as_manual()
+        self.accept_all_predictions()
 
     def confirm_smart_annotation_head(self, head: str):
-        self.inference_manager.confirm_smart_annotation_for_head(head)
+        pending = self._pending_predictions.pop((self.current_sample_id, str(head)), None)
+        if not pending:
+            return
+        values = self._manual_payload_to_panel(self._current_sample_snapshot.get("labels")) or {}
+        definition = self._schema_definitions.get(str(head), {})
+        values[str(head)] = [pending["label"]] if definition.get("type") == "multi_label" else pending["label"]
+        self.save_manual_annotation(values, show_feedback=True)
+        self.classification_panel.set_head_smart_state(head, "", 0.0, False)
+        self._display_pending_predictions()
 
     def reject_smart_annotation_head(self, head: str):
-        self.inference_manager.reject_smart_annotation_for_head(head)
+        if self._pending_predictions.pop((self.current_sample_id, str(head)), None) is not None:
+            self.display_manual_annotation()
+            self._display_pending_predictions()
+
+    def accept_all_predictions(self):
+        keys = [key for key in self._pending_predictions if key[0] == self.current_sample_id]
+        if not keys:
+            return
+        values = self._manual_payload_to_panel(self._current_sample_snapshot.get("labels")) or {}
+        for _sample_id, head in keys:
+            pending = self._pending_predictions.pop((_sample_id, head))
+            definition = self._schema_definitions.get(head, {})
+            values[head] = [pending["label"]] if definition.get("type") == "multi_label" else pending["label"]
+        self.save_manual_annotation(values, show_feedback=True)
+        self.display_manual_annotation()
+        self._display_pending_predictions()
+
+    def reject_all_predictions(self):
+        for key in [key for key in self._pending_predictions if key[0] == self.current_sample_id]:
+            self._pending_predictions.pop(key, None)
+        self.display_manual_annotation()
+        self._display_pending_predictions()
+
+    def _display_pending_predictions(self):
+        count = 0
+        for (sample_id, head), pending in self._pending_predictions.items():
+            if sample_id != self.current_sample_id:
+                continue
+            count += 1
+            self.classification_panel.set_head_smart_state(
+                head, pending["label"], pending["confidence_score"], True
+            )
+        self.classification_panel.set_bulk_prediction_actions_visible(count > 1)
+        self.pendingPredictionsChanged.emit({sample_id for sample_id, _head in self._pending_predictions})
 
     def _on_head_selected(self, head: str):
         self._preferred_head = str(head or "") or None
@@ -215,13 +283,10 @@ class ClassificationEditorController(QObject):
         self.classification_panel.clear_selection()
 
     def clear_current_smart_annotation(self):
-        self.inference_manager.clear_current_smart_annotation()
+        self.reject_all_predictions()
 
     def _on_inference_cancel_requested(self):
-        if not self.inference_manager.cancel_active_inference():
-            self._emit_status("Inference", "No classification inference is running.", 1200)
-            return
-        self._emit_status("Inference", "Classification inference cancelled.", 1200)
+        self._emit_status("Inference", "Use the status-bar task to cancel inference.", 1200)
 
     def display_manual_annotation(self):
         data = self._manual_payload_to_panel(self._current_sample_snapshot.get("labels"))

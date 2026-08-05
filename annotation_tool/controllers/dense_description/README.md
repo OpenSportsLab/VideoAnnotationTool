@@ -3,6 +3,9 @@
 ## Role
 Owns Dense Description mode behavior for timestamped text event CRUD and marker/table synchronization.
 
+Shared inference appends deduplicated smart dense captions. Applying a batch or
+confirming/rejecting a selected prediction uses one set-style history mutation.
+
 ## Architecture Context
 - `DenseEditorController` is selection-driven and consumes selected sample payloads.
 - Constructor takes only the dense panel object.

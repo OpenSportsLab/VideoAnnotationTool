@@ -1,7 +1,11 @@
 # Description Controller
 
 ## Role
-Owns Description mode editor behavior for sample-level captions.
+Owns Description mode list/detail editor behavior for ordered sample-level captions.
+
+Shared inference remains transient during review. Confirm appends the candidate
+without inference metadata; reject is non-mutating. Existing captions are never
+replaced by inference acceptance.
 
 ## Architecture Context
 - `DescEditorController` is selection-driven and operates on the selected sample payload.
@@ -24,18 +28,23 @@ Owns Description mode editor behavior for sample-level captions.
 - `on_selected_sample_changed(sample)`
   - Loads selected sample and populates editor text.
 - `save_current_annotation()`
-  - Converts editor text into `captions` payload and emits update if changed.
+  - Merges selected-row `variant`, `lang`, and `text` changes into a copied full
+    caption list, preserving unknown keys and emitting only on an effective diff.
+- `add_caption()` / `delete_selected_caption()`
+  - Mutate caption-list structure through the same whole-list request signal.
 - `reset_ui()`
   - Clears current context and disables panel state.
 
 ## Business Rules
 - Autosave debounce is 250 ms.
+- Pending edits are flushed before row/sample switches and structural actions.
 - No selected sample => no save.
 - No effective captions diff => no mutation signal.
 - Description flow emits caption-only updates (`captions` field).
+- Caption order and unexposed caption keys are preserved.
 
 ## Conventions
-- Keep parsing/formatting local to controller.
+- Keep list selection and draft merging local to controller.
 - Use signals for all persistence side effects.
 - Do not own dataset create/load/save/filter/remove behavior.
 - Keep controller-panel boundary clean: use `DescriptionAnnotationPanel` API (`set_caption_text`, `get_caption_text`, `set_caption_editor_enabled`).

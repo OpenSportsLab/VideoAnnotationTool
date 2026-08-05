@@ -1,10 +1,12 @@
 import os
+from urllib.parse import urlparse
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QRadioButton, QTreeView, QDialogButtonBox,
     QAbstractItemView, QGroupBox, QFormLayout, QLineEdit, QHBoxLayout,
     QFrame, QListWidget, QComboBox, QPushButton, QLabel, QProgressBar,
     QMessageBox, QWidget, QListWidgetItem, QStyle, QButtonGroup, QScrollArea,
-    QFileDialog, QCheckBox, QSizePolicy, QSpinBox, QTabWidget
+    QFileDialog, QCheckBox, QSizePolicy, QSpinBox, QTabWidget, QTableWidget,
+    QTableWidgetItem, QHeaderView, QPlainTextEdit
 )
 from PyQt6.QtCore import QDir, Qt, QSize, QSettings, pyqtSignal
 from PyQt6.QtGui import QFileSystemModel, QIcon
@@ -15,6 +17,17 @@ from media_control_settings import (
     parse_playback_factors,
     parse_seek_intervals,
 )
+from inference_settings import (
+    DEFAULT_SERVER_URL,
+    KNOWN_HF_LOCAL_MODEL_IDS,
+    SERVER_URL_KEY,
+    load_local_models,
+    load_shared_mappings,
+    normalize_server_url,
+    remote_inference_enabled,
+    trusted_legacy_allowed,
+)
+from inference_types import INFERENCE_TASKS
 from explorer_settings import (
     DEFAULT_EXPLORER_PAGE_SIZE,
     MAX_EXPLORER_PAGE_SIZE,
@@ -23,10 +36,357 @@ from explorer_settings import (
 )
 
 
+class HfLocalModelDialog(QDialog):
+    """Collect the repository coordinates for a local model import."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Local Model from Hugging Face")
+        self.setModal(True)
+        self.resize(520, 180)
+        root = QVBoxLayout(self)
+        form = QFormLayout()
+        root.addLayout(form)
+        self.repository_combo = QComboBox(self)
+        self.repository_combo.setEditable(True)
+        self.repository_combo.addItems(KNOWN_HF_LOCAL_MODEL_IDS)
+        self.repository_combo.setCurrentText("")
+        self.repository_combo.setPlaceholderText("owner/model-name")
+        form.addRow("Repository ID:", self.repository_combo)
+        self.revision_edit = QLineEdit("main", self)
+        form.addRow("Revision:", self.revision_edit)
+        self.token_edit = QLineEdit(self)
+        self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.token_edit.setPlaceholderText("Optional; blank uses HF login or HF_TOKEN")
+        form.addRow("Token override:", self.token_edit)
+        self.force_download_checkbox = QCheckBox(
+            "Force re-download cached files", self
+        )
+        self.force_download_checkbox.setToolTip(
+            "Re-fetch both the configuration and checkpoint even when they "
+            "already exist in the Hugging Face cache."
+        )
+        form.addRow("", self.force_download_checkbox)
+        note = QLabel(
+            "The model configuration and checkpoint will be downloaded into the "
+            "standard Hugging Face cache.",
+            self,
+        )
+        note.setWordWrap(True)
+        root.addWidget(note)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self._validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def payload(self):
+        repo_id = self.repository_combo.currentText().strip()
+        revision = self.revision_edit.text().strip() or "main"
+        if not repo_id or "/" not in repo_id or repo_id.startswith("/") or repo_id.endswith("/"):
+            raise ValueError("Enter a repository ID such as owner/model-name.")
+        return {
+            "repo_id": repo_id,
+            "revision": revision,
+            "token": self.token_edit.text().strip() or None,
+            "force_download": self.force_download_checkbox.isChecked(),
+        }
+
+    def _validate_and_accept(self):
+        try:
+            self.payload()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Hugging Face Model", str(exc))
+            return
+        self.accept()
+
+
+class InferenceSetupWidget(QWidget):
+    """Settings-only editor for Local models and one Remote server."""
+
+    testConnectionRequested = pyqtSignal(object)
+    remoteCatalogRefreshRequested = pyqtSignal(object)
+    huggingFaceModelRequested = pyqtSignal(object)
+    huggingFaceModelCancelRequested = pyqtSignal()
+    configurationChanged = pyqtSignal()
+
+    def __init__(self, config=None, parent=None):
+        super().__init__(parent)
+        config = dict(config or {})
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        local_group = QGroupBox("Local Models", self)
+        local_layout = QVBoxLayout(local_group)
+        self.local_model_table = QTableWidget(0, 5, local_group)
+        self.local_model_table.setHorizontalHeaderLabels(["Task", "Model ID", "Display name", "Config YAML", "Weights"])
+        self.local_model_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        local_layout.addWidget(self.local_model_table)
+        model_buttons = QHBoxLayout()
+        self.add_local_model_button = QPushButton("Add Manually", local_group)
+        self.add_hf_model_button = QPushButton("Add from Hugging Face…", local_group)
+        self.remove_local_model_button = QPushButton("Remove Local Model", local_group)
+        model_buttons.addWidget(self.add_local_model_button)
+        model_buttons.addWidget(self.add_hf_model_button)
+        model_buttons.addWidget(self.remove_local_model_button)
+        model_buttons.addStretch(1)
+        local_layout.addLayout(model_buttons)
+        transfer_row = QHBoxLayout()
+        self.local_model_status = QLabel("", local_group)
+        self.local_model_status.setWordWrap(True)
+        self.local_model_progress = QProgressBar(local_group)
+        self.local_model_progress.setRange(0, 3)
+        self.local_model_progress.hide()
+        self.cancel_hf_model_button = QPushButton("Cancel Download", local_group)
+        self.cancel_hf_model_button.hide()
+        transfer_row.addWidget(self.local_model_status, 1)
+        transfer_row.addWidget(self.local_model_progress)
+        transfer_row.addWidget(self.cancel_hf_model_button)
+        local_layout.addLayout(transfer_row)
+        root.addWidget(local_group)
+
+        self.remote_group = QGroupBox("Remote Server", self)
+        remote_layout = QVBoxLayout(self.remote_group)
+        self.remote_enabled_checkbox = QCheckBox("Enable remote inference", self.remote_group)
+        self.remote_enabled_checkbox.setChecked(bool(config.get("remote_enabled", False)))
+        remote_layout.addWidget(self.remote_enabled_checkbox)
+        remote_form = QFormLayout()
+        remote_layout.addLayout(remote_form)
+        server_row = QWidget(self.remote_group)
+        server_layout = QHBoxLayout(server_row)
+        server_layout.setContentsMargins(0, 0, 0, 0)
+        self.server_url_edit = QLineEdit(str(config.get("server_url") or DEFAULT_SERVER_URL), server_row)
+        self.test_button = QPushButton("Test Connection", server_row)
+        self.refresh_remote_models_button = QPushButton("Refresh Models", server_row)
+        server_layout.addWidget(self.server_url_edit, 1)
+        server_layout.addWidget(self.test_button)
+        server_layout.addWidget(self.refresh_remote_models_button)
+        remote_form.addRow("Server URL:", server_row)
+        self.connection_status = QLabel("", self.remote_group)
+        self.connection_status.setWordWrap(True)
+        remote_layout.addWidget(self.connection_status)
+
+        remote_layout.addWidget(QLabel("Discovered remote models", self.remote_group))
+        self.remote_model_table = QTableWidget(0, 3, self.remote_group)
+        self.remote_model_table.setHorizontalHeaderLabels(["Task", "Model ID", "Display name"])
+        self.remote_model_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.remote_model_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        remote_layout.addWidget(self.remote_model_table)
+
+        remote_layout.addWidget(QLabel("Shared storage mappings", self.remote_group))
+        self.mapping_table = QTableWidget(0, 2, self.remote_group)
+        self.mapping_table.setHorizontalHeaderLabels(["Local directory", "Server root ID"])
+        self.mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        remote_layout.addWidget(self.mapping_table)
+        mapping_buttons = QHBoxLayout()
+        self.add_mapping_button = QPushButton("Add Mapping", self.remote_group)
+        self.remove_mapping_button = QPushButton("Remove Mapping", self.remote_group)
+        mapping_buttons.addWidget(self.add_mapping_button)
+        mapping_buttons.addWidget(self.remove_mapping_button)
+        mapping_buttons.addStretch(1)
+        remote_layout.addLayout(mapping_buttons)
+        root.addWidget(self.remote_group)
+
+        for mapping in config.get("shared_mappings", []):
+            self.append_mapping(mapping.get("local_root", ""), mapping.get("root_id", ""))
+        for model in config.get("local_models", []):
+            self.append_local_model(model)
+        self.add_mapping_button.clicked.connect(lambda: self.append_mapping("", ""))
+        self.remove_mapping_button.clicked.connect(lambda: self._remove_row(self.mapping_table))
+        self.add_local_model_button.clicked.connect(lambda: self.append_local_model({"task": "classification"}))
+        self.add_hf_model_button.clicked.connect(self._request_hf_model)
+        self.cancel_hf_model_button.clicked.connect(self.huggingFaceModelCancelRequested)
+        self.remove_local_model_button.clicked.connect(lambda: self._remove_row(self.local_model_table))
+        self.test_button.clicked.connect(lambda: self.testConnectionRequested.emit(self.payload()))
+        self.refresh_remote_models_button.clicked.connect(
+            lambda: self.remoteCatalogRefreshRequested.emit(self.payload())
+        )
+        self.remote_enabled_checkbox.toggled.connect(self._update_remote_enabled)
+        self.server_url_edit.textChanged.connect(self._changed)
+        self._update_remote_enabled()
+        self._changed()
+
+    def _update_remote_enabled(self, *_args):
+        enabled = self.remote_enabled_checkbox.isChecked()
+        for widget in (
+            self.server_url_edit,
+            self.test_button,
+            self.refresh_remote_models_button,
+            self.remote_model_table,
+            self.mapping_table,
+            self.add_mapping_button,
+            self.remove_mapping_button,
+        ):
+            widget.setEnabled(enabled)
+        self._changed()
+
+    def _changed(self, *_args):
+        self.connection_status.clear()
+        parsed = urlparse(self.server_url_edit.text().strip())
+        if (
+            self.remote_enabled_checkbox.isChecked()
+            and parsed.scheme == "http"
+            and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        ):
+            self.set_connection_status(
+                "Warning: this endpoint is unauthenticated and unencrypted; use only a trusted network.",
+                False,
+            )
+        self.configurationChanged.emit()
+
+    @staticmethod
+    def _remove_row(table):
+        if table.currentRow() >= 0:
+            table.removeRow(table.currentRow())
+
+    def append_mapping(self, local_root, root_id):
+        row = self.mapping_table.rowCount()
+        self.mapping_table.insertRow(row)
+        self.mapping_table.setItem(row, 0, QTableWidgetItem(str(local_root or "")))
+        self.mapping_table.setItem(row, 1, QTableWidgetItem(str(root_id or "")))
+
+    def append_local_model(self, model):
+        row = self.local_model_table.rowCount()
+        self.local_model_table.insertRow(row)
+        self._set_local_model_row(row, model)
+
+    def _set_local_model_row(self, row, model):
+        values = (
+            model.get("task", "classification"),
+            model.get("id", ""),
+            model.get("display_name", ""),
+            model.get("config_path", ""),
+            model.get("weights", ""),
+        )
+        for column, value in enumerate(values):
+            item = QTableWidgetItem(str(value or ""))
+            if column == 0:
+                metadata = dict(model)
+                metadata["_registry_source"] = {
+                    "id": str(model.get("id") or ""),
+                    "hf_repo_id": str(model.get("hf_repo_id") or ""),
+                    "hf_revision": str(model.get("hf_revision") or ""),
+                    "weights": str(model.get("weights") or ""),
+                }
+                item.setData(Qt.ItemDataRole.UserRole, metadata)
+            self.local_model_table.setItem(row, column, item)
+
+    def upsert_local_model(self, model):
+        key = (str(model.get("task") or ""), str(model.get("id") or ""))
+        for row in range(self.local_model_table.rowCount()):
+            current = tuple(
+                str(self.local_model_table.item(row, col).text() if self.local_model_table.item(row, col) else "").strip()
+                for col in (0, 1)
+            )
+            if current == key:
+                self.local_model_table.removeRow(row)
+                self.local_model_table.insertRow(row)
+                self._set_local_model_row(row, model)
+                self.local_model_table.selectRow(row)
+                return
+        self.append_local_model(model)
+        self.local_model_table.selectRow(self.local_model_table.rowCount() - 1)
+
+    def _request_hf_model(self):
+        dialog = HfLocalModelDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.huggingFaceModelRequested.emit(dialog.payload())
+
+    def set_model_import_busy(self, busy, message=""):
+        busy = bool(busy)
+        self.add_hf_model_button.setEnabled(not busy)
+        self.local_model_progress.setVisible(busy)
+        self.cancel_hf_model_button.setVisible(busy)
+        if message:
+            self.local_model_status.setText(str(message))
+
+    def set_model_import_progress(self, message, current=0, total=0):
+        self.local_model_status.setText(str(message or ""))
+        if total > 0:
+            self.local_model_progress.setRange(0, int(total))
+            self.local_model_progress.setValue(max(0, min(int(current), int(total))))
+        else:
+            self.local_model_progress.setRange(0, 0)
+
+    def set_connection_status(self, text, success):
+        self.connection_status.setText(str(text or ""))
+        self.connection_status.setStyleSheet("color: #27823b;" if success else "color: #d9534f;")
+
+    def set_remote_catalog(self, models):
+        self.remote_model_table.setRowCount(0)
+        for descriptor in list(models or []):
+            row = self.remote_model_table.rowCount()
+            self.remote_model_table.insertRow(row)
+            for column, value in enumerate(
+                (descriptor.task, descriptor.id, descriptor.display_name)
+            ):
+                self.remote_model_table.setItem(row, column, QTableWidgetItem(str(value)))
+        self.set_connection_status(
+            f"Discovered {self.remote_model_table.rowCount()} remote model(s).",
+            True,
+        )
+
+    def payload(self):
+        mappings = []
+        for row in range(self.mapping_table.rowCount()):
+            values = [str(self.mapping_table.item(row, col).text() if self.mapping_table.item(row, col) else "").strip() for col in range(2)]
+            if bool(values[0]) != bool(values[1]):
+                raise ValueError("Each shared mapping requires both a local directory and server root ID.")
+            if values[0]:
+                mappings.append({"local_root": os.path.abspath(os.path.expanduser(values[0])), "root_id": values[1]})
+        models = []
+        for row in range(self.local_model_table.rowCount()):
+            values = [str(self.local_model_table.item(row, col).text() if self.local_model_table.item(row, col) else "").strip() for col in range(5)]
+            if not any(values):
+                continue
+            task, model_id, display_name, config_path, weights = values
+            if task not in INFERENCE_TASKS or not model_id or not config_path:
+                raise ValueError("Each local model requires a valid task, model ID, and config YAML path.")
+            first_item = self.local_model_table.item(row, 0)
+            metadata = first_item.data(Qt.ItemDataRole.UserRole) if first_item else None
+            model = dict(metadata if isinstance(metadata, dict) else {})
+            source = dict(model.pop("_registry_source", {}) or {})
+            model.update({
+                "task": task,
+                "id": model_id,
+                "display_name": display_name or model_id,
+                "config_path": config_path,
+                "weights": weights,
+                "available": True,
+                "accepted_input_types": ["video"],
+                "supports_time_range": task in {"localization", "dense_description"},
+            })
+            if source and any(
+                (
+                    model_id != source.get("id", ""),
+                    str(model.get("hf_repo_id") or "") != source.get("hf_repo_id", ""),
+                    str(model.get("hf_revision") or "") != source.get("hf_revision", ""),
+                    weights != source.get("weights", ""),
+                )
+            ):
+                model["trusted_legacy"] = False
+            model["trusted_legacy"] = trusted_legacy_allowed(model)
+            models.append(model)
+        return {
+            "remote_enabled": self.remote_enabled_checkbox.isChecked(),
+            "server_url": normalize_server_url(self.server_url_edit.text()),
+            "shared_mappings": mappings,
+            "local_models": models,
+        }
+
+
 class ApplicationSettingsDialog(QDialog):
     """Extensible application settings dialog."""
 
     mediaControlsApplyRequested = pyqtSignal(str, str, object, object)
+    inferenceSettingsApplyRequested = pyqtSignal(object)
+    inferenceTestRequested = pyqtSignal()
+    inferenceRemoteCatalogRequested = pyqtSignal()
+    inferenceHfModelRequested = pyqtSignal(object)
+    inferenceHfModelCancelRequested = pyqtSignal()
     explorerPageSizeApplyRequested = pyqtSignal(int)
 
     def __init__(
@@ -34,6 +394,7 @@ class ApplicationSettingsDialog(QDialog):
         playback_factors: str,
         seek_intervals: str,
         explorer_page_size: int = DEFAULT_EXPLORER_PAGE_SIZE,
+        settings: QSettings | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -106,6 +467,34 @@ class ApplicationSettingsDialog(QDialog):
         explorer_layout.addStretch(1)
         tabs.addTab(explorer_page, "Dataset Explorer")
 
+        self._settings = settings
+        inference_page = QWidget(tabs)
+        inference_layout = QVBoxLayout(inference_page)
+        inference_config = {
+            "remote_enabled": remote_inference_enabled(settings),
+            "server_url": str(settings.value(SERVER_URL_KEY, DEFAULT_SERVER_URL) if settings is not None else DEFAULT_SERVER_URL),
+            "shared_mappings": load_shared_mappings(settings),
+            "local_models": load_local_models(settings),
+        }
+        self.inference_setup_widget = InferenceSetupWidget(inference_config, parent=inference_page)
+        inference_layout.addWidget(self.inference_setup_widget)
+        self.inference_remote_enabled_checkbox = self.inference_setup_widget.remote_enabled_checkbox
+        self.inference_server_url_edit = self.inference_setup_widget.server_url_edit
+        self.inference_test_button = self.inference_setup_widget.test_button
+        self.inference_refresh_models_button = self.inference_setup_widget.refresh_remote_models_button
+        self.inference_connection_status = self.inference_setup_widget.connection_status
+        self.remote_model_table = self.inference_setup_widget.remote_model_table
+        self.shared_mapping_table = self.inference_setup_widget.mapping_table
+        self.local_model_table = self.inference_setup_widget.local_model_table
+        self.add_mapping_button = self.inference_setup_widget.add_mapping_button
+        self.remove_mapping_button = self.inference_setup_widget.remove_mapping_button
+        self.add_local_model_button = self.inference_setup_widget.add_local_model_button
+        self.add_hf_model_button = self.inference_setup_widget.add_hf_model_button
+        self.remove_local_model_button = self.inference_setup_widget.remove_local_model_button
+
+        tabs.addTab(inference_page, "Inference")
+        self.resize(760, 620)
+
         self.buttons = QDialogButtonBox(self)
         self.restore_defaults_button = self.buttons.addButton(
             "Restore Defaults", QDialogButtonBox.ButtonRole.ResetRole
@@ -123,17 +512,73 @@ class ApplicationSettingsDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         self.playback_factors_edit.textChanged.connect(lambda _text: self.validation_label.clear())
         self.seek_intervals_edit.textChanged.connect(lambda _text: self.validation_label.clear())
+        self.inference_setup_widget.testConnectionRequested.connect(lambda _config: self.inferenceTestRequested.emit())
+        self.inference_setup_widget.remoteCatalogRefreshRequested.connect(
+            lambda _config: self.inferenceRemoteCatalogRequested.emit()
+        )
+        self.inference_setup_widget.huggingFaceModelRequested.connect(
+            self.inferenceHfModelRequested
+        )
+        self.inference_setup_widget.huggingFaceModelCancelRequested.connect(
+            self.inferenceHfModelCancelRequested
+        )
+
+    def _append_mapping(self, local_root: str, root_id: str):
+        self.inference_setup_widget.append_mapping(local_root, root_id)
+
+    def _remove_selected_mapping(self):
+        row = self.shared_mapping_table.currentRow()
+        if row >= 0:
+            self.shared_mapping_table.removeRow(row)
+
+    def _append_local_model(self, model: dict):
+        self.inference_setup_widget.append_local_model(model)
+
+    def _remove_selected_local_model(self):
+        row = self.local_model_table.currentRow()
+        if row >= 0:
+            self.local_model_table.removeRow(row)
+
+    def set_inference_connection_status(self, text: str, success: bool):
+        self.inference_setup_widget.set_connection_status(text, success)
+
+    def set_remote_model_catalog(self, models):
+        self.inference_setup_widget.set_remote_catalog(models)
+
+    def set_hf_model_import_busy(self, busy, message=""):
+        self.inference_setup_widget.set_model_import_busy(busy, message)
+        self.apply_button.setEnabled(not busy)
+        self.ok_button.setEnabled(not busy)
+        self.restore_defaults_button.setEnabled(not busy)
+
+    def set_hf_model_import_progress(self, message, current=0, total=0):
+        self.inference_setup_widget.set_model_import_progress(message, current, total)
+
+    def add_downloaded_hf_model(self, model):
+        self.inference_setup_widget.upsert_local_model(model)
+        self.set_hf_model_import_busy(
+            False, f"Added {model.get('id', 'model')} to this Settings draft."
+        )
+
+    def inference_payload(self) -> dict:
+        return self.inference_setup_widget.payload()
 
     def _restore_defaults(self) -> None:
         self.playback_factors_edit.setText(DEFAULT_PLAYBACK_FACTORS)
         self.seek_intervals_edit.setText(DEFAULT_SEEK_INTERVALS)
         self.explorer_page_size_spin.setValue(DEFAULT_EXPLORER_PAGE_SIZE)
+        self.inference_remote_enabled_checkbox.setChecked(False)
+        self.inference_server_url_edit.setText(DEFAULT_SERVER_URL)
+        self.shared_mapping_table.setRowCount(0)
+        self.local_model_table.setRowCount(0)
+        self.remote_model_table.setRowCount(0)
         self.validation_label.clear()
 
     def _apply(self, *, close_after: bool) -> None:
         try:
             factors = parse_playback_factors(self.playback_factors_edit.text())
             intervals = parse_seek_intervals(self.seek_intervals_edit.text())
+            inference_payload = self.inference_payload()
         except ValueError as exc:
             self.validation_label.setText(str(exc))
             return
@@ -147,9 +592,226 @@ class ApplicationSettingsDialog(QDialog):
             factors.values,
             intervals.values,
         )
+        self.inferenceSettingsApplyRequested.emit(inference_payload)
+        parsed_server = urlparse(inference_payload["server_url"])
+        if (
+            inference_payload["remote_enabled"]
+            and parsed_server.scheme == "http"
+            and parsed_server.hostname not in {"127.0.0.1", "localhost", "::1"}
+        ):
+            self.set_inference_connection_status(
+                "Warning: this server is unauthenticated and unencrypted. Use it only on a trusted network.",
+                False,
+            )
         self.explorerPageSizeApplyRequested.emit(self.explorer_page_size_spin.value())
         if close_after:
             self.accept()
+
+
+class InferenceRunDialog(QDialog):
+    """Reusable task-aware model and input selection dialog."""
+
+    refreshModelsRequested = pyqtSignal(str)
+
+    def __init__(
+        self,
+        task: str,
+        inputs: list,
+        context: dict | None = None,
+        *,
+        preferred_model=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.task = str(task)
+        self.inputs = list(inputs or [])
+        self.context = dict(context or {})
+        self.preferred_model = tuple(preferred_model) if preferred_model else None
+        self.setWindowTitle("Run Inference")
+        self.resize(620, 520)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.runtime_form = form
+        layout.addLayout(form)
+
+        model_row = QWidget(self)
+        model_layout = QHBoxLayout(model_row)
+        model_layout.setContentsMargins(0, 0, 0, 0)
+        self.model_combo = QComboBox(model_row)
+        self.refresh_models_button = QPushButton("Refresh", model_row)
+        model_layout.addWidget(self.model_combo, 1)
+        model_layout.addWidget(self.refresh_models_button)
+        form.addRow("Model:", model_row)
+
+        self.start_spin = QSpinBox(self)
+        self.start_spin.setRange(0, 2_147_483_647)
+        self.start_spin.setValue(int(self.context.get("start_ms", 0) or 0))
+        self.end_spin = QSpinBox(self)
+        self.end_spin.setRange(0, 2_147_483_647)
+        self.end_spin.setValue(int(self.context.get("end_ms", 0) or 0))
+        if self.task in {"localization", "dense_description"}:
+            form.addRow("Start (ms):", self.start_spin)
+            form.addRow("End (ms, 0 = end):", self.end_spin)
+            form.setRowVisible(self.start_spin, False)
+            form.setRowVisible(self.end_spin, False)
+
+        self.language_edit = QLineEdit(str(self.context.get("language") or "en"), self)
+        if self.task in {"description", "dense_description"}:
+            form.addRow("Language:", self.language_edit)
+
+        self.question_edit = QPlainTextEdit(self)
+        self.question_edit.setPlainText(str(self.context.get("question") or ""))
+        self.question_edit.setMaximumHeight(90)
+        if self.task == "question_answer":
+            form.addRow("Question:", self.question_edit)
+
+        layout.addWidget(QLabel("Inputs", self))
+        self.input_list = QListWidget(self)
+        for source in self.inputs:
+            label = os.path.basename(str(getattr(source, "path", "") or "")) or str(getattr(source, "path", ""))
+            item = QListWidgetItem(label, self.input_list)
+            item.setData(Qt.ItemDataRole.UserRole, source)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+        layout.addWidget(self.input_list, 1)
+
+        self.availability_label = QLabel("", self)
+        self.availability_label.setWordWrap(True)
+        layout.addWidget(self.availability_label)
+        self.run_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        self.run_buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Run")
+        layout.addWidget(self.run_buttons)
+
+        self.run_buttons.accepted.connect(self._accept_if_valid)
+        self.run_buttons.rejected.connect(self.reject)
+        self.refresh_models_button.clicked.connect(self._request_refresh)
+        self.model_combo.currentIndexChanged.connect(self._update_model_availability)
+
+        self.scope_combo = None
+        if self.task == "classification" and self.context.get("available_batch_sample_ids"):
+            self.scope_combo = QComboBox(self)
+            self.scope_combo.addItem("Current sample", "current")
+            self.scope_combo.addItem("All samples", "all")
+            form.insertRow(1, "Scope:", self.scope_combo)
+            self.scope_combo.currentIndexChanged.connect(self._apply_scope)
+            self._apply_scope()
+
+    def _apply_scope(self, *_args):
+        if self.scope_combo is None:
+            return
+        current_only = self.scope_combo.currentData() == "current"
+        current_id = str(self.context.get("current_sample_id") or "")
+        for index in range(self.input_list.count()):
+            item = self.input_list.item(index)
+            source = item.data(Qt.ItemDataRole.UserRole)
+            sample_id = str(getattr(source, "sample_id", "") or "")
+            item.setCheckState(Qt.CheckState.Checked if not current_only or sample_id == current_id else Qt.CheckState.Unchecked)
+
+    def _request_refresh(self):
+        self.refreshModelsRequested.emit(self.task)
+
+    def set_models(self, choices, warning: str = ""):
+        current = self.model_combo.currentData()
+        previous = current.key if current is not None else self.preferred_model
+        self.model_combo.clear()
+        for choice in list(choices or []):
+            self.model_combo.addItem(choice.display_name, choice)
+        if previous:
+            for index in range(self.model_combo.count()):
+                choice = self.model_combo.itemData(index)
+                if choice is not None and choice.key == tuple(previous):
+                    self.model_combo.setCurrentIndex(index)
+                    break
+        self._catalog_warning = str(warning or "")
+        self._update_model_availability()
+
+    def _update_model_availability(self):
+        choice = self.model_combo.currentData()
+        descriptor = choice.descriptor if choice is not None else None
+        available = descriptor is not None
+        message = getattr(self, "_catalog_warning", "")
+        if descriptor is None:
+            message = "No runnable models are configured for this task. " + message
+        self.availability_label.setText(message)
+        self.run_buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(available)
+        accepted_types = set(descriptor.accepted_input_types) if descriptor is not None else set()
+        for index in range(self.input_list.count()):
+            item = self.input_list.item(index)
+            source = item.data(Qt.ItemDataRole.UserRole)
+            compatible = not accepted_types or getattr(source, "type", "video") in accepted_types
+            flags = item.flags()
+            if compatible:
+                item.setFlags(flags | Qt.ItemFlag.ItemIsEnabled)
+            else:
+                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setFlags(flags & ~Qt.ItemFlag.ItemIsEnabled)
+        supports_range = bool(descriptor is not None and descriptor.supports_time_range)
+        if self.task in {"localization", "dense_description"}:
+            self.runtime_form.setRowVisible(self.start_spin, supports_range)
+            self.runtime_form.setRowVisible(self.end_spin, supports_range)
+
+    def _accept_if_valid(self):
+        selected_inputs = self.selected_inputs()
+        if not selected_inputs:
+            self.availability_label.setText("Select at least one input.")
+            return
+        choice = self.model_combo.currentData()
+        descriptor = choice.descriptor if choice is not None else None
+        is_batch = bool(self.context.get("batch_sample_ids")) or bool(self.scope_combo is not None and self.scope_combo.currentData() == "all")
+        if descriptor is not None and not is_batch:
+            if len(selected_inputs) < descriptor.min_inputs:
+                self.availability_label.setText(f"This model requires at least {descriptor.min_inputs} input(s).")
+                return
+            if descriptor.max_inputs is not None and len(selected_inputs) > descriptor.max_inputs:
+                self.availability_label.setText(f"This model accepts at most {descriptor.max_inputs} input(s).")
+                return
+        elif descriptor is not None and is_batch:
+            counts = {}
+            for source in selected_inputs:
+                sample_id = str(getattr(source, "sample_id", "") or "")
+                counts[sample_id] = counts.get(sample_id, 0) + 1
+            if any(count < descriptor.min_inputs for count in counts.values()):
+                self.availability_label.setText(f"Every sample requires at least {descriptor.min_inputs} input(s).")
+                return
+            if descriptor.max_inputs is not None and any(count > descriptor.max_inputs for count in counts.values()):
+                self.availability_label.setText(f"Every sample accepts at most {descriptor.max_inputs} input(s).")
+                return
+        if self.task == "question_answer" and not self.question_edit.toPlainText().strip():
+            self.availability_label.setText("Enter a question.")
+            return
+        if (
+            descriptor is not None
+            and descriptor.supports_time_range
+            and self.end_spin.value()
+            and self.end_spin.value() <= self.start_spin.value()
+        ):
+            self.availability_label.setText("End time must be greater than start time.")
+            return
+        self.accept()
+
+    def selected_inputs(self):
+        selected = []
+        for index in range(self.input_list.count()):
+            item = self.input_list.item(index)
+            if item.checkState() == Qt.CheckState.Checked:
+                selected.append(item.data(Qt.ItemDataRole.UserRole))
+        return selected
+
+    def payload(self) -> dict:
+        choice = self.model_combo.currentData()
+        supports_range = bool(
+            choice is not None and choice.descriptor.supports_time_range
+        )
+        return {
+            "backend": choice.backend if choice is not None else "",
+            "model_id": choice.descriptor.id if choice is not None else "",
+            "inputs": self.selected_inputs(),
+            "start_ms": self.start_spin.value() if supports_range else 0,
+            "end_ms": self.end_spin.value() if supports_range else 0,
+            "language": self.language_edit.text().strip() or "en",
+            "question": self.question_edit.toPlainText().strip(),
+            "scope": str(self.scope_combo.currentData()) if self.scope_combo is not None else "current",
+        }
 
 class UnsavedChangesDialog(QDialog):
     """Dialog with fixed button order for close-project decisions."""

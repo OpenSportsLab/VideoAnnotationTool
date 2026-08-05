@@ -2,8 +2,10 @@ import os
 
 from PyQt6 import uic
 from PyQt6.QtCore import QAbstractTableModel, QObject, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QMenu, QPushButton, QTableView, QWidget
 
+from ui.inference_review_bar import InferenceReviewBar
 from utils import (
     annotation_utc_datetime,
     format_annotation_utc_display,
@@ -73,6 +75,8 @@ class DenseTableModel(QAbstractTableModel):
     def flags(self, index):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
+        if self._data[index.row()].get("_pending_prediction"):
+            return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         return (
             Qt.ItemFlag.ItemIsEnabled
             | Qt.ItemFlag.ItemIsSelectable
@@ -106,6 +110,11 @@ class DenseTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.UserRole:
             return item
+        if role == Qt.ItemDataRole.BackgroundRole and item.get("_pending_prediction"):
+            return QColor("#fff3bf")
+        if role == Qt.ItemDataRole.ToolTipRole and item.get("_pending_prediction"):
+            score = float(item.get("confidence_score", 0.0) or 0.0) * 100
+            return f"Pending model prediction · {score:.1f}% · {item.get('inference_model_id', '')}"
 
         return None
 
@@ -307,6 +316,10 @@ class DenseAnnotationPanel(QWidget):
     eventDeleted = pyqtSignal(dict)
     eventModified = pyqtSignal(dict, dict)
     updateTimeForSelectedRequested = pyqtSignal(dict)
+    smartConfirmRequested = pyqtSignal()
+    smartRejectRequested = pyqtSignal()
+    smartAcceptAllRequested = pyqtSignal()
+    smartRejectAllRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -325,6 +338,18 @@ class DenseAnnotationPanel(QWidget):
         self.denseConfirmBtn.setProperty("class", "dense_confirm_btn")
 
         self.input_widget = _DenseInputAdapter(submit_btn=self.denseConfirmBtn)
+
+        self.inference_review_bar = InferenceReviewBar(self)
+        self.denseMainLayout.addWidget(self.inference_review_bar)
+        self.confirm_smart_button = self.inference_review_bar.accept_button
+        self.reject_smart_button = self.inference_review_bar.reject_button
+        self.accept_all_smart_button = self.inference_review_bar.accept_all_button
+        self.reject_all_smart_button = self.inference_review_bar.reject_all_button
+        self.inference_review_bar.acceptRequested.connect(self.smartConfirmRequested.emit)
+        self.inference_review_bar.rejectRequested.connect(self.smartRejectRequested.emit)
+        self.inference_review_bar.acceptAllRequested.connect(self.smartAcceptAllRequested.emit)
+        self.inference_review_bar.rejectAllRequested.connect(self.smartRejectAllRequested.emit)
+        self.set_prediction_actions_visible(False)
 
         self.table = _DenseTableAdapter(
             self.denseEventsTableView,
@@ -363,7 +388,9 @@ class DenseAnnotationPanel(QWidget):
         header.setStretchLastSection(False)
 
         # Keep the table as the primary expanding region.
-        self.denseMainLayout.setStretch(3, 1)
+        self.denseMainLayout.setStretch(
+            self.denseMainLayout.indexOf(self.denseEventsTableView), 1
+        )
         self._pending_column_layout_retry = False
 
         QTimer.singleShot(0, self._apply_dense_column_ratio)
@@ -394,6 +421,13 @@ class DenseAnnotationPanel(QWidget):
 
     def set_events(self, annotations):
         self.table.set_data(annotations or [])
+
+    def set_prediction_actions_visible(self, visible):
+        self.inference_review_bar.set_review_actions_visible(
+            visible,
+            allow_selected=True,
+            allow_bulk=True,
+        )
 
     def set_timeline_origin(self, origin_utc):
         self.table.set_timeline_origin(origin_utc)

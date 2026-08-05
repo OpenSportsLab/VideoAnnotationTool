@@ -27,6 +27,7 @@ nav:
       - GUI Overview: gui_overview.md
       - Synchronized Playback: synchronized_playback.md
       - Annotating: annotating.md
+      - Local and Remote Inference: inference.md
       - Editing: editing.md
       - Saving and Loading: saving_loading.md
       - Keyboard Shortcuts: shortcuts.md

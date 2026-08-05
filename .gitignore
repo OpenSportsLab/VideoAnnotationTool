@@ -216,3 +216,5 @@ test_data/*
 .vscode
 
 CODEX.md
+
+checkpoints/

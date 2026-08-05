@@ -11,7 +11,10 @@ from PyQt6.QtCore import QObject, QSettings, QThread, pyqtSignal
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from controllers.command_types import CmdType
+from controllers.inference_runtime import configure_compute_device, cuda_is_available
 from utils import natural_sort_key
+
+_cuda_is_available = cuda_is_available
 
 os.environ["WANDB_MODE"] = "disabled"
 ssl._create_default_https_context = ssl._create_unverified_context
@@ -43,9 +46,15 @@ def _run_opensportslib_inference(base_config_path: str, temp_data: dict, prefix:
 
         config_text = config_text.replace("./temp_workspace", writable_dir_fwd)
         config_text = config_text.replace("./logs", logs_dir_fwd)
+        config_dict = yaml.safe_load(config_text) or {}
+        if not isinstance(config_dict, dict):
+            raise ValueError("Classification model config must contain a YAML mapping.")
+        configure_compute_device(
+            config_dict, cuda_available=_cuda_is_available()
+        )
 
         with open(temp_config_path, "w", encoding="utf-8") as handle:
-            handle.write(config_text)
+            yaml.safe_dump(config_dict, handle, sort_keys=False)
 
         runner = model.ClassificationModel(config=temp_config_path)
         pred_data = runner.infer(
@@ -98,7 +107,9 @@ class InferenceWorker(QThread):
         self.video_path = video_path
         self.label_map = label_map or {}
         self.target_head = str(target_head or "action")
-        self.pretrained_model = str(pretrained_model or "jeetv/snpro-classification-mvit")
+        self.pretrained_model = str(
+            pretrained_model or "OpenSportsLab/OSL-cls-action-mvitv2"
+        )
 
     def _map_label(self, raw_label: str) -> str:
         raw_label = str(raw_label or "").strip()
@@ -234,7 +245,9 @@ class BatchInferenceWorker(QThread):
         self.json_path = json_path
         self.target_clips = list(target_clips or [])
         self.label_map = dict(label_map or {})
-        self.pretrained_model = str(pretrained_model or "jeetv/snpro-classification-mvit")
+        self.pretrained_model = str(
+            pretrained_model or "OpenSportsLab/OSL-cls-action-mvitv2"
+        )
 
     def _map_label(self, raw_label):
         raw_label = str(raw_label or "").strip()
@@ -331,7 +344,7 @@ class InferenceManager(QObject):
     SETTINGS_ORG = "OpenSportsLab"
     SETTINGS_APP = "VideoAnnotationTool"
     SETTINGS_MODEL_KEY = "classification/last_inference_model"
-    DEFAULT_MODEL = "jeetv/snpro-classification-mvit"
+    DEFAULT_MODEL = "OpenSportsLab/OSL-cls-action-mvitv2"
 
     def __init__(self, classification_controller):
         super().__init__()
@@ -587,7 +600,7 @@ class InferenceManager(QObject):
         self.worker = worker
         worker.start()
 
-    def _on_inference_success(self, target_head, label, conf_dict):
+    def _on_inference_success(self, target_head, label, conf_dict, inference_model_id=""):
         self.panel.show_inference_loading(False)
 
         if self.model is None:
@@ -624,6 +637,8 @@ class InferenceManager(QObject):
         labels = self._sample_labels(sample)
         old_payload = copy.deepcopy(labels.get(target_head))
         new_payload = {"label": mapped_label, "confidence_score": score}
+        if inference_model_id:
+            new_payload["inference_model_id"] = str(inference_model_id)
 
         if old_payload == new_payload:
             self.panel.display_inference_result(target_head, mapped_label, self._chart_conf_dict(mapped_label, score))
@@ -667,6 +682,7 @@ class InferenceManager(QObject):
                 new_payload = copy.deepcopy(old_payload) if isinstance(old_payload, dict) else None
                 if isinstance(new_payload, dict):
                     new_payload.pop("confidence_score", None)
+                    new_payload.pop("inference_model_id", None)
                     if not new_payload:
                         new_payload = None
                 if old_payload == new_payload:

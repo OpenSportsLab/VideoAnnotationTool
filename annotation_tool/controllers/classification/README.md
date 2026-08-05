@@ -1,7 +1,10 @@
 # Classification Controllers
 
 ## Role
-Implements Classification mode behavior and coordinates smart inference/train helpers.
+Implements Classification mode behavior and coordinates transient inference review and training.
+
+The bottom **Run Inference…** footer emits shared inference intent through
+`MainWindow`; current-sample and batch scope are selected in the shared dialog.
 
 ## Architecture Context
 - `ClassificationEditorController` manages panel behavior for Classification mode.
@@ -10,7 +13,11 @@ Implements Classification mode behavior and coordinates smart inference/train he
 - Runtime context is supplied via signal-slot wiring in `MainWindow.connect_signals()`:
   - sample selection snapshots
   - schema snapshots
-- Dataset model ownership for smart inference/training lives in helper services wired from `MainWindow` through `set_dataset_model(...)`.
+- The central `InferenceController` owns Local/Remote execution; this controller
+  only normalizes results into transient per-sample candidates.
+- Direct local inference resolves `auto`/CUDA against runtime CUDA availability
+  in a temporary config and falls back to CPU without editing the registered
+  model configuration.
 
 ## Public Surface
 ### Class
@@ -27,8 +34,7 @@ Implements Classification mode behavior and coordinates smart inference/train he
 - `schemaLabelAddRequested(str, str)`
 - `schemaLabelRemoveRequested(str, str)`
 
-### Helpers
-- `InferenceManager`
+### Helper
 - `TrainManager`
 
 ## Key Functions and Responsibilities
@@ -40,10 +46,8 @@ Implements Classification mode behavior and coordinates smart inference/train he
   - Rebuilds dynamic schema-driven controls from runtime schema context.
 - `save_manual_annotation(override_data=None, show_feedback=True)`
   - Normalizes annotation payload and emits tracked save intent.
-- `confirm_smart_annotation_as_manual()`
-  - Delegates smart confirmation flow to `InferenceManager`.
-- `reject_smart_annotation_head(head)`
-  - Rejects inferred smart annotation for one head and restores pre-inference manual state.
+- `confirm_smart_annotation_head(head)` / `reject_smart_annotation_head(head)`
+  - Accept or discard one transient inferred label.
 - `clear_current_manual_annotation()` / `clear_current_smart_annotation()`
   - Clears manual/smart state with proper history behavior.
 
@@ -52,10 +56,11 @@ Implements Classification mode behavior and coordinates smart inference/train he
 - No-op saves (same normalized annotation) do nothing.
 - Schema operations enforce duplicate checks and route through `HistoryManager`.
 - Head/category management is tab-driven; create still prompts for `single_label` vs `multi_label`.
-- Smart inference is persisted in `labels[head]` with `confidence_score`.
-- Confirming smart annotation removes `confidence_score` only.
-- Rejecting/clearing smart annotation restores pre-inference manual state (or removes head if none existed).
-- Smart inference is triggered per head from the manual panel (no Smart tab flow).
+- Predictions remain in a per-sample transient review store.
+- Accepting writes the plain `labels[head]` value through `HistoryManager`;
+  rejecting never mutates the dataset.
+- The annotation panel exposes only the shared bottom inference footer; there
+  are no per-head or separate batch execution buttons.
 
 ## Conventions
 - UI stays in panel classes; controller performs behavior orchestration.
@@ -77,6 +82,9 @@ Implements Classification mode behavior and coordinates smart inference/train he
 - `tests/gui/test_signal_decoupling_contract.py`
 
 ## Developer Knowledge
+- Device resolution is shared with Localization through
+  `controllers.inference_runtime.configure_compute_device`; keep capability
+  checks out of annotation UI/controller state.
 - Manual save path:
   normalize selection payload before emitting `manualAnnotationSaveRequested`.
 - No-op guard:

@@ -1,15 +1,17 @@
 import copy
 import html
 import importlib.metadata
+import json
 import os
 
 from PyQt6.QtCore import Qt, QModelIndex, QTimer
-from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QLabel, QDockWidget, QMainWindow, QMessageBox, QStackedWidget, QTabWidget
 
 from app_info import APP_DISPLAY_NAME, APP_VERSION, build_shortcuts_help_text
 from controllers.classification import ClassificationEditorController
 from controllers.hf_transfer_controller import HfTransferController
+from controllers.inference_controller import InferenceController
 from opensportslib.tools.hf_transfer import (
     create_dataset_branch_on_hf,
     create_dataset_repo_on_hf,
@@ -37,12 +39,29 @@ from ui.localization import LocalizationAnnotationPanel
 from ui.description import DescriptionAnnotationPanel
 from ui.dense_description import DenseAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
-from ui.dialogs import ApplicationSettingsDialog, BusyStatusDialog, HfDownloadDialog, HfUploadDialog
+from ui.dialogs import ApplicationSettingsDialog, BusyStatusDialog, HfDownloadDialog, HfUploadDialog, InferenceRunDialog
+from ui.inference_jobs_widget import InferenceJobsWidget
 
 from media_control_settings import (
     PLAYBACK_FACTORS_KEY,
     SEEK_INTERVALS_KEY,
     load_media_control_settings,
+)
+from inference_settings import (
+    LOCAL_MODELS_KEY,
+    LOCAL_MODELS_SCHEMA_VERSION,
+    LOCAL_MODELS_SCHEMA_VERSION_KEY,
+    REMOTE_ENABLED_KEY,
+    SERVER_URL_KEY,
+    SHARED_MAPPINGS_KEY,
+    load_last_model_choice,
+    save_last_model_choice,
+)
+from inference_types import (
+    InferenceItem,
+    InferenceRequest,
+    InferenceResult,
+    resolve_sample_inputs,
 )
 from explorer_settings import EXPLORER_PAGE_SIZE_KEY, load_explorer_page_size
 
@@ -58,6 +77,7 @@ class VideoAnnotationWindow(QMainWindow):
     _VIEWER_LAYOUT_SETTING_KEY = "view/viewer_layout"
     _DATA_DOCK_VISIBLE_SETTING_KEY = "view/dataset_explorer_visible"
     _EDITOR_DOCK_VISIBLE_SETTING_KEY = "view/annotation_editor_visible"
+    _INFERENCE_JOBS_DOCK_VISIBLE_SETTING_KEY = "view/inference_jobs_visible"
 
     def __init__(self) -> None:
         super().__init__()
@@ -168,15 +188,41 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.welcome_controller = WelcomeController(self.welcome_widget, self.dataset_explorer_controller, self)
         self.hf_transfer_controller = HfTransferController()
+        self.inference_controller = InferenceController(
+            settings=self.dataset_explorer_controller.settings,
+            base_dir=os.path.abspath(os.path.dirname(__file__)),
+            parent=self,
+        )
+        self.action_run_inference = QAction("Run Inference…", self)
+        self.action_run_inference.setEnabled(False)
+        self.inference_jobs_widget = InferenceJobsWidget(
+            self.action_run_inference, self
+        )
+        self.inference_jobs_dock = QDockWidget("Inference Jobs", self)
+        self.inference_jobs_dock.setObjectName("InferenceJobsDock")
+        self.inference_jobs_dock.setWidget(self.inference_jobs_widget)
+        self.addDockWidget(
+            Qt.DockWidgetArea.RightDockWidgetArea, self.inference_jobs_dock
+        )
+        self.splitDockWidget(
+            self.editor_dock,
+            self.inference_jobs_dock,
+            Qt.Orientation.Vertical,
+        )
+        self.inference_jobs_dock.hide()
+        self._pending_inference_requests = {}
+        self._pending_prediction_samples_by_task = {}
         self._hf_busy_dialog = None
         self._active_hf_transfer_kind: str | None = None
         self._last_hf_download_payload: dict | None = None
         self._last_hf_upload_payload: dict | None = None
+        self._active_hf_model_settings_dialog = None
         self._last_restored_mute_state: bool | None = None
         self._workspace_visible = False
         self._updating_view_state = False
         self._data_dock_preferred_visible = True
         self._editor_dock_preferred_visible = True
+        self._inference_jobs_dock_preferred_visible = False
         self._playback_factor_text = "2,4"
         self._seek_interval_text = "1,5"
         self._speed_rates = (0.25, 0.5, 1.0, 2.0, 4.0)
@@ -264,6 +310,7 @@ class VideoAnnotationWindow(QMainWindow):
         """Enables/Disables all project-related docks and editors."""
         self.data_dock.setEnabled(enabled)
         self.editor_dock.setEnabled(enabled)
+        self.action_run_inference.setEnabled(enabled)
         self.qa_editor_controller.set_project_enabled(enabled)
         
         # Also explicitly disable the sub-editors to be safe
@@ -277,11 +324,12 @@ class VideoAnnotationWindow(QMainWindow):
         self.qa_editor_controller.set_sample_selection_enabled(enabled)
 
     def _set_side_docks_visible(self, visible: bool):
-        """Show or hide side dock widgets (dataset explorer + annotation editor)."""
+        """Show or hide project dock widgets without changing their preferences."""
         self._updating_view_state = True
         try:
             self.data_dock.setVisible(visible)
             self.editor_dock.setVisible(visible)
+            self.inference_jobs_dock.setVisible(visible)
         finally:
             self._updating_view_state = False
 
@@ -354,7 +402,6 @@ class VideoAnnotationWindow(QMainWindow):
         center_panel = self.center_panel
 
         # Runtime dataset context wiring for helper services.
-        self.classification_editor_controller.inference_manager.set_dataset_model(self.dataset_explorer_controller)
         self.classification_editor_controller.train_manager.set_dataset_model(self.dataset_explorer_controller)
         
         # --- Dataset Explorer panel (Unified) ---
@@ -389,6 +436,39 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.dataset_explorer_controller.schemaContextChanged.connect(
             self.localization_editor_controller.on_schema_context_changed
+        )
+        self.classification_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
+        self.localization_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
+        self.desc_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
+        self.dense_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
+        self.qa_editor_controller.inferenceRunRequested.connect(self._open_inference_run_dialog)
+        self.action_run_inference.triggered.connect(
+            self._request_inference_for_active_mode
+        )
+        self.inference_jobs_widget.cancelRequested.connect(
+            self.inference_controller.cancel_request
+        )
+        self.inference_jobs_widget.cancelAllRequested.connect(
+            self.inference_controller.cancel_all
+        )
+        self.inference_jobs_widget.clearHistoryRequested.connect(
+            self.inference_controller.clear_queue_history
+        )
+        for task_name, controller in (
+            ("classification", self.classification_editor_controller),
+            ("localization", self.localization_editor_controller),
+            ("description", self.desc_editor_controller),
+            ("dense_description", self.dense_editor_controller),
+            ("question_answer", self.qa_editor_controller),
+        ):
+            controller.pendingPredictionsChanged.connect(
+                lambda sample_ids, task=task_name: self._on_pending_predictions_changed(task, sample_ids)
+            )
+        self.inference_controller.inferenceCompleted.connect(self._on_shared_inference_completed)
+        self.inference_controller.inferenceFailed.connect(self._on_shared_inference_failed)
+        self.inference_controller.inferenceCancelled.connect(self._on_shared_inference_cancelled)
+        self.inference_controller.queueChanged.connect(
+            self.inference_jobs_widget.set_entries
         )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
             self._handle_media_route
@@ -459,6 +539,9 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.dataset_explorer_controller.settingsChanged.connect(
             lambda _settings: self._restore_mute_state_from_settings()
+        )
+        self.dataset_explorer_controller.projectGenerationChanged.connect(
+            self._on_project_generation_changed
         )
         self.dataset_explorer_controller.settingsChanged.connect(
             lambda _settings: self._restore_view_state_from_settings()
@@ -591,6 +674,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.dense_editor_controller.denseEventDelRequested.connect(
             self.history_manager.execute_dense_event_del
         )
+        self.dense_editor_controller.denseEventsSetRequested.connect(
+            self.history_manager.execute_dense_events_set
+        )
         self.dense_editor_controller.mediaSeekRequested.connect(
             lambda ms: self.media_controller.set_position(ms)
         )
@@ -668,8 +754,24 @@ class VideoAnnotationWindow(QMainWindow):
         self.hf_transfer_controller.uploadFailed.connect(self._on_hf_upload_failed)
         self.hf_transfer_controller.uploadCancelled.connect(self._on_hf_upload_cancelled)
 
+        self.hf_transfer_controller.modelImportStarted.connect(
+            self._on_hf_model_import_started
+        )
+        self.hf_transfer_controller.modelImportProgress.connect(
+            self._on_hf_model_import_progress
+        )
+        self.hf_transfer_controller.modelImportCompleted.connect(
+            self._on_hf_model_import_completed
+        )
+        self.hf_transfer_controller.modelImportFailed.connect(
+            self._on_hf_model_import_failed
+        )
+        self.hf_transfer_controller.modelImportCancelled.connect(
+            self._on_hf_model_import_cancelled
+        )
+
     def _setup_menu_bar(self) -> None:
-        from PyQt6.QtGui import QAction, QActionGroup
+        from PyQt6.QtGui import QActionGroup
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("&File")
 
@@ -749,6 +851,10 @@ class VideoAnnotationWindow(QMainWindow):
         )
         view_menu.addAction(self.action_show_annotation_editor)
 
+        self.action_show_inference_jobs = self.inference_jobs_dock.toggleViewAction()
+        self.action_show_inference_jobs.setText("Inference Jobs")
+        view_menu.addAction(self.action_show_inference_jobs)
+
         view_menu.addSeparator()
         layout_menu = view_menu.addMenu("Viewer Layout")
         self.viewer_layout_action_group = QActionGroup(self)
@@ -775,6 +881,9 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.editor_dock.visibilityChanged.connect(
             lambda visible: self._on_dock_visibility_changed("editor", visible)
+        )
+        self.inference_jobs_dock.visibilityChanged.connect(
+            lambda visible: self._on_dock_visibility_changed("inference", visible)
         )
         self._restore_view_state_from_settings()
 
@@ -814,6 +923,10 @@ class VideoAnnotationWindow(QMainWindow):
         self._editor_dock_preferred_visible = self._setting_bool(
             settings.value(self._EDITOR_DOCK_VISIBLE_SETTING_KEY, True), True
         )
+        self._inference_jobs_dock_preferred_visible = self._setting_bool(
+            settings.value(self._INFERENCE_JOBS_DOCK_VISIBLE_SETTING_KEY, False),
+            False,
+        )
         raw_mode = str(
             settings.value(
                 self._VIEWER_LAYOUT_SETTING_KEY,
@@ -830,11 +943,17 @@ class VideoAnnotationWindow(QMainWindow):
         try:
             self.action_show_dataset_explorer.setChecked(self._data_dock_preferred_visible)
             self.action_show_annotation_editor.setChecked(self._editor_dock_preferred_visible)
+            self.action_show_inference_jobs.setChecked(
+                self._inference_jobs_dock_preferred_visible
+            )
             self.viewer_layout_actions[mode].setChecked(True)
             self.center_panel.set_viewer_layout(mode)
             if self._workspace_visible:
                 self.data_dock.setVisible(self._data_dock_preferred_visible)
                 self.editor_dock.setVisible(self._editor_dock_preferred_visible)
+                self.inference_jobs_dock.setVisible(
+                    self._inference_jobs_dock_preferred_visible
+                )
         finally:
             self._updating_view_state = False
 
@@ -853,10 +972,14 @@ class VideoAnnotationWindow(QMainWindow):
             self._data_dock_preferred_visible = target
             setting_key = self._DATA_DOCK_VISIBLE_SETTING_KEY
             dock = self.data_dock
-        else:
+        elif dock_name == "editor":
             self._editor_dock_preferred_visible = target
             setting_key = self._EDITOR_DOCK_VISIBLE_SETTING_KEY
             dock = self.editor_dock
+        else:
+            self._inference_jobs_dock_preferred_visible = target
+            setting_key = self._INFERENCE_JOBS_DOCK_VISIBLE_SETTING_KEY
+            dock = self.inference_jobs_dock
         if self._updating_view_state:
             return
         if self._workspace_visible:
@@ -873,11 +996,12 @@ class VideoAnnotationWindow(QMainWindow):
     def _on_dock_visibility_changed(self, dock_name: str, visible: bool) -> None:
         if self._updating_view_state or not self._workspace_visible:
             return
-        action = (
-            self.action_show_dataset_explorer
-            if dock_name == "data"
-            else self.action_show_annotation_editor
-        )
+        actions = {
+            "data": self.action_show_dataset_explorer,
+            "editor": self.action_show_annotation_editor,
+            "inference": self.action_show_inference_jobs,
+        }
+        action = actions[dock_name]
         self._updating_view_state = True
         try:
             action.setChecked(bool(visible))
@@ -890,6 +1014,9 @@ class VideoAnnotationWindow(QMainWindow):
         try:
             self.data_dock.setVisible(self._data_dock_preferred_visible)
             self.editor_dock.setVisible(self._editor_dock_preferred_visible)
+            self.inference_jobs_dock.setVisible(
+                self._inference_jobs_dock_preferred_visible
+            )
         finally:
             self._updating_view_state = False
 
@@ -897,6 +1024,7 @@ class VideoAnnotationWindow(QMainWindow):
         if hasattr(self, "action_show_dataset_explorer"):
             self.action_show_dataset_explorer.setEnabled(enabled)
             self.action_show_annotation_editor.setEnabled(enabled)
+            self.action_show_inference_jobs.setEnabled(enabled)
 
     def _setup_shortcuts(self) -> None:
         """Register common keyboard shortcuts."""
@@ -952,17 +1080,458 @@ class VideoAnnotationWindow(QMainWindow):
         )
 
     def _open_settings_dialog(self) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
         dialog = ApplicationSettingsDialog(
             self._playback_factor_text,
             self._seek_interval_text,
-            self.tree_model.page_size(),
+            self.dataset_explorer_controller.tree_model.page_size(),
+            settings=settings,
             parent=self,
         )
         dialog.mediaControlsApplyRequested.connect(self._save_and_apply_media_controls)
         dialog.explorerPageSizeApplyRequested.connect(
             self._save_and_apply_explorer_page_size
         )
+        dialog.inferenceSettingsApplyRequested.connect(self._save_inference_settings)
+        dialog.inferenceTestRequested.connect(lambda: self._test_inference_connection(dialog))
+        dialog.inferenceRemoteCatalogRequested.connect(
+            lambda: self._refresh_remote_model_catalog(dialog)
+        )
+        dialog.inferenceHfModelRequested.connect(
+            lambda payload: self._start_hf_model_import(dialog, payload)
+        )
+        dialog.inferenceHfModelCancelRequested.connect(
+            self.hf_transfer_controller.cancel_model_import
+        )
+        catalog_slot = lambda models: dialog.set_remote_model_catalog(models)
+        catalog_error_slot = lambda message: dialog.set_inference_connection_status(message, False)
+        self.inference_controller.remoteCatalogDiscovered.connect(catalog_slot)
+        self.inference_controller.remoteCatalogFailed.connect(catalog_error_slot)
         dialog.exec()
+        if self._active_hf_model_settings_dialog is dialog:
+            self.hf_transfer_controller.cancel_model_import()
+            self._active_hf_model_settings_dialog = None
+        try:
+            self.inference_controller.remoteCatalogDiscovered.disconnect(catalog_slot)
+            self.inference_controller.remoteCatalogFailed.disconnect(catalog_error_slot)
+        except Exception:
+            pass
+
+    def _save_inference_settings(self, payload: dict) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is None:
+            return
+        settings.setValue(REMOTE_ENABLED_KEY, bool(payload.get("remote_enabled", False)))
+        settings.setValue(SERVER_URL_KEY, str(payload.get("server_url") or ""))
+        settings.setValue(SHARED_MAPPINGS_KEY, json.dumps(list(payload.get("shared_mappings") or [])))
+        settings.setValue(LOCAL_MODELS_KEY, json.dumps(list(payload.get("local_models") or [])))
+        settings.setValue(LOCAL_MODELS_SCHEMA_VERSION_KEY, LOCAL_MODELS_SCHEMA_VERSION)
+        settings.sync()
+
+    def _start_hf_model_import(self, dialog, payload: dict) -> None:
+        if self._active_hf_model_settings_dialog is not None:
+            dialog.set_hf_model_import_progress(
+                "Another Hugging Face model download is already running."
+            )
+            return
+        self._active_hf_model_settings_dialog = dialog
+        if not self.hf_transfer_controller.start_model_import(payload):
+            self._active_hf_model_settings_dialog = None
+
+    def _on_hf_model_import_started(self, message: str) -> None:
+        dialog = self._active_hf_model_settings_dialog
+        if dialog is not None:
+            dialog.set_hf_model_import_busy(True, message)
+
+    def _on_hf_model_import_progress(
+        self, message: str, current: int, total: int
+    ) -> None:
+        dialog = self._active_hf_model_settings_dialog
+        if dialog is not None:
+            dialog.set_hf_model_import_progress(message, current, total)
+
+    def _on_hf_model_import_completed(self, descriptor: dict) -> None:
+        dialog = self._active_hf_model_settings_dialog
+        self._active_hf_model_settings_dialog = None
+        if dialog is not None:
+            dialog.add_downloaded_hf_model(descriptor)
+        self.show_temp_msg(
+            "Hugging Face Model",
+            f"Added {descriptor.get('id', 'model')} to the Settings draft.",
+            4000,
+        )
+
+    def _on_hf_model_import_failed(self, error: str) -> None:
+        dialog = self._active_hf_model_settings_dialog
+        self._active_hf_model_settings_dialog = None
+        if dialog is not None:
+            dialog.set_hf_model_import_busy(False, f"Model import failed: {error}")
+            QMessageBox.warning(dialog, "Hugging Face Model Import Failed", error)
+        self.show_temp_msg("Hugging Face Model Import Failed", error, 5000)
+
+    def _on_hf_model_import_cancelled(self, message: str) -> None:
+        dialog = self._active_hf_model_settings_dialog
+        self._active_hf_model_settings_dialog = None
+        if dialog is not None:
+            dialog.set_hf_model_import_busy(
+                False, message or "Model download cancelled."
+            )
+        self.show_temp_msg("Hugging Face Model", "Model download cancelled.", 3000)
+
+    def _refresh_remote_model_catalog(self, dialog) -> None:
+        try:
+            config = dialog.inference_payload()
+        except ValueError as exc:
+            dialog.set_inference_connection_status(str(exc), False)
+            return
+        if not config.get("remote_enabled", False):
+            dialog.set_inference_connection_status(
+                "Enable remote inference before refreshing models.", False
+            )
+            return
+        dialog.set_inference_connection_status("Discovering remote models…", True)
+        if not self.inference_controller.request_remote_catalog(config):
+            dialog.set_inference_connection_status(
+                "Another model discovery request is still running.", False
+            )
+
+    def _test_inference_connection(self, dialog) -> None:
+        try:
+            config = dialog.inference_payload()
+            if not config.get("remote_enabled", False):
+                dialog.set_inference_connection_status(
+                    "Enable remote inference before testing the connection.", False
+                )
+                return
+            capabilities = self.inference_controller.test_connection(config)
+            version = str(capabilities.get("version") or "unknown")
+            shared_roots = list(capabilities.get("shared_roots") or [])
+            root_ids = [str(root.get("id") or "") for root in shared_roots if isinstance(root, dict) and root.get("id")]
+            root_text = f" Available root IDs: {', '.join(root_ids)}." if root_ids else ""
+            dialog.set_inference_connection_status(
+                f"Connected to API version {version}; {len(shared_roots)} shared root(s) advertised.{root_text}", True
+            )
+        except Exception as exc:
+            dialog.set_inference_connection_status(str(exc), False)
+
+    def _request_inference_for_active_mode(self) -> None:
+        controllers = (
+            self.classification_editor_controller,
+            self.localization_editor_controller,
+            self.desc_editor_controller,
+            self.dense_editor_controller,
+            self.qa_editor_controller,
+        )
+        index = self.right_tabs.currentIndex()
+        if index < 0 or index >= len(controllers):
+            QMessageBox.warning(
+                self, "Inference", "Select an annotation mode first."
+            )
+            return
+        controllers[index].request_inference()
+
+    def _open_inference_run_dialog(self, task: str, context) -> None:
+        context = dict(context or {})
+        current_sample_id = str(self.dataset_explorer_controller.current_selected_sample_id or "")
+        sample_ids = list(context.get("batch_sample_ids") or [current_sample_id])
+        if task == "classification" and not context.get("batch_sample_ids"):
+            available = [str(sample.get("id") or "") for sample in self.dataset_explorer_controller.dataset_json.get("data", []) if isinstance(sample, dict) and sample.get("id")]
+            if available:
+                sample_ids = available
+                context["available_batch_sample_ids"] = available
+                context["current_sample_id"] = current_sample_id
+        samples = [
+            self.dataset_explorer_controller.get_sample(str(sample_id))
+            for sample_id in sample_ids
+        ]
+        samples = [sample for sample in samples if isinstance(sample, dict)]
+        if not samples:
+            QMessageBox.warning(self, "Inference", "Please select a sample first.")
+            return
+        inputs_by_sample = {
+            str(sample.get("id") or ""): resolve_sample_inputs(
+                sample, str(self.dataset_explorer_controller.current_json_path or "")
+            )
+            for sample in samples
+        }
+        for sample_id, sample_inputs in inputs_by_sample.items():
+            for source in sample_inputs:
+                source.sample_id = sample_id
+        inputs = [source for sample_inputs in inputs_by_sample.values() for source in sample_inputs]
+        dialog_inputs = (
+            list(inputs_by_sample.get(current_sample_id, []))
+            if task == "classification"
+            else inputs
+        )
+        if not dialog_inputs:
+            QMessageBox.warning(self, "Inference", "The selected sample has no usable inputs.")
+            return
+
+        dialog = InferenceRunDialog(
+            task,
+            dialog_inputs,
+            context,
+            preferred_model=load_last_model_choice(
+                getattr(self.dataset_explorer_controller, "settings", None), task
+            ),
+            parent=self,
+        )
+        def refresh_models(selected_task: str):
+            dialog.set_models([])
+            dialog.availability_label.setText("Discovering models…")
+            if not self.inference_controller.request_model_catalog(selected_task):
+                dialog.availability_label.setText("Another model discovery request is still running.")
+
+        dialog.refreshModelsRequested.connect(refresh_models)
+        def apply_catalog(discovered_task, choices, warning):
+            if discovered_task != task:
+                return
+            input_types = {source.type for source in dialog_inputs}
+            dialog.set_models(
+                [
+                    choice
+                    for choice in choices
+                    if not choice.descriptor.accepted_input_types
+                    or not input_types.isdisjoint(choice.descriptor.accepted_input_types)
+                ],
+                warning,
+            )
+
+        def show_catalog_error(discovered_task, message):
+            if discovered_task == task:
+                dialog.set_models([], message)
+
+        self.inference_controller.modelCatalogDiscovered.connect(apply_catalog)
+        self.inference_controller.modelCatalogFailed.connect(show_catalog_error)
+        refresh_models(task)
+        dialog_result = dialog.exec()
+        try:
+            self.inference_controller.modelCatalogDiscovered.disconnect(apply_catalog)
+            self.inference_controller.modelCatalogFailed.disconnect(show_catalog_error)
+        except Exception:
+            pass
+        if dialog_result != dialog.DialogCode.Accepted:
+            return
+        payload = dialog.payload()
+        parameters = {
+            key: value for key, value in payload.items()
+            if key in {"start_ms", "end_ms", "language", "question"}
+            and value not in (None, "")
+        }
+        if task in {"classification", "localization"}:
+            parameters["head"] = str(context.get("head") or "")
+        if task == "localization":
+            parameters["labels"] = list(context.get("labels") or [])
+        selected_sources = {(str(getattr(source, "sample_id", "") or ""), os.path.realpath(source.path)) for source in payload["inputs"]}
+        classification_input_indices = []
+        if task == "classification":
+            selected_paths = {
+                os.path.realpath(source.path) for source in payload["inputs"]
+            }
+            classification_input_indices = [
+                index
+                for index, source in enumerate(dialog_inputs)
+                if os.path.realpath(source.path) in selected_paths
+            ]
+        if payload.get("scope") == "current":
+            samples = [sample for sample in samples if str(sample.get("id") or "") == current_sample_id]
+        request_items = []
+        for sample in samples:
+            sample_id = str(sample.get("id") or "")
+            sample_inputs = inputs_by_sample.get(sample_id, [])
+            if task == "classification":
+                selected_inputs = [
+                    sample_inputs[index]
+                    for index in classification_input_indices
+                    if index < len(sample_inputs)
+                    and sample_inputs[index].type == dialog_inputs[index].type
+                ]
+            else:
+                selected_inputs = [
+                    source for source in sample_inputs
+                    if (sample_id, os.path.realpath(source.path)) in selected_sources
+                ]
+            if selected_inputs:
+                request_items.append(InferenceItem(
+                    sample_id=sample_id,
+                    inputs=selected_inputs,
+                    sample=copy.deepcopy(sample),
+                ))
+        if not request_items or len(request_items) != len(samples):
+            QMessageBox.warning(self, "Inference", "Every batch sample must retain at least one input.")
+            return
+        request = InferenceRequest(
+            task=task,
+            model_id=payload["model_id"],
+            backend=payload["backend"],
+            provider_config=copy.deepcopy(
+                self.inference_controller.configuration_snapshot()
+            ),
+            target_context=copy.deepcopy(context),
+            schema=copy.deepcopy(self.dataset_explorer_controller.label_definitions),
+            parameters=parameters,
+            items=request_items,
+        )
+        self._pending_inference_requests[request.request_id] = {
+            "task": task,
+            "sample_ids": tuple(item.sample_id for item in request.items),
+            "request_items": {
+                item.item_id: item.sample_id for item in request.items
+            },
+            "project_generation": self.dataset_explorer_controller.project_generation,
+            "context": copy.deepcopy(parameters),
+            "backend": payload["backend"],
+            "model_id": payload["model_id"],
+            "invalidated": False,
+        }
+        entry = self.inference_controller.enqueue_inference(request)
+        if entry is None:
+            self._pending_inference_requests.pop(request.request_id, None)
+            QMessageBox.information(self, "Inference", "The inference request could not be queued.")
+            return
+        self._show_inference_jobs()
+        if entry.state == "queued":
+            self.show_temp_msg(
+                "Inference",
+                f"Added to the {entry.backend.title()} queue at position {entry.queue_position}.",
+                2500,
+            )
+        elif entry.state == "running":
+            self.show_temp_msg(
+                "Inference", f"Started {entry.backend.title()} inference.", 1800
+            )
+
+    def _on_shared_inference_completed(self, request_id: str, result) -> None:
+        pending = self._pending_inference_requests.pop(request_id, None)
+        if not pending:
+            return
+        if (
+            pending.get("invalidated")
+            or pending.get("project_generation")
+            != self.dataset_explorer_controller.project_generation
+        ):
+            self.show_temp_msg(
+                "Inference",
+                "Discarded results from the previous project.",
+                3000,
+            )
+            return
+        save_last_model_choice(
+            getattr(self.dataset_explorer_controller, "settings", None),
+            pending["task"],
+            pending.get("backend", ""),
+            pending.get("model_id", ""),
+        )
+        request_items = dict(pending.get("request_items") or {})
+        surviving_items = tuple(
+            item
+            for item in result.items
+            if request_items.get(str(item.get("item_id") or ""))
+            == str(item.get("sample_id") or "")
+            and self.dataset_explorer_controller.get_sample(
+                str(item.get("sample_id") or "")
+            )
+            is not None
+        )
+        discarded_count = len(result.items) - len(surviving_items)
+        if not surviving_items:
+            self.show_temp_msg(
+                "Inference",
+                "Results were discarded because their original sample no longer exists.",
+                3500,
+            )
+            return
+        if surviving_items != result.items:
+            result = InferenceResult(
+                request_id=result.request_id,
+                task=result.task,
+                model_id=result.model_id,
+                items=surviving_items,
+            )
+        handlers = {
+            "classification": self.classification_editor_controller.apply_shared_inference_result,
+            "localization": self.localization_editor_controller.apply_shared_inference_result,
+            "description": self.desc_editor_controller.apply_shared_inference_result,
+            "dense_description": self.dense_editor_controller.apply_shared_inference_result,
+            "question_answer": self.qa_editor_controller.apply_shared_inference_result,
+        }
+        active_annotation_tab = self.right_tabs.currentIndex()
+        active_classification_head = self.classification_panel.get_current_head()
+        active_localization_head = (
+            self.localization_panel.annot_mgmt.tabs.get_current_head()
+        )
+        try:
+            handlers[pending["task"]](result, pending.get("context", {}))
+        except Exception as exc:
+            QMessageBox.critical(self, "Inference Result Error", str(exc))
+            return
+        finally:
+            if self.right_tabs.currentIndex() != active_annotation_tab:
+                self.right_tabs.setCurrentIndex(active_annotation_tab)
+            if (
+                active_classification_head
+                and self.classification_panel.get_current_head()
+                != active_classification_head
+            ):
+                self.classification_panel.set_current_head(
+                    active_classification_head
+                )
+            if (
+                active_localization_head
+                and self.localization_panel.annot_mgmt.tabs.get_current_head()
+                != active_localization_head
+            ):
+                self.localization_panel.annot_mgmt.tabs.set_current_head(
+                    active_localization_head
+                )
+        sample_ids = tuple(
+            str(item.get("sample_id") or "") for item in surviving_items
+        )
+        if len(sample_ids) == 1:
+            message = f"Predictions are ready for sample {sample_ids[0]}."
+        else:
+            message = f"Predictions are ready for {len(sample_ids)} samples."
+        if discarded_count:
+            message += f" {discarded_count} removed sample result(s) were discarded."
+        self.show_temp_msg("Inference", message, 3500)
+
+    def _on_pending_predictions_changed(self, task: str, sample_ids) -> None:
+        task = str(task)
+        pending_sample_ids = {str(value) for value in sample_ids or [] if str(value)}
+        if self._pending_prediction_samples_by_task.get(task, set()) == pending_sample_ids:
+            return
+        self._pending_prediction_samples_by_task[task] = pending_sample_ids
+        combined = set().union(*self._pending_prediction_samples_by_task.values()) if self._pending_prediction_samples_by_task else set()
+        self.dataset_explorer_controller.set_pending_prediction_samples(combined)
+
+    def _on_shared_inference_failed(self, request_id, message, code, retryable, details) -> None:
+        pending = self._pending_inference_requests.pop(request_id, None)
+        if not pending or pending.get("invalidated"):
+            return
+        self._show_inference_jobs()
+        retry_text = " The operation may be retried." if retryable else ""
+        self.show_temp_msg(
+            "Inference Error",
+            f"{message}{retry_text} Code: {code}. See Inference Jobs.",
+            6000,
+        )
+
+    def _show_inference_jobs(self) -> None:
+        self.inference_jobs_dock.show()
+        self.inference_jobs_dock.raise_()
+
+    def _on_shared_inference_cancelled(self, request_id: str) -> None:
+        pending = self._pending_inference_requests.pop(request_id, None)
+        if not pending or pending.get("invalidated"):
+            return
+        self.show_temp_msg("Inference", "Inference cancelled.", 1500)
+
+    def _on_project_generation_changed(self, _generation: int) -> None:
+        if not self._pending_inference_requests:
+            return
+        for pending in self._pending_inference_requests.values():
+            pending["invalidated"] = True
+        self.inference_controller.cancel_all()
 
     def _save_and_apply_explorer_page_size(self, page_size: int) -> None:
         settings = getattr(self.dataset_explorer_controller, "settings", None)
@@ -1109,6 +1678,15 @@ class VideoAnnotationWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         if self.dataset_explorer_controller.check_and_close_current_project():
+            if not self.inference_controller.shutdown(wait_ms=3000):
+                self.show_temp_msg(
+                    "Inference Running",
+                    "Shared inference is still stopping. Please wait and close again.",
+                    2500,
+                )
+                event.ignore()
+                return
+            self._pending_inference_requests.clear()
             if not self.classification_editor_controller.shutdown_background_tasks(wait_ms=2500):
                 self.show_temp_msg(
                     "Inference Running",
@@ -1121,6 +1699,14 @@ class VideoAnnotationWindow(QMainWindow):
                 self.show_temp_msg(
                     "Inference Running",
                     "Localization inference is still running. Please wait and close again.",
+                    2500,
+                )
+                event.ignore()
+                return
+            if not self.hf_transfer_controller.shutdown(wait_ms=3000):
+                self.show_temp_msg(
+                    "Hugging Face Transfer",
+                    "A Hugging Face transfer is still stopping. Please wait and close again.",
                     2500,
                 )
                 event.ignore()

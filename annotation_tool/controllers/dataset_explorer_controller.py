@@ -257,6 +257,7 @@ class DatasetExplorerController(QObject):
     removeItemMutationRequested = pyqtSignal(str, str)
     ballH5AssociationMutationRequested = pyqtSignal(str, str, str)
     settingsChanged = pyqtSignal(object)
+    projectGenerationChanged = pyqtSignal(int)
 
     SETTINGS_ORG = "OpenSportsLab"
     SETTINGS_APP = "VideoAnnotationTool"
@@ -288,6 +289,8 @@ class DatasetExplorerController(QObject):
         self.settings = QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
 
         self.dataset_json = {}
+        self._project_generation = 0
+        self._pending_prediction_sample_ids = set()
         self.current_json_path = None
         self.project_root = None
         self.current_working_directory = None
@@ -310,6 +313,8 @@ class DatasetExplorerController(QObject):
         self.current_selected_input_path = None
         self._last_routed_media_path = None
         self._sort_by_confidence = False
+        self._is_populating_tree = False
+        self._pending_prediction_sample_ids.clear()
         self._json_preview_dirty = True
         self._tree_page_change_in_progress = False
 
@@ -327,6 +332,10 @@ class DatasetExplorerController(QObject):
     def settings(self, value):
         self._settings = value
         self.settingsChanged.emit(value)
+
+    @property
+    def project_generation(self) -> int:
+        return self._project_generation
 
     # ------------------------------------------------------------------
     # Compatibility properties
@@ -433,6 +442,8 @@ class DatasetExplorerController(QObject):
         self.tree_model.renameRequested.connect(self.sampleRenameRequested.emit)
 
     def reset(self, full_reset: bool = False):
+        self._project_generation += 1
+        self.projectGenerationChanged.emit(self._project_generation)
         self.current_json_path = None
         self.project_root = None
         self.current_working_directory = None
@@ -899,7 +910,7 @@ class DatasetExplorerController(QObject):
         if not sample:
             return False
         hand_labelled, smart_labelled = self._label_state_for_sample(sample)
-        return bool(hand_labelled or smart_labelled)
+        return bool(hand_labelled or smart_labelled or str(sample.get("id") or "") in self._pending_prediction_sample_ids)
 
     def set_sample_captions(self, sample_id: str, captions):
         sample = self.get_sample(sample_id)
@@ -1314,9 +1325,25 @@ class DatasetExplorerController(QObject):
 
             answer_texts = []
             for raw_text in raw_answers:
-                answer_text = str(raw_text or "").strip()
-                if answer_text:
-                    answer_texts.append(answer_text)
+                if isinstance(raw_text, dict):
+                    answer_text = str(raw_text.get("text") or "").strip()
+                    if not answer_text:
+                        continue
+                    normalized_answer = {"text": answer_text}
+                    if "confidence_score" in raw_text:
+                        try:
+                            normalized_answer["confidence_score"] = max(
+                                0.0, min(1.0, float(raw_text.get("confidence_score") or 0.0))
+                            )
+                        except Exception:
+                            normalized_answer["confidence_score"] = 0.0
+                    if raw_text.get("inference_model_id"):
+                        normalized_answer["inference_model_id"] = str(raw_text["inference_model_id"])
+                    answer_texts.append(normalized_answer)
+                else:
+                    answer_text = str(raw_text or "").strip()
+                    if answer_text:
+                        answer_texts.append(answer_text)
             if not answer_texts:
                 continue
 
@@ -1606,6 +1633,10 @@ class DatasetExplorerController(QObject):
             sample = entry.get("sample_ref")
             confidence = self._average_smart_confidence_for_sample(sample)
             hand_labelled, smart_labelled = self._label_state_for_sample(sample)
+            smart_labelled = (
+                smart_labelled
+                or str(entry.get("data_id") or "") in self._pending_prediction_sample_ids
+            )
             entry["display_name"] = self.tree_model.entry_display_name(entry.get("name"), confidence)
             entry["sort_text"] = natural_sort_key(entry.get("name", ""))
             entry["hand_labelled"] = hand_labelled
@@ -2041,8 +2072,22 @@ class DatasetExplorerController(QObject):
             or has_caption_text
             or self._has_non_empty_answers(sample)
         )
-        smart = self._has_smart_labels(sample) or self._has_smart_events(sample)
+        smart = (
+            self._has_smart_labels(sample)
+            or self._has_smart_events(sample)
+            or self._has_smart_sequence(sample.get("captions"))
+            or self._has_smart_sequence(sample.get("dense_captions"))
+            or self._has_smart_answers(sample)
+        )
         return bool(hand), bool(smart)
+
+    def set_pending_prediction_samples(self, sample_ids):
+        pending_sample_ids = {str(value) for value in sample_ids or [] if str(value)}
+        if pending_sample_ids == self._pending_prediction_sample_ids:
+            return
+        self._pending_prediction_sample_ids = pending_sample_ids
+        self.refresh_all_item_statuses()
+        self.handle_filter_change(self.panel.filter_combo.currentIndex(), selection_fallback="clear_selection")
 
     @staticmethod
     def _has_non_empty_answers(sample: dict) -> bool:
@@ -2055,7 +2100,8 @@ class DatasetExplorerController(QObject):
             if not str(entry.get("question") or "").strip():
                 continue
             for answer_text in list(entry.get("answers") or []):
-                if str(answer_text or "").strip():
+                text = answer_text.get("text") if isinstance(answer_text, dict) else answer_text
+                if str(text or "").strip():
                     return True
         return False
 
@@ -2075,6 +2121,25 @@ class DatasetExplorerController(QObject):
             for event in events:
                 if isinstance(event, dict) and "confidence_score" in event:
                     return True
+        return False
+
+    @staticmethod
+    def _has_smart_sequence(values) -> bool:
+        return any(
+            isinstance(value, dict) and "confidence_score" in value
+            for value in list(values or [])
+        )
+
+    @staticmethod
+    def _has_smart_answers(sample: dict) -> bool:
+        for group in list(sample.get("answers") or []):
+            if not isinstance(group, dict):
+                continue
+            if any(
+                isinstance(answer, dict) and "confidence_score" in answer
+                for answer in list(group.get("answers") or [])
+            ):
+                return True
         return False
 
     @staticmethod
@@ -2098,6 +2163,24 @@ class DatasetExplorerController(QObject):
                 if isinstance(event, dict) and "confidence_score" in event:
                     try:
                         scores.append(float(event.get("confidence_score")))
+                    except (TypeError, ValueError):
+                        pass
+
+        for field_name in ("captions", "dense_captions"):
+            for item in list(sample.get(field_name) or []):
+                if isinstance(item, dict) and "confidence_score" in item:
+                    try:
+                        scores.append(float(item.get("confidence_score")))
+                    except (TypeError, ValueError):
+                        pass
+
+        for group in list(sample.get("answers") or []):
+            if not isinstance(group, dict):
+                continue
+            for answer in list(group.get("answers") or []):
+                if isinstance(answer, dict) and "confidence_score" in answer:
+                    try:
+                        scores.append(float(answer.get("confidence_score")))
                     except (TypeError, ValueError):
                         pass
 

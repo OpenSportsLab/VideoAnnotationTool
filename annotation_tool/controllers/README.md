@@ -17,7 +17,9 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `media_controller.py`: grouped media playback, UTC alignment, synchronization, and mute routing.
 - `media/`: internal playback backends used by `MediaController` (`video`, `frames_npy`, `tracking_parquet`).
 - `welcome_controller.py`: welcome-page routing.
-- `hf_transfer_controller.py`: threaded Hugging Face download/upload orchestration for GUI menu actions.
+- `hf_transfer_controller.py`: threaded Hugging Face dataset transfer and local-model cache orchestration for GUI actions.
+- `inference_controller.py`: canonical local/remote model discovery, execution,
+  progress, cancellation, and worker lifecycle owner.
 - `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`: mode controllers.
 
 ## Key Functions and Responsibilities
@@ -90,7 +92,84 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 ### `HfTransferController`
 - `start_download(...)`: execute Hugging Face dataset download in a worker thread.
 - `start_upload(...)`: execute Hugging Face dataset upload from local dataset JSON inputs in a worker thread.
+- `start_model_import(...)`: inspect and cache one OpenSportsLib model repository
+  through `_HfModelWorker`. Its started/progress/completed/failed/cancelled
+  signals are routed by `MainWindow` to the active Settings draft; Settings
+  widgets never hold the controller. `shutdown()` interrupts and waits for all
+  dataset and model workers.
 - Emits start/progress/completion/failure signals for UI wiring in `main_window.py`.
+
+### `InferenceController`
+- Owns independent Local and Remote FIFO queues. Each lane has at most one
+  worker, the two lanes may overlap, and providers are instantiated only when
+  their requests reach the front.
+- Aggregates runnable task models into provider-aware choices. Local discovery
+  always runs; Remote discovery runs only when explicitly enabled and failures
+  are non-fatal when Local choices remain available. Identical model IDs remain
+  distinct through their `(backend, model_id)` identity.
+- Application Settings is the sole setup surface. Run requests contain an
+  immutable snapshot of saved Local registry, Remote endpoint, enablement, and
+  shared mappings; the run dialog only chooses a model and runtime parameters.
+- The last successfully completed `(backend, model_id)` is stored per task and
+  used as the preferred choice on the next run when still available.
+- `enqueue_inference()`, `cancel_request()`, `cancel_all()`, `queue_snapshot()`,
+  `queueChanged`, and `clear_queue_history()` form the queue interface.
+  Immutable `InferenceQueueEntry` snapshots drive the Inference Jobs dock. Each
+  entry includes a bounded immutable event timeline; repeated stage progress is
+  coalesced and the latest 20 terminal entries remain session-only.
+- Provider work runs in one `QThread` per active lane; `MainWindow` leaves
+  navigation, editing, and further inference submission enabled. A generic
+  post-provider cancellation check suppresses late Local results.
+- `controllers.inference_runtime.configure_compute_device` is the canonical
+  direct-library device resolver for Classification and Localization. It
+  preserves explicit CPU and converts unavailable `auto`/CUDA requests to CPU
+  in temporary per-job configs, including legacy and canonical GPU fields.
+- The Local VQA adapter builds a temporary config before constructing
+  `VQAModel`: system output paths become job-local, device/dtype are made
+  CPU-safe, adjacent X-VARS dependencies are resolved, and stale missing
+  publisher paths fail with `local_model_dependency_missing`. OpenSportsLib
+  0.3 `data[].answer_text` output is normalized at the provider boundary.
+- Result validation correlates by request `item_id`, then unique request
+  `sample_id`, with positional fallback restricted to legacy Local OSL output.
+- `MainWindow` preserves the user's active annotation and head tabs while
+  dispatching completed results. Classification batch input choices are shown
+  from the selected sample and applied positionally to each queued sample.
+- `MainWindow` also owns the Inference Jobs dock visibility preference. Welcome
+  mode hides the dock without overwriting that preference and disables its View
+  action; workspace mode restores it alongside the other project docks.
+  Canonical request IDs overwrite result-owned IDs; unknown and duplicate
+  targets are invalid results.
+- `DatasetExplorerController.project_generation` increments on every reset.
+  Main-window request state captures that generation and the complete
+  item-to-sample mapping, cancels both active jobs and all waiting jobs on
+  generation change, discards missing sample targets, and never routes
+  predictions through the current selection.
+- The local registry is authoritative and may be empty; local discovery never
+  injects built-in model descriptors. The three curated OpenSportsLab IDs live
+  only in `KNOWN_HF_LOCAL_MODEL_IDS` as editable import-dialog suggestions. An
+  explicit Hugging Face import pins cache paths and hidden
+  repository/revision/checkpoint metadata in the draft registry.
+  `RETIRED_LOCAL_MODEL_IDS` filters the two legacy `jeetv` defaults from older
+  persisted settings during registry loading. `_is_obsolete_seeded_model()`
+  also removes former OpenSportsLab seed rows while preserving explicit imports
+  whose weights point into the Hugging Face cache.
+- `hf_model_import.resolve_hf_local_model()` performs deterministic repository
+  inspection, configuration/task validation, checkpoint selection, cache
+  downloads, and cancellation checks. The request-scoped `force_download`
+  option is forwarded to both `hf_hub_download` calls and is not persisted as
+  model metadata. Only the two exact official
+  localization repositories in `TRUSTED_LEGACY_HF_MODEL_IDS` may carry
+  `trusted_legacy=True` through `ModelDescriptor` to `LocInferenceWorker`.
+  Registry serialization revalidates that allowlist and revokes trust after a
+  relevant manual edit.
+- Local adapters call public OpenSportsLib task classes. Missing native
+  Description/Dense APIs are advertised as unavailable rather than emulated.
+- Remote execution resolves shared assets or resumable uploads, submits an
+  idempotent job, polls terminal state, and validates task-native results.
+- Mode controllers emit inference intent; `MainWindow.connect_signals()` adds
+  canonical sample/schema context and routes results back. Mode controllers
+  then emit ordinary mutation intents to `HistoryManager`.
+- Upload manifests are application settings and never enter dataset JSON.
 
 ## Business Rules
 - Dataset JSON mutation must preserve undo/redo correctness.

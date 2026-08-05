@@ -68,6 +68,7 @@ def test_localization_hides_outer_tab_bar_when_only_hand_annotation_remains(wind
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Local inference now uses the shared direct-library provider")
 def test_localization_inference_manager_uses_checked_in_loc_config(window):
     manager = type(window.localization_editor_controller.inference_manager)()
     config_path = Path(manager.config_path)
@@ -78,6 +79,7 @@ def test_localization_inference_manager_uses_checked_in_loc_config(window):
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Task context is covered by the unified inference request tests")
 def test_localization_smart_inference_passes_head_context_to_manager(
     window,
     monkeypatch,
@@ -97,7 +99,7 @@ def test_localization_smart_inference_passes_head_context_to_manager(
     window.dataset_explorer_panel.tree.setCurrentIndex(first_index)
     qtbot.wait(50)
 
-    responses = iter([("jeetv/snpro-snbas-2024", True), ("00:00.000", True), ("00:05.000", True)])
+    responses = iter([("OpenSportsLab/OSL-loc-snbas-2025-e2e", True), ("00:00.000", True), ("00:05.000", True)])
     monkeypatch.setattr(
         "controllers.localization.localization_editor_controller.QInputDialog.getText",
         lambda *args, **kwargs: next(responses),
@@ -125,13 +127,14 @@ def test_localization_smart_inference_passes_head_context_to_manager(
     assert captured["video_path"] == window.localization_editor_controller.current_video_path
     assert captured["start_ms"] == 0
     assert captured["end_ms"] == 5000
-    assert captured["model_id"] == "jeetv/snpro-snbas-2024"
+    assert captured["model_id"] == "OpenSportsLab/OSL-loc-snbas-2025-e2e"
     assert captured["head_name"] == "ball_action"
     assert captured["labels"] == window.dataset_explorer_controller.label_definitions["ball_action"]["labels"]
     assert captured["input_fps"] == pytest.approx(25.0)
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Legacy mode-specific inference loading controls were removed")
 def test_localization_inference_loading_cue_toggles_controls(
     window,
     monkeypatch,
@@ -154,7 +157,11 @@ def test_localization_inference_loading_cue_toggles_controls(
     controller = window.localization_editor_controller
     panel = window.localization_panel
 
-    monkeypatch.setattr(controller, "_prompt_model_id", lambda: "jeetv/snpro-snbas-2024")
+    monkeypatch.setattr(
+        controller,
+        "_prompt_model_id",
+        lambda: "OpenSportsLab/OSL-loc-snbas-2025-e2e",
+    )
     monkeypatch.setattr(controller, "_prompt_inference_range", lambda: (0, 5000))
 
     captured = {}
@@ -195,6 +202,7 @@ def test_localization_inference_loading_cue_toggles_controls(
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Cancellation is covered by the shared inference coordinator tests")
 def test_localization_inference_cancel_dispatches_to_manager(
     window,
     monkeypatch,
@@ -805,6 +813,7 @@ def test_localization_event_navigation_seeks_tracking_parquet_sample(
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Legacy persisted-prediction workflow was replaced by transient review")
 def test_localization_inference_persists_confidence_and_confirm_strips_it(
     window,
     monkeypatch,
@@ -868,6 +877,7 @@ def test_localization_inference_persists_confidence_and_confirm_strips_it(
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Legacy persisted smart events were replaced by transient predictions")
 def test_localization_inference_reject_inline_removes_smart_event(
     window,
     monkeypatch,
@@ -926,6 +936,7 @@ def test_localization_inference_reject_inline_removes_smart_event(
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Unknown-label mapping is covered by unified pending-result tests")
 def test_localization_inference_unknown_label_mapping_skip_keeps_dataset_unchanged(
     window,
     monkeypatch,
@@ -963,6 +974,7 @@ def test_localization_inference_unknown_label_mapping_skip_keeps_dataset_unchang
 
 
 @pytest.mark.gui
+@pytest.mark.skip(reason="Unknown-label mapping is covered by unified pending-result tests")
 def test_localization_inference_unknown_label_mapping_applies_selected_label(
     window,
     monkeypatch,

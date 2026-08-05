@@ -1,7 +1,7 @@
 import copy
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QInputDialog
+from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 
 class QAEditorController(QObject):
@@ -12,6 +12,8 @@ class QAEditorController(QObject):
 
     statusMessageRequested = pyqtSignal(str, str, int)
     qaAnswersUpdateRequested = pyqtSignal(str, object)
+    inferenceRunRequested = pyqtSignal(str, object)
+    pendingPredictionsChanged = pyqtSignal(object)
 
     def __init__(self, question_answer_panel):
         super().__init__()
@@ -28,6 +30,7 @@ class QAEditorController(QObject):
         self._question_catalog = []
         self._selected_group_index = -1
         self._selected_answer_index = -1
+        self._pending_by_sample = {}
 
         self._autosave_timer = QTimer(self.question_answer_panel)
         self._autosave_timer.setSingleShot(True)
@@ -51,6 +54,116 @@ class QAEditorController(QObject):
         self.question_answer_panel.answerEditRequested.connect(self._on_edit_answer_requested)
         self.question_answer_panel.answerDeleteRequested.connect(self._on_delete_answer_requested)
         self.question_answer_panel.answerSelectionChanged.connect(self._on_answer_selection_changed)
+        self.question_answer_panel.smartConfirmRequested.connect(self.confirm_selected_smart_answer)
+        self.question_answer_panel.smartRejectRequested.connect(self.reject_selected_smart_answer)
+        self.question_answer_panel.smartAcceptAllRequested.connect(self.accept_all_predictions)
+        self.question_answer_panel.smartRejectAllRequested.connect(self.reject_all_predictions)
+
+    def request_inference(self):
+        if not self._valid_group_index(self._selected_group_index):
+            QMessageBox.warning(
+                self.question_answer_panel,
+                "Inference",
+                "Select a question before running inference.",
+            )
+            return
+        question = str(self._answer_groups[self._selected_group_index].get("question") or "").strip()
+        if question:
+            self.inferenceRunRequested.emit("question_answer", {"question": question})
+
+    @staticmethod
+    def _answer_text(answer) -> str:
+        if isinstance(answer, dict):
+            return str(answer.get("text") or "")
+        return str(answer or "")
+
+    def apply_shared_inference_result(self, result, context=None):
+        question = str((context or {}).get("question") or "").strip()
+        if not question:
+            return
+        for item in result.items:
+            sample_id = str(item.get("sample_id") or "")
+            raw = item.get("answer")
+            if isinstance(raw, dict):
+                text = str(raw.get("text") or raw.get("answer") or "").strip()
+                confidence = float(raw.get("confidence_score", raw.get("confidence", 1.0)) or 0.0)
+            else:
+                text, confidence = str(raw or "").strip(), 1.0
+            if not sample_id or not text:
+                continue
+            candidate = {"text": text, "confidence_score": confidence, "inference_model_id": result.model_id, "_pending_prediction": True, "_question": question}
+            self._pending_by_sample.setdefault(sample_id, []).append(copy.deepcopy(candidate))
+            if sample_id == self.current_sample_id:
+                self._insert_pending_candidate(candidate)
+        self._set_question_groups(self._answer_groups)
+        self._update_editor_enabled()
+        self.pendingPredictionsChanged.emit({sample_id for sample_id, values in self._pending_by_sample.items() if values})
+
+    def _insert_pending_candidate(self, candidate):
+        question = str(candidate.get("_question") or "")
+        group_index = self._group_index_for_question(question)
+        if group_index < 0:
+            self._answer_groups.append({"question": question, "answers": []})
+            group_index = len(self._answer_groups) - 1
+        answers = self._answer_groups[group_index].setdefault("answers", [])
+        if any(self._answer_text(existing).strip() == str(candidate.get("text") or "").strip() for existing in answers):
+            return
+        answers.append(copy.deepcopy(candidate))
+        self._selected_group_index = group_index
+        self._selected_answer_index = len(answers) - 1
+
+    def confirm_selected_smart_answer(self):
+        self._change_selected_smart_answer(confirm=True)
+
+    def reject_selected_smart_answer(self):
+        self._change_selected_smart_answer(confirm=False)
+
+    def _change_selected_smart_answer(self, *, confirm: bool):
+        if not self._valid_answer_index(self._selected_group_index, self._selected_answer_index):
+            return
+        answers = self._answer_groups[self._selected_group_index].setdefault("answers", [])
+        answer = answers[self._selected_answer_index]
+        if not isinstance(answer, dict) or not answer.get("_pending_prediction"):
+            return
+        pending = self._pending_by_sample.get(self.current_sample_id, [])
+        pending[:] = [item for item in pending if not (item.get("text") == answer.get("text") and item.get("_question") == answer.get("_question"))]
+        if confirm:
+            answers[self._selected_answer_index] = self._answer_text(answer).strip()
+        else:
+            answers.pop(self._selected_answer_index)
+            self._selected_answer_index = min(self._selected_answer_index, len(answers) - 1)
+        if confirm:
+            persisted = self._persistable_groups()
+            self.qaAnswersUpdateRequested.emit(self.current_sample_id, copy.deepcopy(persisted))
+            self._current_sample_snapshot["answers"] = copy.deepcopy(persisted)
+        self._set_question_groups(self._answer_groups)
+        self._update_editor_enabled()
+        self.pendingPredictionsChanged.emit({sample_id for sample_id, values in self._pending_by_sample.items() if values})
+
+    def accept_all_predictions(self):
+        pending = self._pending_by_sample.pop(self.current_sample_id, [])
+        if not pending:
+            return
+        for group in self._answer_groups:
+            group["answers"] = [
+                self._answer_text(answer).strip() if isinstance(answer, dict) and answer.get("_pending_prediction") else answer
+                for answer in group.get("answers", [])
+            ]
+        persisted = self._persistable_groups()
+        self.qaAnswersUpdateRequested.emit(self.current_sample_id, copy.deepcopy(persisted))
+        self._current_sample_snapshot["answers"] = copy.deepcopy(persisted)
+        self._set_question_groups(self._answer_groups)
+        self._update_editor_enabled()
+        self.pendingPredictionsChanged.emit({sample_id for sample_id, values in self._pending_by_sample.items() if values})
+
+    def reject_all_predictions(self):
+        self._pending_by_sample.pop(self.current_sample_id, None)
+        for group in self._answer_groups:
+            group["answers"] = [answer for answer in group.get("answers", []) if not (isinstance(answer, dict) and answer.get("_pending_prediction"))]
+        self._answer_groups = [group for group in self._answer_groups if group.get("answers") or str(group.get("question") or "") in {str(item.get("question") or "") for item in self._current_sample_snapshot.get("answers", []) if isinstance(item, dict)}]
+        self._set_question_groups(self._answer_groups)
+        self._update_editor_enabled()
+        self.pendingPredictionsChanged.emit({sample_id for sample_id, values in self._pending_by_sample.items() if values})
 
     def on_mode_changed(self, index: int):
         self._active_mode_index = index
@@ -73,6 +186,8 @@ class QAEditorController(QObject):
         self._question_catalog = []
         self._selected_group_index = -1
         self._selected_answer_index = -1
+        self._pending_by_sample.clear()
+        self.pendingPredictionsChanged.emit(set())
 
         self._set_question_groups([])
         self._update_editor_enabled()
@@ -100,6 +215,8 @@ class QAEditorController(QObject):
                 self.current_sample_id = sample_id
                 self._current_sample_snapshot = copy.deepcopy(sample)
                 self._answer_groups = self._normalize_answers_payload(sample.get("answers"))
+                for candidate in self._pending_by_sample.get(sample_id, []):
+                    self._insert_pending_candidate(candidate)
                 for group in self._answer_groups:
                     self._add_question_to_catalog(group.get("question"))
 
@@ -208,7 +325,7 @@ class QAEditorController(QObject):
             return
         self._selected_answer_index = int(index)
         answers = self._answer_groups[self._selected_group_index].setdefault("answers", [])
-        current_answer = str(answers[self._selected_answer_index] or "")
+        current_answer = self._answer_text(answers[self._selected_answer_index])
         answer_text = self._request_answer_text("Edit Answer", current_answer)
         if not answer_text or answer_text == current_answer.strip():
             return
@@ -245,7 +362,7 @@ class QAEditorController(QObject):
         if not self.current_sample_id:
             return False
 
-        new_answers = self._normalize_answers_payload(self._answer_groups)
+        new_answers = self._normalize_answers_payload(self._persistable_groups())
         old_answers = self._normalize_answers_payload(self._current_sample_snapshot.get("answers"))
         if old_answers == new_answers:
             return False
@@ -259,8 +376,22 @@ class QAEditorController(QObject):
             self._current_sample_snapshot.pop("answers", None)
         return True
 
+    def _persistable_groups(self):
+        groups = []
+        pending_questions = {str(item.get("_question") or "") for item in self._pending_by_sample.get(self.current_sample_id, [])}
+        for group in self._answer_groups:
+            answers = [copy.deepcopy(answer) for answer in group.get("answers", []) if not (isinstance(answer, dict) and answer.get("_pending_prediction"))]
+            had_manual_group = any(not (isinstance(answer, dict) and answer.get("_pending_prediction")) for answer in group.get("answers", []))
+            if answers or had_manual_group or str(group.get("question") or "") not in pending_questions:
+                groups.append({"question": str(group.get("question") or ""), "answers": answers})
+        return groups
+
     def _start_autosave(self):
         if self.current_sample_id:
+            if self._pending_by_sample.pop(self.current_sample_id, None):
+                for group in self._answer_groups:
+                    group["answers"] = [answer for answer in group.get("answers", []) if not (isinstance(answer, dict) and answer.get("_pending_prediction"))]
+                self.pendingPredictionsChanged.emit({sample_id for sample_id, values in self._pending_by_sample.items() if values})
             self._autosave_timer.start()
 
     def _set_question_groups(self, groups):
@@ -304,10 +435,19 @@ class QAEditorController(QObject):
         )
         has_group = self._valid_group_index(self._selected_group_index)
         has_answer = self._valid_answer_index(self._selected_group_index, self._selected_answer_index)
+        selected_answer = None
+        if has_answer:
+            selected_answer = self._answer_groups[self._selected_group_index]["answers"][self._selected_answer_index]
+        has_smart_answer = isinstance(selected_answer, dict) and selected_answer.get("_pending_prediction")
         self.question_answer_panel.set_controls_enabled(
             editor_enabled=editor_enabled,
             has_group=has_group,
             has_answer=has_answer,
+        )
+        pending_count = len(self._pending_by_sample.get(self.current_sample_id, []))
+        self.question_answer_panel.set_prediction_actions_visible(
+            selected=has_smart_answer,
+            bulk=pending_count > 1,
         )
 
     def _valid_group_index(self, index: int) -> bool:
@@ -407,9 +547,24 @@ class QAEditorController(QObject):
 
             answer_texts = []
             for raw_answer in raw_answers:
-                answer_text = str(raw_answer or "").strip()
-                if answer_text:
-                    answer_texts.append(answer_text)
+                if isinstance(raw_answer, dict):
+                    answer_text = str(raw_answer.get("text") or "").strip()
+                    if answer_text:
+                        normalized_answer = {"text": answer_text}
+                        if "confidence_score" in raw_answer:
+                            try:
+                                normalized_answer["confidence_score"] = max(
+                                    0.0, min(1.0, float(raw_answer.get("confidence_score") or 0.0))
+                                )
+                            except Exception:
+                                normalized_answer["confidence_score"] = 0.0
+                        if raw_answer.get("inference_model_id"):
+                            normalized_answer["inference_model_id"] = str(raw_answer["inference_model_id"])
+                        answer_texts.append(normalized_answer)
+                else:
+                    answer_text = str(raw_answer or "").strip()
+                    if answer_text:
+                        answer_texts.append(answer_text)
             if not answer_texts:
                 continue
 

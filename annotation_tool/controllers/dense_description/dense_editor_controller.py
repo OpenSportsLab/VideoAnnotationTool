@@ -22,6 +22,9 @@ class DenseEditorController(QObject):
     denseEventDelRequested = pyqtSignal(str, dict, int)
     mediaSeekRequested = pyqtSignal(int)
     markersUpdateRequested = pyqtSignal(object)
+    denseEventsSetRequested = pyqtSignal(str, object)
+    inferenceRunRequested = pyqtSignal(str, object)
+    pendingPredictionsChanged = pyqtSignal(object)
 
     def __init__(self, dense_panel):
         super().__init__()
@@ -34,6 +37,7 @@ class DenseEditorController(QObject):
         self.current_sample_id = ""
         self.current_video_path = None
         self._current_sample_snapshot = {}
+        self._pending_predictions = {}
 
     # -------------------------------------------------------------------------
     # Lifecycle / Wiring
@@ -45,6 +49,86 @@ class DenseEditorController(QObject):
         self.dense_panel.eventDeleted.connect(self._on_delete_single_annotation)
         self.dense_panel.eventModified.connect(self._on_annotation_modified)
         self.dense_panel.updateTimeForSelectedRequested.connect(self._on_update_time_for_selected)
+        self.dense_panel.smartConfirmRequested.connect(self.confirm_selected_smart_prediction)
+        self.dense_panel.smartRejectRequested.connect(self.reject_selected_smart_prediction)
+        self.dense_panel.smartAcceptAllRequested.connect(self.accept_all_predictions)
+        self.dense_panel.smartRejectAllRequested.connect(self.reject_all_predictions)
+
+    def request_inference(self):
+        if not self.current_sample_id:
+            QMessageBox.warning(
+                self.dense_panel, "Inference", "Please select a sample first."
+            )
+            return
+        self.inferenceRunRequested.emit(
+            "dense_description", {"language": "en"}
+        )
+
+    def apply_shared_inference_result(self, result, context=None):
+        for item in result.items:
+            sample_id = str(item.get("sample_id") or "")
+            predictions = item.get("dense_captions")
+            if not sample_id or not isinstance(predictions, list):
+                continue
+            pending = []
+            for raw in predictions:
+                if not isinstance(raw, dict) or not str(raw.get("text") or "").strip():
+                    continue
+                event = copy.deepcopy(raw)
+                event.setdefault("lang", "en")
+                event["confidence_score"] = float(event.get("confidence_score", 1.0) or 0.0)
+                event["inference_model_id"] = result.model_id
+                event["_pending_prediction"] = True
+                pending.append(event)
+            self._pending_predictions[sample_id] = pending
+        self._refresh_events_display(update_markers=self._is_active_mode())
+
+    def confirm_selected_smart_prediction(self):
+        self._change_selected_smart_prediction(confirm=True)
+
+    def reject_selected_smart_prediction(self):
+        self._change_selected_smart_prediction(confirm=False)
+
+    def _change_selected_smart_prediction(self, *, confirm: bool):
+        target = self.dense_panel.get_selected_event()
+        if not isinstance(target, dict) or not target.get("_pending_prediction") or not self.current_sample_id:
+            return
+        pending = self._pending_predictions.get(self.current_sample_id, [])
+        index = self._find_event_index(pending, target)
+        if index < 0:
+            return
+        if confirm:
+            event = pending[index]
+            accepted = {key: copy.deepcopy(value) for key, value in event.items() if key not in {"confidence_score", "confidence", "inference_model_id", "_pending_prediction"}}
+            events = self._snapshot_dense_events()
+            key = (int(accepted.get("position_ms", 0) or 0), str(accepted.get("text") or ""))
+            if key not in {(int(e.get("position_ms", 0) or 0), str(e.get("text") or "")) for e in events}:
+                events.append(accepted)
+                self.denseEventsSetRequested.emit(self.current_sample_id, copy.deepcopy(events))
+                self._set_snapshot_dense_events(events)
+        pending.pop(index)
+        self._refresh_events_display(update_markers=self._is_active_mode())
+
+    def accept_all_predictions(self):
+        pending = self._pending_predictions.pop(self.current_sample_id, [])
+        if not pending:
+            return
+        events = self._snapshot_dense_events()
+        existing = {(int(e.get("position_ms", 0) or 0), str(e.get("text") or "")) for e in events}
+        for event in pending:
+            accepted = {key: copy.deepcopy(value) for key, value in event.items() if key not in {"confidence_score", "confidence", "inference_model_id", "_pending_prediction"}}
+            key = (int(accepted.get("position_ms", 0) or 0), str(accepted.get("text") or ""))
+            if key not in existing:
+                existing.add(key)
+                events.append(accepted)
+        if events != self._snapshot_dense_events():
+            self.denseEventsSetRequested.emit(self.current_sample_id, copy.deepcopy(events))
+            self._set_snapshot_dense_events(events)
+        self._refresh_events_display(update_markers=self._is_active_mode())
+
+    def reject_all_predictions(self):
+        self._pending_predictions.pop(self.current_sample_id, None)
+        self._refresh_events_display(update_markers=self._is_active_mode())
 
     def on_mode_changed(self, index: int):
         self._active_mode_index = index
@@ -79,6 +163,9 @@ class DenseEditorController(QObject):
         self._refresh_events_display(update_markers=self._is_active_mode())
 
     def reset_ui(self):
+        self._pending_predictions.clear()
+        self.pendingPredictionsChanged.emit(set())
+        self.dense_panel.set_prediction_actions_visible(False)
         self.dense_panel.set_events([])
         self.dense_panel.set_dense_enabled(False)
         self.current_sample_id = ""
@@ -139,6 +226,7 @@ class DenseEditorController(QObject):
         self.mediaSeekRequested.emit(int(ms))
 
     def _on_add_event_requested(self, initial_text: str = ""):
+        self.reject_all_predictions()
         if not self.current_video_path:
             QMessageBox.warning(self.dense_panel, "Warning", "Please select a sample first.")
             return
@@ -175,6 +263,7 @@ class DenseEditorController(QObject):
         self.dense_panel.select_event(new_event)
 
     def _on_annotation_modified(self, old_event: dict, new_event: dict):
+        self.reject_all_predictions()
         if not self.current_video_path:
             return
         if old_event == new_event:
@@ -207,6 +296,7 @@ class DenseEditorController(QObject):
         self.dense_panel.select_event(target_event)
 
     def _on_delete_single_annotation(self, item_data: dict):
+        self.reject_all_predictions()
         if not self.current_video_path:
             return
 
@@ -285,7 +375,11 @@ class DenseEditorController(QObject):
             current_selection_ms = current_selected_event.get("position_ms")
 
         events = self._snapshot_dense_events()
+        pending = copy.deepcopy(self._pending_predictions.get(self.current_sample_id, []))
+        events.extend(pending)
         self.dense_panel.set_events(events)
+        self.dense_panel.set_prediction_actions_visible(bool(pending))
+        self.pendingPredictionsChanged.emit({sample_id for sample_id, values in self._pending_predictions.items() if values})
 
         if update_markers is None:
             update_markers = self._is_active_mode()

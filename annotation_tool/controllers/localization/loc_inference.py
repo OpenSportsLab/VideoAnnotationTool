@@ -8,6 +8,10 @@ import tempfile
 import yaml
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from controllers.inference_runtime import configure_compute_device, cuda_is_available
+
+_cuda_is_available = cuda_is_available
+
 
 def _base_dir() -> str:
     if hasattr(sys, "_MEIPASS"):
@@ -78,6 +82,67 @@ def _runtime_confidence(event: dict) -> float:
             return 1.0
     return 1.0
 
+
+def _dali_is_available() -> bool:
+    """Return whether the DALI pieces used by OpenSportsLib can be imported."""
+    try:
+        from nvidia.dali import backend, pipeline_def
+        import nvidia.dali.fn as fn
+        import nvidia.dali.types as types
+        from nvidia.dali.plugin.pytorch import DALIGenericIterator
+
+        del backend, pipeline_def, fn, types, DALIGenericIterator
+        return True
+    except Exception:
+        return False
+
+
+def _replace_dali_dataset_type(split_cfg: dict) -> None:
+    replacements = {
+        "VideoGameWithDali": "VideoGameWithOpencv",
+        "VideoGameWithDaliVideo": "VideoGameWithOpencvVideo",
+    }
+    dataset_type = str(split_cfg.get("type") or "")
+    if dataset_type in replacements:
+        split_cfg["type"] = replacements[dataset_type]
+
+
+def _configure_runtime_backend(config_dict: dict) -> None:
+    """Resolve consistent compute and video-loader backends for this machine."""
+    use_cuda = configure_compute_device(
+        config_dict, cuda_available=_cuda_is_available()
+    )
+
+    data_cfg = config_dict.setdefault("DATA", {})
+    common_cfg = data_cfg.get("common")
+    runtime_cfg = common_cfg.get("runtime") if isinstance(common_cfg, dict) else None
+    canonical_backend = (
+        str(runtime_cfg.get("loader_backend") or "opencv").lower()
+        if isinstance(runtime_cfg, dict)
+        else ""
+    )
+    requested_dali = bool(config_dict.get("dali", data_cfg.get("dali", False)))
+    requested_dali = requested_dali or canonical_backend == "dali"
+    use_dali = requested_dali and use_cuda and _dali_is_available()
+
+    # Explicitly set both schemas so migration cannot restore DALI after a
+    # CPU/OpenCV fallback has been selected.
+    config_dict["dali"] = use_dali
+    if "dali" in data_cfg:
+        data_cfg["dali"] = use_dali
+    if isinstance(runtime_cfg, dict):
+        runtime_cfg["loader_backend"] = "dali" if use_dali else "opencv"
+
+    if not use_dali:
+        test_cfg = data_cfg.get("test")
+        if isinstance(test_cfg, dict):
+            _replace_dali_dataset_type(test_cfg)
+        splits_cfg = common_cfg.get("splits") if isinstance(common_cfg, dict) else None
+        canonical_test_cfg = splits_cfg.get("test") if isinstance(splits_cfg, dict) else None
+        if isinstance(canonical_test_cfg, dict):
+            _replace_dali_dataset_type(canonical_test_cfg)
+
+
 class LocInferenceWorker(QThread):
     """
     Background worker for running OpenSportsLib Localization inference.
@@ -86,16 +151,31 @@ class LocInferenceWorker(QThread):
     finished_signal = pyqtSignal(list)
     error_signal = pyqtSignal(str)
 
-    def __init__(self, video_path, start_ms, end_ms, config_path, model_id, head_name, labels, input_fps):
+    def __init__(
+        self,
+        video_path,
+        start_ms,
+        end_ms,
+        config_path,
+        model_id,
+        head_name,
+        labels,
+        input_fps,
+        *,
+        trusted_legacy=False,
+    ):
         super().__init__()
         self.video_path = os.path.abspath(video_path)
         self.start_ms = start_ms
         self.end_ms = end_ms
         self.config_path = config_path
-        self.model_id = str(model_id or "jeetv/snpro-snbas-2024")
+        self.model_id = str(
+            model_id or "OpenSportsLab/OSL-loc-snbas-2025-e2e"
+        )
         self.target_head = str(head_name or "ball_action")
         self.labels = [str(label) for label in list(labels or []) if str(label).strip()]
         self.input_fps = float(input_fps or 25.0)
+        self.trusted_legacy = bool(trusted_legacy)
 
     def _clip_video_if_needed(self, tmp_dir: str) -> tuple[str, int]:
         if self.start_ms <= 0 and self.end_ms <= 0:
@@ -133,6 +213,8 @@ class LocInferenceWorker(QThread):
                 "23",
                 "-c:a",
                 "aac",
+                "-movflags",
+                "+faststart",
                 clip_video_path,
             ]
             subprocess.run(
@@ -171,9 +253,7 @@ class LocInferenceWorker(QThread):
         system_cfg["work_dir"] = tmp_dir
         system_cfg["save_dir"] = os.path.join(tmp_dir, "checkpoints")
         system_cfg["log_dir"] = os.path.join(tmp_dir, "logs")
-        system_cfg["device"] = "cpu"
-        system_cfg["GPU"] = -1
-        system_cfg["gpu_id"] = -1
+        _configure_runtime_backend(config_dict)
 
         temp_config_path = os.path.join(tmp_dir, "temp_config.yaml")
         with open(temp_config_path, "w", encoding="utf-8") as handle:
@@ -253,6 +333,7 @@ class LocInferenceWorker(QThread):
                             test_set=tmp_input_json,
                             weights=self.model_id,
                             use_wandb=False,
+                            trusted_legacy=self.trusted_legacy,
                         )
                     )
                     raw_evts = self._extract_prediction_events(output_data)

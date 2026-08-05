@@ -22,6 +22,15 @@ they are not written to dataset JSON.
 The **Edit → Settings…** dialog contains application-wide preferences. On its
 **Media Controls** page, comma-separated playback factors and seek intervals
 change the two media-control rows immediately when **Apply** or **OK** is used.
+
+The **Inference** settings tab selects Local or Remote execution, configures the
+server URL, tests `/api/v1/capabilities`, maps local directories to advertised
+server storage roots, and manages local model config/weights entries. **Add
+from Hugging Face…** downloads a validated OpenSportsLib configuration and
+checkpoint in the background and stages the cached paths until Settings is
+applied; **Add Manually** retains direct path entry. See
+[Local and Remote Inference](inference.md).
+
 On **Dataset Explorer**, **Samples per page** controls the bounded tree window
 (500 by default, configurable from 100 to 2,000) and applies immediately.
 These preferences are stored in application settings and are never added to a
@@ -84,6 +93,24 @@ layouts stay pinned to the modality being synchronized.
 
 ### Right: Annotation Tabs
 
+All five editors end with the same prediction-review footer. Accept/Reject and
+bulk review actions appear only when pending predictions exist. Task-specific
+prediction rows remain inline in the editor above it.
+
+The **Inference Jobs** dock sits below the Annotation Editor. Its single
+**Run Inference…** action opens a runtime-only dialog for the active annotation
+mode, with task-compatible Local/Remote models, inputs, and applicable task
+parameters. Server and model setup lives in **Edit → Settings → Inference**.
+The dock shows active progress, FIFO waiting jobs, cancellation, recent outcomes,
+and timestamped per-job details while leaving the status bar unobstructed.
+It hides when the project closes and the welcome screen is restored; its View
+action is disabled there, and its prior visibility returns with the workspace.
+One Local and one Remote job may run
+at the same time, and more runs can be queued without blocking the annotation
+workspace. Predictions stay associated with the sample from which each request
+was submitted even if another sample is selected before completion, and
+completion does not switch the active annotation or head tab.
+
 #### Classification (`CLS`)
 
 ![Classification Interface](assets/classification-UI.png)
@@ -91,7 +118,7 @@ layouts stay pinned to the modality being synchronized.
 - Edit label heads and labels
 - Supports single-label and multi-label heads
 - Manual edits are saved immediately on effective change
-- Smart inference per head with confirm/reject
+- Pending labels have inline Accept/Reject controls
 
 #### Localization (`LOC`)
 
@@ -102,14 +129,15 @@ layouts stay pinned to the modality being synchronized.
 - Event table supports edit, delete, confirm/reject smart events
 - Time shows full UTC when resolvable and relative time otherwise; media seeking
   still uses the projected timeline position
-- Smart inference with model + time-range prompts
+- Pending events are visually distinct and can be reviewed inline
 
 #### Description (`DESC`)
 
 ![Description Interface](assets/description-UI.png)
 
-- Clip-level text editor for captions
-- Autosaves after short idle delay when text changes
+- Ordered caption list with selected-row variant, language, and text editor
+- Add/delete controls and autosave after a short idle delay
+- Existing optional caption metadata is preserved when visible fields change
 
 #### Dense Description (`DENSE`)
 

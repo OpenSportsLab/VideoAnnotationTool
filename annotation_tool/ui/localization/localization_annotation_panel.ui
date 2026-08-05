@@ -136,7 +136,7 @@
        <item>
         <widget class="QGroupBox" name="smartInferenceGroup">
          <property name="title">
-          <string>Smart Inference Range</string>
+          <string>Legacy Prediction Range</string>
          </property>
          <property name="class" stdset="0">
           <string notr="true">smart_inference_box</string>
@@ -253,19 +253,6 @@
              </widget>
             </item>
            </layout>
-          </item>
-          <item>
-           <widget class="QPushButton" name="smartRunInferenceBtn">
-            <property name="cursor">
-             <cursorShape>PointingHandCursor</cursorShape>
-            </property>
-            <property name="text">
-             <string>Run Smart Inference</string>
-            </property>
-            <property name="class" stdset="0">
-             <string notr="true">run_inference_btn</string>
-            </property>
-           </widget>
           </item>
          </layout>
         </widget>

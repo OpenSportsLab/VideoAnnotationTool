@@ -977,6 +977,7 @@ def test_view_menu_dock_preferences_are_independent_and_survive_welcome(window, 
 
     assert window.data_dock.isVisible() is True
     assert window.editor_dock.isVisible() is True
+    assert window.inference_jobs_dock.isVisible() is False
 
     window.action_show_dataset_explorer.setChecked(False)
     qtbot.wait(20)
@@ -988,11 +989,20 @@ def test_view_menu_dock_preferences_are_independent_and_survive_welcome(window, 
     qtbot.wait(20)
     assert window.action_show_annotation_editor.isChecked() is False
 
+    window.inference_jobs_dock.setVisible(True)
+    qtbot.wait(20)
+    assert window.action_show_inference_jobs.isChecked() is True
+    assert settings.value(
+        window._INFERENCE_JOBS_DOCK_VISIBLE_SETTING_KEY, False
+    ) in (True, "true")
+
     window.show_welcome_view()
+    assert window.action_show_inference_jobs.isEnabled() is False
     window.show_workspace()
     qtbot.wait(20)
     assert window.data_dock.isVisible() is False
     assert window.editor_dock.isVisible() is False
+    assert window.inference_jobs_dock.isVisible() is True
 
 
 @pytest.mark.gui
@@ -1002,6 +1012,7 @@ def test_view_preferences_restore_from_qsettings(window, qtbot):
     settings = window.dataset_explorer_controller.settings
     settings.setValue(window._DATA_DOCK_VISIBLE_SETTING_KEY, False)
     settings.setValue(window._EDITOR_DOCK_VISIBLE_SETTING_KEY, True)
+    settings.setValue(window._INFERENCE_JOBS_DOCK_VISIBLE_SETTING_KEY, True)
     settings.setValue(window._VIEWER_LAYOUT_SETTING_KEY, ViewerLayoutMode.TABS.value)
     settings.sync()
 
@@ -1011,8 +1022,10 @@ def test_view_preferences_restore_from_qsettings(window, qtbot):
 
     assert window.data_dock.isVisible() is False
     assert window.editor_dock.isVisible() is True
+    assert window.inference_jobs_dock.isVisible() is True
     assert window.action_show_dataset_explorer.isChecked() is False
     assert window.action_show_annotation_editor.isChecked() is True
+    assert window.action_show_inference_jobs.isChecked() is True
     assert window.center_panel.viewer_layout() == ViewerLayoutMode.TABS
     assert window.viewer_layout_actions[ViewerLayoutMode.TABS].isChecked() is True
 

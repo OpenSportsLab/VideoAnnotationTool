@@ -3,6 +3,8 @@
 ## Role
 Provides the Dense Description right-panel with table and add-event adapters.
 
+Includes the shared bottom inference-review footer and pending-row review.
+
 ## Architecture Context
 - Static layout comes from `dense_annotation_panel.ui`.
 - `DenseAnnotationPanel` builds runtime adapters and table model in `__init__.py`.
@@ -25,6 +27,8 @@ Provides the Dense Description right-panel with table and add-event adapters.
 - `eventDeleted(dict)`
 - `eventModified(dict, dict)`
 - `updateTimeForSelectedRequested(dict)`
+- `smartConfirmRequested()` / `smartRejectRequested()`
+- `smartAcceptAllRequested()` / `smartRejectAllRequested()`
 
 ### Table Adapter Signals
 - `annotationSelected(int)`
@@ -54,6 +58,8 @@ Provides the Dense Description right-panel with table and add-event adapters.
 ## Business Rules
 - Table emits edit intents; controller validates and persists changes.
 - Add-event button only emits intent.
+- `InferenceReviewBar` is always the final layout widget and contains review
+  actions only; execution starts from the Inference Jobs dock.
 - The Time column reserves enough width for full UTC timestamps across resize events.
 - UTC Time edits normalize ISO-compatible input and emit both temporal fields;
   invalid input is a no-op. Relative rows retain the relative-time parser.
