@@ -17,7 +17,9 @@ from typing import Any, Callable
 from urllib.parse import quote
 
 import httpx
+import yaml
 
+from controllers.inference_runtime import configure_compute_device
 from inference_settings import (
     load_local_models,
     load_shared_mappings,
@@ -219,21 +221,133 @@ class LocalInferenceProvider:
         if not question:
             raise InferenceError("Q/A inference requires a question.", code="invalid_request")
         results = []
-        for index, item in enumerate(request.items):
-            _check_cancelled(cancel_event)
-            if not item.inputs:
-                raise InferenceError("Q/A input is missing.", code="invalid_request")
-            runner = model.VQAModel(config=descriptor.config_path)
-            output = runner.infer(
-                video_path=item.inputs[0].path,
-                question=question,
-                weights=descriptor.weights or None,
-                use_wandb=False,
+        with tempfile.TemporaryDirectory(prefix="vat_vqa_") as tmp_dir:
+            runtime_config = self._build_vqa_runtime_config(
+                descriptor.config_path, tmp_dir
             )
-            answer = output.get("answer") if isinstance(output, dict) else output
-            results.append({"sample_id": item.sample_id, "answer": answer})
-            progress("Running local inference", index + 1, len(request.items))
+            runner = model.VQAModel(config=runtime_config)
+            for index, item in enumerate(request.items):
+                _check_cancelled(cancel_event)
+                if not item.inputs:
+                    raise InferenceError("Q/A input is missing.", code="invalid_request")
+                output = runner.infer(
+                    video_path=item.inputs[0].path,
+                    question=question,
+                    weights=descriptor.weights or None,
+                    use_wandb=False,
+                )
+                answer = self._normalize_vqa_answer(output)
+                if not answer:
+                    raise InferenceError(
+                        "OpenSportsLib returned no VQA answer text.",
+                        code="invalid_result",
+                    )
+                results.append({"sample_id": item.sample_id, "answer": answer})
+                progress("Running local inference", index + 1, len(request.items))
         return {"items": results}
+
+    @staticmethod
+    def _normalize_vqa_answer(output) -> str:
+        if not isinstance(output, dict):
+            return str(output or "").strip()
+        for key in ("answer", "answer_text", "text"):
+            value = output.get(key)
+            if value is not None:
+                return str(value).strip()
+        rows = output.get("data")
+        if isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict):
+            for key in ("answer", "answer_text", "text"):
+                value = rows[0].get(key)
+                if value is not None:
+                    return str(value).strip()
+        return ""
+
+    @staticmethod
+    def _build_vqa_runtime_config(config_path: str, tmp_dir: str) -> str:
+        with open(config_path, "r", encoding="utf-8") as handle:
+            config = yaml.safe_load(handle) or {}
+        if not isinstance(config, dict):
+            raise InferenceError(
+                "Local VQA model config must contain a YAML object.",
+                code="invalid_model_config",
+            )
+
+        use_cuda = configure_compute_device(config)
+        system = config.setdefault("SYSTEM", {})
+        paths = system.setdefault("paths", {})
+        paths["save_dir"] = os.path.join(tmp_dir, "checkpoints")
+        paths["work_dir"] = os.path.join(tmp_dir, "checkpoints")
+        paths["log_dir"] = os.path.join(tmp_dir, "logs")
+        # Also cover legacy OpenSportsLib system paths.
+        system["save_dir"] = paths["save_dir"]
+        system["work_dir"] = paths["work_dir"]
+        system["log_dir"] = paths["log_dir"]
+
+        model_cfg = config.setdefault("MODEL", {})
+        runtime = model_cfg.setdefault("runtime", {})
+        runtime["device"] = system["device"]
+        if not use_cuda:
+            runtime["dtype"] = "float32"
+        execution = config.setdefault("TRAIN", {}).setdefault("execution", {})
+        hf_cfg = execution.setdefault("hf", {})
+        hf_cfg["prefer_cuda"] = use_cuda
+        offload_folder = hf_cfg.get("offload_folder")
+        if offload_folder:
+            hf_cfg["offload_folder"] = os.path.join(tmp_dir, "hf_offload")
+
+        LocalInferenceProvider._resolve_vqa_local_dependencies(
+            config, os.path.dirname(os.path.abspath(config_path))
+        )
+        runtime_path = os.path.join(tmp_dir, "runtime_config.yaml")
+        with open(runtime_path, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(config, handle, sort_keys=False)
+        return runtime_path
+
+    @staticmethod
+    def _resolve_vqa_local_dependencies(config: dict, config_dir: str) -> None:
+        """Resolve adjacent X-VARS artifacts or report stale absolute paths."""
+        components = config.get("MODEL", {}).get("components", {})
+        execution = config.get("TRAIN", {}).get("execution", {})
+        candidates = []
+
+        for component in components.values() if isinstance(components, dict) else ():
+            if not isinstance(component, dict):
+                continue
+            kind = str(component.get("kind") or "").lower()
+            if kind == "encoder":
+                load_cfg = component.get("load")
+                if isinstance(load_cfg, dict) and load_cfg.get("weights_path"):
+                    candidates.append((load_cfg, "weights_path", "X-VARS visual encoder checkpoint"))
+            elif kind == "decoder":
+                params = component.get("params")
+                if isinstance(params, dict) and params.get("repo_id"):
+                    candidates.append((params, "repo_id", "X-VARS base model bundle"))
+
+        hf_cfg = execution.get("hf") if isinstance(execution, dict) else None
+        if isinstance(hf_cfg, dict) and hf_cfg.get("tokenizer_id"):
+            candidates.append((hf_cfg, "tokenizer_id", "X-VARS tokenizer bundle"))
+
+        missing = []
+        for owner, key, label in candidates:
+            value = str(owner.get(key) or "")
+            expanded = os.path.abspath(os.path.expanduser(value)) if os.path.isabs(os.path.expanduser(value)) else ""
+            if not expanded or os.path.exists(expanded):
+                continue
+            adjacent = os.path.join(config_dir, os.path.basename(os.path.normpath(expanded)))
+            if os.path.exists(adjacent):
+                owner[key] = adjacent
+            else:
+                missing.append({"field": key, "description": label, "path": value})
+
+        if missing:
+            descriptions = ", ".join(sorted({item["description"] for item in missing}))
+            raise InferenceError(
+                "The VQA adapter config references unavailable files from its publisher's "
+                f"machine: {descriptions}. Download the required X-VARS artifacts and "
+                "update a local copy of config.yaml, or place them beside config.yaml.",
+                code="local_model_dependency_missing",
+                details={"missing": missing},
+            )
 
 
 class RemoteInferenceProvider:

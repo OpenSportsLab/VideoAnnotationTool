@@ -1,10 +1,12 @@
 import json
 import hashlib
+import tempfile
 import threading
 from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 
 from inference_providers import LocalInferenceProvider, RemoteInferenceProvider
 from inference_settings import (
@@ -162,6 +164,115 @@ def test_local_provider_reports_missing_native_caption_apis():
     assert "DescriptionModel" in description.unavailable_reason
     assert dense.available is False
     assert "DenseDescriptionModel" in dense.unavailable_reason
+
+
+def test_local_vqa_uses_portable_runtime_config_and_opensportslib_03_answer(
+    monkeypatch, tmp_path
+):
+    import opensportslib
+
+    captured = {}
+
+    class FakeVQAModel:
+        def __init__(self, config):
+            with open(config, encoding="utf-8") as handle:
+                captured["config"] = yaml.safe_load(handle)
+
+        def infer(self, **kwargs):
+            captured["infer"] = kwargs
+            return {"task": "vqa", "data": [{"answer_text": "A late tackle."}]}
+
+    monkeypatch.setattr(
+        opensportslib,
+        "model",
+        type("FakeModelModule", (), {"VQAModel": FakeVQAModel}),
+        raising=False,
+    )
+    config_path = tmp_path / "vqa.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "TASK": "VQA",
+                "SYSTEM": {
+                    "device": "auto",
+                    "paths": {
+                        "save_dir": "/home/vorajv/checkpoints",
+                        "work_dir": "/home/vorajv/checkpoints",
+                    },
+                },
+                "MODEL": {"runtime": {"device": "auto", "dtype": "fp16"}},
+                "TRAIN": {"execution": {"hf": {}}},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    provider = LocalInferenceProvider(
+        MemorySettings(),
+        local_models=[{
+            "task": "question_answer",
+            "id": "OpenSportsLab/vqa",
+            "display_name": "VQA",
+            "config_path": str(config_path),
+            "weights": str(tmp_path / "adapter.safetensors"),
+        }],
+    )
+    request = InferenceRequest(
+        task="question_answer",
+        model_id="OpenSportsLab/vqa",
+        backend="local",
+        parameters={"question": "What happened?"},
+        items=[InferenceItem("sample", [InferenceInput(str(video))])],
+    )
+
+    result = provider.run(request, lambda *_args: None, threading.Event())
+
+    assert result.items[0]["answer"] == "A late tackle."
+    assert captured["config"]["SYSTEM"]["device"] == "cpu"
+    assert not captured["config"]["SYSTEM"]["paths"]["save_dir"].startswith(
+        "/home/vorajv"
+    )
+    assert captured["config"]["MODEL"]["runtime"]["dtype"] == "float32"
+    assert captured["infer"]["video_path"] == str(video)
+
+
+def test_local_vqa_reports_missing_xvars_dependencies_before_model_start(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "TASK": "VQA",
+            "SYSTEM": {"device": "auto", "paths": {"save_dir": "/home/vorajv/out"}},
+            "MODEL": {
+                "components": {
+                    "video_encoder": {
+                        "kind": "encoder",
+                        "load": {"weights_path": "/home/vorajv/X-VARS/weights/14_model.pth.tar"},
+                    },
+                    "llm_decoder": {
+                        "kind": "decoder",
+                        "params": {"repo_id": "/home/vorajv/X-VARS/weights/base_model_videoChatGPT"},
+                    },
+                }
+            },
+            "TRAIN": {
+                "execution": {
+                    "hf": {"tokenizer_id": "/home/vorajv/X-VARS/weights/base_model_videoChatGPT"}
+                }
+            },
+        }, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InferenceError) as error, tempfile.TemporaryDirectory() as runtime_dir:
+        LocalInferenceProvider._build_vqa_runtime_config(
+            str(config_path), runtime_dir
+        )
+
+    assert error.value.code == "local_model_dependency_missing"
+    assert "publisher's machine" in str(error.value)
+    assert len(error.value.details["missing"]) == 3
 
 
 def test_local_model_registry_is_saved_only_and_filters_retired_entries(tmp_path):

@@ -120,6 +120,15 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - Provider work runs in one `QThread` per active lane; `MainWindow` leaves
   navigation, editing, and further inference submission enabled. A generic
   post-provider cancellation check suppresses late Local results.
+- `controllers.inference_runtime.configure_compute_device` is the canonical
+  direct-library device resolver for Classification and Localization. It
+  preserves explicit CPU and converts unavailable `auto`/CUDA requests to CPU
+  in temporary per-job configs, including legacy and canonical GPU fields.
+- The Local VQA adapter builds a temporary config before constructing
+  `VQAModel`: system output paths become job-local, device/dtype are made
+  CPU-safe, adjacent X-VARS dependencies are resolved, and stale missing
+  publisher paths fail with `local_model_dependency_missing`. OpenSportsLib
+  0.3 `data[].answer_text` output is normalized at the provider boundary.
 - Result validation correlates by request `item_id`, then unique request
   `sample_id`, with positional fallback restricted to legacy Local OSL output.
 - `MainWindow` preserves the user's active annotation and head tabs while

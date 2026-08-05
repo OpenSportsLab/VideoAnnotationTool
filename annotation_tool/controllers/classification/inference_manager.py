@@ -11,7 +11,10 @@ from PyQt6.QtCore import QObject, QSettings, QThread, pyqtSignal
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from controllers.command_types import CmdType
+from controllers.inference_runtime import configure_compute_device, cuda_is_available
 from utils import natural_sort_key
+
+_cuda_is_available = cuda_is_available
 
 os.environ["WANDB_MODE"] = "disabled"
 ssl._create_default_https_context = ssl._create_unverified_context
@@ -43,9 +46,15 @@ def _run_opensportslib_inference(base_config_path: str, temp_data: dict, prefix:
 
         config_text = config_text.replace("./temp_workspace", writable_dir_fwd)
         config_text = config_text.replace("./logs", logs_dir_fwd)
+        config_dict = yaml.safe_load(config_text) or {}
+        if not isinstance(config_dict, dict):
+            raise ValueError("Classification model config must contain a YAML mapping.")
+        configure_compute_device(
+            config_dict, cuda_available=_cuda_is_available()
+        )
 
         with open(temp_config_path, "w", encoding="utf-8") as handle:
-            handle.write(config_text)
+            yaml.safe_dump(config_dict, handle, sort_keys=False)
 
         runner = model.ClassificationModel(config=temp_config_path)
         pred_data = runner.infer(

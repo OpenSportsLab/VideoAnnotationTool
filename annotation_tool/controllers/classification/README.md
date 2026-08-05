@@ -15,6 +15,9 @@ The bottom **Run Inference…** footer emits shared inference intent through
   - schema snapshots
 - The central `InferenceController` owns Local/Remote execution; this controller
   only normalizes results into transient per-sample candidates.
+- Direct local inference resolves `auto`/CUDA against runtime CUDA availability
+  in a temporary config and falls back to CPU without editing the registered
+  model configuration.
 
 ## Public Surface
 ### Class
@@ -79,6 +82,9 @@ The bottom **Run Inference…** footer emits shared inference intent through
 - `tests/gui/test_signal_decoupling_contract.py`
 
 ## Developer Knowledge
+- Device resolution is shared with Localization through
+  `controllers.inference_runtime.configure_compute_device`; keep capability
+  checks out of annotation UI/controller state.
 - Manual save path:
   normalize selection payload before emitting `manualAnnotationSaveRequested`.
 - No-op guard:
