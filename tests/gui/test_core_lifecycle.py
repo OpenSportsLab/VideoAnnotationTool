@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6.QtCore import QModelIndex, Qt
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QDialogButtonBox, QMessageBox
 
 from app_info import APP_DISPLAY_NAME, APP_VERSION
@@ -967,6 +968,24 @@ def test_menu_bar_contains_file_data_edit_view_help_menus(window):
     assert window.action_settings.text() == "Settings…"
     assert window.action_hf_upload.isEnabled() is False
     assert window.viewer_layout_actions[window.center_panel.viewer_layout()].isChecked() is True
+
+
+@pytest.mark.gui
+def test_undo_redo_shortcuts_have_single_action_owner(window):
+    assert window.action_undo.shortcut() == QKeySequence(QKeySequence.StandardKey.Undo)
+    assert window.action_redo.shortcut() == QKeySequence(QKeySequence.StandardKey.Redo)
+
+    window_shortcuts = window.findChildren(QShortcut)
+    standard_history_shortcuts = (
+        window.action_undo.shortcut(),
+        window.action_redo.shortcut(),
+    )
+    assert not any(
+        shortcut.key().matches(sequence)
+        == QKeySequence.SequenceMatch.ExactMatch
+        for shortcut in window_shortcuts
+        for sequence in standard_history_shortcuts
+    )
 
 
 @pytest.mark.gui

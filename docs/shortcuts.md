@@ -14,6 +14,9 @@
 - `Ctrl/Cmd+Z`: Undo
 - `Ctrl/Cmd+Shift+Z` or platform redo key: Redo
 
+Undo and redo use the platform-standard shortcuts shown in the **Edit** menu.
+Their availability follows the current undo and redo history.
+
 ## Media
 
 - `Space`: Play/Pause

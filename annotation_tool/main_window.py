@@ -1056,9 +1056,6 @@ class VideoAnnotationWindow(QMainWindow):
             self._open_hf_upload_dialog
         )
 
-        QShortcut(QKeySequence.StandardKey.Undo, self).activated.connect(self.history_manager.perform_undo)
-        QShortcut(QKeySequence.StandardKey.Redo, self).activated.connect(self.history_manager.perform_redo)
-
         QShortcut(QKeySequence(Qt.Key.Key_Space), self).activated.connect(
             self.media_controller.toggle_play_pause
         )
