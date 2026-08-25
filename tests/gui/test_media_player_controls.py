@@ -1516,6 +1516,43 @@ def test_deferred_raster_render_does_not_block_gui_thread(
 
 
 @pytest.mark.gui
+def test_deferred_raster_render_displays_forward_progress_while_newer_frame_is_pending(
+    media_panel_and_controller,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    _panel, controller = media_panel_and_controller
+    frames_path = tmp_path / "slow_deferred_frames.npy"
+    np.save(frames_path, np.zeros((3, 8, 8, 3), dtype=np.uint8))
+    controller.load_and_play(
+        {"type": "frames_npy", "path": str(frames_path), "fps": 2.0},
+        auto_play=False,
+    )
+    backend = controller._active_backend
+    displayed_indices = []
+
+    def slow_index_image(frame_index, _payload):
+        time.sleep(0.1)
+        image = QImage(1, 1, QImage.Format.Format_ARGB32)
+        image.fill(frame_index)
+        return image
+
+    monkeypatch.setattr(backend, "render_frame_image", slow_index_image)
+    monkeypatch.setattr(
+        controller,
+        "_show_frame_image",
+        lambda image: displayed_indices.append(image.pixel(0, 0)),
+    )
+
+    backend.set_position_deferred(500)
+    backend.set_position_deferred(1000)
+
+    qtbot.waitUntil(lambda: 1 in displayed_indices, timeout=1500)
+    assert backend._frame_last_rendered_index == 2
+
+
+@pytest.mark.gui
 @pytest.mark.parametrize(
     ("value", "expected"),
     [

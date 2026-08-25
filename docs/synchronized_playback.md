@@ -71,6 +71,11 @@ navigation are explicit group seeks. They reposition the active video clock as
 well as the other modalities, including while playback is running, so the
 timeline does not snap back to the pre-seek position.
 
+Raster panes render outside the UI thread during synchronized playback. If a
+complex skeleton frame takes longer to draw than the source frame interval,
+completed forward-progress frames remain visible while the renderer catches up
+to the shared playhead; playback does not stay frozen on the first frame.
+
 ## Correct an Input's UTC Alignment
 
 Use visual synchronization when one modality is early or late:

@@ -113,6 +113,7 @@ Provides the central grouped media/timeline panel used across all annotation mod
   route/restart, UTC, and synchronization logic belong in `MediaController`.
 - The panel stays backend-agnostic: internal backends push either Qt video output or raster images into the same preview area.
 - Pane preview surfaces support Qt video, NPY frames, tracking pitches, and H5 joints/centroids.
+- Deferred raster rendering tracks requested and displayed frame indices separately. A completed frame may advance the visible pane while a newer frame is queued, but an older completion must never replace a newer displayed frame.
 - Marker payload contract:
   list of dicts with at least `start_ms`, optional `color`.
 - Marker color is supplied by the owning mode controller; the media player should render it without imposing mode-specific defaults.

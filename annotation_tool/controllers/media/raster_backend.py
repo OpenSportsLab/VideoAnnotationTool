@@ -68,6 +68,7 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self._frame_position_ms = 0
         self._frame_anchor_position_ms = 0
         self._frame_last_rendered_index = -1
+        self._frame_last_displayed_index = -1
         self._frame_last_emitted_position_ms = -1
         self._frame_playing = False
         self._frame_image_cache: OrderedDict[int, QImage] = OrderedDict()
@@ -108,6 +109,7 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self._frame_position_ms = 0
         self._frame_anchor_position_ms = 0
         self._frame_last_rendered_index = -1
+        self._frame_last_displayed_index = -1
         self._frame_last_emitted_position_ms = -1
         self._frame_playing = False
         self._frame_image_cache = OrderedDict()
@@ -159,6 +161,7 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self._frame_position_ms = 0
         self._frame_anchor_position_ms = 0
         self._frame_last_rendered_index = -1
+        self._frame_last_displayed_index = -1
         self._frame_last_emitted_position_ms = -1
         self._frame_playing = False
         self._frame_image_cache = OrderedDict()
@@ -185,6 +188,7 @@ class BaseRasterMediaBackend(BaseMediaBackend):
             if cached is not None:
                 self._frame_image_cache.move_to_end(frame_index)
                 self.controller._show_frame_image(cached)
+                self._frame_last_displayed_index = frame_index
             else:
                 self._deferred_pending_index = frame_index
                 self._start_deferred_render()
@@ -311,8 +315,14 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self._deferred_render_in_flight = False
         if generation == self._render_generation and self._clip is not None and not image.isNull():
             self._cache_frame_image(frame_index, image)
-            if frame_index == self._frame_last_rendered_index:
+            requested_index = self._frame_last_rendered_index
+            # Slow renderers must still advance visibly while newer work is
+            # queued, without letting an old completion move the pane backward.
+            if frame_index == requested_index or (
+                self._frame_last_displayed_index < frame_index < requested_index
+            ):
                 self.controller._show_frame_image(image)
+                self._frame_last_displayed_index = frame_index
         self._start_deferred_render()
 
     def _cancel_deferred_render(self):
@@ -338,6 +348,7 @@ class BaseRasterMediaBackend(BaseMediaBackend):
             image = self._frame_image_for_index(frame_index)
             if not image.isNull() and self._clip is not None:
                 self.controller._show_frame_image(image)
+                self._frame_last_displayed_index = frame_index
             self._frame_last_rendered_index = frame_index
 
         if emit_position and clamped != self._frame_last_emitted_position_ms:
