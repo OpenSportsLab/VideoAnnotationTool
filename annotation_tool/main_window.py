@@ -64,6 +64,14 @@ from inference_types import (
     resolve_sample_inputs,
 )
 from explorer_settings import EXPLORER_PAGE_SIZE_KEY, load_explorer_page_size
+from shortcut_settings import (
+    DEFAULT_LOCALIZATION_ACCEPT_SHORTCUT,
+    DEFAULT_LOCALIZATION_REJECT_SHORTCUT,
+    LOCALIZATION_ACCEPT_SHORTCUT_KEY,
+    LOCALIZATION_REJECT_SHORTCUT_KEY,
+    load_localization_review_shortcuts,
+    validate_localization_review_shortcuts,
+)
 
 from utils import create_checkmark_icon, resource_path
 
@@ -227,6 +235,8 @@ class VideoAnnotationWindow(QMainWindow):
         self._seek_interval_text = "1,5"
         self._speed_rates = (0.25, 0.5, 1.0, 2.0, 4.0)
         self._seek_intervals_seconds = (1.0, 5.0)
+        self._localization_accept_shortcut_text = DEFAULT_LOCALIZATION_ACCEPT_SHORTCUT
+        self._localization_reject_shortcut_text = DEFAULT_LOCALIZATION_REJECT_SHORTCUT
 
         # Coalesce repeated status-triggered filter refreshes to avoid UI stalls
         # during rapid annotation mutations.
@@ -553,6 +563,9 @@ class VideoAnnotationWindow(QMainWindow):
             lambda _settings: self._restore_explorer_settings_from_settings()
         )
         self.dataset_explorer_controller.settingsChanged.connect(
+            lambda _settings: self._restore_shortcut_settings_from_settings()
+        )
+        self.dataset_explorer_controller.settingsChanged.connect(
             self.localization_editor_controller.set_settings
         )
         self.localization_editor_controller.set_settings(self.dataset_explorer_controller.settings)
@@ -577,6 +590,7 @@ class VideoAnnotationWindow(QMainWindow):
         self._restore_mute_state_from_settings()
         self._restore_media_controls_from_settings()
         self._restore_explorer_settings_from_settings()
+        self._restore_shortcut_settings_from_settings()
         # Dense add should always pause playback first; no auto-resume behavior.
         self.dense_panel.addEventRequested.connect(self.media_controller.pause)
         # Snapshot runtime media position on dense actions.
@@ -1070,13 +1084,29 @@ class VideoAnnotationWindow(QMainWindow):
         self.shortcut_seek_fwd_secondary.activated.connect(
             lambda: self._seek_by_configured_interval(1, 1)
         )
+        self.shortcut_localization_accept = QShortcut(QKeySequence(), self)
+        self.shortcut_localization_reject = QShortcut(QKeySequence(), self)
+        self.shortcut_localization_accept.activated.connect(
+            lambda: self._review_selected_localization_prediction(accept=True)
+        )
+        self.shortcut_localization_reject.activated.connect(
+            lambda: self._review_selected_localization_prediction(accept=False)
+        )
+        self._apply_localization_review_shortcuts(
+            self._localization_accept_shortcut_text,
+            self._localization_reject_shortcut_text,
+        )
         self._update_media_shortcut_state()
 
     def _show_shortcuts_popup(self) -> None:
         QMessageBox.information(
             self,
             "Shortcuts",
-            build_shortcuts_help_text(self._seek_intervals_seconds),
+            build_shortcuts_help_text(
+                self._seek_intervals_seconds,
+                self._localization_accept_shortcut_text,
+                self._localization_reject_shortcut_text,
+            ),
         )
 
     def _open_settings_dialog(self) -> None:
@@ -1089,6 +1119,9 @@ class VideoAnnotationWindow(QMainWindow):
             parent=self,
         )
         dialog.mediaControlsApplyRequested.connect(self._save_and_apply_media_controls)
+        dialog.shortcutSettingsApplyRequested.connect(
+            self._save_and_apply_localization_review_shortcuts
+        )
         dialog.explorerPageSizeApplyRequested.connect(
             self._save_and_apply_explorer_page_size
         )
@@ -1576,6 +1609,46 @@ class VideoAnnotationWindow(QMainWindow):
             factors.values,
             intervals.values,
         )
+
+    def _save_and_apply_localization_review_shortcuts(
+        self, accept_text: str, reject_text: str
+    ) -> None:
+        shortcuts = validate_localization_review_shortcuts(accept_text, reject_text)
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is not None:
+            settings.setValue(LOCALIZATION_ACCEPT_SHORTCUT_KEY, shortcuts.accept)
+            settings.setValue(LOCALIZATION_REJECT_SHORTCUT_KEY, shortcuts.reject)
+            settings.sync()
+        self._apply_localization_review_shortcuts(shortcuts.accept, shortcuts.reject)
+
+    def _restore_shortcut_settings_from_settings(self) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        shortcuts = load_localization_review_shortcuts(settings)
+        self._apply_localization_review_shortcuts(shortcuts.accept, shortcuts.reject)
+
+    def _apply_localization_review_shortcuts(
+        self, accept_text: str, reject_text: str
+    ) -> None:
+        self._localization_accept_shortcut_text = accept_text
+        self._localization_reject_shortcut_text = reject_text
+        if hasattr(self, "shortcut_localization_accept"):
+            self.shortcut_localization_accept.setKey(QKeySequence(accept_text))
+            self.shortcut_localization_reject.setKey(QKeySequence(reject_text))
+
+    def _review_selected_localization_prediction(self, *, accept: bool) -> None:
+        if (
+            not self._workspace_visible
+            or self.right_tabs.currentWidget() is not self.localization_panel
+        ):
+            return
+        handled = self.localization_panel.request_selected_inference_review(
+            accept=accept
+        )
+        if not handled:
+            self.show_temp_msg(
+                "Localization",
+                "Select an inferred annotation with a confidence score first.",
+            )
 
     def _apply_media_controls(
         self,

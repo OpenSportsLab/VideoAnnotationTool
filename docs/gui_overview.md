@@ -23,6 +23,12 @@ The **Edit → Settings…** dialog contains application-wide preferences. On it
 **Media Controls** page, comma-separated playback factors and seek intervals
 change the two media-control rows immediately when **Apply** or **OK** is used.
 
+The **Shortcuts** page configures localization prediction review. By default,
+`Ctrl+Enter` accepts the selected confidence-scored localization row and
+`Ctrl+Backspace` rejects it. Both bindings are required, must differ, and cannot
+overlap an existing application shortcut. They are stored as application
+preferences rather than in dataset JSON.
+
 The **Inference** settings tab selects Local or Remote execution, configures the
 server URL, tests `/api/v1/capabilities`, maps local directories to advertised
 server storage roots, and manages local model config/weights entries. **Add
@@ -127,6 +133,8 @@ completion does not switch the active annotation or head tab.
 - Spot events at current playhead time
 - Head/label add/rename/delete + per-label colors
 - Event table supports edit, delete, confirm/reject smart events
+- Configured review shortcuts accept or reject the selected confidence-scored
+  row while Localization is active, then advance to an adjacent row
 - Time shows full UTC when resolvable and relative time otherwise; media seeking
   still uses the projected timeline position
 - Pending events are visually distinct and can be reviewed inline

@@ -516,8 +516,10 @@ class LocalizationEditorController(QObject):
         if not self.current_video_path or not self.current_sample_id:
             return
 
+        acted_row = self._table_row_for_event(item_data)
+
         if item_data.get("_pending_prediction"):
-            self._accept_pending_event(item_data)
+            self._accept_pending_event(item_data, acted_row=acted_row)
             return
 
         events = self._snapshot_events()
@@ -542,7 +544,7 @@ class LocalizationEditorController(QObject):
 
         self._display_events_for_item(self.current_video_path)
         self.refresh_tree_icons(self.current_video_path)
-        self._reselect_event(updated_event)
+        self._select_adjacent_table_row(acted_row, row_removed=False)
 
     def _on_reject_single_annotation(self, item_data):
         if not isinstance(item_data, dict) or "confidence_score" not in item_data:
@@ -550,12 +552,15 @@ class LocalizationEditorController(QObject):
         if not self.current_video_path or not self.current_sample_id:
             return
 
+        acted_row = self._table_row_for_event(item_data)
+
         if item_data.get("_pending_prediction"):
             pending = self._pending_predictions.get(self.current_sample_id, [])
             index = self._find_event_index(pending, item_data)
             if index >= 0:
                 pending.pop(index)
                 self._display_events_for_item(self.current_video_path)
+                self._select_adjacent_table_row(acted_row, row_removed=True)
             return
 
         events = self._snapshot_events()
@@ -573,6 +578,7 @@ class LocalizationEditorController(QObject):
         self._set_snapshot_events(events)
         self._display_events_for_item(self.current_video_path)
         self.refresh_tree_icons(self.current_video_path)
+        self._select_adjacent_table_row(acted_row, row_removed=True)
 
     def _on_delete_single_annotation(self, item_data):
         if isinstance(item_data, dict) and item_data.get("_pending_prediction"):
@@ -747,7 +753,7 @@ class LocalizationEditorController(QObject):
             ]
             self.markersUpdateRequested.emit(markers)
 
-    def _accept_pending_event(self, target):
+    def _accept_pending_event(self, target, *, acted_row=-1):
         pending = self._pending_predictions.get(self.current_sample_id, [])
         index = self._find_event_index(pending, target)
         if index < 0:
@@ -760,6 +766,35 @@ class LocalizationEditorController(QObject):
             self.locEventsSetRequested.emit(self.current_sample_id, copy.deepcopy(events))
             self._set_snapshot_events(events)
         self._display_events_for_item(self.current_video_path)
+        self._select_adjacent_table_row(acted_row, row_removed=False)
+
+    def _table_row_for_event(self, target) -> int:
+        model = self.localization_panel.table.model
+        for row in range(model.rowCount()):
+            candidate = model.get_annotation_at(row)
+            if candidate == target:
+                return row
+        return -1
+
+    def _select_adjacent_table_row(self, acted_row: int, *, row_removed: bool) -> None:
+        if acted_row < 0:
+            return
+        table_adapter = self.localization_panel.table
+        row_count = table_adapter.model.rowCount()
+        if row_count <= 0:
+            table_adapter.table.clearSelection()
+            if (
+                hasattr(table_adapter, "btn_set_time")
+                and table_adapter.btn_set_time is not None
+            ):
+                table_adapter.btn_set_time.setEnabled(False)
+            return
+
+        target_row = acted_row if row_removed else acted_row + 1
+        target_row = min(target_row, row_count - 1)
+        index = table_adapter.model.index(target_row, 0)
+        table_adapter.table.selectRow(target_row)
+        table_adapter.table.scrollTo(index)
 
     def accept_all_predictions(self):
         pending = self._pending_predictions.pop(self.current_sample_id, [])

@@ -342,6 +342,23 @@ class _TableAdapter(QObject):
         if item:
             self.updateTimeForSelectedRequested.emit(item)
 
+    def request_selected_inference_review(self, *, accept: bool) -> bool:
+        """Emit a review intent for the selected confidence-scored row."""
+        selection_model = self.table.selectionModel()
+        indexes = selection_model.selectedRows() if selection_model is not None else []
+        if not indexes:
+            return False
+
+        item = self.model.get_annotation_at(indexes[0].row())
+        if not isinstance(item, dict) or "confidence_score" not in item:
+            return False
+
+        if accept:
+            self.annotationConfirmRequested.emit(item)
+        else:
+            self.annotationRejectRequested.emit(item)
+        return True
+
     def _show_context_menu(self, pos):
         index = self.table.indexAt(pos)
         if not index.isValid():
@@ -774,5 +791,8 @@ class LocalizationAnnotationPanel(QWidget):
 
     def set_timeline_origin(self, origin_utc):
         self.table.set_timeline_origin(origin_utc)
+
+    def request_selected_inference_review(self, *, accept: bool) -> bool:
+        return self.table.request_selected_inference_review(accept=accept)
 
 __all__ = ["LocalizationAnnotationPanel"]

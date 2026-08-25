@@ -46,6 +46,12 @@ live in the main-window Inference Jobs dock.
   - Includes a `Confidence` column for smart events.
   - Double-clicking a confidence cell opens a Yes/No/Cancel dialog to confirm/reject/ignore.
   - Applies deterministic per-label row colors so the table stays visually aligned with timeline markers.
+- `_TableAdapter.request_selected_inference_review(accept=...)`
+  - Resolves the selected row and emits the existing confirm/reject intent only
+    when the row contains `confidence_score`.
+- `LocalizationAnnotationPanel.request_selected_inference_review(accept=...)`
+  - Exposes selected-row review to `MainWindow`, where configurable shortcuts
+    are composed without coupling the controller to application settings.
 - `_TableAdapter.set_timeline_origin(origin_utc)`
   - Supplies sample-scoped UTC display/edit context without coupling the panel
     to `MediaController`.
@@ -55,6 +61,7 @@ live in the main-window Inference Jobs dock.
 - Table edit emits old/new payloads; controller decides mutation validity.
 - Tabs adapter manages head/label UX including add/rename/delete requests.
 - Pending event actions are emitted as intent only; persistence remains in controller/history layer.
+- Invalid shortcut targets (no selection or a manual row) produce no table intent.
 - Table row background color is derived from the same label-color mapping used for timeline markers.
 - A malformed annotation `timestamp_utc` displays relative `position_ms`; an
   invalid UTC edit is rejected without emitting a mutation.

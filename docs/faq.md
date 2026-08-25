@@ -21,6 +21,11 @@ Playback factors and relative-seek intervals from **Edit → Settings…** are
 application-wide `QSettings` preferences. They are not saved in or exported
 with dataset JSON.
 
+Localization accept/reject key bindings on the **Shortcuts** settings page are
+also application-wide `QSettings` preferences. The defaults are `Ctrl+Enter`
+and `Ctrl+Backspace`; bindings must be non-empty, distinct, and free of conflicts
+with built-in shortcuts.
+
 ## Where is the Dataset Explorer page size stored?
 
 The value from **Edit → Settings… → Dataset Explorer** is an application-wide

@@ -74,9 +74,15 @@ offset back onto the original sample timeline.
 - The shared run dialog supplies head, labels, range, model, and provider details.
 - Runtime fallback supports both legacy (`dali`, `DATA.test.type`) and canonical
   (`DATA.common.runtime.loader_backend`) OpenSportsLib configuration shapes.
-- Accepting adds a metadata-free event; rejecting is non-mutating. Manual edits invalidate pending rows.
+- Accepting adds a metadata-free event; rejecting a transient prediction is
+  non-mutating. Rejecting a confidence-scored event loaded from JSON uses the
+  tracked delete path. Manual edits invalidate pending rows.
+- Single-row review selects the following row after refresh, or the preceding row
+  when the reviewed row was last; ordinary selection signaling seeks playback.
+- Main-window shortcuts invoke the panel's selected-row intent surface. The
+  controller remains unaware of key bindings and `QSettings` shortcut values.
 - Table confidence-cell confirmation prompt supports `Yes` (confirm), `No` (reject), `Cancel` (no-op).
-- Rejecting an inferred row deletes the smart-inferred event row.
+- Rejecting an inferred row removes it from the review table.
 - Unknown predicted labels are mapped via popup per inference run.
 
 ## Conventions

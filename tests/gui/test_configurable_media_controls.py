@@ -1,8 +1,15 @@
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QKeySequence
 
 from media_control_settings import PLAYBACK_FACTORS_KEY, SEEK_INTERVALS_KEY
 from explorer_settings import EXPLORER_PAGE_SIZE_KEY
+from shortcut_settings import (
+    DEFAULT_LOCALIZATION_ACCEPT_SHORTCUT,
+    DEFAULT_LOCALIZATION_REJECT_SHORTCUT,
+    LOCALIZATION_ACCEPT_SHORTCUT_KEY,
+    LOCALIZATION_REJECT_SHORTCUT_KEY,
+)
 from ui.dialogs import ApplicationSettingsDialog
 from ui.media_player import MediaCenterPanel
 
@@ -85,6 +92,59 @@ def test_settings_dialog_validates_applies_normalizes_and_restores_defaults(qtbo
 
 
 @pytest.mark.gui
+def test_settings_dialog_validates_and_applies_localization_shortcuts(qtbot):
+    dialog = ApplicationSettingsDialog("2,4", "1,5")
+    qtbot.addWidget(dialog)
+    applied = []
+    dialog.shortcutSettingsApplyRequested.connect(
+        lambda accept, reject: applied.append((accept, reject))
+    )
+
+    assert dialog.localization_accept_shortcut_edit.keySequence().toString() == (
+        DEFAULT_LOCALIZATION_ACCEPT_SHORTCUT
+    )
+    assert dialog.localization_reject_shortcut_edit.keySequence().toString() == (
+        DEFAULT_LOCALIZATION_REJECT_SHORTCUT
+    )
+
+    dialog.localization_accept_shortcut_edit.clear()
+    qtbot.mouseClick(dialog.apply_button, Qt.MouseButton.LeftButton)
+    assert applied == []
+    assert "are required" in dialog.shortcut_validation_label.text()
+
+    dialog.localization_accept_shortcut_edit.setKeySequence(QKeySequence("Ctrl+Enter"))
+    dialog.localization_reject_shortcut_edit.setKeySequence(QKeySequence("Ctrl+Enter"))
+    qtbot.mouseClick(dialog.apply_button, Qt.MouseButton.LeftButton)
+    assert applied == []
+    assert "must be different" in dialog.shortcut_validation_label.text()
+
+    dialog.localization_reject_shortcut_edit.setKeySequence(QKeySequence("Ctrl+S"))
+    qtbot.mouseClick(dialog.apply_button, Qt.MouseButton.LeftButton)
+    assert applied == []
+    assert "built-in shortcut" in dialog.shortcut_validation_label.text()
+
+    dialog.localization_reject_shortcut_edit.setKeySequence(
+        QKeySequence("Ctrl+S, Ctrl+R")
+    )
+    qtbot.mouseClick(dialog.apply_button, Qt.MouseButton.LeftButton)
+    assert applied == []
+    assert "built-in shortcut" in dialog.shortcut_validation_label.text()
+
+    dialog.localization_accept_shortcut_edit.setKeySequence(QKeySequence("Ctrl+Return"))
+    dialog.localization_reject_shortcut_edit.setKeySequence(QKeySequence("Alt+Backspace"))
+    qtbot.mouseClick(dialog.apply_button, Qt.MouseButton.LeftButton)
+    assert applied == [("Ctrl+Return", "Alt+Backspace")]
+
+    qtbot.mouseClick(dialog.restore_defaults_button, Qt.MouseButton.LeftButton)
+    assert dialog.localization_accept_shortcut_edit.keySequence().toString() == (
+        DEFAULT_LOCALIZATION_ACCEPT_SHORTCUT
+    )
+    assert dialog.localization_reject_shortcut_edit.keySequence().toString() == (
+        DEFAULT_LOCALIZATION_REJECT_SHORTCUT
+    )
+
+
+@pytest.mark.gui
 def test_window_persists_and_restores_media_controls(window):
     window._save_and_apply_media_controls(
         "2,4,8",
@@ -115,6 +175,24 @@ def test_window_persists_and_restores_explorer_page_size(window):
     settings.sync()
     window._restore_explorer_settings_from_settings()
     assert window.tree_model.page_size() == 300
+
+
+@pytest.mark.gui
+def test_window_persists_restores_and_remaps_localization_shortcuts(window):
+    window._save_and_apply_localization_review_shortcuts(
+        "Alt+Enter", "Alt+Backspace"
+    )
+    settings = window.dataset_explorer_controller.settings
+    assert settings.value(LOCALIZATION_ACCEPT_SHORTCUT_KEY) == "Alt+Enter"
+    assert settings.value(LOCALIZATION_REJECT_SHORTCUT_KEY) == "Alt+Backspace"
+    assert window.shortcut_localization_accept.key().toString() == "Alt+Enter"
+    assert window.shortcut_localization_reject.key().toString() == "Alt+Backspace"
+
+    settings.setValue(LOCALIZATION_ACCEPT_SHORTCUT_KEY, "Ctrl+Return")
+    settings.setValue(LOCALIZATION_REJECT_SHORTCUT_KEY, "Ctrl+Delete")
+    window._restore_shortcut_settings_from_settings()
+    assert window.shortcut_localization_accept.key().toString() == "Ctrl+Return"
+    assert window.shortcut_localization_reject.key().toString() == "Ctrl+Del"
 
 
 @pytest.mark.gui
@@ -150,3 +228,5 @@ def test_shortcuts_help_uses_configured_intervals(window, monkeypatch):
     window._show_shortcuts_popup()
     assert "Ctrl+Left: Seek backward 2 seconds" in shown[0]
     assert "Ctrl+Shift+Right: Seek forward 10 seconds" in shown[0]
+    assert "Ctrl+Enter: Accept selected inferred annotation" in shown[0]
+    assert "Ctrl+Backspace: Reject selected inferred annotation" in shown[0]

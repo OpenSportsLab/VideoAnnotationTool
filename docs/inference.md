@@ -236,6 +236,14 @@ Pending rows show confidence and model identity, and the Smart Labelled filter
 recognizes them while the application is open. Editing the same annotation
 manually invalidates its pending candidates.
 
+For Localization, select a confidence-scored row and use the shortcuts configured
+under **Edit → Settings → Shortcuts** (`Ctrl+Enter` to accept and
+`Ctrl+Backspace` to reject by default). The bindings work only while Localization
+is active. After review, selection advances to the next table row, falling back
+to the preceding row at the end of the table. A transient rejection remains
+non-mutating; accepting, or rejecting a confidence-scored event loaded from JSON,
+uses the normal undoable history path.
+
 ## Server API v1
 
 The client expects these JSON endpoints below `/api/v1`:

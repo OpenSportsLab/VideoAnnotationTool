@@ -24,7 +24,11 @@ Right: Seek forward ~40 ms
 """
 
 
-def build_shortcuts_help_text(seek_intervals=(1.0, 5.0)) -> str:
+def build_shortcuts_help_text(
+    seek_intervals=(1.0, 5.0),
+    localization_accept="Ctrl+Enter",
+    localization_reject="Ctrl+Backspace",
+) -> str:
     def seconds_text(value) -> str:
         formatted = format_control_value(value)
         unit = "second" if float(value) == 1.0 else "seconds"
@@ -48,6 +52,14 @@ def build_shortcuts_help_text(seek_intervals=(1.0, 5.0)) -> str:
                 f"Ctrl+Shift+Right: Seek forward {secondary}",
             )
         )
+    lines.extend(
+        (
+            "",
+            "Localization review",
+            f"{localization_accept}: Accept selected inferred annotation",
+            f"{localization_reject}: Reject selected inferred annotation",
+        )
+    )
     return "\n".join(lines) + "\n"
 
 

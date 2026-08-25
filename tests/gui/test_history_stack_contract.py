@@ -308,6 +308,223 @@ def test_history_contract_localization_smart_mutations(window, monkeypatch, qtbo
 
 
 @pytest.mark.gui
+def test_localization_review_shortcuts_accept_reject_and_select_adjacent(
+    window, monkeypatch, qtbot, synthetic_project_json
+):
+    project_json_path = synthetic_project_json("localization")
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["localization"])
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    controller.current_head = "ball_action"
+    result = InferenceResult(
+        "shortcut-review",
+        "localization",
+        "model",
+        ({
+            "sample_id": controller.current_sample_id,
+            "events": [
+                {"head": "ball_action", "label": "pass", "position_ms": 2000, "confidence_score": 0.9},
+                {"head": "ball_action", "label": "pass", "position_ms": 3000, "confidence_score": 0.8},
+            ],
+        },),
+    )
+    controller.apply_shared_inference_result(result, {"head": "ball_action"})
+    table = window.localization_panel.table.table
+    model = window.localization_panel.table.model
+    assert model.rowCount() == 3
+    table.selectRow(1)
+
+    undo_before = len(window.dataset_explorer_controller.undo_stack)
+    window.shortcut_localization_accept.activated.emit()
+    qtbot.wait(20)
+
+    assert len(window.dataset_explorer_controller.undo_stack) == undo_before + 1
+    accepted = model.get_annotation_at(1)
+    assert accepted["position_ms"] == 2000
+    assert "confidence_score" not in accepted
+    assert table.currentIndex().row() == 2
+    assert model.get_annotation_at(2)["confidence_score"] == pytest.approx(0.8)
+
+    window.shortcut_localization_reject.activated.emit()
+    qtbot.wait(20)
+
+    assert len(window.dataset_explorer_controller.undo_stack) == undo_before + 1
+    assert model.rowCount() == 2
+    assert table.currentIndex().row() == 1
+    assert model.get_annotation_at(1)["position_ms"] == 2000
+
+
+@pytest.mark.gui
+def test_localization_review_shortcut_rejects_persisted_inference_with_undo_redo(
+    window, monkeypatch, qtbot, synthetic_project_json
+):
+    project_json_path = synthetic_project_json("localization")
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["localization"])
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    inferred = {
+        "head": "ball_action",
+        "label": "pass",
+        "position_ms": 2500,
+        "confidence_score": 0.75,
+    }
+    window.history_manager.execute_localization_event_add(
+        controller.current_sample_id, inferred
+    )
+    controller.on_selected_sample_changed(
+        window.dataset_explorer_controller.get_sample(controller.current_sample_id)
+    )
+    model = window.localization_panel.table.model
+    table = window.localization_panel.table.table
+    inferred_row = next(
+        row
+        for row in range(model.rowCount())
+        if "confidence_score" in model.get_annotation_at(row)
+    )
+    table.selectRow(inferred_row)
+    before_reject = _json_snapshot(window)
+    undo_before = len(window.dataset_explorer_controller.undo_stack)
+
+    window.shortcut_localization_reject.activated.emit()
+    qtbot.wait(20)
+    after_reject = _json_snapshot(window)
+    assert len(window.dataset_explorer_controller.undo_stack) == undo_before + 1
+    assert not any(
+        "confidence_score" in (model.get_annotation_at(row) or {})
+        for row in range(model.rowCount())
+    )
+
+    window.history_manager.perform_undo()
+    qtbot.wait(20)
+    assert _json_snapshot(window) == before_reject
+    window.history_manager.perform_redo()
+    qtbot.wait(20)
+    assert _json_snapshot(window) == after_reject
+
+
+@pytest.mark.gui
+def test_localization_review_shortcut_accepts_persisted_inference_with_undo_redo(
+    window, monkeypatch, qtbot, synthetic_project_json
+):
+    project_json_path = synthetic_project_json("localization")
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["localization"])
+    qtbot.wait(50)
+
+    controller = window.localization_editor_controller
+    inferred = {
+        "head": "ball_action",
+        "label": "pass",
+        "position_ms": 2500,
+        "confidence_score": 0.75,
+        "inference_model_id": "test-model",
+    }
+    window.history_manager.execute_localization_event_add(
+        controller.current_sample_id, inferred
+    )
+    controller.on_selected_sample_changed(
+        window.dataset_explorer_controller.get_sample(controller.current_sample_id)
+    )
+    model = window.localization_panel.table.model
+    table = window.localization_panel.table.table
+    inferred_row = next(
+        row
+        for row in range(model.rowCount())
+        if "confidence_score" in model.get_annotation_at(row)
+    )
+    table.selectRow(inferred_row)
+    before_accept = _json_snapshot(window)
+    undo_before = len(window.dataset_explorer_controller.undo_stack)
+
+    window.shortcut_localization_accept.activated.emit()
+    qtbot.wait(20)
+    after_accept = _json_snapshot(window)
+    accepted = next(
+        model.get_annotation_at(row)
+        for row in range(model.rowCount())
+        if model.get_annotation_at(row)["position_ms"] == 2500
+    )
+    assert len(window.dataset_explorer_controller.undo_stack) == undo_before + 1
+    assert "confidence_score" not in accepted
+    assert "inference_model_id" not in accepted
+
+    window.history_manager.perform_undo()
+    qtbot.wait(20)
+    assert _json_snapshot(window) == before_accept
+    window.history_manager.perform_redo()
+    qtbot.wait(20)
+    assert _json_snapshot(window) == after_accept
+
+
+@pytest.mark.gui
+def test_localization_review_shortcut_requires_active_mode_and_inferred_selection(
+    window, monkeypatch, qtbot, synthetic_project_json
+):
+    project_json_path = synthetic_project_json("localization")
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+    table = window.localization_panel.table.table
+    table.selectRow(0)
+    before = _json_snapshot(window)
+
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["classification"])
+    window.shortcut_localization_reject.activated.emit()
+    assert _json_snapshot(window) == before
+
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["localization"])
+    window.shortcut_localization_reject.activated.emit()
+    assert _json_snapshot(window) == before
+    assert "confidence score" in window.statusBar().currentMessage()
+
+
+@pytest.mark.gui
+def test_localization_review_shortcut_rejects_only_row_and_clears_selection(
+    window, monkeypatch, qtbot, synthetic_project_json
+):
+    project_json_path = synthetic_project_json("localization")
+    _open_project(window, monkeypatch, project_json_path)
+    _select_top_row(window, qtbot, 0)
+    window.right_tabs.setCurrentIndex(MODE_TO_TAB_INDEX["localization"])
+
+    controller = window.localization_editor_controller
+    sample_id = controller.current_sample_id
+    controller._current_sample_snapshot["events"] = []
+    controller.apply_shared_inference_result(
+        InferenceResult(
+            "only-row",
+            "localization",
+            "model",
+            ({
+                "sample_id": sample_id,
+                "events": [{
+                    "head": "ball_action",
+                    "label": "pass",
+                    "position_ms": 500,
+                    "confidence_score": 0.6,
+                }],
+            },),
+        ),
+        {"head": "ball_action"},
+    )
+    model = window.localization_panel.table.model
+    table = window.localization_panel.table.table
+    assert model.rowCount() == 1
+    table.selectRow(0)
+
+    window.shortcut_localization_reject.activated.emit()
+    qtbot.wait(20)
+    assert model.rowCount() == 0
+    assert not table.selectionModel().selectedRows()
+
+
+@pytest.mark.gui
 def test_history_contract_description_mutation(window, monkeypatch, qtbot, synthetic_project_json):
     project_json_path = synthetic_project_json("description")
     _open_project(window, monkeypatch, project_json_path)

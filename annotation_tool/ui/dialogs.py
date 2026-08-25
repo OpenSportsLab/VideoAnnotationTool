@@ -6,10 +6,10 @@ from PyQt6.QtWidgets import (
     QFrame, QListWidget, QComboBox, QPushButton, QLabel, QProgressBar,
     QMessageBox, QWidget, QListWidgetItem, QStyle, QButtonGroup, QScrollArea,
     QFileDialog, QCheckBox, QSizePolicy, QSpinBox, QTabWidget, QTableWidget,
-    QTableWidgetItem, QHeaderView, QPlainTextEdit
+    QTableWidgetItem, QHeaderView, QPlainTextEdit, QKeySequenceEdit
 )
 from PyQt6.QtCore import QDir, Qt, QSize, QSettings, pyqtSignal
-from PyQt6.QtGui import QFileSystemModel, QIcon
+from PyQt6.QtGui import QFileSystemModel, QIcon, QKeySequence
 from utils import get_square_remove_btn_style
 from media_control_settings import (
     DEFAULT_PLAYBACK_FACTORS,
@@ -33,6 +33,12 @@ from explorer_settings import (
     MAX_EXPLORER_PAGE_SIZE,
     MIN_EXPLORER_PAGE_SIZE,
     normalize_explorer_page_size,
+)
+from shortcut_settings import (
+    DEFAULT_LOCALIZATION_ACCEPT_SHORTCUT,
+    DEFAULT_LOCALIZATION_REJECT_SHORTCUT,
+    load_localization_review_shortcuts,
+    validate_localization_review_shortcuts,
 )
 
 
@@ -388,6 +394,7 @@ class ApplicationSettingsDialog(QDialog):
     inferenceHfModelRequested = pyqtSignal(object)
     inferenceHfModelCancelRequested = pyqtSignal()
     explorerPageSizeApplyRequested = pyqtSignal(int)
+    shortcutSettingsApplyRequested = pyqtSignal(str, str)
 
     def __init__(
         self,
@@ -467,6 +474,46 @@ class ApplicationSettingsDialog(QDialog):
         explorer_layout.addStretch(1)
         tabs.addTab(explorer_page, "Dataset Explorer")
 
+        shortcut_page = QWidget(tabs)
+        shortcut_layout = QVBoxLayout(shortcut_page)
+        shortcut_form = QFormLayout()
+        shortcut_layout.addLayout(shortcut_form)
+        review_shortcuts = load_localization_review_shortcuts(settings)
+        self.localization_accept_shortcut_edit = QKeySequenceEdit(
+            QKeySequence(review_shortcuts.accept), shortcut_page
+        )
+        self.localization_accept_shortcut_edit.setObjectName(
+            "localizationAcceptShortcutEdit"
+        )
+        shortcut_form.addRow(
+            "Accept selected localization prediction:",
+            self.localization_accept_shortcut_edit,
+        )
+        self.localization_reject_shortcut_edit = QKeySequenceEdit(
+            QKeySequence(review_shortcuts.reject), shortcut_page
+        )
+        self.localization_reject_shortcut_edit.setObjectName(
+            "localizationRejectShortcutEdit"
+        )
+        shortcut_form.addRow(
+            "Reject selected localization prediction:",
+            self.localization_reject_shortcut_edit,
+        )
+        shortcut_help = QLabel(
+            "These shortcuts work only while Localization is the active annotation editor. "
+            "They require a selected row with a confidence score.",
+            shortcut_page,
+        )
+        shortcut_help.setWordWrap(True)
+        shortcut_layout.addWidget(shortcut_help)
+        self.shortcut_validation_label = QLabel("", shortcut_page)
+        self.shortcut_validation_label.setObjectName("shortcutValidationLabel")
+        self.shortcut_validation_label.setWordWrap(True)
+        self.shortcut_validation_label.setStyleSheet("color: #d9534f;")
+        shortcut_layout.addWidget(self.shortcut_validation_label)
+        shortcut_layout.addStretch(1)
+        tabs.addTab(shortcut_page, "Shortcuts")
+
         self._settings = settings
         inference_page = QWidget(tabs)
         inference_layout = QVBoxLayout(inference_page)
@@ -512,6 +559,12 @@ class ApplicationSettingsDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         self.playback_factors_edit.textChanged.connect(lambda _text: self.validation_label.clear())
         self.seek_intervals_edit.textChanged.connect(lambda _text: self.validation_label.clear())
+        self.localization_accept_shortcut_edit.keySequenceChanged.connect(
+            lambda _sequence: self.shortcut_validation_label.clear()
+        )
+        self.localization_reject_shortcut_edit.keySequenceChanged.connect(
+            lambda _sequence: self.shortcut_validation_label.clear()
+        )
         self.inference_setup_widget.testConnectionRequested.connect(lambda _config: self.inferenceTestRequested.emit())
         self.inference_setup_widget.remoteCatalogRefreshRequested.connect(
             lambda _config: self.inferenceRemoteCatalogRequested.emit()
@@ -567,12 +620,19 @@ class ApplicationSettingsDialog(QDialog):
         self.playback_factors_edit.setText(DEFAULT_PLAYBACK_FACTORS)
         self.seek_intervals_edit.setText(DEFAULT_SEEK_INTERVALS)
         self.explorer_page_size_spin.setValue(DEFAULT_EXPLORER_PAGE_SIZE)
+        self.localization_accept_shortcut_edit.setKeySequence(
+            QKeySequence(DEFAULT_LOCALIZATION_ACCEPT_SHORTCUT)
+        )
+        self.localization_reject_shortcut_edit.setKeySequence(
+            QKeySequence(DEFAULT_LOCALIZATION_REJECT_SHORTCUT)
+        )
         self.inference_remote_enabled_checkbox.setChecked(False)
         self.inference_server_url_edit.setText(DEFAULT_SERVER_URL)
         self.shared_mapping_table.setRowCount(0)
         self.local_model_table.setRowCount(0)
         self.remote_model_table.setRowCount(0)
         self.validation_label.clear()
+        self.shortcut_validation_label.clear()
 
     def _apply(self, *, close_after: bool) -> None:
         try:
@@ -581,6 +641,19 @@ class ApplicationSettingsDialog(QDialog):
             inference_payload = self.inference_payload()
         except ValueError as exc:
             self.validation_label.setText(str(exc))
+            return
+
+        try:
+            shortcuts = validate_localization_review_shortcuts(
+                self.localization_accept_shortcut_edit.keySequence().toString(
+                    QKeySequence.SequenceFormat.PortableText
+                ),
+                self.localization_reject_shortcut_edit.keySequence().toString(
+                    QKeySequence.SequenceFormat.PortableText
+                ),
+            )
+        except ValueError as exc:
+            self.shortcut_validation_label.setText(str(exc))
             return
 
         self.playback_factors_edit.setText(factors.normalized_text)
@@ -592,6 +665,7 @@ class ApplicationSettingsDialog(QDialog):
             factors.values,
             intervals.values,
         )
+        self.shortcutSettingsApplyRequested.emit(shortcuts.accept, shortcuts.reject)
         self.inferenceSettingsApplyRequested.emit(inference_payload)
         parsed_server = urlparse(inference_payload["server_url"])
         if (
