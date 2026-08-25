@@ -140,7 +140,7 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
         ("r_ankle", "r_small_toe"),
     )
 
-    def build_clip(self, source: dict) -> RasterClip | None:
+    def build_clip(self, source: dict, progress_callback=None) -> RasterClip | None:
         h5py_module = self.controller._get_h5py_module()
         if h5py_module is None:
             self.controller._trigger_player_joints_h5_load_error(
@@ -193,7 +193,10 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
             )
             return None
 
-        frame_groups, timing_error = self._build_frame_groups(datasets[self._TIME_COLUMN])
+        frame_groups, timing_error = self._build_frame_groups(
+            datasets[self._TIME_COLUMN],
+            progress_callback=progress_callback,
+        )
         if timing_error:
             h5_file.close()
             self.controller._trigger_player_joints_h5_load_error(
@@ -219,7 +222,12 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
         ]
         hold_ms = self._median_frame_delta_ms(time_axis_ms)
         duration_ms = time_axis_ms[-1] + hold_ms if time_axis_ms else 0
-        ball_source = self._open_ball_source(source.get("ball_path"), h5py_module, hold_ms)
+        ball_source = self._open_ball_source(
+            source.get("ball_path"),
+            h5py_module,
+            hold_ms,
+            progress_callback=progress_callback,
+        )
         frame_source = _H5PlayerJointsFrameSource(
             h5_file,
             datasets,
@@ -296,7 +304,13 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
             return "Ball H5 datasets contain no rows."
         return ""
 
-    def _open_ball_source(self, ball_path: str | None, h5py_module, hold_ms: int):
+    def _open_ball_source(
+        self,
+        ball_path: str | None,
+        h5py_module,
+        hold_ms: int,
+        progress_callback=None,
+    ):
         if not ball_path:
             return None
         if not os.path.isfile(ball_path):
@@ -312,7 +326,10 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
                 self._log_ball_overlay_warning("Unsupported ball H5 schema", validation_error)
                 ball_file.close()
                 return None
-            timestamp_rows, timing_error = self._scan_ball_timestamp_rows(datasets[self._TIME_COLUMN])
+            timestamp_rows, timing_error = self._scan_ball_timestamp_rows(
+                datasets[self._TIME_COLUMN],
+                progress_callback=progress_callback,
+            )
             if timing_error:
                 self._log_ball_overlay_warning("Unsupported ball H5 timing", timing_error)
                 ball_file.close()
@@ -332,11 +349,13 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
             self._log_ball_overlay_warning("Unable to read ball H5 file", str(exc))
             return None
 
-    def _scan_ball_timestamp_rows(self, timestamp_dataset):
+    def _scan_ball_timestamp_rows(self, timestamp_dataset, progress_callback=None):
         timestamp_rows = []
         row_count = int(timestamp_dataset.shape[0])
         for chunk_start in range(0, row_count, self._TIMESTAMP_CHUNK_ROWS):
             chunk_stop = min(row_count, chunk_start + self._TIMESTAMP_CHUNK_ROWS)
+            if progress_callback is not None:
+                progress_callback(chunk_start, row_count, "Scanning ball timestamps…")
             try:
                 values = timestamp_dataset[chunk_start:chunk_stop]
             except Exception as exc:
@@ -347,6 +366,8 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
                 timestamp = self._parse_utc_timestamp(value)
                 if timestamp is not None:
                     timestamp_rows.append((timestamp, row_index))
+        if progress_callback is not None:
+            progress_callback(row_count, row_count, "Scanning ball timestamps…")
         return sorted(timestamp_rows, key=lambda item: item[0]), ""
 
     @staticmethod
@@ -363,7 +384,7 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
                 names.append(joint)
         return sorted(names)
 
-    def _build_frame_groups(self, timestamp_dataset):
+    def _build_frame_groups(self, timestamp_dataset, progress_callback=None):
         frame_groups = []
         row_count = int(timestamp_dataset.shape[0])
         active_text = None
@@ -372,6 +393,8 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
 
         for chunk_start in range(0, row_count, self._TIMESTAMP_CHUNK_ROWS):
             chunk_stop = min(row_count, chunk_start + self._TIMESTAMP_CHUNK_ROWS)
+            if progress_callback is not None:
+                progress_callback(chunk_start, row_count, "Scanning H5 timestamps…")
             try:
                 values = timestamp_dataset[chunk_start:chunk_stop]
             except Exception as exc:
@@ -414,6 +437,8 @@ class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
                 )
             )
 
+        if progress_callback is not None:
+            progress_callback(row_count, row_count, "Scanning H5 timestamps…")
         return sorted(frame_groups, key=lambda group: group.timestamp), ""
 
     def _frame_payload_for_row_range(

@@ -10,7 +10,7 @@ from .raster_backend import BaseRasterMediaBackend, RasterClip
 class FramesNpyMediaBackend(BaseRasterMediaBackend):
     backend_type = "frames_npy"
 
-    def build_clip(self, source: dict) -> RasterClip | None:
+    def build_clip(self, source: dict, progress_callback=None) -> RasterClip | None:
         numpy_module = self.controller._get_numpy_module()
         if numpy_module is None:
             self.controller._trigger_frame_load_error(

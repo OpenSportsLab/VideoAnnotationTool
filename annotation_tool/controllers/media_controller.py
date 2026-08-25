@@ -3,7 +3,7 @@ import os
 import datetime as _datetime
 from bisect import bisect_left, bisect_right
 
-from PyQt6.QtCore import QElapsedTimer, QMimeDatabase, QObject, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QElapsedTimer, QMimeDatabase, QObject, QThread, QTimer, QUrl, pyqtSignal
 from PyQt6.QtMultimedia import QMediaMetaData, QMediaPlayer
 
 from controllers.media import (
@@ -52,6 +52,7 @@ class _SingleMediaController(QObject):
     muteStateChanged = pyqtSignal(bool)
     positionChanged = pyqtSignal(int)
     durationChanged = pyqtSignal(int)
+    loadErrorRequested = pyqtSignal(str, str, str, str)
 
     _VIDEO_EXTENSIONS = {
         ".mp4",
@@ -119,6 +120,7 @@ class _SingleMediaController(QObject):
     _FRAME_TIMER_INTERVAL_MS = 30
     _TIMESTAMP_MAX_STEP_MS = 60000.0
     _RASTER_FRAME_CACHE_LIMIT = 128
+    _ASYNC_RASTER_LOAD_THRESHOLD_BYTES = 8 * 1024 * 1024
 
     _BACKEND_VIDEO = "video"
     _BACKEND_FRAMES_NPY = "frames_npy"
@@ -160,6 +162,7 @@ class _SingleMediaController(QObject):
         self.player.playbackStateChanged.connect(self._handle_player_playback_state_changed)
         self.player.positionChanged.connect(self._handle_player_position_changed)
         self.player.durationChanged.connect(self._handle_player_duration_changed)
+        self.loadErrorRequested.connect(self._handle_deferred_load_error)
 
         if self.video_widget and hasattr(self.video_widget, "videoSink"):
             sink = self.video_widget.videoSink()
@@ -279,6 +282,42 @@ class _SingleMediaController(QObject):
         if self.media_panel and hasattr(self.media_panel, "set_frame_image"):
             self.media_panel.set_frame_image(image)
 
+    def _show_load_progress(self, message: str, current: int = 0, total: int = 0):
+        if self.media_panel and hasattr(self.media_panel, "show_loading_progress"):
+            self.media_panel.show_loading_progress(message, current, total)
+
+    def _handle_raster_load_progress(
+        self,
+        backend,
+        request_id: int,
+        generation: int,
+        current: int,
+        total: int,
+        message: str,
+    ):
+        backend._on_async_load_progress(
+            request_id,
+            generation,
+            current,
+            total,
+            message,
+        )
+
+    def _handle_raster_load_finished(
+        self,
+        backend,
+        request_id: int,
+        generation: int,
+        clip,
+        error_details: str,
+    ):
+        backend._on_async_load_finished(
+            request_id,
+            generation,
+            clip,
+            error_details,
+        )
+
     def _clear_preview(self):
         if self.media_panel and hasattr(self.media_panel, "clear_preview"):
             self.media_panel.clear_preview()
@@ -294,6 +333,14 @@ class _SingleMediaController(QObject):
         text: str = "Unable to load media.",
         informative_text: str = "",
     ):
+        if QThread.currentThread() != self.thread():
+            self.loadErrorRequested.emit(
+                str(error_details),
+                str(title),
+                str(text),
+                str(informative_text),
+            )
+            return
         self.stop()
         if self._error_handler is not None:
             self._error_handler(title, text, error_details)
@@ -313,6 +360,20 @@ class _SingleMediaController(QObject):
             error_dialog.exec()
         except ImportError as exc:
             print(f"Failed to import MediaErrorDialog: {exc}")
+
+    def _handle_deferred_load_error(
+        self,
+        error_details: str,
+        title: str,
+        text: str,
+        informative_text: str,
+    ):
+        self._trigger_error_dialog(
+            error_details,
+            title=title,
+            text=text,
+            informative_text=informative_text,
+        )
 
     def _trigger_video_decode_error(self, error_details: str):
         self._trigger_error_dialog(
@@ -940,6 +1001,11 @@ class MediaController(QObject):
 
     def _on_session_duration(self, record, duration):
         record["duration_ms"] = max(0, int(duration))
+        if not record["utc_start_present"]:
+            session = record.get("controller")
+            record["origin_utc"] = (
+                session.timeline_origin_utc() if session is not None else None
+            )
         if self._group_active:
             self._recalculate_group_timeline()
             if self._pending_group_autoplay and self._all_sessions_ready():
@@ -952,6 +1018,10 @@ class MediaController(QObject):
             return False
         for record in valid_records:
             session = record["controller"]
+            if session is not None and bool(
+                getattr(session._active_backend, "_is_loading", False)
+            ):
+                return False
             if session is not None and session._current_backend == session._BACKEND_VIDEO:
                 if record["duration_ms"] <= 0:
                     return False

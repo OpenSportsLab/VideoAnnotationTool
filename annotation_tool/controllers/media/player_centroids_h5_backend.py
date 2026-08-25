@@ -57,7 +57,7 @@ class PlayerCentroidsH5MediaBackend(PlayerJointsH5MediaBackend):
     _CENTROID_MARKER_RADIUS_MIN = 6.0
     _CENTROID_MARKER_RADIUS_SCALE = 1.0
 
-    def build_clip(self, source: dict) -> RasterClip | None:
+    def build_clip(self, source: dict, progress_callback=None) -> RasterClip | None:
         h5py_module = self.controller._get_h5py_module()
         if h5py_module is None:
             self.controller._trigger_player_centroids_h5_load_error(
@@ -100,7 +100,10 @@ class PlayerCentroidsH5MediaBackend(PlayerJointsH5MediaBackend):
             )
             return None
 
-        frame_groups, timing_error = self._build_frame_groups(datasets[self._TIME_COLUMN])
+        frame_groups, timing_error = self._build_frame_groups(
+            datasets[self._TIME_COLUMN],
+            progress_callback=progress_callback,
+        )
         if timing_error:
             h5_file.close()
             self.controller._trigger_player_centroids_h5_load_error(
@@ -126,7 +129,12 @@ class PlayerCentroidsH5MediaBackend(PlayerJointsH5MediaBackend):
         ]
         hold_ms = self._median_frame_delta_ms(time_axis_ms)
         duration_ms = time_axis_ms[-1] + hold_ms if time_axis_ms else 0
-        ball_source = self._open_ball_source(source.get("ball_path"), h5py_module, hold_ms)
+        ball_source = self._open_ball_source(
+            source.get("ball_path"),
+            h5py_module,
+            hold_ms,
+            progress_callback=progress_callback,
+        )
         frame_source = _H5PlayerCentroidsFrameSource(
             h5_file,
             datasets,

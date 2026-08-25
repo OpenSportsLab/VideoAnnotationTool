@@ -76,6 +76,14 @@ complex skeleton frame takes longer to draw than the source frame interval,
 completed forward-progress frames remain visible while the renderer catches up
 to the shared playhead; playback does not stay frozen on the first frame.
 
+Large NPY, Parquet, player-joints H5, and player-centroids H5 inputs are prepared
+outside the UI thread. The affected viewer displays a loading progress bar while
+the rest of the application remains usable. H5 timestamp scans and tracking
+frame preparation show determinate progress; file-opening phases use an
+indeterminate bar. Selection autoplay waits until every playable input is ready.
+You can continue adding data, selecting another sample, or resizing the window;
+pane reconfiguration cancels and safely discards obsolete load results.
+
 ## Correct an Input's UTC Alignment
 
 Use visual synchronization when one modality is early or late:

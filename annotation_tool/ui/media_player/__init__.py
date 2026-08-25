@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QMessageBox,
     QInputDialog,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -173,7 +174,24 @@ class MediaViewerPane(QFrame):
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setWordWrap(True)
         self.status_label.hide()
-        for widget in (self.video_widget, self.frame_widget, self.status_label):
+        self.loading_widget = QWidget(self.surface)
+        loading_layout = QVBoxLayout(self.loading_widget)
+        loading_layout.setContentsMargins(24, 24, 24, 24)
+        loading_layout.addStretch(1)
+        self.loading_label = QLabel("Loading…", self.loading_widget)
+        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_progress = QProgressBar(self.loading_widget)
+        self.loading_progress.setAccessibleName("Media loading progress")
+        loading_layout.addWidget(self.loading_label)
+        loading_layout.addWidget(self.loading_progress)
+        loading_layout.addStretch(1)
+        self.loading_widget.hide()
+        for widget in (
+            self.video_widget,
+            self.frame_widget,
+            self.status_label,
+            self.loading_widget,
+        ):
             widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             self.surface_layout.addWidget(widget)
         self.frame_widget.hide()
@@ -193,7 +211,7 @@ class MediaViewerPane(QFrame):
         self._explicit_utc_text = str(source.get("UTC_time_start") or "")
         self.title_label.setText(f"{source_type} · {os.path.basename(path) or path}")
         self.set_focused(focused)
-        self.show_status("Loading…")
+        self.show_loading_progress("Loading…", 0, 0)
 
     def set_timing_status(self, text: str, tooltip: str = ""):
         self.timing_label.setText(str(text or "Relative"))
@@ -226,16 +244,34 @@ class MediaViewerPane(QFrame):
     def show_status(self, text: str):
         self.video_widget.hide()
         self.frame_widget.hide()
+        self.loading_widget.hide()
         self.status_label.setText(str(text or ""))
         self.status_label.show()
 
+    def show_loading_progress(self, message: str, current: int = 0, total: int = 0):
+        self.video_widget.hide()
+        self.frame_widget.hide()
+        self.status_label.hide()
+        self.loading_label.setText(str(message or "Loading…"))
+        safe_total = max(0, int(total))
+        if safe_total > 0:
+            self.loading_progress.setRange(0, safe_total)
+            self.loading_progress.setValue(max(0, min(int(current), safe_total)))
+            self.loading_progress.setTextVisible(True)
+        else:
+            self.loading_progress.setRange(0, 0)
+            self.loading_progress.setTextVisible(False)
+        self.loading_widget.show()
+
     def show_video_surface(self):
         self.status_label.hide()
+        self.loading_widget.hide()
         self.frame_widget.hide()
         self.video_widget.show()
 
     def show_frame_surface(self):
         self.status_label.hide()
+        self.loading_widget.hide()
         self.video_widget.hide()
         self.frame_widget.show()
 
@@ -794,12 +830,13 @@ class MediaCenterPanel(QWidget):
         self._update_label(self.slider.value())
 
     def show_video_surface(self):
-        self.frame_widget.hide()
-        self.video_widget.show()
+        self._viewer_panes[0].show_video_surface()
 
     def show_frame_surface(self):
-        self.video_widget.hide()
-        self.frame_widget.show()
+        self._viewer_panes[0].show_frame_surface()
+
+    def show_loading_progress(self, message: str, current: int = 0, total: int = 0):
+        self._viewer_panes[0].show_loading_progress(message, current, total)
 
     def clear_preview(self):
         for pane in self._viewer_panes:

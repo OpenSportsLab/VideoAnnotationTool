@@ -114,6 +114,7 @@ Provides the central grouped media/timeline panel used across all annotation mod
 - The panel stays backend-agnostic: internal backends push either Qt video output or raster images into the same preview area.
 - Pane preview surfaces support Qt video, NPY frames, tracking pitches, and H5 joints/centroids.
 - Deferred raster rendering tracks requested and displayed frame indices separately. A completed frame may advance the visible pane while a newer frame is queued, but an older completion must never replace a newer displayed frame.
+- Raster inputs whose primary and associated ball files total at least 8 MiB are prepared on a dedicated worker pool. `MediaViewerPane.show_loading_progress(message, current, total)` owns determinate/indeterminate presentation, while load request/generation IDs prevent stale completion after rerouting. Worker pools and signal relays must not be QObject children of disposable panes/controllers; controller destruction cancels the request, disconnected completion becomes a no-op, and canceled clips close their frame sources. Group readiness waits for async backends, and delayed duration callbacks refresh backend-derived UTC origins before autoplay.
 - Marker payload contract:
   list of dicts with at least `start_ms`, optional `color`.
 - Marker color is supplied by the owning mode controller; the media player should render it without imposing mode-specific defaults.

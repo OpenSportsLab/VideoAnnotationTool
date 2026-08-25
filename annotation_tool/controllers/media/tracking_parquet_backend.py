@@ -12,7 +12,7 @@ from .raster_backend import BaseRasterMediaBackend, RasterClip
 class TrackingParquetMediaBackend(BaseRasterMediaBackend):
     backend_type = "tracking_parquet"
 
-    def build_clip(self, source: dict) -> RasterClip | None:
+    def build_clip(self, source: dict, progress_callback=None) -> RasterClip | None:
         pandas_module = self.controller._get_pandas_module()
         pyarrow_module = self.controller._get_pyarrow_module()
         if pandas_module is None or pyarrow_module is None:
@@ -69,7 +69,12 @@ class TrackingParquetMediaBackend(BaseRasterMediaBackend):
             return None
 
         frame_payloads = []
-        for row in dataframe.to_dict(orient="records"):
+        rows = dataframe.to_dict(orient="records")
+        total_rows = len(rows)
+        progress_step = max(1, total_rows // 100)
+        for row_index, row in enumerate(rows):
+            if progress_callback is not None and row_index % progress_step == 0:
+                progress_callback(row_index, total_rows, "Preparing tracking frames…")
             frame_payloads.append(
                 {
                     "home": self._parse_tracking_players(row.get(home_column)),
@@ -77,6 +82,8 @@ class TrackingParquetMediaBackend(BaseRasterMediaBackend):
                     "ball": self._parse_tracking_ball(row.get(ball_column)),
                 }
             )
+        if progress_callback is not None:
+            progress_callback(total_rows, total_rows, "Preparing tracking frames…")
 
         fallback_fps = self.controller._coerce_source_fps(
             source.get("fps"),

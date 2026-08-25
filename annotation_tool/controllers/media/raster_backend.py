@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+import os
 import statistics
+import threading
 from bisect import bisect_left, bisect_right
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -34,6 +36,70 @@ class RasterClip:
 
 class _RasterRenderSignals(QObject):
     finished = pyqtSignal(int, int, int, object)
+
+
+class _RasterLoadSignals(QObject):
+    progress = pyqtSignal(object, int, int, int, int, str)
+    finished = pyqtSignal(object, int, int, object, str)
+
+
+class _RasterLoadTask(QRunnable):
+    def __init__(
+        self,
+        backend,
+        signals,
+        cancel_event: threading.Event,
+        request_id: int,
+        generation: int,
+        source: dict,
+    ):
+        super().__init__()
+        self.backend = backend
+        self.signals = signals
+        self.cancel_event = cancel_event
+        self.request_id = request_id
+        self.generation = generation
+        self.source = source
+
+    def run(self):
+        def report_progress(current: int, total: int, message: str):
+            if self.cancel_event.is_set():
+                return
+            try:
+                self.signals.progress.emit(
+                    self.backend,
+                    self.request_id,
+                    self.generation,
+                    max(0, int(current)),
+                    max(0, int(total)),
+                    str(message or "Loading…"),
+                )
+            except RuntimeError:
+                self.cancel_event.set()
+
+        report_progress(0, 0, "Opening media…")
+        error_details = ""
+        try:
+            clip = self.backend.build_clip(
+                self.source,
+                progress_callback=report_progress,
+            )
+        except Exception as exc:
+            clip = None
+            error_details = str(exc)
+        if self.cancel_event.is_set():
+            self.backend._close_clip(clip)
+            return
+        try:
+            self.signals.finished.emit(
+                self.backend,
+                self.request_id,
+                self.generation,
+                clip,
+                error_details,
+            )
+        except RuntimeError:
+            self.backend._close_clip(clip)
 
 
 class _RasterRenderTask(QRunnable):
@@ -74,14 +140,24 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self._frame_image_cache: OrderedDict[int, QImage] = OrderedDict()
         self._frame_clock = QElapsedTimer()
         self._load_generation = 0
+        self._load_request_id = 0
+        self._is_loading = False
+        self._load_auto_play = False
         self._render_generation = 0
         self._deferred_request_id = 0
         self._deferred_render_in_flight = False
         self._deferred_pending_index = None
-        self._render_signals = _RasterRenderSignals(controller)
+        self._render_signals = _RasterRenderSignals()
         self._render_signals.finished.connect(self._on_deferred_frame_ready)
-        self._render_pool = QThreadPool(controller)
+        self._render_pool = QThreadPool()
         self._render_pool.setMaxThreadCount(1)
+        self._load_cancel_event = threading.Event()
+        self._load_signals = _RasterLoadSignals()
+        self._load_signals.progress.connect(controller._handle_raster_load_progress)
+        self._load_signals.finished.connect(controller._handle_raster_load_finished)
+        self._load_pool = QThreadPool()
+        self._load_pool.setMaxThreadCount(1)
+        controller.destroyed.connect(self._cancel_async_load)
 
         self.frame_timer = QTimer(controller)
         self.frame_timer.setInterval(self.controller._FRAME_TIMER_INTERVAL_MS)
@@ -91,6 +167,26 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self.stop()
         self._load_generation += 1
         generation = self._load_generation
+        if self._should_load_asynchronously(source):
+            self._current_source = source
+            self._playback_rate = 1.0
+            self._is_loading = True
+            self._load_auto_play = bool(auto_play)
+            self._load_request_id += 1
+            self._load_cancel_event = threading.Event()
+            self.controller._show_load_progress("Opening media…", 0, 0)
+            self._load_pool.start(
+                _RasterLoadTask(
+                    self,
+                    self._load_signals,
+                    self._load_cancel_event,
+                    self._load_request_id,
+                    generation,
+                    source,
+                )
+            )
+            return True
+
         clip = self.build_clip(source)
         if clip is None:
             return False
@@ -102,6 +198,10 @@ class BaseRasterMediaBackend(BaseMediaBackend):
                     pass
             return False
 
+        self._install_clip(source, clip, generation, auto_play)
+        return True
+
+    def _install_clip(self, source: dict, clip: RasterClip, generation: int, auto_play: bool):
         self._current_source = source
         self._playback_rate = 1.0
         self._clip = clip
@@ -118,9 +218,71 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self._set_frame_position(0, emit_position=True, snap_to_frame=True)
         if auto_play:
             self.play()
-        return True
 
-    def build_clip(self, source: dict) -> RasterClip | None:
+    def _should_load_asynchronously(self, source: dict) -> bool:
+        source_size = 0
+        for key in ("path", "ball_path"):
+            try:
+                source_size += os.path.getsize(str(source.get(key) or ""))
+            except (OSError, TypeError, ValueError):
+                continue
+        threshold = max(
+            0,
+            int(getattr(self.controller, "_ASYNC_RASTER_LOAD_THRESHOLD_BYTES", 0)),
+        )
+        return threshold > 0 and source_size >= threshold
+
+    def _on_async_load_progress(
+        self,
+        request_id: int,
+        generation: int,
+        current: int,
+        total: int,
+        message: str,
+    ):
+        if (
+            request_id != self._load_request_id
+            or generation != self._load_generation
+            or not self._is_loading
+        ):
+            return
+        self.controller._show_load_progress(message, current, total)
+
+    def _on_async_load_finished(
+        self,
+        request_id: int,
+        generation: int,
+        clip: RasterClip | None,
+        error_details: str,
+    ):
+        if request_id != self._load_request_id or generation != self._load_generation:
+            self._close_clip(clip)
+            return
+        self._is_loading = False
+        if clip is None:
+            if error_details:
+                self.controller._trigger_error_dialog(
+                    error_details,
+                    title="Media Load Error",
+                    text="<b>Unable to prepare media</b>",
+                )
+            return
+        source = self._current_source
+        if not isinstance(source, dict):
+            self._close_clip(clip)
+            return
+        self._install_clip(source, clip, generation, self._load_auto_play)
+
+    @staticmethod
+    def _close_clip(clip: RasterClip | None):
+        frame_source = getattr(clip, "frame_source", None)
+        if hasattr(frame_source, "close"):
+            try:
+                frame_source.close()
+            except Exception:
+                pass
+
+    def build_clip(self, source: dict, progress_callback=None) -> RasterClip | None:
         raise NotImplementedError
 
     def render_frame_image(self, frame_index: int, frame_payload) -> QImage:
@@ -147,7 +309,11 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self.controller.playbackStateChanged.emit(False)
 
     def stop(self):
+        self._cancel_async_load()
         self._load_generation += 1
+        self._load_request_id += 1
+        self._is_loading = False
+        self._load_auto_play = False
         self._render_generation = self._load_generation
         self._cancel_deferred_render()
         if self.frame_timer.isActive():
@@ -166,6 +332,9 @@ class BaseRasterMediaBackend(BaseMediaBackend):
         self._frame_playing = False
         self._frame_image_cache = OrderedDict()
         super().stop()
+
+    def _cancel_async_load(self):
+        self._load_cancel_event.set()
 
     def set_position(self, position_ms: int):
         self._cancel_deferred_render()

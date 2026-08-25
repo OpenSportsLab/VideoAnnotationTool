@@ -1,11 +1,12 @@
 import time
+import threading
 from pathlib import Path
 
 import h5py
 import numpy as np
 import pandas as pd
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage
 from PyQt6.QtWidgets import QMessageBox
 
@@ -537,6 +538,135 @@ def test_player_joints_h5_controller_play_pause_seek_and_rate(media_panel_and_co
     controller.set_position(345)
     qtbot.wait(30)
     assert controller.current_position_ms() == 340
+
+
+@pytest.mark.gui
+def test_large_player_joints_h5_load_is_async_and_reports_progress(
+    media_panel_and_controller,
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    panel, controller = media_panel_and_controller
+    h5_path = tmp_path / "large_joints.h5"
+    _write_minimal_player_joints_h5(
+        h5_path,
+        [
+            b"2026-01-01 12:00:00.000000",
+            b"2026-01-01 12:00:00.040000",
+            b"2026-01-01 12:00:00.080000",
+        ],
+    )
+    controller._single._ASYNC_RASTER_LOAD_THRESHOLD_BYTES = 1
+    progress_updates = []
+    original_show_progress = panel.show_loading_progress
+
+    def record_progress(message, current=0, total=0):
+        progress_updates.append((message, current, total))
+        original_show_progress(message, current, total)
+
+    monkeypatch.setattr(panel, "show_loading_progress", record_progress)
+    event_loop_ticks = []
+    QTimer.singleShot(0, lambda: event_loop_ticks.append(True))
+
+    controller.route_media_group(
+        [{"type": "player_joints_h5", "path": str(h5_path)}],
+        str(h5_path),
+        False,
+    )
+
+    record = controller._sessions[0]
+    backend = record["controller"]._active_backend
+    assert backend._is_loading is True
+    assert panel._viewer_panes[0].loading_widget.isVisible() is True
+    qtbot.waitUntil(lambda: bool(event_loop_ticks), timeout=1500)
+    qtbot.waitUntil(lambda: not backend._is_loading, timeout=3000)
+
+    assert any(total == 3 and current < total for _message, current, total in progress_updates)
+    assert any(total == 3 and current == total for _message, current, total in progress_updates)
+    assert record["duration_ms"] == 120
+    assert record["origin_utc"].isoformat(sep=" ") == "2026-01-01 12:00:00"
+    assert controller._global_origin_utc == record["origin_utc"]
+    assert panel._viewer_panes[0].loading_widget.isVisible() is False
+
+
+@pytest.mark.gui
+def test_async_raster_load_survives_controller_deletion(qtbot, tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+    build_finished = threading.Event()
+    source_closed = threading.Event()
+
+    class DisposableController(QObject):
+        positionChanged = pyqtSignal(int)
+        durationChanged = pyqtSignal(int)
+        playbackStateChanged = pyqtSignal(bool)
+
+        _FRAME_TIMER_INTERVAL_MS = 30
+        _FRAME_DEFAULT_FPS = 2.0
+        _RASTER_FRAME_CACHE_LIMIT = 8
+        _ASYNC_RASTER_LOAD_THRESHOLD_BYTES = 1
+
+        def __init__(self):
+            super().__init__()
+            self.player = None
+            self.media_panel = None
+
+        def _handle_raster_load_progress(self, backend, request_id, generation, current, total, message):
+            backend._on_async_load_progress(request_id, generation, current, total, message)
+
+        def _handle_raster_load_finished(self, backend, request_id, generation, clip, error_details):
+            backend._on_async_load_finished(request_id, generation, clip, error_details)
+
+        def _show_load_progress(self, *_args):
+            return None
+
+        def _show_frame_image(self, *_args):
+            return None
+
+        def _trigger_error_dialog(self, *_args, **_kwargs):
+            return None
+
+    class CloseableFrameSource(list):
+        def close(self):
+            source_closed.set()
+
+    class SlowRasterBackend(BaseRasterMediaBackend):
+        def build_clip(self, _source, progress_callback=None):
+            started.set()
+            release.wait(timeout=2.0)
+            build_finished.set()
+            return RasterClip(
+                frame_source=CloseableFrameSource([0]),
+                frame_count=1,
+                time_axis_ms=[0],
+                hold_ms=40,
+                duration_ms=40,
+                fallback_fps=25.0,
+            )
+
+        def render_frame_image(self, _frame_index, _frame_payload):
+            return QImage(1, 1, QImage.Format.Format_ARGB32)
+
+    source_path = tmp_path / "slow-raster.bin"
+    source_path.write_bytes(b"large")
+    controller = DisposableController()
+    backend = SlowRasterBackend(controller)
+
+    assert backend.load_source(
+        {"type": "test_raster", "path": str(source_path)},
+        auto_play=False,
+    )
+    qtbot.waitUntil(started.is_set, timeout=1500)
+    cancel_event = backend._load_cancel_event
+
+    controller.deleteLater()
+    qtbot.waitUntil(cancel_event.is_set, timeout=1500)
+    release.set()
+    qtbot.waitUntil(build_finished.is_set, timeout=1500)
+    qtbot.waitUntil(source_closed.is_set, timeout=1500)
+
+    assert backend._clip is None
 
 
 @pytest.mark.gui
