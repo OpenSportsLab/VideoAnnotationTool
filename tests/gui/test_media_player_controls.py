@@ -85,6 +85,57 @@ def media_panel_and_controller(qtbot):
 
 
 @pytest.mark.gui
+def test_timeline_zoom_exceeds_old_cap_and_preserves_center(media_panel_and_controller, qtbot):
+    panel, _controller = media_panel_and_controller
+    initial_center = panel._get_current_center_ratio()
+
+    for _ in range(8):
+        panel._change_zoom(1)
+    qtbot.wait(20)
+
+    assert panel.zoom_level > 20.0
+    assert panel._get_current_center_ratio() == pytest.approx(initial_center, abs=0.01)
+
+
+@pytest.mark.gui
+def test_timeline_zoom_stops_at_qt_width_limit_and_can_zoom_out(
+    media_panel_and_controller,
+    monkeypatch,
+):
+    panel, _controller = media_panel_and_controller
+    viewport_width = max(1, panel.scroll_area.viewport().width())
+    practical_test_limit = viewport_width * 32
+    monkeypatch.setattr(
+        "ui.media_player._QT_MAX_WIDGET_SIZE",
+        practical_test_limit,
+    )
+
+    for _ in range(20):
+        panel._change_zoom(1)
+
+    saturated_level = panel.zoom_level
+    saturated_width = panel.slider.width()
+    assert saturated_level == pytest.approx(32.0)
+    assert saturated_width == practical_test_limit
+
+    panel._change_zoom(1)
+    assert panel.zoom_level == saturated_level
+    assert panel.slider.width() == saturated_width
+
+    panel._change_zoom(-1)
+    assert panel.zoom_level < saturated_level
+
+    panel.zoom_level = saturated_level * 2
+    panel._update_slider_width()
+    assert panel.zoom_level == saturated_level
+    assert panel.slider.width() == saturated_width
+
+    for _ in range(20):
+        panel._change_zoom(-1)
+    assert panel.zoom_level == 1.0
+
+
+@pytest.mark.gui
 def test_mute_button_toggles_media_controller_and_updates_label(window, qtbot):
     assert window.center_panel.btn_mute.text() == ""
     assert window.center_panel.btn_mute.toolTip() == "Mute"

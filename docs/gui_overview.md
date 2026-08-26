@@ -81,6 +81,10 @@ rows only highlights its viewer and likewise leaves playback unchanged.
 - Per-viewer right-click actions for **Go to start**, **Go to end**, manual UTC
   start management, and visual UTC synchronization
 
+The timeline zoom buttons use 1.5× steps. There is no fixed application-level
+zoom multiplier limit; zoom-in stops only at Qt's maximum supported widget
+width. Zooming preserves the center of the currently visible timeline region.
+
 Playback factors add both a direct and reciprocal speed, with `1x` always
 present. For example, `2,4,8` creates `0.125x`, `0.25x`, `0.5x`, `1x`, `2x`,
 `4x`, and `8x`. Seek intervals such as `1,5,10,30,60` create matching backward

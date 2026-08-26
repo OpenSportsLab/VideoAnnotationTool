@@ -70,6 +70,10 @@ Provides the central grouped media/timeline panel used across all annotation mod
 - UI emits control intents; controller decides route/playback policy.
 - Timeline, relative-seek, and annotation-navigation intents are authoritative
   group seeks and must remain stable while playback is active.
+- Timeline zoom uses 1.5x steps with no fixed multiplier cap. Its effective
+  maximum is derived from the current viewport and Qt's maximum widget width;
+  width and zoom clamping must remain a single calculation used by both button
+  changes and resize handling.
 - `focus_viewer(path)` changes only pane contour state; it must not seek or alter
   playback state. In single and tab layouts, a non-empty focus also selects the
   matching visible pane.

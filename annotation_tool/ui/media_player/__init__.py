@@ -32,6 +32,10 @@ from media_control_settings import format_control_value
 from utils import format_utc_datetime, parse_utc_datetime, resource_path
 
 
+_QT_MAX_WIDGET_SIZE = 16_777_215
+_TIMELINE_ZOOM_FACTOR = 1.5
+
+
 class ViewerLayoutMode(str, Enum):
     SINGLE = "single"
     MOSAIC = "mosaic"
@@ -878,29 +882,40 @@ class MediaCenterPanel(QWidget):
     def _change_zoom(self, direction):
         old_level = self.zoom_level
         if direction > 0:
-            self.zoom_level = min(self.zoom_level * 1.5, 20.0)
+            requested_level = self.zoom_level * _TIMELINE_ZOOM_FACTOR
         else:
-            self.zoom_level = max(self.zoom_level / 1.5, 1.0)
+            requested_level = self.zoom_level / _TIMELINE_ZOOM_FACTOR
 
-        if abs(self.zoom_level - 1.0) < 0.05:
-            self.zoom_level = 1.0
+        new_level, _new_width = self._bounded_timeline_zoom(requested_level)
+        if abs(new_level - 1.0) < 0.05:
+            new_level = 1.0
 
-        if old_level != self.zoom_level:
+        if old_level != new_level:
             center_ratio = self._get_current_center_ratio()
+            self.zoom_level = new_level
             self._update_slider_width()
             self._restore_center_ratio(center_ratio)
 
+    def _bounded_timeline_zoom(self, requested_level):
+        viewport_width = max(1, self.scroll_area.viewport().width())
+        maximum_level = max(1.0, _QT_MAX_WIDGET_SIZE / viewport_width)
+        bounded_level = min(max(float(requested_level), 1.0), maximum_level)
+        slider_width = min(
+            _QT_MAX_WIDGET_SIZE,
+            max(viewport_width, int(viewport_width * bounded_level)),
+        )
+        return bounded_level, slider_width
+
     def _update_slider_width(self):
-        viewport_width = self.scroll_area.viewport().width()
+        self.zoom_level, slider_width = self._bounded_timeline_zoom(self.zoom_level)
         if self.zoom_level <= 1.0:
             self.scroll_area.setWidgetResizable(True)
             self.slider.setMinimumWidth(0)
-            self.slider.setMaximumWidth(16777215)
+            self.slider.setMaximumWidth(_QT_MAX_WIDGET_SIZE)
         else:
             self.scroll_area.setWidgetResizable(False)
-            new_width = int(viewport_width * self.zoom_level)
-            self.slider.setMinimumWidth(new_width)
-            self.slider.setMaximumWidth(new_width)
+            self.slider.setMinimumWidth(slider_width)
+            self.slider.setMaximumWidth(slider_width)
 
     def _on_user_scroll_start(self):
         self.user_is_scrolling = True
