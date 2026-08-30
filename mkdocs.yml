@@ -37,6 +37,7 @@ nav:
   - Troubleshooting: troubleshooting.md
   - About: about.md
   - Contributing: contributing.md
+  - Releasing: releasing.md
   - Changelog: changelog.md
 
 markdown_extensions:

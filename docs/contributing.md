@@ -12,3 +12,5 @@ Typical flow:
 2. Create a feature branch.
 3. Add tests/docs for your change.
 4. Open a pull request.
+
+Maintainers publishing a version should follow the [release guide](releasing.md).

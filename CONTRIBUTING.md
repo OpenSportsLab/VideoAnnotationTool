@@ -17,6 +17,11 @@ Thank you for considering contributing to this project!
 - Write clear commit messages
 - Add or update documentation as needed
 
+## Releasing
+
+Maintainers should follow the [release guide](docs/releasing.md) for version
+bumps, tag publication, CI monitoring, and artifact verification.
+
 ## Reporting Issues
 - Use the GitHub Issues page to report bugs or request features
 - Please provide as much detail as possible

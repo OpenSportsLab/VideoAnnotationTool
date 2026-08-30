@@ -344,18 +344,20 @@ When a version tag matching `v*` or `V*` (e.g., `v1.0.7`) is pushed, the release
 * Generates release notes from recent commit messages
 
 The build commands in CI mirror the manual PyInstaller commands above (including bundling `style/`, `ui/`, and `controllers/`).
+Maintainers should use the complete [release checklist](docs/releasing.md) when
+preparing and verifying a release.
 
 ### Manual build artifacts (workflow dispatch)
 
 There is also a standalone build workflow that can be triggered manually:
 
-* Workflow: `.github/workflows/CL.yml`
+* Workflow: `.github/workflows/ci.yml`
 * Builds for: **Windows**, **macOS**, **Linux**
 * On **manual run** (`workflow_dispatch`), it zips the binaries and uploads them as **Actions artifacts** (short retention)
 
 ### CI workflows overview
 
-* `CL.yml`: Multi-platform build (manual artifacts on `workflow_dispatch`; also runs on pushes to selected branches)
+* `ci.yml`: Multi-platform build (manual artifacts on `workflow_dispatch`; also runs on pushes to selected branches)
 * `release.yml`: Multi-platform build + GitHub Release publishing (triggered by version tags)
 * `deploy_docs.yml`: Documentation build and deployment (MkDocs)
 
