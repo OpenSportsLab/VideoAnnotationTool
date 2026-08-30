@@ -58,6 +58,29 @@ def _effective_weights(descriptor) -> str | None:
     return descriptor.weights or descriptor.id
 
 
+def _find_h5_tracking_inputs(inputs) -> list[dict[str, Any]]:
+    """Collect every ticked player-tracking H5 input (with its paired ball H5).
+
+    Rule-based models like OpenSportsLab/skeleton-header-max-recall run
+    directly on joint/ball tracking H5 files rather than a video clip, and
+    their spotters already iterate every matching-type manifest input (e.g.
+    to combine several tracking sources for one sample) -- so every ticked
+    H5 input must reach the manifest, not just the first one found. Each is
+    copied verbatim (type, resolved path, and every other field it carries,
+    ball_path included) rather than hand-picked, so nothing the dataset
+    loader expects is silently dropped.
+    """
+    tracking_inputs = []
+    for source in inputs:
+        if source.type not in {"player_joints_h5", "player_centroids_h5"}:
+            continue
+        if str(source.metadata.get("ball_path") or "").strip():
+            tracking_inputs.append(
+                {"type": source.type, "path": source.path, **copy.deepcopy(source.metadata)}
+            )
+    return tracking_inputs
+
+
 class LocalInferenceProvider:
     """Task adapters around the public OpenSportsLib model API."""
 
@@ -203,18 +226,27 @@ class LocalInferenceProvider:
             _check_cancelled(cancel_event)
             if not item.inputs:
                 raise InferenceError("Localization input is missing.", code="invalid_request")
+            tracking_inputs = _find_h5_tracking_inputs(item.inputs)
+            primary_input = item.inputs[0]
+            print(
+                f"[LocalInferenceProvider] sample={item.sample_id!r} "
+                f"inputs={[(src.type, src.path, dict(src.metadata)) for src in item.inputs]} "
+                f"tracking_inputs_found={tracking_inputs!r}",
+                flush=True,
+            )
             captured, errors = [], []
             worker = LocInferenceWorker(
-                item.inputs[0].path,
+                primary_input.path,
                 int(request.parameters.get("start_ms", 0) or 0),
                 int(request.parameters.get("end_ms", 0) or 0),
                 descriptor.config_path,
                 _effective_weights(descriptor),
                 str(request.parameters.get("head") or "ball_action"),
                 list(request.parameters.get("labels") or []),
-                float(item.inputs[0].metadata.get("fps", 25.0) or 25.0),
+                float(primary_input.metadata.get("fps", 25.0) or 25.0),
                 trusted_legacy=descriptor.trusted_legacy,
                 checkpoint_free=descriptor.checkpoint_free,
+                tracking_inputs=tracking_inputs,
             )
             worker.finished_signal.connect(captured.append)
             worker.error_signal.connect(errors.append)

@@ -70,7 +70,11 @@ class LocalizationEditorController(QObject):
         self.current_sample_id = ""
         self.current_head = None
         self._current_sample_snapshot = {}
-        self._pending_predictions = {}
+        # Sample ids known to hold at least one inferred-but-unconfirmed event
+        # (an event carrying "confidence_score"). Predictions live directly in
+        # the sample's own events list now, so this is just a lightweight
+        # index for the tree/icon UI, not the source of truth.
+        self._pending_prediction_sample_ids = set()
 
         self.settings = QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
 
@@ -88,7 +92,7 @@ class LocalizationEditorController(QObject):
         self.current_sample_id = ""
         self.current_head = None
         self._current_sample_snapshot = {}
-        self._pending_predictions.clear()
+        self._pending_prediction_sample_ids.clear()
         self.pendingPredictionsChanged.emit(set())
         self.localization_panel.set_prediction_actions_visible(False)
         self._timeline_origin_utc = None
@@ -482,7 +486,6 @@ class LocalizationEditorController(QObject):
         return updated
 
     def _on_annotation_modified(self, old_event, new_event):
-        self.reject_all_predictions()
         if not self.current_video_path:
             return
 
@@ -518,10 +521,6 @@ class LocalizationEditorController(QObject):
 
         acted_row = self._table_row_for_event(item_data)
 
-        if item_data.get("_pending_prediction"):
-            self._accept_pending_event(item_data, acted_row=acted_row)
-            return
-
         events = self._snapshot_events()
         index = self._find_event_index(events, item_data)
         if index < 0:
@@ -554,15 +553,6 @@ class LocalizationEditorController(QObject):
 
         acted_row = self._table_row_for_event(item_data)
 
-        if item_data.get("_pending_prediction"):
-            pending = self._pending_predictions.get(self.current_sample_id, [])
-            index = self._find_event_index(pending, item_data)
-            if index >= 0:
-                pending.pop(index)
-                self._display_events_for_item(self.current_video_path)
-                self._select_adjacent_table_row(acted_row, row_removed=True)
-            return
-
         events = self._snapshot_events()
         index = self._find_event_index(events, item_data)
         if index < 0:
@@ -581,10 +571,6 @@ class LocalizationEditorController(QObject):
         self._select_adjacent_table_row(acted_row, row_removed=True)
 
     def _on_delete_single_annotation(self, item_data):
-        if isinstance(item_data, dict) and item_data.get("_pending_prediction"):
-            self._on_reject_single_annotation(item_data)
-            return
-        self.reject_all_predictions()
         if not self.current_video_path:
             return
 
@@ -639,14 +625,31 @@ class LocalizationEditorController(QObject):
         )
 
     def apply_shared_inference_result(self, result, context=None):
-        target_head = str((context or {}).get("head") or "")
+        """Merge predicted events straight into each sample's real event list.
+
+        Predictions used to live only in a session-only review list, never
+        touching the dataset until individually accepted. That meant a
+        crash or app restart silently lost them, and deleting one
+        unconfirmed event had to fall back to bulk-clearing that whole list.
+        Now every predicted event is written into the sample's own events
+        (tagged with confidence_score/inference_model_id) the moment
+        inference completes, so it's a real, individually addressable event
+        like any other from the start; "not yet confirmed" just means it
+        still carries a confidence_score.
+        """
+        context = context or {}
+        target_head = str(context.get("head") or "")
         if not target_head:
             return
+        existing_events_by_sample = context.get("existing_events_by_sample")
+        if not isinstance(existing_events_by_sample, dict):
+            existing_events_by_sample = {}
+
         for item in result.items:
             sample_id = str(item.get("sample_id") or "")
             if not sample_id:
                 continue
-            pending = []
+            predicted = []
             for raw in list(item.get("events") or []):
                 if not isinstance(raw, dict):
                     continue
@@ -659,9 +662,34 @@ class LocalizationEditorController(QObject):
                 event["position_ms"] = self._event_position_ms(event)
                 event["confidence_score"] = self._prediction_confidence(event)
                 event["inference_model_id"] = result.model_id
-                event["_pending_prediction"] = True
-                pending.append(event)
-            self._pending_predictions[sample_id] = pending
+                predicted.append(event)
+            if not predicted:
+                continue
+
+            if sample_id == self.current_sample_id:
+                events = self._snapshot_events()
+            else:
+                events = [
+                    copy.deepcopy(evt)
+                    for evt in list(existing_events_by_sample.get(sample_id) or [])
+                    if isinstance(evt, dict)
+                ]
+
+            existing_keys = {
+                (event.get("head"), event.get("label"), self._event_position_ms(event))
+                for event in events
+            }
+            for event in predicted:
+                key = (event.get("head"), event.get("label"), self._event_position_ms(event))
+                if key not in existing_keys:
+                    existing_keys.add(key)
+                    events.append(event)
+
+            self.locEventsSetRequested.emit(sample_id, copy.deepcopy(events))
+            if sample_id == self.current_sample_id:
+                self._set_snapshot_events(events)
+            self._pending_prediction_sample_ids.add(sample_id)
+
         self._display_events_for_item(self.current_video_path)
 
     def _resolve_unknown_prediction_label(self, head: str, predicted_label: str):
@@ -724,11 +752,17 @@ class LocalizationEditorController(QObject):
             return
 
         events = self._snapshot_events()
-        pending = copy.deepcopy(self._pending_predictions.get(self.current_sample_id, []))
-        display_data = sorted(events + pending, key=lambda x: self._event_position_ms(x))
+        display_data = sorted(events, key=lambda x: self._event_position_ms(x))
         self.localization_panel.table.set_data(display_data)
-        self.localization_panel.set_prediction_actions_visible(bool(pending))
-        self.pendingPredictionsChanged.emit({sample_id for sample_id, values in self._pending_predictions.items() if values})
+
+        has_unconfirmed = any(isinstance(e, dict) and "confidence_score" in e for e in events)
+        self.localization_panel.set_prediction_actions_visible(has_unconfirmed)
+        if self.current_sample_id:
+            if has_unconfirmed:
+                self._pending_prediction_sample_ids.add(self.current_sample_id)
+            else:
+                self._pending_prediction_sample_ids.discard(self.current_sample_id)
+        self.pendingPredictionsChanged.emit(set(self._pending_prediction_sample_ids))
 
         if update_markers is None:
             update_markers = self._is_active_mode()
@@ -752,21 +786,6 @@ class LocalizationEditorController(QObject):
                 for e in display_data
             ]
             self.markersUpdateRequested.emit(markers)
-
-    def _accept_pending_event(self, target, *, acted_row=-1):
-        pending = self._pending_predictions.get(self.current_sample_id, [])
-        index = self._find_event_index(pending, target)
-        if index < 0:
-            return
-        accepted = {key: copy.deepcopy(value) for key, value in pending.pop(index).items() if key not in {"confidence_score", "confidence", "inference_model_id", "_pending_prediction"}}
-        events = self._snapshot_events()
-        key = (accepted.get("head"), accepted.get("label"), self._event_position_ms(accepted))
-        if key not in {(event.get("head"), event.get("label"), self._event_position_ms(event)) for event in events}:
-            events.append(accepted)
-            self.locEventsSetRequested.emit(self.current_sample_id, copy.deepcopy(events))
-            self._set_snapshot_events(events)
-        self._display_events_for_item(self.current_video_path)
-        self._select_adjacent_table_row(acted_row, row_removed=False)
 
     def _table_row_for_event(self, target) -> int:
         model = self.localization_panel.table.model
@@ -797,25 +816,41 @@ class LocalizationEditorController(QObject):
         table_adapter.table.scrollTo(index)
 
     def accept_all_predictions(self):
-        pending = self._pending_predictions.pop(self.current_sample_id, [])
-        if not pending:
+        """Strip confidence_score/inference_model_id from every unconfirmed event."""
+        if not self.current_sample_id:
             return
         events = self._snapshot_events()
-        existing = {(event.get("head"), event.get("label"), self._event_position_ms(event)) for event in events}
-        for candidate in pending:
-            accepted = {key: copy.deepcopy(value) for key, value in candidate.items() if key not in {"confidence_score", "confidence", "inference_model_id", "_pending_prediction"}}
-            key = (accepted.get("head"), accepted.get("label"), self._event_position_ms(accepted))
-            if key not in existing:
-                existing.add(key)
-                events.append(accepted)
-        if events != self._snapshot_events():
-            self.locEventsSetRequested.emit(self.current_sample_id, copy.deepcopy(events))
-            self._set_snapshot_events(events)
+        updated = []
+        changed = False
+        for event in events:
+            if isinstance(event, dict) and "confidence_score" in event:
+                event = copy.deepcopy(event)
+                event.pop("confidence_score", None)
+                event.pop("inference_model_id", None)
+                changed = True
+            updated.append(event)
+        if not changed:
+            return
+        self.locEventsSetRequested.emit(self.current_sample_id, copy.deepcopy(updated))
+        self._set_snapshot_events(updated)
         self._display_events_for_item(self.current_video_path)
+        self.refresh_tree_icons(self.current_video_path)
 
     def reject_all_predictions(self):
-        self._pending_predictions.pop(self.current_sample_id, None)
+        """Delete every event still carrying a confidence_score (never confirmed)."""
+        if not self.current_sample_id:
+            return
+        events = self._snapshot_events()
+        remaining = [
+            event for event in events
+            if not (isinstance(event, dict) and "confidence_score" in event)
+        ]
+        if len(remaining) == len(events):
+            return
+        self.locEventsSetRequested.emit(self.current_sample_id, copy.deepcopy(remaining))
+        self._set_snapshot_events(remaining)
         self._display_events_for_item(self.current_video_path)
+        self.refresh_tree_icons(self.current_video_path)
 
     def _find_event_index(self, events, event):
         try:

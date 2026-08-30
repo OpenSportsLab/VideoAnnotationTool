@@ -1,3 +1,4 @@
+import json
 import types
 import subprocess
 
@@ -400,6 +401,96 @@ def test_localization_runtime_config_handles_canonical_dali_config_without_dali(
         runtime["DATA"]["common"]["splits"]["test"]["type"]
         == "VideoGameWithOpencvVideo"
     )
+    # A canonical-schema config never had a top-level `dali` flag; injecting
+    # one trips OpenSportsLib's strict canonical validation ("Legacy alias
+    # dali is not allowed in strict canonical runtime").
+    assert "dali" not in runtime
+
+
+def test_localization_runtime_config_does_not_inject_legacy_multi_gpu_alias(
+    monkeypatch, tmp_path
+):
+    """A canonical-schema (e.g. rule-based) config never had MODEL.multi_gpu.
+
+    Forcing it there anyway trips OpenSportsLib's strict canonical validation
+    ("Legacy alias MODEL.multi_gpu is not allowed in strict canonical
+    runtime"), which is exactly what broke importing
+    OpenSportsLab/skeleton-header-max-recall.
+    """
+    monkeypatch.setattr(localization_inference_module, "_cuda_is_available", lambda: False)
+    config_path = tmp_path / "loc_config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "TASK": "localization",
+                "VERSION": 2,
+                "SYSTEM": {"device": "cpu"},
+                "DATA": {"common": {"classes": ["header"]}},
+                "MODEL": {
+                    "metadata": {"family": "RuleBased"},
+                    "components": {
+                        "rule": {"kind": "algorithm", "source": {"provider": "opensportslib"}}
+                    },
+                    "topology": [],
+                },
+                "TRAIN": {"trainer": {"type": "trainer_rule_based"}},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    worker = localization_inference_module.LocInferenceWorker(
+        video_path=str(tmp_path / "clip.mp4"),
+        start_ms=0,
+        end_ms=0,
+        config_path=str(config_path),
+        model_id=None,
+        head_name="action",
+        labels=["header"],
+        input_fps=25.0,
+        checkpoint_free=True,
+    )
+
+    runtime_path, _labels = worker._build_runtime_config(
+        str(tmp_path), str(tmp_path / "input.json")
+    )
+    with open(runtime_path, encoding="utf-8") as handle:
+        runtime = yaml.safe_load(handle)
+
+    assert "multi_gpu" not in runtime["MODEL"]
+
+
+def test_localization_runtime_config_keeps_forcing_legacy_multi_gpu_false(
+    monkeypatch, tmp_path
+):
+    """Legacy-schema configs that already have MODEL.multi_gpu still get forced off."""
+    monkeypatch.setattr(localization_inference_module, "_cuda_is_available", lambda: False)
+    config_path = tmp_path / "loc_config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {"MODEL": {"multi_gpu": True}, "SYSTEM": {"device": "cpu"}},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    worker = localization_inference_module.LocInferenceWorker(
+        video_path=str(tmp_path / "clip.mp4"),
+        start_ms=0,
+        end_ms=0,
+        config_path=str(config_path),
+        model_id="OpenSportsLab/localizer",
+        head_name="action",
+        labels=["pass"],
+        input_fps=25.0,
+    )
+
+    runtime_path, _labels = worker._build_runtime_config(
+        str(tmp_path), str(tmp_path / "input.json")
+    )
+    with open(runtime_path, encoding="utf-8") as handle:
+        runtime = yaml.safe_load(handle)
+
+    assert runtime["MODEL"]["multi_gpu"] is False
 
 
 def test_localization_worker_forwards_explicit_legacy_checkpoint_trust(
@@ -542,3 +633,107 @@ def test_localization_worker_clip_falls_back_to_reencode(monkeypatch, tmp_path):
             }
         ]
     ]
+
+
+def test_localization_worker_uses_h5_tracking_manifest_when_available(monkeypatch, tmp_path):
+    """A joints+ball H5 pair must run through the tracking manifest, not a video clip.
+
+    Rule-based models (e.g. OpenSportsLab/skeleton-header-max-recall) read
+    full joint/ball tracking data; feeding them a clipped video JSON instead
+    silently returns zero events rather than erroring.
+    """
+    import opensportslib
+
+    calls = {}
+
+    class _FakeLocalizationModel:
+        def __init__(self, config):
+            calls["config"] = config
+
+        def infer(self, **kwargs):
+            calls["infer_kwargs"] = kwargs
+            with open(kwargs["test_set"], encoding="utf-8") as handle:
+                calls["manifest"] = json.load(handle)
+            return {
+                "data": [
+                    {
+                        "events": [
+                            {"label": "header", "position_ms": 500, "confidence": 0.9},
+                            {"label": "header", "position_ms": 50000, "confidence": 0.7},
+                        ]
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        opensportslib,
+        "model",
+        types.SimpleNamespace(LocalizationModel=_FakeLocalizationModel),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        localization_inference_module.subprocess,
+        "run",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("ffmpeg must not run for H5 tracking input")),
+    )
+
+    config_path = tmp_path / "loc_config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"DATA": {}, "MODEL": {}, "SYSTEM": {}}), encoding="utf-8"
+    )
+    joints_path = tmp_path / "live_joints.h5"
+    joints_path.write_bytes(b"")
+    centroids_path = tmp_path / "live_centroids.h5"
+    centroids_path.write_bytes(b"")
+    ball_path = tmp_path / "live_ball.h5"
+    ball_path.write_bytes(b"")
+
+    worker = localization_inference_module.LocInferenceWorker(
+        video_path="",
+        start_ms=1000,
+        end_ms=40000,
+        config_path=str(config_path),
+        model_id=None,
+        head_name="action",
+        labels=["header"],
+        input_fps=25.0,
+        checkpoint_free=True,
+        # Two ticked tracking inputs: OpenSportsLib's rule-based spotters
+        # iterate every matching-type manifest input for one sample, so both
+        # must reach the manifest, not just the first one found.
+        tracking_inputs=[
+            {
+                "type": "player_joints_h5",
+                "path": str(joints_path),
+                "ball_path": str(ball_path),
+                # An extra field the sample's input dict happens to carry; it
+                # must survive untouched to prove the whole dict is copied
+                # verbatim rather than rebuilt field by field.
+                "utc_time_start": "2026-01-01T00:00:00Z",
+            },
+            {
+                "type": "player_centroids_h5",
+                "path": str(centroids_path),
+                "ball_path": str(ball_path),
+            },
+        ],
+    )
+
+    finished_payloads = []
+    worker.finished_signal.connect(lambda payload: finished_payloads.append(payload))
+    worker.run()
+
+    manifest_inputs = calls["manifest"]["data"][0]["inputs"]
+    assert len(manifest_inputs) == 2
+    assert manifest_inputs[0]["type"] == "player_joints_h5"
+    assert manifest_inputs[0]["path"] == str(joints_path)
+    assert manifest_inputs[0]["ball_path"] == str(ball_path)
+    assert manifest_inputs[0]["utc_time_start"] == "2026-01-01T00:00:00Z"
+    assert manifest_inputs[1]["type"] == "player_centroids_h5"
+    assert manifest_inputs[1]["path"] == str(centroids_path)
+    assert manifest_inputs[1]["ball_path"] == str(ball_path)
+    assert calls["infer_kwargs"]["weights"] is None
+    # The 500ms event falls below start_ms and the 50000ms one falls above
+    # end_ms; only events inside [start_ms, end_ms] should come back, since
+    # H5 mode runs the whole tracking file uncut and can't clip it upfront.
+    assert finished_payloads == [[]]

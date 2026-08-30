@@ -276,14 +276,24 @@ def test_history_contract_localization_smart_mutations(window, monkeypatch, qtbo
             ({"sample_id": controller.current_sample_id, "events": [{"head": "ball_action", "label": label, "position_ms": position, "confidence_score": confidence}]},),
         )
 
-    _assert_non_mutating_action_keeps_history_unchanged(
+    def _find_predicted_event(label, position):
+        return next(
+            event for event in controller._snapshot_events()
+            if event.get("label") == label
+            and event.get("position_ms") == position
+            and "confidence_score" in event
+        )
+
+    # Predictions are written straight into the sample's own events now
+    # (tagged with confidence_score), not staged in a session-only list, so
+    # receiving them is a real, undoable dataset mutation.
+    _assert_mutating_action_creates_single_history_entry(
         window, qtbot, lambda: controller.apply_shared_inference_result(result("pass", 3500, 0.9), {"head": "ball_action"})
     )
 
     def _confirm_first_smart_event():
-        pending = controller._pending_predictions[controller.current_sample_id]
-        assert pending
-        controller._on_confirm_single_annotation(copy.deepcopy(pending[0]))
+        event = _find_predicted_event("pass", 3500)
+        controller._on_confirm_single_annotation(copy.deepcopy(event))
 
     _assert_mutating_action_creates_single_history_entry(
         window,
@@ -291,16 +301,15 @@ def test_history_contract_localization_smart_mutations(window, monkeypatch, qtbo
         _confirm_first_smart_event,
     )
 
-    _assert_non_mutating_action_keeps_history_unchanged(
+    _assert_mutating_action_creates_single_history_entry(
         window, qtbot, lambda: controller.apply_shared_inference_result(result("shot", 3600, 0.85), {"head": "ball_action"})
     )
 
     def _reject_first_smart_event():
-        pending = controller._pending_predictions[controller.current_sample_id]
-        assert pending
-        controller._on_reject_single_annotation(copy.deepcopy(pending[0]))
+        event = _find_predicted_event("shot", 3600)
+        controller._on_reject_single_annotation(copy.deepcopy(event))
 
-    _assert_non_mutating_action_keeps_history_unchanged(
+    _assert_mutating_action_creates_single_history_entry(
         window,
         qtbot,
         _reject_first_smart_event,
@@ -351,7 +360,9 @@ def test_localization_review_shortcuts_accept_reject_and_select_adjacent(
     window.shortcut_localization_reject.activated.emit()
     qtbot.wait(20)
 
-    assert len(window.dataset_explorer_controller.undo_stack) == undo_before + 1
+    # Rejecting now deletes a real, persisted event (it's no longer a
+    # session-only staged prediction), so it's its own undoable step too.
+    assert len(window.dataset_explorer_controller.undo_stack) == undo_before + 2
     assert model.rowCount() == 2
     assert table.currentIndex().row() == 1
     assert model.get_annotation_at(1)["position_ms"] == 2000

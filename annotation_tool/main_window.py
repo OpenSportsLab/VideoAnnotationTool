@@ -1507,8 +1507,17 @@ class VideoAnnotationWindow(QMainWindow):
         active_localization_head = (
             self.localization_panel.annot_mgmt.tabs.get_current_head()
         )
+        handler_context = dict(pending.get("context", {}))
+        if pending["task"] == "localization":
+            # Predictions merge straight into each sample's own events, so
+            # the controller needs each touched sample's current events to
+            # dedupe against -- it only has the currently open sample cached.
+            handler_context["existing_events_by_sample"] = {
+                sample_id: list((self.dataset_explorer_controller.get_sample(sample_id) or {}).get("events", []))
+                for sample_id in {str(item.get("sample_id") or "") for item in surviving_items}
+            }
         try:
-            handlers[pending["task"]](result, pending.get("context", {}))
+            handlers[pending["task"]](result, handler_context)
         except Exception as exc:
             QMessageBox.critical(self, "Inference Result Error", str(exc))
             return

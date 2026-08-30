@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 import yaml
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -72,6 +73,32 @@ def _build_temp_dataset(video_path: str, input_fps: float, head_name: str, label
     }
 
 
+def _build_tracking_dataset(tracking_inputs: list[dict], head_name: str, labels: list[str]) -> dict:
+    """Build the OSL JSON manifest a rule-based H5 spotter reads its inputs from.
+
+    `tracking_inputs` are copies of the sample's own ticked input dicts
+    (type, resolved path, ball_path, and anything else each carries) taken
+    as-is rather than rebuilt field by field, so nothing the dataset loader
+    expects can get silently dropped. All of them are kept -- OpenSportsLib's
+    rule-based spotters already iterate every matching-type manifest input
+    for one sample (e.g. to combine several tracking sources), so dropping
+    all but the first ticked input would silently lose data.
+    """
+    default_label = labels[0] if labels else "Unknown"
+    return {
+        "version": "2.0",
+        "task": "action_spotting",
+        "labels": {head_name: {"type": "single_label", "labels": list(labels)}},
+        "data": [
+            {
+                "id": "inf_tracking",
+                "inputs": [dict(tracking_input) for tracking_input in tracking_inputs],
+                "events": [{"head": head_name, "label": default_label, "position_ms": 0}],
+            }
+        ],
+    }
+
+
 def _runtime_confidence(event: dict) -> float:
     for key in ("confidence_score", "confidence", "score"):
         if key not in event:
@@ -125,9 +152,14 @@ def _configure_runtime_backend(config_dict: dict) -> None:
     requested_dali = requested_dali or canonical_backend == "dali"
     use_dali = requested_dali and use_cuda and _dali_is_available()
 
-    # Explicitly set both schemas so migration cannot restore DALI after a
-    # CPU/OpenCV fallback has been selected.
-    config_dict["dali"] = use_dali
+    # Explicitly set both legacy schemas so migration cannot restore DALI
+    # after a CPU/OpenCV fallback has been selected. Only touch them if the
+    # source config already carried the legacy `dali` flag: a canonical
+    # config (e.g. a rule-based model) never had one, and injecting a
+    # top-level `dali` key trips strict canonical validation ("Legacy alias
+    # dali is not allowed").
+    if "dali" in config_dict:
+        config_dict["dali"] = use_dali
     if "dali" in data_cfg:
         data_cfg["dali"] = use_dali
     if isinstance(runtime_cfg, dict):
@@ -164,6 +196,7 @@ class LocInferenceWorker(QThread):
         *,
         trusted_legacy=False,
         checkpoint_free=False,
+        tracking_inputs=None,
     ):
         super().__init__()
         self.video_path = os.path.abspath(video_path)
@@ -181,6 +214,15 @@ class LocInferenceWorker(QThread):
         self.labels = [str(label) for label in list(labels or []) if str(label).strip()]
         self.input_fps = float(input_fps or 25.0)
         self.trusted_legacy = bool(trusted_legacy)
+        # Player-tracking H5 inputs take priority over the video: models
+        # like OpenSportsLab/skeleton-header-max-recall run on joint/ball
+        # tracking data, not a video clip, and clipping would break the rule
+        # engine's dwell/velocity checks anyway. Every ticked H5 input is
+        # kept (OpenSportsLib's spotters iterate all matching-type manifest
+        # inputs for one sample), each exactly as the caller copied it from
+        # the sample's own input dict (path already resolved to absolute) so
+        # no field it carries (ball_path or otherwise) is silently dropped.
+        self.tracking_inputs = [dict(t) for t in (tracking_inputs or [])]
 
     def _clip_video_if_needed(self, tmp_dir: str) -> tuple[str, int]:
         if self.start_ms <= 0 and self.end_ms <= 0:
@@ -250,7 +292,14 @@ class LocInferenceWorker(QThread):
         dataloader_cfg["num_workers"] = 0
 
         model_cfg = config_dict.setdefault("MODEL", {})
-        model_cfg["multi_gpu"] = False
+        # Only force this on legacy-schema configs that already carry the
+        # legacy `MODEL.multi_gpu` flag: a canonical config (e.g. a
+        # rule-based model) never had one, and injecting it trips strict
+        # canonical validation ("Legacy alias MODEL.multi_gpu is not
+        # allowed"). Canonical configs gate multi-GPU via
+        # TRAIN.execution.multi_gpu instead, which this worker doesn't touch.
+        if "multi_gpu" in model_cfg:
+            model_cfg["multi_gpu"] = False
         model_cfg["save_dir"] = os.path.join(tmp_dir, "checkpoints")
         model_cfg["work_dir"] = os.path.join(tmp_dir, "checkpoints")
 
@@ -320,28 +369,69 @@ class LocInferenceWorker(QThread):
                     os.chdir(tmp_dir)
                     tmp_input_json = os.path.join(tmp_dir, "temp_test.json")
 
-                    clip_video_path, clip_offset_ms = self._clip_video_if_needed(tmp_dir)
-                    tmp_config_yaml, runtime_labels = self._build_runtime_config(tmp_dir, tmp_input_json)
-
-                    test_data = _build_temp_dataset(
-                        clip_video_path,
-                        self.input_fps,
-                        self.target_head,
-                        runtime_labels,
-                    )
+                    if self.tracking_inputs:
+                        # A rule-based model reads full joint/ball tracking
+                        # data; there is no clip to take, so events come back
+                        # positioned from the tracking file's own start and
+                        # get range-filtered below instead.
+                        clip_offset_ms = 0
+                        tmp_config_yaml, runtime_labels = self._build_runtime_config(tmp_dir, tmp_input_json)
+                        test_data = _build_tracking_dataset(
+                            self.tracking_inputs,
+                            self.target_head,
+                            runtime_labels,
+                        )
+                    else:
+                        clip_video_path, clip_offset_ms = self._clip_video_if_needed(tmp_dir)
+                        tmp_config_yaml, runtime_labels = self._build_runtime_config(tmp_dir, tmp_input_json)
+                        test_data = _build_temp_dataset(
+                            clip_video_path,
+                            self.input_fps,
+                            self.target_head,
+                            runtime_labels,
+                        )
                     with open(tmp_input_json, "w", encoding="utf-8") as handle:
-                        json.dump(test_data, handle)
+                        json.dump(test_data, handle, indent=2)
+
+                    # --- debug: dump the exact files fed to OpenSportsLib ---
+                    debug_dir = os.path.join(tempfile.gettempdir(), "vat_loc_inference_debug")
+                    os.makedirs(debug_dir, exist_ok=True)
+                    debug_config_path = os.path.join(debug_dir, "last_runtime_config.yaml")
+                    debug_input_path = os.path.join(debug_dir, "last_test_input.json")
+                    shutil.copyfile(tmp_config_yaml, debug_config_path)
+                    shutil.copyfile(tmp_input_json, debug_input_path)
+                    print(
+                        f"[LocInferenceWorker] mode={'tracking' if self.tracking_inputs else 'video'} "
+                        f"model_id={self.model_id!r} weights_arg={self.model_id!r} "
+                        f"start_ms={self.start_ms} end_ms={self.end_ms}",
+                        flush=True,
+                    )
+                    print(f"[LocInferenceWorker] runtime config copied to: {debug_config_path}", flush=True)
+                    with open(tmp_config_yaml, encoding="utf-8") as handle:
+                        print("----- runtime_config.yaml -----", flush=True)
+                        print(handle.read(), flush=True)
+                    print(f"[LocInferenceWorker] test manifest copied to: {debug_input_path}", flush=True)
+                    with open(tmp_input_json, encoding="utf-8") as handle:
+                        print("----- test_input.json -----", flush=True)
+                        print(handle.read(), flush=True)
+                    # --- end debug ---
 
                     loc_model = model.LocalizationModel(config=tmp_config_yaml)
-                    output_data = self._normalize_prediction_payload(
-                        loc_model.infer(
-                            test_set=tmp_input_json,
-                            weights=self.model_id,
-                            use_wandb=False,
-                            trusted_legacy=self.trusted_legacy,
-                        )
+                    infer_started = time.time()
+                    raw_output = loc_model.infer(
+                        test_set=tmp_input_json,
+                        weights=self.model_id,
+                        use_wandb=False,
+                        trusted_legacy=self.trusted_legacy,
                     )
+                    print(
+                        f"[LocInferenceWorker] infer() took {time.time() - infer_started:.3f}s, "
+                        f"raw output: {raw_output!r}",
+                        flush=True,
+                    )
+                    output_data = self._normalize_prediction_payload(raw_output)
                     raw_evts = self._extract_prediction_events(output_data)
+                    print(f"[LocInferenceWorker] extracted {len(raw_evts)} raw event(s)", flush=True)
                     predicted_events = []
                     default_label = runtime_labels[0] if runtime_labels else "Unknown"
                     for evt in raw_evts:
@@ -349,6 +439,12 @@ class LocInferenceWorker(QThread):
                         if p_ms == 0 and evt.get("label") == default_label:
                             continue
                         absolute_ms = p_ms + clip_offset_ms
+                        # Video mode already clips to [start_ms, end_ms], so
+                        # absolute_ms is never below start_ms there. H5 mode
+                        # runs the whole tracking file uncut, so the lower
+                        # bound needs to be enforced here too.
+                        if self.start_ms > 0 and absolute_ms < self.start_ms:
+                            continue
                         if self.end_ms > 0 and absolute_ms > self.end_ms:
                             continue
 

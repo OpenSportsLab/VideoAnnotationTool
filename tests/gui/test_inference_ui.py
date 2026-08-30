@@ -728,19 +728,34 @@ def test_localization_result_stays_with_original_sample_after_navigation(qtbot):
     controller.on_schema_context_changed({
         "ball_action": {"type": "single_label", "labels": ["pass"]}
     })
-    sample_a = {"id": "sample-a", "inputs": [{"path": "a.mp4", "type": "video"}], "events": []}
-    sample_b = {"id": "sample-b", "inputs": [{"path": "b.mp4", "type": "video"}], "events": []}
-    controller.on_selected_sample_changed(sample_b)
+    samples = {
+        "sample-a": {"id": "sample-a", "inputs": [{"path": "a.mp4", "type": "video"}], "events": []},
+        "sample-b": {"id": "sample-b", "inputs": [{"path": "b.mp4", "type": "video"}], "events": []},
+    }
+    # Predictions are persisted via locEventsSetRequested now (not staged in
+    # a session-only dict); stand in for what main_window.py's history
+    # manager wiring would do with it.
+    controller.locEventsSetRequested.connect(
+        lambda sample_id, events: samples[sample_id].__setitem__("events", list(events))
+    )
+    controller.on_selected_sample_changed(samples["sample-b"])
     result = InferenceResult(
         "request", "localization", "model",
         ({"sample_id": "sample-a", "events": [{"label": "pass", "position_ms": 100}]},),
     )
 
-    controller.apply_shared_inference_result(result, {"head": "ball_action"})
+    controller.apply_shared_inference_result(
+        result,
+        {
+            "head": "ball_action",
+            "existing_events_by_sample": {"sample-a": samples["sample-a"]["events"]},
+        },
+    )
 
     assert panel.table.model.rowCount() == 0
-    assert len(controller._pending_predictions["sample-a"]) == 1
-    controller.on_selected_sample_changed(sample_a)
+    assert len(samples["sample-a"]["events"]) == 1
+    assert "confidence_score" in samples["sample-a"]["events"][0]
+    controller.on_selected_sample_changed(samples["sample-a"])
     assert panel.table.model.rowCount() == 1
 
 
