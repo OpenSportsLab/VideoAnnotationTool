@@ -39,6 +39,7 @@ class ModelDescriptor:
     config_path: str = ""
     weights: str = ""
     trusted_legacy: bool = False
+    checkpoint_free: bool = False
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ModelDescriptor":
@@ -65,6 +66,7 @@ class ModelDescriptor:
             config_path=str(payload.get("config_path") or ""),
             weights=str(payload.get("weights") or ""),
             trusted_legacy=_explicit_bool(payload.get("trusted_legacy", False)),
+            checkpoint_free=_explicit_bool(payload.get("checkpoint_free", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:

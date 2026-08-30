@@ -21,9 +21,9 @@ In the Dataset Explorer header table:
 - Dense: edit event text/time in the table.
 - Q/A: add question groups with a dialog, choose prior questions there or enter custom text, double-click or right-click to edit/remove groups, and use the **Answer** dialog plus answer-list right-click/double-click actions for answers.
 
-## Remove Data
+## Add or Remove Data
 
-- Right-click a sample row: **Remove Sample**
+- Right-click a sample row: **Add Input...** to attach one or more additional files (or folders of files) to that sample, or **Remove Sample**
 - Right-click an input child row: **Remove Input**
 
 If a sample loses its last input, the whole sample is removed.

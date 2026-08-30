@@ -352,6 +352,14 @@ class VideoAnnotationWindow(QMainWindow):
         else:
             self.close()
 
+    def _handle_add_input_mutation(self, sample_id: str, files: list):
+        self.history_manager.execute_add_input(sample_id, files)
+        if sample_id == self.dataset_explorer_controller.current_selected_sample_id:
+            sources = self.dataset_explorer_controller.get_media_sources_by_id(sample_id)
+            if sources:
+                self.media_controller.set_sample_context(sample_id)
+                self.media_controller.route_media_group(sources, "", False)
+
     def _handle_input_utc_start_mutation(
         self,
         input_path: str,
@@ -537,6 +545,9 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.dataset_explorer_controller.addSamplesRequested.connect(
             self.history_manager.execute_add_samples
+        )
+        self.dataset_explorer_controller.addInputMutationRequested.connect(
+            self._handle_add_input_mutation
         )
         self.dataset_explorer_controller.clearWorkspaceRequested.connect(
             self.history_manager.execute_clear_workspace
@@ -1316,16 +1327,14 @@ class VideoAnnotationWindow(QMainWindow):
         def apply_catalog(discovered_task, choices, warning):
             if discovered_task != task:
                 return
-            input_types = {source.type for source in dialog_inputs}
-            dialog.set_models(
-                [
-                    choice
-                    for choice in choices
-                    if not choice.descriptor.accepted_input_types
-                    or not input_types.isdisjoint(choice.descriptor.accepted_input_types)
-                ],
-                warning,
-            )
+            # Don't exclude models by guessing input compatibility: a model's
+            # accepted_input_types is only ever a hint we recorded at import
+            # time (e.g. every Hugging Face import is labeled "video" even
+            # when, like a rule-based skeletal-tracking model, it actually
+            # needs something else entirely). Let the user pick any
+            # discovered model for this task and let the run itself fail
+            # with a real error if the inputs truly don't fit.
+            dialog.set_models(list(choices), warning)
 
         def show_catalog_error(discovered_task, message):
             if discovered_task == task:

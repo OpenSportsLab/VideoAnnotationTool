@@ -1,0 +1,654 @@
+{
+  "version": "2.0",
+  "task": "action_spotting",
+  "labels": {
+    "action": {
+      "type": "single_label",
+      "labels": [
+        "header"
+      ]
+    }
+  },
+  "data": [
+    {
+      "id": "128068",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128068/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128068/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128069",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128069/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128069/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128070",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128070/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128070/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128071",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128071/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128071/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128072",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128072/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128072/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128073",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128073/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128073/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128074",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128074/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128074/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128075",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128075/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128075/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128076",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128076/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128076/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128077",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128077/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128077/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128078",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128078/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128078/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128079",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128079/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128079/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128080",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128080/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128080/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128081",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128081/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128081/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128082",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128082/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128082/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128083",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128083/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128083/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "128084",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/128084/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/128084/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "132995",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/132995/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/132995/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "132996",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/132996/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/132996/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "132997",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/132997/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/132997/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "132998",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/132998/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/132998/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "132999",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/132999/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/132999/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133000",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133000/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133000/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133001",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133001/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133001/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133002",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133002/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133002/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133003",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133003/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133003/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133004",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133004/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133004/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133005",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133005/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133005/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133006",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133006/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133006/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133007",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133007/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133007/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133008",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133008/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133008/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133009",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133009/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133009/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133010",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133010/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133010/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133011",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133011/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133011/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133012",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133012/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133012/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133013",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133013/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133013/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133014",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133014/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133014/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133015",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133015/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133015/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133016",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133016/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133016/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133017",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133017/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133017/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133018",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133018/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133018/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133019",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133019/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133019/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133020",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133020/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133020/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133021",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133021/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133021/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133022",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133022/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133022/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133023",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133023/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133023/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133024",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133024/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133024/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133025",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133025/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133025/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133026",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133026/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133026/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133027",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133027/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133027/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133028",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133028/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133028/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133029",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133029/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133029/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133030",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133030/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133030/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133031",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133031/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133031/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133032",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133032/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133032/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133033",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133033/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133033/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133034",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133034/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133034/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133035",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133035/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133035/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133036",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133036/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133036/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133037",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133037/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133037/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133038",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133038/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133038/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133039",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133039/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133039/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133040",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133040/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133040/live_ball.h5"
+        }
+      ]
+    },
+    {
+      "id": "133041",
+      "inputs": [
+        {
+          "type": "player_joints_h5",
+          "path": "/home/giancos/FIFA_data/133041/live_joints.h5",
+          "ball_path": "/home/giancos/FIFA_data/133041/live_ball.h5"
+        }
+      ]
+    }
+  ]
+}

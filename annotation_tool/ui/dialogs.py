@@ -808,17 +808,15 @@ class InferenceRunDialog(QDialog):
             message = "No runnable models are configured for this task. " + message
         self.availability_label.setText(message)
         self.run_buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(available)
-        accepted_types = set(descriptor.accepted_input_types) if descriptor is not None else set()
+        # Don't disable inputs by guessing compatibility from accepted_input_types:
+        # it's only a hint recorded at import time and isn't reliable enough to
+        # gate what the user can select (e.g. a rule-based model imported from
+        # Hugging Face is always labeled "video" even when it actually needs
+        # something else). Leave every input selectable and let the run itself
+        # report a real error if the inputs don't fit.
         for index in range(self.input_list.count()):
             item = self.input_list.item(index)
-            source = item.data(Qt.ItemDataRole.UserRole)
-            compatible = not accepted_types or getattr(source, "type", "video") in accepted_types
-            flags = item.flags()
-            if compatible:
-                item.setFlags(flags | Qt.ItemFlag.ItemIsEnabled)
-            else:
-                item.setCheckState(Qt.CheckState.Unchecked)
-                item.setFlags(flags & ~Qt.ItemFlag.ItemIsEnabled)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
         supports_range = bool(descriptor is not None and descriptor.supports_time_range)
         if self.task in {"localization", "dense_description"}:
             self.runtime_form.setRowVisible(self.start_spin, supports_range)

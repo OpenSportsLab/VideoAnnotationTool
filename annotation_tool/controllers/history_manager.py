@@ -873,6 +873,44 @@ class HistoryManager(QObject):
                 self.model.panel.tree.setCurrentIndex(index)
                 self.model.panel.tree.setFocus()
 
+    def execute_add_input(self, sample_id: str, files: list):
+        if not self.model.json_loaded:
+            self.statusMessageRequested.emit("Warning", "Please create or load a dataset first.", 1500)
+            return
+
+        sample_id = str(sample_id or "")
+        sample = self.model.get_sample(sample_id)
+        if not isinstance(sample, dict):
+            return
+
+        file_list = [str(path) for path in files or [] if path]
+        if not file_list:
+            return
+
+        new_inputs = self.model._new_input_payloads_for_source_group(file_list)
+        if not new_inputs:
+            return
+
+        before_json = self.model.snapshot_dataset_json()
+        sample.setdefault("inputs", []).extend(new_inputs)
+        self.model.ensure_modalities_for_inputs(sample.get("inputs", []))
+
+        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
+            return
+
+        self.model.populate_tree()
+        self.saveStateRefreshRequested.emit()
+        self.statusMessageRequested.emit(
+            "Added",
+            f"Added {len(new_inputs)} input(s) to '{sample_id}'.",
+            1500,
+        )
+
+        index = self.model._top_level_index_for_sample(sample_id)
+        if index.isValid():
+            self.model.panel.tree.setCurrentIndex(index)
+            self.model.panel.tree.setFocus()
+
     def execute_clear_workspace(self):
         if not self.model.json_loaded:
             return

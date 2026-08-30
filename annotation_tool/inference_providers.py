@@ -46,6 +46,18 @@ def _check_cancelled(cancel_event):
         raise InferenceError("Inference cancelled.", code="cancelled")
 
 
+def _effective_weights(descriptor) -> str | None:
+    """Weights to hand OpenSportsLib: None for checkpoint-free (rule-based) models.
+
+    Rule-based models build straight from their config and have no checkpoint
+    to load, so falling back to ``descriptor.id`` here would make OpenSportsLib
+    try (and fail) to download a checkpoint from that Hugging Face repo.
+    """
+    if descriptor.checkpoint_free:
+        return None
+    return descriptor.weights or descriptor.id
+
+
 class LocalInferenceProvider:
     """Task adapters around the public OpenSportsLib model API."""
 
@@ -163,11 +175,11 @@ class LocalInferenceProvider:
                     descriptor.config_path,
                     dataset,
                     "shared_infer",
-                    descriptor.weights or descriptor.id,
+                    _effective_weights(descriptor),
                 )
             else:
                 runner = model_class(config=descriptor.config_path)
-                output = runner.infer(test_set=dataset_path, weights=descriptor.weights or descriptor.id, use_wandb=False)
+                output = runner.infer(test_set=dataset_path, weights=_effective_weights(descriptor), use_wandb=False)
             if isinstance(output, str):
                 with open(output, "r", encoding="utf-8") as handle:
                     output = json.load(handle)
@@ -197,11 +209,12 @@ class LocalInferenceProvider:
                 int(request.parameters.get("start_ms", 0) or 0),
                 int(request.parameters.get("end_ms", 0) or 0),
                 descriptor.config_path,
-                descriptor.weights or descriptor.id,
+                _effective_weights(descriptor),
                 str(request.parameters.get("head") or "ball_action"),
                 list(request.parameters.get("labels") or []),
                 float(item.inputs[0].metadata.get("fps", 25.0) or 25.0),
                 trusted_legacy=descriptor.trusted_legacy,
+                checkpoint_free=descriptor.checkpoint_free,
             )
             worker.finished_signal.connect(captured.append)
             worker.error_signal.connect(errors.append)

@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import hf_model_import
 import pytest
+import yaml
 from hf_model_import import (
     HfModelImportCancelled,
     parse_opensportslib_task,
@@ -15,6 +16,38 @@ def _model_info(*filenames):
     return SimpleNamespace(
         siblings=[SimpleNamespace(rfilename=filename) for filename in filenames]
     )
+
+
+def _canonical_config(task="classification", family="custom", **overrides):
+    """Minimal config that satisfies OpenSportsLib's canonical-schema validator."""
+    components = {
+        "encoder": {"kind": "encoder", "source": {"provider": "opensportslib"}}
+    }
+    data = {"common": {"classes": ["a", "b"]}}
+    if str(task).strip().lower() == "vqa":
+        components["decoder"] = {"kind": "decoder", "source": {"provider": "opensportslib"}}
+        data["inputs"] = {"video": {}, "question": {}}
+    config = {
+        "TASK": task,
+        "VERSION": 2,
+        "SYSTEM": {"device": "cpu"},
+        "DATA": data,
+        "MODEL": {
+            "metadata": {"family": family},
+            "components": components,
+            "topology": [],
+        },
+        "TRAIN": {"trainer": {"type": "trainer_default"}},
+    }
+    config.update(overrides)
+    return config
+
+
+def _write_config(path, task="classification", family="custom", dumper=yaml.safe_dump, **overrides):
+    config = _canonical_config(task=task, family=family, **overrides)
+    with open(path, "w", encoding="utf-8") as handle:
+        dumper(config, handle)
+    return path
 
 
 def test_checkpoint_selection_prefers_standard_name_and_rejects_ambiguity():
@@ -36,18 +69,25 @@ def test_config_selection_prefers_root_and_accepts_one_nested_config():
 
 
 @pytest.mark.parametrize(
-    ("filename", "contents", "expected"),
+    ("filename", "task", "family", "expected_task", "expected_rule_based"),
     [
-        ("config.yaml", "TASK: classification\nDATA: {}\nMODEL: {}\n", "classification"),
-        ("config.yml", "task: localization\nDATA: {}\nMODEL: {}\n", "localization"),
-        ("config.yaml", "TASK: VQA\nDATA: {}\nMODEL: {}\n", "question_answer"),
-        ("config.json", '{"TASK": "question_answer", "DATA": {}, "MODEL": {}}', "question_answer"),
+        ("config.yaml", "classification", "custom", "classification", False),
+        ("config.yml", "localization", "custom", "localization", False),
+        ("config.yaml", "VQA", "custom", "question_answer", False),
+        ("config.yaml", "localization", "RuleBased", "localization", True),
     ],
 )
-def test_parse_opensportslib_task(filename, contents, expected, tmp_path):
+def test_parse_opensportslib_task(
+    filename, task, family, expected_task, expected_rule_based, tmp_path
+):
     path = tmp_path / filename
-    path.write_text(contents, encoding="utf-8")
-    assert parse_opensportslib_task(str(path)) == expected
+    dumper = (
+        (lambda cfg, handle: __import__("json").dump(cfg, handle))
+        if filename.endswith(".json")
+        else yaml.safe_dump
+    )
+    _write_config(str(path), task=task, family=family, dumper=dumper)
+    assert parse_opensportslib_task(str(path)) == (expected_task, expected_rule_based)
 
 
 def test_parse_opensportslib_task_rejects_malformed_or_unsupported(tmp_path):
@@ -55,9 +95,11 @@ def test_parse_opensportslib_task_rejects_malformed_or_unsupported(tmp_path):
     malformed.write_text("[broken", encoding="utf-8")
     with pytest.raises(ValueError, match="Could not parse"):
         parse_opensportslib_task(str(malformed))
-    malformed.write_text("TASK: segmentation\nDATA: {}\nMODEL: {}\n", encoding="utf-8")
+
+    unsupported = tmp_path / "config.yml"
+    _write_config(str(unsupported), task="segmentation")
     with pytest.raises(ValueError, match="unsupported or missing"):
-        parse_opensportslib_task(str(malformed))
+        parse_opensportslib_task(str(unsupported))
 
 
 def test_resolve_downloads_config_and_checkpoint_with_revision_and_token(
@@ -66,7 +108,7 @@ def test_resolve_downloads_config_and_checkpoint_with_revision_and_token(
     info = _model_info("config.yaml", "model.pth.tar", "extra.bin")
     calls = []
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("TASK: classification\nDATA: {}\nMODEL: {}\n", encoding="utf-8")
+    _write_config(str(config_path), task="classification")
     weights_path = tmp_path / "model.pth.tar"
     weights_path.write_bytes(b"checkpoint")
 
@@ -99,6 +141,7 @@ def test_resolve_downloads_config_and_checkpoint_with_revision_and_token(
     assert model["hf_revision"] == "v1"
     assert model["hf_checkpoint_filename"] == "model.pth.tar"
     assert model["trusted_legacy"] is False
+    assert model["checkpoint_free"] is False
     assert calls[0][1]["files_metadata"] is True
     assert all(call[1]["token"] == "hf_test" for call in calls)
     download_calls = [call for kind, call in calls if kind == "download"]
@@ -109,7 +152,7 @@ def test_resolve_downloads_config_and_checkpoint_with_revision_and_token(
 
 def test_resolve_grants_legacy_only_to_allowlisted_official_repo(monkeypatch, tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("TASK: localization\nDATA: {}\nMODEL: {}\n", encoding="utf-8")
+    _write_config(str(config_path), task="localization")
     weights_path = tmp_path / "model.pt"
     weights_path.write_bytes(b"legacy")
 
@@ -138,6 +181,35 @@ def test_resolve_grants_legacy_only_to_allowlisted_official_repo(monkeypatch, tm
     assert trusted["trusted_legacy"] is True
     assert other_revision["trusted_legacy"] is False
     assert arbitrary["trusted_legacy"] is False
+
+
+def test_resolve_rule_based_model_skips_checkpoint_download(monkeypatch, tmp_path):
+    """A rule-based repo (config.yaml only, no checkpoint) must import cleanly."""
+    config_path = tmp_path / "config.yaml"
+    _write_config(str(config_path), task="localization", family="RuleBased")
+
+    class FakeApi:
+        def model_info(self, **_kwargs):
+            return _model_info("config.yaml")
+
+    download_calls = []
+
+    def fake_download(**kwargs):
+        download_calls.append(kwargs["filename"])
+        return str(config_path)
+
+    monkeypatch.setattr(hf_model_import, "HfApi", FakeApi)
+    monkeypatch.setattr(hf_model_import, "hf_hub_download", fake_download)
+
+    model = resolve_hf_local_model(
+        {"repo_id": "OpenSportsLab/skeleton-header-max-recall"}
+    )
+
+    assert model["checkpoint_free"] is True
+    assert model["weights"] == ""
+    assert model["hf_checkpoint_filename"] == ""
+    assert model["trusted_legacy"] is False
+    assert download_calls == ["config.yaml"]
 
 
 def test_resolve_checks_cancellation_after_blocking_repository_inspection(monkeypatch):

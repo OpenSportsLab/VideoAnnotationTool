@@ -253,6 +253,7 @@ class DatasetExplorerController(QObject):
     headerDraftMutationRequested = pyqtSignal(dict)
     sampleRenameRequested = pyqtSignal(str, str)
     addSamplesRequested = pyqtSignal(list)
+    addInputMutationRequested = pyqtSignal(str, list)
     clearWorkspaceRequested = pyqtSignal()
     removeItemMutationRequested = pyqtSignal(str, str)
     ballH5AssociationMutationRequested = pyqtSignal(str, str, str)
@@ -423,6 +424,8 @@ class DatasetExplorerController(QObject):
     # ------------------------------------------------------------------
     def _setup_connections(self):
         self.panel.addDataRequested.connect(self.handle_add_sample)
+        if hasattr(self.panel, "addInputRequested"):
+            self.panel.addInputRequested.connect(self.handle_add_input)
         self.panel.clear_btn.clicked.connect(self.handle_clear_workspace)
         self.panel.removeItemRequested.connect(self.handle_remove_item)
         if hasattr(self.panel, "associateBallH5Requested"):
@@ -2507,6 +2510,60 @@ class DatasetExplorerController(QObject):
             else:
                 self.current_working_directory = os.path.dirname(first_path)
         self.addSamplesRequested.emit(source_groups)
+
+    def _flatten_selected_paths_for_new_inputs(self, selected_paths):
+        flat_paths = []
+        seen_paths = set()
+
+        for path in selected_paths or []:
+            selected_path = str(path)
+            if os.path.isdir(selected_path):
+                for media_path in self._collect_media_files_from_folders([selected_path]):
+                    media_key = self._fs_path_key(media_path)
+                    if media_key in seen_paths:
+                        continue
+                    seen_paths.add(media_key)
+                    flat_paths.append(media_path)
+                continue
+
+            if not os.path.isfile(selected_path) or not self._is_supported_media_file(selected_path):
+                continue
+
+            selected_key = self._fs_path_key(selected_path)
+            if selected_key in seen_paths:
+                continue
+            seen_paths.add(selected_key)
+            flat_paths.append(selected_path)
+
+        return self._auto_pair_ball_h5_sources_in_group(flat_paths)
+
+    def handle_add_input(self, index: QModelIndex):
+        if not self.json_loaded:
+            QMessageBox.warning(self.panel, "Warning", "Please create or load a dataset first.")
+            return
+
+        action_idx = self._get_action_index(index)
+        if not action_idx.isValid():
+            return
+        sample_id = action_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101))
+        if not sample_id:
+            return
+
+        start_dir = self.current_working_directory or self.project_root or ""
+        selected_paths = self._pick_files_or_folders_for_add_data(start_dir)
+        if not selected_paths:
+            return
+
+        new_paths = self._flatten_selected_paths_for_new_inputs(selected_paths)
+        if not new_paths:
+            QMessageBox.information(
+                self.panel,
+                "No Media Found",
+                "No supported media files were found in the selected files/folders.",
+            )
+            return
+
+        self.addInputMutationRequested.emit(str(sample_id), new_paths)
 
     def handle_clear_workspace(self):
         if not self.json_loaded:

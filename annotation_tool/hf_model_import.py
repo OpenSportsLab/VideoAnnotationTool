@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Callable
 from pathlib import PurePosixPath
 from typing import Any
 
-import yaml
 from huggingface_hub import HfApi, hf_hub_download
 from inference_settings import TRUSTED_LEGACY_HF_MODEL_IDS
 from inference_types import INFERENCE_TASKS
+from opensportslib.core.config import load_config_omega
+from opensportslib.core.config.accessors import get_model_family
 
 CONFIG_FILENAMES = ("config.yaml", "config.yml", "config.json")
 CHECKPOINT_SUFFIXES = (".safetensors", ".pth.tar", ".pth", ".pt", ".bin")
+RULE_BASED_MODEL_FAMILY = "rulebased"
 PREFERRED_CHECKPOINT_FILENAMES = (
     "model.safetensors",
     "model.pth.tar",
@@ -103,18 +104,20 @@ def select_checkpoint_filename(filenames: list[str]) -> str:
     )
 
 
-def parse_opensportslib_task(config_path: str) -> str:
+def parse_opensportslib_task(config_path: str) -> tuple[str, bool]:
+    """Load a downloaded config via OpenSportsLib's own loader and report its task.
+
+    Reusing ``load_config_omega``/``get_model_family`` (instead of hand-parsing
+    the YAML/JSON) means the same schema validation and model-family detection
+    OpenSportsLib itself relies on also gates what the Video Annotation Tool
+    accepts, and it lets us recognize checkpoint-free rule-based models, which
+    have no MODEL/DATA structure resembling a trainable model config.
+    """
     try:
-        with open(config_path, "r", encoding="utf-8") as stream:
-            if config_path.lower().endswith(".json"):
-                payload = json.load(stream)
-            else:
-                payload = yaml.safe_load(stream)
+        config = load_config_omega(config_path)
     except Exception as exc:
         raise ValueError(f"Could not parse OpenSportsLib configuration: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise TypeError("OpenSportsLib configuration must contain a mapping/object.")
-    task = str(payload.get("TASK") or payload.get("task") or "").strip().lower()
+    task = str(getattr(config, "TASK", "") or "").strip().lower()
     if task == "vqa":
         task = "question_answer"
     if task not in INFERENCE_TASKS:
@@ -123,13 +126,8 @@ def parse_opensportslib_task(config_path: str) -> str:
             f"Configuration has unsupported or missing OpenSportsLib task {task!r}; "
             f"expected one of: {supported}."
         )
-    if not isinstance(payload.get("DATA"), dict) or not isinstance(
-        payload.get("MODEL"), dict
-    ):
-        raise TypeError(
-            "OpenSportsLib configuration must contain DATA and MODEL mappings."
-        )
-    return task
+    is_rule_based = get_model_family(config).strip().lower() == RULE_BASED_MODEL_FAMILY
+    return task, is_rule_based
 
 
 def resolve_hf_local_model(
@@ -157,7 +155,6 @@ def resolve_hf_local_model(
     _check_cancelled(is_cancelled)
     filenames = _repository_filenames(info)
     config_filename = select_config_filename(filenames)
-    checkpoint_filename = select_checkpoint_filename(filenames)
 
     _emit_progress(progress_cb, f"Downloading {config_filename}…", 1, 3)
     config_path = hf_hub_download(
@@ -168,31 +165,41 @@ def resolve_hf_local_model(
         force_download=force_download,
     )
     _check_cancelled(is_cancelled)
-    task = parse_opensportslib_task(config_path)
+    task, is_rule_based = parse_opensportslib_task(config_path)
 
-    _emit_progress(progress_cb, f"Downloading {checkpoint_filename}…", 2, 3)
-    weights_path = hf_hub_download(
-        repo_id=repo_id,
-        filename=checkpoint_filename,
-        revision=revision,
-        token=token,
-        force_download=force_download,
-    )
-    _check_cancelled(is_cancelled)
+    # Rule-based models (e.g. OpenSportsLab/skeleton-header-max-recall) run
+    # from their config alone and have no checkpoint to fetch.
+    weights_path = None
+    checkpoint_filename = ""
+    if is_rule_based:
+        _emit_progress(progress_cb, "Rule-based model has no checkpoint to download.", 2, 3)
+    else:
+        checkpoint_filename = select_checkpoint_filename(filenames)
+        _emit_progress(progress_cb, f"Downloading {checkpoint_filename}…", 2, 3)
+        weights_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=checkpoint_filename,
+            revision=revision,
+            token=token,
+            force_download=force_download,
+        )
+        _check_cancelled(is_cancelled)
 
     descriptor = {
         "task": task,
         "id": repo_id,
         "display_name": repo_id.rsplit("/", 1)[-1],
         "config_path": os.path.abspath(config_path),
-        "weights": os.path.abspath(weights_path),
+        "weights": os.path.abspath(weights_path) if weights_path else "",
         "available": True,
         "accepted_input_types": ["video"],
         "supports_time_range": task in {"localization", "dense_description"},
         "hf_repo_id": repo_id,
         "hf_revision": revision,
         "hf_checkpoint_filename": checkpoint_filename,
-        "trusted_legacy": task == "localization"
+        "checkpoint_free": is_rule_based,
+        "trusted_legacy": (not is_rule_based)
+        and task == "localization"
         and repo_id in TRUSTED_LEGACY_HF_MODEL_IDS
         and revision == "main",
     }

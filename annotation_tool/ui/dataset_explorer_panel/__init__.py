@@ -377,6 +377,7 @@ class DatasetExplorerPanel(QWidget):
     associateBallH5Requested = pyqtSignal(QModelIndex)
     clearBallH5Requested = pyqtSignal(QModelIndex)
     addDataRequested = pyqtSignal()
+    addInputRequested = pyqtSignal(QModelIndex)
     sampleNavigateRequested = pyqtSignal(int)
     pageNavigateRequested = pyqtSignal(int)
     pageRequested = pyqtSignal(int)
@@ -606,6 +607,13 @@ class DatasetExplorerPanel(QWidget):
         else:
             associate_action = None
             clear_ball_action = None
+
+        if not index.parent().isValid():
+            add_input_action = menu.addAction("Add Input...")
+            menu.addSeparator()
+        else:
+            add_input_action = None
+
         remove_label = "Remove Input" if index.parent().isValid() else "Remove Sample"
         remove_action = menu.addAction(remove_label)
         selected = menu.exec(self.tree.mapToGlobal(pos))
@@ -613,6 +621,8 @@ class DatasetExplorerPanel(QWidget):
             self.associateBallH5Requested.emit(ball_target_index)
         elif clear_ball_action is not None and selected == clear_ball_action:
             self.clearBallH5Requested.emit(ball_target_index)
+        elif add_input_action is not None and selected == add_input_action:
+            self.addInputRequested.emit(index)
         elif selected == remove_action:
             self.removeItemRequested.emit(index)
 

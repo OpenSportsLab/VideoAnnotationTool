@@ -163,13 +163,18 @@ class LocInferenceWorker(QThread):
         input_fps,
         *,
         trusted_legacy=False,
+        checkpoint_free=False,
     ):
         super().__init__()
         self.video_path = os.path.abspath(video_path)
         self.start_ms = start_ms
         self.end_ms = end_ms
         self.config_path = config_path
-        self.model_id = str(
+        self.checkpoint_free = bool(checkpoint_free)
+        # Rule-based models run straight from their config and have no
+        # checkpoint, so `model_id` must stay unset rather than fall back to
+        # a default pretrained repo.
+        self.model_id = None if self.checkpoint_free else str(
             model_id or "OpenSportsLab/OSL-loc-snbas-2025-e2e"
         )
         self.target_head = str(head_name or "ball_action")
