@@ -42,6 +42,28 @@ PLAYER_JOINTS_H5_PATH = (
     / "test_data"
     / "live_joints_sirus_mini_test.h5"
 )
+
+# These three fixtures are real files someone created locally; test_data/ is
+# gitignored except for a small whitelist that doesn't include them (see
+# .gitignore), so they only exist on machines that made them by hand. Absent
+# them, `_pick_files_or_folders_for_add_data` returns a path with no
+# recognizable media, `handle_add_sample` pops an unmocked "No Media Found"
+# QMessageBox, and the test hangs forever waiting for a click that never
+# comes. Skip cleanly instead.
+_frame_stack_missing = pytest.mark.skipif(
+    not FRAME_STACK_PATH.exists(),
+    reason=f"local-only fixture not present: {FRAME_STACK_PATH}",
+)
+_tracking_parquet_missing = pytest.mark.skipif(
+    not TRACKING_PARQUET_PATH.exists(),
+    reason=f"local-only fixture not present: {TRACKING_PARQUET_PATH}",
+)
+_player_joints_h5_missing = pytest.mark.skipif(
+    not PLAYER_JOINTS_H5_PATH.exists(),
+    reason=f"local-only fixture not present: {PLAYER_JOINTS_H5_PATH}",
+)
+
+
 @pytest.mark.gui
 # Workflow: App startup should land on welcome screen with project UI disabled and no dataset loaded.
 def test_launches_to_welcome_view(window):
@@ -110,6 +132,7 @@ def test_close_project_returns_to_welcome(window, monkeypatch):
 
 
 @pytest.mark.gui
+@_player_joints_h5_missing
 def test_close_project_clears_media_viewer_preview(window, monkeypatch, qtbot):
     window.dataset_explorer_controller.create_new_project("classification")
     window.media_controller.route_media_group(
@@ -184,6 +207,7 @@ def test_dataset_explorer_prev_next_sample_buttons_navigate_rows(
 
 
 @pytest.mark.gui
+@_frame_stack_missing
 def test_add_data_accepts_npy_and_creates_frames_npy_sample(window, monkeypatch, qtbot):
     window.dataset_explorer_controller.create_new_project("classification")
     assert window.dataset_explorer_controller.json_loaded is True
@@ -206,6 +230,7 @@ def test_add_data_accepts_npy_and_creates_frames_npy_sample(window, monkeypatch,
 
 
 @pytest.mark.gui
+@_tracking_parquet_missing
 def test_add_data_accepts_parquet_and_creates_tracking_sample(window, monkeypatch, qtbot):
     window.dataset_explorer_controller.create_new_project("classification")
     assert window.dataset_explorer_controller.json_loaded is True
@@ -228,6 +253,7 @@ def test_add_data_accepts_parquet_and_creates_tracking_sample(window, monkeypatc
 
 
 @pytest.mark.gui
+@_player_joints_h5_missing
 def test_add_data_accepts_h5_and_creates_player_joints_sample(window, monkeypatch, qtbot):
     window.dataset_explorer_controller.create_new_project("classification")
     assert window.dataset_explorer_controller.json_loaded is True
@@ -422,6 +448,7 @@ def test_dataset_selection_emits_data_id_and_routes_media(
 
 
 @pytest.mark.gui
+@_frame_stack_missing
 def test_frames_npy_dataset_selection_routes_canonical_media_source(
     window,
     monkeypatch,
@@ -505,6 +532,7 @@ def test_dataset_media_sources_preserve_input_utc_time_start(window, tmp_path):
 
 
 @pytest.mark.gui
+@_tracking_parquet_missing
 def test_tracking_parquet_dataset_selection_routes_canonical_media_source(
     window,
     monkeypatch,
@@ -560,6 +588,7 @@ def test_tracking_parquet_dataset_selection_routes_canonical_media_source(
 
 
 @pytest.mark.gui
+@_player_joints_h5_missing
 def test_player_joints_h5_dataset_selection_routes_canonical_media_source(
     window,
     monkeypatch,
@@ -719,6 +748,7 @@ def test_player_joints_h5_save_rewrites_ball_path_relative(window, tmp_path):
 
 
 @pytest.mark.gui
+@_tracking_parquet_missing
 def test_mixed_video_and_tracking_selection_routes_selected_input(
     window,
     monkeypatch,

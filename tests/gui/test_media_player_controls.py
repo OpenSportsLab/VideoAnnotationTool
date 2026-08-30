@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from controllers.media_controller import MediaController
 from controllers.media.raster_backend import BaseRasterMediaBackend, RasterClip
-from ui.media_player import MediaCenterPanel, ViewerLayoutMode
+from ui.media_player import MediaCenterPanel, MediaViewerPane, ViewerLayoutMode
 
 
 FRAME_STACK_PATH = (
@@ -35,6 +35,23 @@ PLAYER_JOINTS_H5_PATH = (
     / "test_data"
     / "live_joints_sirus_mini_test.h5"
 )
+
+# FRAME_STACK_PATH/TRACKING_PARQUET_PATH are real files someone created
+# locally; test_data/ is gitignored except for a small whitelist that
+# doesn't include them (see .gitignore), so they only exist on machines that
+# made them by hand. The two tests that load them directly (without mocking
+# the error dialog) would otherwise hang forever on a real, unmocked
+# QMessageBox popped by the "file not found"/"invalid" load path.
+_frame_stack_missing = pytest.mark.skipif(
+    not FRAME_STACK_PATH.exists(),
+    reason=f"local-only fixture not present: {FRAME_STACK_PATH}",
+)
+_tracking_parquet_missing = pytest.mark.skipif(
+    not TRACKING_PARQUET_PATH.exists(),
+    reason=f"local-only fixture not present: {TRACKING_PARQUET_PATH}",
+)
+
+
 def _write_minimal_player_joints_h5(path: Path, timestamps: list[bytes]):
     row_count = len(timestamps)
     with h5py.File(path, "w") as h5_file:
@@ -256,6 +273,7 @@ def test_raster_backend_does_not_show_frame_after_reentrant_stop(media_panel_and
 
 
 @pytest.mark.gui
+@_frame_stack_missing
 def test_frames_npy_controller_play_pause_seek_and_rate(media_panel_and_controller, qtbot):
     panel, controller = media_panel_and_controller
 
@@ -306,6 +324,7 @@ def test_frames_npy_controller_play_pause_seek_and_rate(media_panel_and_controll
 def test_frames_npy_invalid_payload_reports_clear_error(
     media_panel_and_controller,
     monkeypatch,
+    qtbot,
     tmp_path,
     array_factory,
     expected_snippet,
@@ -323,6 +342,11 @@ def test_frames_npy_invalid_payload_reports_clear_error(
 
     controller.load_and_play({"type": "frames_npy", "path": str(bad_path)})
 
+    # The float32 case saves a payload above _ASYNC_RASTER_LOAD_THRESHOLD_BYTES,
+    # so validation runs on a background load thread; wait for it instead of
+    # asserting immediately (the uint8 case stays under threshold and
+    # resolves synchronously, so waitUntil is a no-op there).
+    qtbot.waitUntil(lambda: bool(errors), timeout=2000)
     assert errors
     assert errors[-1][0]["title"] == "Invalid Frame Stack"
     assert expected_snippet in errors[-1][1]
@@ -374,6 +398,7 @@ def test_frames_npy_missing_file_reports_clear_error(
 
 
 @pytest.mark.gui
+@_tracking_parquet_missing
 def test_tracking_parquet_controller_play_pause_seek_and_rate(media_panel_and_controller, qtbot):
     panel, controller = media_panel_and_controller
 
@@ -610,13 +635,17 @@ def test_large_player_joints_h5_load_is_async_and_reports_progress(
     )
     controller._single._ASYNC_RASTER_LOAD_THRESHOLD_BYTES = 1
     progress_updates = []
-    original_show_progress = panel.show_loading_progress
+    # Grouped/routed sessions redirect each backend's progress reporting to
+    # its own MediaViewerPane (session.media_panel = pane), not the
+    # top-level MediaCenterPanel -- so the pane class, not the panel
+    # instance, is what needs patching to observe it.
+    original_show_progress = MediaViewerPane.show_loading_progress
 
-    def record_progress(message, current=0, total=0):
+    def record_progress(self, message, current=0, total=0):
         progress_updates.append((message, current, total))
-        original_show_progress(message, current, total)
+        original_show_progress(self, message, current, total)
 
-    monkeypatch.setattr(panel, "show_loading_progress", record_progress)
+    monkeypatch.setattr(MediaViewerPane, "show_loading_progress", record_progress)
     event_loop_ticks = []
     QTimer.singleShot(0, lambda: event_loop_ticks.append(True))
 
@@ -1720,8 +1749,14 @@ def test_deferred_raster_render_displays_forward_progress_while_newer_frame_is_p
         return image
 
     monkeypatch.setattr(backend, "render_frame_image", slow_index_image)
+    # load_and_play() runs through controller._single, and the backend keeps
+    # a reference to that inner object (backend.controller is
+    # controller._single), not the outer MediaController facade. The facade
+    # only forwards attribute *reads* via __getattr__, not writes, so
+    # patching `controller` directly here would set a stray attribute the
+    # real call path never sees.
     monkeypatch.setattr(
-        controller,
+        controller._single,
         "_show_frame_image",
         lambda image: displayed_indices.append(image.pixel(0, 0)),
     )

@@ -1,9 +1,19 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "test_data" / "convert_xfoul_to_qa.py"
+
+# test_data/ is gitignored except for a small whitelist (see .gitignore) and
+# this script isn't in it, so it only exists on machines that created it
+# locally. Skip cleanly instead of failing collection on a fresh checkout.
+if not SCRIPT_PATH.exists():
+    pytest.skip(
+        f"{SCRIPT_PATH} is a local-only script not tracked in the repository.",
+        allow_module_level=True,
+    )
 
 spec = importlib.util.spec_from_file_location("convert_xfoul_to_qa", SCRIPT_PATH)
 convert_xfoul_to_qa = importlib.util.module_from_spec(spec)

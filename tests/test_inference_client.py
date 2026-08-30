@@ -171,6 +171,12 @@ def test_local_vqa_uses_portable_runtime_config_and_opensportslib_03_answer(
 ):
     import opensportslib
 
+    # This test exercises the "no CUDA" normalization branch of
+    # configure_compute_device specifically; without mocking it, the
+    # assertion below depends on whether the machine running the suite
+    # happens to have a visible CUDA device.
+    monkeypatch.setattr("controllers.inference_runtime.cuda_is_available", lambda: False)
+
     captured = {}
 
     class FakeVQAModel:

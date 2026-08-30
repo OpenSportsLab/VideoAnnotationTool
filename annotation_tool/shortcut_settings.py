@@ -47,8 +47,14 @@ def _built_in_shortcuts() -> tuple[QKeySequence, ...]:
         QKeySequence.StandardKey.Undo,
         QKeySequence.StandardKey.Redo,
     )
+    # A platform without a native binding for a StandardKey (e.g. no window
+    # manager under the offscreen QPA platform used for headless tests)
+    # resolves it to an empty QKeySequence. An empty sequence isn't a real
+    # shortcut in use, but _sequences_conflict's prefix-match check treats it
+    # as conflicting with everything, which would reject every candidate
+    # shortcut. Drop anything that didn't actually resolve to keys.
     return tuple(QKeySequence(value) for value in explicit) + tuple(
-        QKeySequence(value) for value in standard
+        sequence for value in standard if not (sequence := QKeySequence(value)).isEmpty()
     )
 
 
