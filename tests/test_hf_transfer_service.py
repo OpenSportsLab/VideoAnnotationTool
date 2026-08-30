@@ -12,7 +12,9 @@ from hf_model_import import HfModelImportCancelled
 
 def test_controller_module_uses_opensportslib_transfer_functions():
     assert hf_transfer_controller.HfTransferCancelled is hf_transfer.HfTransferCancelled
-    assert hf_transfer_controller.download_dataset_split_from_hf is hf_transfer.download_dataset_split_from_hf
+    assert hf_transfer_controller.download_dataset_splits_from_hf is hf_transfer.download_dataset_splits_from_hf
+    assert hf_transfer_controller.list_dataset_branches_on_hf is hf_transfer.list_dataset_branches_on_hf
+    assert hf_transfer_controller.list_dataset_splits_on_hf is hf_transfer.list_dataset_splits_on_hf
     assert hf_transfer_controller.upload_dataset_inputs_from_json_to_hf is hf_transfer.upload_dataset_inputs_from_json_to_hf
     assert hf_transfer_controller.upload_dataset_as_parquet_to_hf is hf_transfer.upload_dataset_as_parquet_to_hf
 
@@ -20,21 +22,21 @@ def test_controller_module_uses_opensportslib_transfer_functions():
 def test_download_worker_routes_to_library_api(monkeypatch):
     calls = {}
 
-    def _fake_download_dataset_split_from_hf(repo_id, revision, split, output_dir, **kwargs):
+    def _fake_download_dataset_splits_from_hf(repo_id, revision, splits, output_dir, **kwargs):
         calls["repo_id"] = repo_id
         calls["revision"] = revision
-        calls["split"] = split
+        calls["splits"] = splits
         calls["output_dir"] = output_dir
         calls.update(kwargs)
-        return {"ok": True}
+        return [{"ok": True}]
 
-    monkeypatch.setattr(hf_transfer_controller, "download_dataset_split_from_hf", _fake_download_dataset_split_from_hf)
+    monkeypatch.setattr(hf_transfer_controller, "download_dataset_splits_from_hf", _fake_download_dataset_splits_from_hf)
 
     worker = _HfDownloadWorker(
         {
             "repo_id": "OpenSportsLab/repo",
             "revision": "main",
-            "split": "test",
+            "splits": ["test"],
             "download_format": "json",
             "output_dir": "/tmp/output",
             "dry_run": True,
@@ -48,14 +50,14 @@ def test_download_worker_routes_to_library_api(monkeypatch):
 
     assert calls["repo_id"] == "OpenSportsLab/repo"
     assert calls["revision"] == "main"
-    assert calls["split"] == "test"
+    assert calls["splits"] == ["test"]
     assert calls["download_format"] == "json"
     assert calls["output_dir"] == "/tmp/output"
     assert calls["dry_run"] is True
     assert calls["token"] == "hf_test"
     assert callable(calls["progress_cb"])
     assert callable(calls["is_cancelled"])
-    assert completed_payloads == [{"ok": True}]
+    assert completed_payloads == [{"results": [{"ok": True}], "dry_run": True, "output_dir": "/tmp/output"}]
 
 
 def test_upload_worker_routes_json_mode_to_library_api(monkeypatch, tmp_path):
@@ -150,9 +152,9 @@ def test_download_worker_emits_cancelled_for_transfer_cancel(monkeypatch):
     def _raise_cancel(*args, **kwargs):
         raise hf_transfer.HfTransferCancelled("Transfer cancelled by user.")
 
-    monkeypatch.setattr(hf_transfer_controller, "download_dataset_split_from_hf", _raise_cancel)
+    monkeypatch.setattr(hf_transfer_controller, "download_dataset_splits_from_hf", _raise_cancel)
 
-    worker = _HfDownloadWorker({"repo_id": "r", "revision": "main", "split": "s", "output_dir": "o"})
+    worker = _HfDownloadWorker({"repo_id": "r", "revision": "main", "splits": ["s"], "output_dir": "o"})
     cancelled_messages = []
     worker.cancelled.connect(lambda msg: cancelled_messages.append(msg))
     worker.run()

@@ -1013,24 +1013,31 @@ class HfDownloadDialog(QDialog):
     _KEY_URL = f"{_SETTINGS_PREFIX}/url"
     _KEY_REPO_ID = f"{_SETTINGS_PREFIX}/repo_id"
     _KEY_REVISION = f"{_SETTINGS_PREFIX}/revision"
-    _KEY_SPLIT = f"{_SETTINGS_PREFIX}/split"
-    _KEY_DOWNLOAD_FORMAT = f"{_SETTINGS_PREFIX}/download_format"
+    _KEY_SPLITS = f"{_SETTINGS_PREFIX}/splits"
     _KEY_SUCCESS_TRANSFERS = f"{_SETTINGS_PREFIX}/successful_transfers"
     _KEY_SUCCESS_URLS = f"{_SETTINGS_PREFIX}/successful_urls"
     _KEY_OUTPUT_DIR = f"{_SETTINGS_PREFIX}/output_dir"
     _KEY_DRY_RUN = f"{_SETTINGS_PREFIX}/dry_run"
     _KEY_TOKEN = f"{_SETTINGS_PREFIX}/token"
     _AVAILABLE_DATASET_TRANSFERS = [
-        {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "test", "download_format": "parquet"},
-        {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "valid", "download_format": "parquet"},
-        {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "train", "download_format": "parquet"},
-        {"repo_id": "OpenSportsLab/soccernetpro-classification-vars", "revision": "mvfouls", "split": "annotations_test", "download_format": "json"},
+        {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "test"},
+        {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "valid"},
+        {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "train"},
+        {"repo_id": "OpenSportsLab/soccernetpro-classification-vars", "revision": "mvfouls", "split": "annotations_test"},
     ]
+    _FORMAT_LABELS = {
+        "parquet": "Format: Parquet + WebDataset",
+        "json": "Format: JSON + referenced inputs",
+        None: "Format: unknown (fetch splits to detect)",
+    }
 
     def __init__(self, settings: QSettings | None = None, parent=None) -> None:
         super().__init__(parent)
         self._settings = settings
         self._submitted = False
+        self._detected_format: str | None = None
+        self._branches_worker = None
+        self._splits_worker = None
         self.setWindowTitle("Download Dataset from Hugging Face")
         self.setModal(True)
         self.setMinimumWidth(760)
@@ -1044,18 +1051,28 @@ class HfDownloadDialog(QDialog):
         self.repo_id_edit.setPlaceholderText("OpenSportsLab/OSL-XFoul")
         form.addRow("Repo ID*", self.repo_id_edit)
 
-        self.revision_edit = QLineEdit("main", self)
-        self.revision_edit.setPlaceholderText("main-parquet")
-        form.addRow("Branch*", self.revision_edit)
+        self.revision_combo = QComboBox(self)
+        self.revision_combo.setEditable(True)
+        self.revision_combo.addItem("main")
+        self.fetch_branches_button = QPushButton("Fetch Branches", self)
+        self.fetch_branches_button.clicked.connect(self._fetch_branches)
+        branch_row = QHBoxLayout()
+        branch_row.addWidget(self.revision_combo, 1)
+        branch_row.addWidget(self.fetch_branches_button, 0)
+        form.addRow("Branch*", branch_row)
 
-        self.split_edit = QLineEdit(self)
-        self.split_edit.setPlaceholderText("test")
-        form.addRow("Split*", self.split_edit)
-
-        self.download_format_combo = QComboBox(self)
-        self.download_format_combo.addItem("Parquet + WebDataset", "parquet")
-        self.download_format_combo.addItem("JSON + referenced inputs", "json")
-        form.addRow("Format*", self.download_format_combo)
+        self.split_list = QListWidget(self)
+        self.split_list.setMaximumHeight(120)
+        self.fetch_splits_button = QPushButton("Fetch Splits", self)
+        self.fetch_splits_button.clicked.connect(self._fetch_splits)
+        self.detected_format_label = QLabel(self._FORMAT_LABELS[None], self)
+        split_column = QVBoxLayout()
+        split_column.addWidget(self.split_list)
+        split_row = QHBoxLayout()
+        split_row.addWidget(self.fetch_splits_button, 0)
+        split_row.addWidget(self.detected_format_label, 1)
+        split_column.addLayout(split_row)
+        form.addRow("Split(s)*", split_column)
 
         self.output_dir_edit = QLineEdit(self)
         self.output_dir_edit.setPlaceholderText("test_data/Classification/svfouls")
@@ -1074,9 +1091,9 @@ class HfDownloadDialog(QDialog):
         self.token_edit.setPlaceholderText("Optional token override")
         form.addRow("HF Token", self.token_edit)
 
-        self.download_format_combo.setMinimumHeight(34)
-        self.download_format_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        for edit in (self.repo_id_edit, self.revision_edit, self.split_edit, self.output_dir_edit, self.token_edit):
+        self.revision_combo.setMinimumHeight(34)
+        self.revision_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        for edit in (self.repo_id_edit, self.output_dir_edit, self.token_edit):
             edit.setMinimumHeight(34)
             edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -1094,14 +1111,12 @@ class HfDownloadDialog(QDialog):
         self._load_settings()
 
     @classmethod
-    @classmethod
     def _normalize_transfer(cls, transfer: dict | None) -> dict:
         payload = transfer if isinstance(transfer, dict) else {}
         return {
             "repo_id": str(payload.get("repo_id") or "").strip(),
             "revision": str(payload.get("revision") or "main").strip() or "main",
             "split": str(payload.get("split") or "").strip(),
-            "download_format": str(payload.get("download_format") or "parquet").strip().lower() or "parquet",
         }
 
     @classmethod
@@ -1114,21 +1129,19 @@ class HfDownloadDialog(QDialog):
                 normalized["repo_id"],
                 normalized["revision"],
                 normalized["split"],
-                normalized["download_format"],
             ]
         )
 
     @classmethod
     def _transfer_from_key(cls, key: str) -> dict:
         parts = str(key or "").split("|")
-        if len(parts) != 4:
+        if len(parts) != 3:
             return {}
         return cls._normalize_transfer(
             {
                 "repo_id": parts[0],
                 "revision": parts[1],
                 "split": parts[2],
-                "download_format": parts[3],
             }
         )
 
@@ -1192,10 +1205,118 @@ class HfDownloadDialog(QDialog):
         if chosen:
             self.output_dir_edit.setText(chosen)
 
+    def _checked_splits(self) -> list[str]:
+        checked = []
+        for row in range(self.split_list.count()):
+            item = self.split_list.item(row)
+            if item.checkState() == Qt.CheckState.Checked:
+                checked.append(item.text())
+        return checked
+
+    def _fetch_branches(self) -> None:
+        repo_id = self.repo_id_edit.text().strip()
+        if not repo_id:
+            QMessageBox.warning(self, "Missing Required Field", "Repo ID is required before fetching branches.")
+            return
+        if self._branches_worker and self._branches_worker.isRunning():
+            return
+
+        from controllers.hf_transfer_controller import _HfListBranchesWorker
+
+        self.fetch_branches_button.setEnabled(False)
+        self.fetch_branches_button.setText("Fetching…")
+        token = self.token_edit.text().strip() or None
+        worker = _HfListBranchesWorker(repo_id, token)
+        self._branches_worker = worker
+        worker.succeeded.connect(self._on_branches_fetched)
+        worker.failed.connect(self._on_branches_fetch_failed)
+        worker.finished.connect(lambda: self._cleanup_branches_worker(worker))
+        worker.start()
+
+    def _cleanup_branches_worker(self, worker) -> None:
+        if self._branches_worker is worker:
+            self._branches_worker = None
+        self.fetch_branches_button.setEnabled(True)
+        self.fetch_branches_button.setText("Fetch Branches")
+        worker.deleteLater()
+
+    def _on_branches_fetched(self, branches: list) -> None:
+        current_text = self.revision_combo.currentText().strip()
+        self.revision_combo.clear()
+        self.revision_combo.addItems(branches)
+        if current_text and self.revision_combo.findText(current_text) < 0:
+            self.revision_combo.addItem(current_text)
+        if current_text:
+            self.revision_combo.setCurrentText(current_text)
+        elif branches:
+            self.revision_combo.setCurrentIndex(0)
+        if not branches:
+            QMessageBox.information(self, "No Branches Found", "No branches were found for this repository.")
+
+    def _on_branches_fetch_failed(self, error: str) -> None:
+        QMessageBox.warning(self, "Fetch Branches Failed", error)
+
+    def _fetch_splits(self) -> None:
+        repo_id = self.repo_id_edit.text().strip()
+        revision = self.revision_combo.currentText().strip()
+        if not repo_id or not revision:
+            QMessageBox.warning(
+                self,
+                "Missing Required Field",
+                "Repo ID and Branch are required before fetching splits.",
+            )
+            return
+        if self._splits_worker and self._splits_worker.isRunning():
+            return
+
+        from controllers.hf_transfer_controller import _HfListSplitsWorker
+
+        self.fetch_splits_button.setEnabled(False)
+        self.fetch_splits_button.setText("Fetching…")
+        token = self.token_edit.text().strip() or None
+        worker = _HfListSplitsWorker(repo_id, revision, token)
+        self._splits_worker = worker
+        worker.succeeded.connect(self._on_splits_fetched)
+        worker.failed.connect(self._on_splits_fetch_failed)
+        worker.finished.connect(lambda: self._cleanup_splits_worker(worker))
+        worker.start()
+
+    def _cleanup_splits_worker(self, worker) -> None:
+        if self._splits_worker is worker:
+            self._splits_worker = None
+        self.fetch_splits_button.setEnabled(True)
+        self.fetch_splits_button.setText("Fetch Splits")
+        worker.deleteLater()
+
+    def _on_splits_fetched(self, result: dict) -> None:
+        splits = list(result.get("splits") or [])
+        self._detected_format = result.get("format")
+        self.detected_format_label.setText(self._FORMAT_LABELS.get(self._detected_format, self._FORMAT_LABELS[None]))
+
+        self.split_list.clear()
+        if not splits:
+            QMessageBox.information(
+                self, "No Splits Found", "No JSON or Parquet/WebDataset splits were found for this branch."
+            )
+            return
+
+        preselect = self._last_selected_splits & set(splits) if self._last_selected_splits else set(splits)
+        for split in splits:
+            item = QListWidgetItem(split)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if split in preselect else Qt.CheckState.Unchecked)
+            self.split_list.addItem(item)
+
+    def _on_splits_fetch_failed(self, error: str) -> None:
+        self.split_list.clear()
+        self._detected_format = None
+        self.detected_format_label.setText(self._FORMAT_LABELS[None])
+        QMessageBox.warning(self, "Fetch Splits Failed", error)
+
     def _validate_and_accept(self) -> bool:
         repo_id = self.repo_id_edit.text().strip()
-        revision = self.revision_edit.text().strip()
-        split = self.split_edit.text().strip()
+        revision = self.revision_combo.currentText().strip()
+        splits = self._checked_splits()
         output_dir = self.output_dir_edit.text().strip()
 
         if not repo_id:
@@ -1204,13 +1325,18 @@ class HfDownloadDialog(QDialog):
         if not revision:
             QMessageBox.warning(self, "Missing Required Field", "Branch is required.")
             return False
-        if not split:
-            QMessageBox.warning(self, "Missing Required Field", "Split is required.")
+        if not splits:
+            QMessageBox.warning(
+                self, "Missing Required Field", "Select at least one split (fetch splits first if needed)."
+            )
+            return False
+        if self._detected_format is None:
+            QMessageBox.warning(self, "Format Unknown", "Fetch splits first so the dataset format can be detected.")
             return False
         if not output_dir:
             QMessageBox.warning(self, "Missing Required Field", "Output directory is required.")
             return False
-        if self.dry_run_checkbox.isChecked() and self.download_format_combo.currentData() == "parquet":
+        if self.dry_run_checkbox.isChecked() and self._detected_format == "parquet":
             QMessageBox.warning(self, "Unsupported Dry-Run", "Dry-run is available only for JSON downloads.")
             return False
         return True
@@ -1228,9 +1354,9 @@ class HfDownloadDialog(QDialog):
     def get_payload(self) -> dict:
         return {
             "repo_id": self.repo_id_edit.text().strip(),
-            "revision": self.revision_edit.text().strip() or "main",
-            "split": self.split_edit.text().strip(),
-            "download_format": str(self.download_format_combo.currentData() or "parquet"),
+            "revision": self.revision_combo.currentText().strip() or "main",
+            "splits": self._checked_splits(),
+            "download_format": self._detected_format or "parquet",
             "output_dir": self.output_dir_edit.text().strip(),
             "dry_run": self.dry_run_checkbox.isChecked(),
             "token": self.token_edit.text().strip() or None,
@@ -1240,17 +1366,23 @@ class HfDownloadDialog(QDialog):
         return self._submitted
 
     def _load_settings(self) -> None:
+        self._last_selected_splits: set[str] = set()
         if not self._settings:
             return
-        saved_transfer = {
-            "repo_id": str(self._settings.value(self._KEY_REPO_ID, "") or ""),
-            "revision": str(self._settings.value(self._KEY_REVISION, "main") or "main"),
-            "split": str(self._settings.value(self._KEY_SPLIT, "") or ""),
-            "download_format": str(self._settings.value(self._KEY_DOWNLOAD_FORMAT, "parquet") or "parquet"),
-        }
-        if not saved_transfer["repo_id"] or not saved_transfer["split"]:
-            saved_transfer = self._AVAILABLE_DATASET_TRANSFERS[0]
-        self._apply_transfer(saved_transfer)
+        repo_id = str(self._settings.value(self._KEY_REPO_ID, "") or "")
+        revision = str(self._settings.value(self._KEY_REVISION, "main") or "main")
+        splits_raw = str(self._settings.value(self._KEY_SPLITS, "") or "")
+        self._last_selected_splits = {name for name in splits_raw.split("|") if name}
+
+        if not repo_id or not self._last_selected_splits:
+            default_transfer = self._AVAILABLE_DATASET_TRANSFERS[0]
+            repo_id = repo_id or default_transfer["repo_id"]
+            revision = revision if self._settings.contains(self._KEY_REVISION) else default_transfer["revision"]
+            if not self._last_selected_splits:
+                self._last_selected_splits = {default_transfer["split"]}
+
+        self.repo_id_edit.setText(repo_id)
+        self.revision_combo.setEditText(revision)
         self.output_dir_edit.setText(str(self._settings.value(self._KEY_OUTPUT_DIR, "") or ""))
         dry_run_raw = self._settings.value(self._KEY_DRY_RUN, False)
         if isinstance(dry_run_raw, str):
@@ -1265,20 +1397,53 @@ class HfDownloadDialog(QDialog):
         payload = self.get_payload()
         self._settings.setValue(self._KEY_REPO_ID, payload["repo_id"])
         self._settings.setValue(self._KEY_REVISION, payload["revision"])
-        self._settings.setValue(self._KEY_SPLIT, payload["split"])
-        self._settings.setValue(self._KEY_DOWNLOAD_FORMAT, payload["download_format"])
+        self._settings.setValue(self._KEY_SPLITS, "|".join(payload["splits"]))
         self._settings.setValue(self._KEY_OUTPUT_DIR, self.output_dir_edit.text().strip())
         self._settings.setValue(self._KEY_DRY_RUN, self.dry_run_checkbox.isChecked())
         self._settings.setValue(self._KEY_TOKEN, self.token_edit.text().strip())
         self._settings.sync()
 
-    def _apply_transfer(self, transfer: dict) -> None:
-        normalized = self._normalize_transfer(transfer)
-        self.repo_id_edit.setText(normalized["repo_id"])
-        self.revision_edit.setText(normalized["revision"])
-        self.split_edit.setText(normalized["split"])
-        index = self.download_format_combo.findData(normalized["download_format"])
-        self.download_format_combo.setCurrentIndex(index if index >= 0 else 0)
+
+class HfOpenDownloadedSplitDialog(QDialog):
+    """Lets the user pick one of several just-downloaded splits to open."""
+
+    def __init__(self, entries: list[tuple[str, str]], parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Open Downloaded Dataset")
+        self.setModal(True)
+        self.setMinimumWidth(420)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Multiple splits were downloaded. Choose one to open now:", self))
+
+        self.entry_list = QListWidget(self)
+        for label, json_path in entries:
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, json_path)
+            self.entry_list.addItem(item)
+        if self.entry_list.count():
+            self.entry_list.setCurrentRow(0)
+        layout.addWidget(self.entry_list)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Open | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        open_button = buttons.button(QDialogButtonBox.StandardButton.Open)
+        if open_button:
+            open_button.setText("Open")
+        cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if cancel_button:
+            cancel_button.setText("Skip")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected_json_path(self) -> str | None:
+        item = self.entry_list.currentItem()
+        if not item:
+            return None
+        return str(item.data(Qt.ItemDataRole.UserRole) or "") or None
 
 
 class HfUploadDialog(QDialog):

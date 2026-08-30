@@ -5,6 +5,9 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from opensportslib.tools.hf_transfer import (
     HfTransferCancelled,
     download_dataset_split_from_hf,
+    download_dataset_splits_from_hf,
+    list_dataset_branches_on_hf,
+    list_dataset_splits_on_hf,
     upload_dataset_as_parquet_to_hf,
     upload_dataset_inputs_from_json_to_hf,
 )
@@ -23,10 +26,10 @@ class _HfDownloadWorker(QThread):
 
     def run(self) -> None:
         try:
-            result = download_dataset_split_from_hf(
+            results = download_dataset_splits_from_hf(
                 self._config.get("repo_id", ""),
                 self._config.get("revision", "main"),
-                self._config.get("split", ""),
+                list(self._config.get("splits", []) or []),
                 self._config.get("output_dir", ""),
                 download_format=str(self._config.get("download_format", "parquet") or "parquet"),
                 dry_run=bool(self._config.get("dry_run", False)),
@@ -34,9 +37,50 @@ class _HfDownloadWorker(QThread):
                 progress_cb=self.progress.emit,
                 is_cancelled=self.isInterruptionRequested,
             )
-            self.completed.emit(result)
+            self.completed.emit(
+                {
+                    "results": results,
+                    "dry_run": bool(self._config.get("dry_run", False)),
+                    "output_dir": self._config.get("output_dir", ""),
+                }
+            )
         except HfTransferCancelled as exc:
             self.cancelled.emit(str(exc))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class _HfListBranchesWorker(QThread):
+    succeeded = pyqtSignal(list)
+    failed = pyqtSignal(str)
+
+    def __init__(self, repo_id: str, token: str | None = None) -> None:
+        super().__init__()
+        self._repo_id = repo_id
+        self._token = token
+
+    def run(self) -> None:
+        try:
+            branches = list_dataset_branches_on_hf(self._repo_id, token=self._token)
+            self.succeeded.emit(branches)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class _HfListSplitsWorker(QThread):
+    succeeded = pyqtSignal(dict)
+    failed = pyqtSignal(str)
+
+    def __init__(self, repo_id: str, revision: str, token: str | None = None) -> None:
+        super().__init__()
+        self._repo_id = repo_id
+        self._revision = revision
+        self._token = token
+
+    def run(self) -> None:
+        try:
+            result = list_dataset_splits_on_hf(self._repo_id, self._revision, token=self._token)
+            self.succeeded.emit(result)
         except Exception as exc:
             self.failed.emit(str(exc))
 

@@ -16,6 +16,7 @@ from opensportslib.tools.hf_transfer import (
     create_dataset_branch_on_hf,
     create_dataset_repo_on_hf,
     dataset_repo_exists_on_hf,
+    human_size,
     is_hf_download_url_not_found_error,
     is_hf_repo_not_found_error,
     is_hf_revision_not_found_error,
@@ -39,7 +40,14 @@ from ui.localization import LocalizationAnnotationPanel
 from ui.description import DescriptionAnnotationPanel
 from ui.dense_description import DenseAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
-from ui.dialogs import ApplicationSettingsDialog, BusyStatusDialog, HfDownloadDialog, HfUploadDialog, InferenceRunDialog
+from ui.dialogs import (
+    ApplicationSettingsDialog,
+    BusyStatusDialog,
+    HfDownloadDialog,
+    HfOpenDownloadedSplitDialog,
+    HfUploadDialog,
+    InferenceRunDialog,
+)
 from ui.inference_jobs_widget import InferenceJobsWidget
 
 from media_control_settings import (
@@ -1982,7 +1990,10 @@ class VideoAnnotationWindow(QMainWindow):
         failed_payload = dict(self._last_hf_download_payload or {})
         if failed_payload and is_hf_download_url_not_found_error(error):
             settings = getattr(self.dataset_explorer_controller, "settings", None)
-            HfDownloadDialog.remove_successful_transfer_from_settings(settings, failed_payload)
+            for split in failed_payload.get("splits", []) or []:
+                HfDownloadDialog.remove_successful_transfer_from_settings(
+                    settings, {**failed_payload, "split": split}
+                )
 
         self._last_hf_download_payload = None
         self._on_hf_transfer_failed("HF Download Failed", error)
@@ -1993,58 +2004,56 @@ class VideoAnnotationWindow(QMainWindow):
         QMessageBox.information(self, "HF Download Cancelled", message or "Download cancelled.")
         self.show_temp_msg("HF Download", "Download cancelled.", 3000)
 
-    def _on_hf_download_completed(self, result: dict) -> None:
+    def _on_hf_download_completed(self, payload: dict) -> None:
         self._close_hf_busy_dialog()
-        output_dir = str(result.get("output_dir") or "")
-        dry_run = bool(result.get("dry_run"))
+        output_dir = str(payload.get("output_dir") or "")
+        dry_run = bool(payload.get("dry_run"))
+        results = list(payload.get("results") or [])
 
         if dry_run:
-            msg = (
-                f"Dry-run completed.\n"
-                f"Matched files: {result.get('referenced_file_count', 0)}\n"
-                f"Estimated size: {result.get('estimated_total_size_human', '0.0 B')}\n"
-                f"Output directory: {output_dir}"
-            )
-            QMessageBox.information(self, "HF Dry-Run Complete", msg)
+            total_files = sum(int(result.get("referenced_file_count") or 0) for result in results)
+            total_bytes = sum(int(result.get("estimated_total_size_bytes") or 0) for result in results)
+            lines = [f"Dry-run completed for {len(results)} split(s)."]
+            lines.append(f"Total matched files: {total_files}")
+            lines.append(f"Total estimated size: {human_size(total_bytes)}")
+            lines.append(f"Output directory: {output_dir}")
+            QMessageBox.information(self, "HF Dry-Run Complete", "\n".join(lines))
             self.show_temp_msg("HF Dry-Run", "Dry-run completed.", 3000)
             self._last_hf_download_payload = None
             return
 
         completed_payload = dict(self._last_hf_download_payload or {})
         settings = getattr(self.dataset_explorer_controller, "settings", None)
-        HfDownloadDialog.add_successful_transfer_to_settings(settings, completed_payload)
+        for split in completed_payload.get("splits", []) or []:
+            HfDownloadDialog.add_successful_transfer_to_settings(settings, {**completed_payload, "split": split})
         self._last_hf_download_payload = None
 
-        download_kind = str(result.get("download_kind") or "json")
-        if download_kind == "parquet":
-            sample_count = int(result.get("num_samples") or 0)
-            media_count = int(result.get("extracted_media_count") or 0)
-            QMessageBox.information(
-                self,
-                "HF Download Complete",
-                (
-                    f"Downloaded Parquet dataset and converted it locally.\n"
-                    f"Samples: {sample_count}\n"
-                    f"Extracted media files: {media_count}\n"
-                    f"Output directory: {output_dir}"
-                ),
-            )
-            self.show_temp_msg(
-                "HF Download",
-                f"Downloaded {sample_count} samples and extracted {media_count} media files.",
-                3000,
-            )
-        else:
-            downloaded_count = int(result.get("downloaded_file_count") or 0)
-            QMessageBox.information(
-                self,
-                "HF Download Complete",
-                f"Downloaded {downloaded_count} files to:\n{output_dir}",
-            )
-            self.show_temp_msg("HF Download", f"Downloaded {downloaded_count} files.", 3000)
+        summary_lines = []
+        open_candidates: list[tuple[str, str]] = []
+        for result in results:
+            split = str(result.get("split") or "")
+            download_kind = str(result.get("download_kind") or "json")
+            if download_kind == "parquet":
+                sample_count = int(result.get("num_samples") or 0)
+                media_count = int(result.get("extracted_media_count") or 0)
+                summary_lines.append(f"{split}: {sample_count} samples, {media_count} media files")
+            else:
+                downloaded_count = int(result.get("downloaded_file_count") or 0)
+                summary_lines.append(f"{split}: {downloaded_count} files downloaded")
 
-        json_path = str(result.get("json_path") or "")
-        if json_path and os.path.exists(json_path):
+            json_path = str(result.get("json_path") or "")
+            if json_path and os.path.exists(json_path):
+                open_candidates.append((split, json_path))
+
+        QMessageBox.information(
+            self,
+            "HF Download Complete",
+            "Downloaded {} split(s) to:\n{}\n\n{}".format(len(results), output_dir, "\n".join(summary_lines)),
+        )
+        self.show_temp_msg("HF Download", f"Downloaded {len(results)} split(s).", 3000)
+
+        if len(open_candidates) == 1:
+            split, json_path = open_candidates[0]
             reply = QMessageBox.question(
                 self,
                 "Open Downloaded Dataset",
@@ -2054,6 +2063,13 @@ class VideoAnnotationWindow(QMainWindow):
             )
             if reply == QMessageBox.StandardButton.Yes:
                 self.dataset_explorer_controller.open_project_from_path(json_path)
+        elif len(open_candidates) > 1:
+            entries = [(f"{split}", json_path) for split, json_path in open_candidates]
+            open_dialog = HfOpenDownloadedSplitDialog(entries, parent=self)
+            if open_dialog.exec() == open_dialog.DialogCode.Accepted:
+                selected_path = open_dialog.selected_json_path()
+                if selected_path:
+                    self.dataset_explorer_controller.open_project_from_path(selected_path)
 
     def _on_hf_upload_completed(self, result: dict) -> None:
         self._close_hf_busy_dialog()

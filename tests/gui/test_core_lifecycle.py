@@ -1095,7 +1095,6 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
         "repo_id": "OpenSportsLab/custom",
         "revision": "main",
         "split": "test",
-        "download_format": "json",
     }
     window.dataset_explorer_controller.settings.setValue(
         HfDownloadDialog._KEY_SUCCESS_TRANSFERS,
@@ -1132,6 +1131,32 @@ def test_hf_dialog_primary_buttons_use_action_labels(window, tmp_path):
     assert upload_dialog.shard_size_spin.value() == 1000
     assert upload_dialog.shard_size_spin.isEnabled() is False
     upload_dialog.close()
+
+
+@pytest.mark.gui
+def test_hf_download_dialog_checked_splits_produce_payload(window, tmp_path):
+    from ui.dialogs import HfDownloadDialog
+
+    dialog = HfDownloadDialog(settings=None, parent=window)
+    dialog.repo_id_edit.setText("OpenSportsLab/repo")
+    dialog.revision_combo.setEditText("main")
+    dialog.output_dir_edit.setText(str(tmp_path))
+
+    # Simulate a successful "Fetch Splits" response without spinning up the worker thread.
+    dialog._on_splits_fetched({"format": "parquet", "splits": ["train", "valid", "test"]})
+
+    assert dialog.detected_format_label.text() == HfDownloadDialog._FORMAT_LABELS["parquet"]
+    assert dialog.split_list.count() == 3
+
+    for row in range(dialog.split_list.count()):
+        item = dialog.split_list.item(row)
+        if item.text() == "valid":
+            item.setCheckState(Qt.CheckState.Unchecked)
+
+    payload = dialog.get_payload()
+    assert payload["splits"] == ["train", "test"]
+    assert payload["download_format"] == "parquet"
+    dialog.close()
 
 
 @pytest.mark.gui
@@ -1235,7 +1260,7 @@ def test_data_menu_actions_dispatch_hf_download_and_upload(window, monkeypatch, 
     download_payload = {
         "repo_id": "OpenSportsLab/repo",
         "revision": "main",
-        "split": "test",
+        "splits": ["test"],
         "download_format": "json",
         "output_dir": "test_data/Classification/svfouls",
         "dry_run": False,
@@ -1329,8 +1354,13 @@ def test_download_completion_prompts_and_opens_dataset_when_accepted(window, mon
         {
             "dry_run": False,
             "output_dir": str(tmp_path),
-            "downloaded_file_count": 4,
-            "json_path": str(downloaded_json),
+            "results": [
+                {
+                    "split": "test",
+                    "downloaded_file_count": 4,
+                    "json_path": str(downloaded_json),
+                }
+            ],
         }
     )
 
@@ -1349,12 +1379,15 @@ def test_download_success_appends_transfer_to_settings_without_duplicates(window
         "repo_id": "OpenSportsLab/repo",
         "revision": "main",
         "split": "test",
-        "download_format": "json",
     }
 
     settings = window.dataset_explorer_controller.settings
     HfDownloadDialog.add_successful_transfer_to_settings(settings, successful_transfer)
-    window._last_hf_download_payload = dict(successful_transfer)
+    window._last_hf_download_payload = {
+        "repo_id": "OpenSportsLab/repo",
+        "revision": "main",
+        "splits": ["test"],
+    }
 
     monkeypatch.setattr("main_window.QMessageBox.information", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -1366,8 +1399,13 @@ def test_download_success_appends_transfer_to_settings_without_duplicates(window
         {
             "dry_run": False,
             "output_dir": str(tmp_path),
-            "downloaded_file_count": 1,
-            "json_path": str(downloaded_json),
+            "results": [
+                {
+                    "split": "test",
+                    "downloaded_file_count": 1,
+                    "json_path": str(downloaded_json),
+                }
+            ],
         }
     )
 
@@ -1383,11 +1421,14 @@ def test_download_not_found_removes_transfer_from_settings(window, monkeypatch):
         "repo_id": "OpenSportsLab/repo",
         "revision": "main",
         "split": "missing",
-        "download_format": "json",
     }
     settings = window.dataset_explorer_controller.settings
     HfDownloadDialog.add_successful_transfer_to_settings(settings, stale_transfer)
-    window._last_hf_download_payload = dict(stale_transfer)
+    window._last_hf_download_payload = {
+        "repo_id": "OpenSportsLab/repo",
+        "revision": "main",
+        "splits": ["missing"],
+    }
 
     monkeypatch.setattr("main_window.QMessageBox.critical", lambda *args, **kwargs: None)
 

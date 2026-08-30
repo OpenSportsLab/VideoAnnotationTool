@@ -85,6 +85,19 @@ def _install_opensportslib_stub() -> None:
     hf_transfer_module.create_dataset_repo_on_hf = lambda *args, **kwargs: {}
     hf_transfer_module.dataset_repo_exists_on_hf = lambda *args, **kwargs: False
     hf_transfer_module.download_dataset_split_from_hf = lambda *args, **kwargs: {}
+    hf_transfer_module.download_dataset_splits_from_hf = lambda *args, **kwargs: []
+    hf_transfer_module.list_dataset_branches_on_hf = lambda *args, **kwargs: []
+    hf_transfer_module.list_dataset_splits_on_hf = lambda *args, **kwargs: {"format": None, "splits": []}
+
+    def _human_size(num) -> str:
+        num = float(num or 0)
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
+            if num < 1024.0:
+                return f"{num:3.1f} {unit}"
+            num /= 1024.0
+        return f"{num:.1f} PB"
+
+    hf_transfer_module.human_size = _human_size
 
     def _error_text(value) -> str:
         return str(value or "").strip().lower()
