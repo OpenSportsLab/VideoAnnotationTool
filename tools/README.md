@@ -362,7 +362,7 @@ python tools/parquet_webdataset_to_osl_json.py \
 Both scripts require `opensportslib` latest version
 
 ```bash
-pip install opensportslib==0.1.3
+pip install opensportslib
 pip install -e ~/git/opensportslib/
 ```
 
