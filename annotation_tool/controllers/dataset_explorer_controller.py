@@ -297,6 +297,7 @@ class DatasetExplorerController(QObject):
         self.current_working_directory = None
         self.json_loaded = False
         self.is_data_dirty = False
+        self._h5_timeline_origin_cache = {}
 
         self.undo_stack = []
         self.redo_stack = []
@@ -452,6 +453,7 @@ class DatasetExplorerController(QObject):
         self.current_working_directory = None
         self.json_loaded = False
         self.is_data_dirty = False
+        self._h5_timeline_origin_cache.clear()
 
         self.undo_stack = []
         self.redo_stack = []
@@ -2667,38 +2669,86 @@ class DatasetExplorerController(QObject):
     # ------------------------------------------------------------------
     # Save helpers
     # ------------------------------------------------------------------
+    def _timeline_origin_for_input(self, input_item: dict):
+        if not isinstance(input_item, dict):
+            return None
+        if "UTC_time_start" in input_item:
+            # An explicit malformed value intentionally disables backend UTC.
+            return parse_utc_datetime(input_item.get("UTC_time_start"))
+        input_type = self._canonical_input_type(
+            input_item.get("type"), input_item.get("path")
+        )
+        if input_type not in {"player_joints_h5", "player_centroids_h5"}:
+            return None
+        source_path = self._resolve_media_path(input_item.get("path"))
+        if not source_path or not os.path.isfile(source_path):
+            return None
+        try:
+            import h5py
+
+            stat = os.stat(source_path)
+            cache_key = self._fs_path_key(source_path)
+            file_signature = (stat.st_mtime_ns, stat.st_size)
+            cached = self._h5_timeline_origin_cache.get(cache_key)
+            if cached is not None and cached[:2] == file_signature:
+                return cached[2]
+
+            earliest = None
+            with h5py.File(source_path, "r") as h5_file:
+                timestamp_dataset = h5_file.get("timestamp_utc")
+                if timestamp_dataset is None or not timestamp_dataset.shape[0]:
+                    return None
+                row_count = int(timestamp_dataset.shape[0])
+                chunk_rows = 262_144
+                for chunk_start in range(0, row_count, chunk_rows):
+                    values = timestamp_dataset[
+                        chunk_start : min(row_count, chunk_start + chunk_rows)
+                    ]
+                    if not len(values):
+                        continue
+                    candidate = parse_utc_datetime(min(values))
+                    if candidate is not None and (
+                        earliest is None or candidate < earliest
+                    ):
+                        earliest = candidate
+            self._h5_timeline_origin_cache[cache_key] = (*file_signature, earliest)
+            return earliest
+        except Exception:
+            return None
+
     def _timeline_origin_for_sample(self, sample: dict):
         origins = []
         for input_item in list(sample.get("inputs") or []):
+            origin = self._timeline_origin_for_input(input_item)
+            if origin is not None:
+                origins.append(origin)
+        return min(origins) if origins else None
+
+    def timeline_offset_ms_for_inputs(self, sample: dict, resolved_paths) -> int:
+        """Project selected input-relative inference time onto the sample timeline."""
+        sample_origin = self._timeline_origin_for_sample(sample)
+        if sample_origin is None:
+            return 0
+        selected_keys = {
+            self._fs_path_key(path) for path in list(resolved_paths or []) if path
+        }
+        selected_origins = []
+        for input_item in list(sample.get("inputs") or []):
             if not isinstance(input_item, dict):
                 continue
-            if "UTC_time_start" in input_item:
-                explicit = parse_utc_datetime(input_item.get("UTC_time_start"))
-                if explicit is not None:
-                    origins.append(explicit)
-                # An explicit malformed value intentionally disables backend UTC.
+            resolved_path = self._resolve_media_path(input_item.get("path"))
+            if self._fs_path_key(resolved_path) not in selected_keys:
                 continue
-            input_type = self._canonical_input_type(
-                input_item.get("type"), input_item.get("path")
-            )
-            if input_type not in {"player_joints_h5", "player_centroids_h5"}:
-                continue
-            source_path = self._resolve_media_path(input_item.get("path"))
-            if not source_path or not os.path.isfile(source_path):
-                continue
-            try:
-                import h5py
-
-                with h5py.File(source_path, "r") as h5_file:
-                    timestamp_dataset = h5_file.get("timestamp_utc")
-                    if timestamp_dataset is None or not timestamp_dataset.shape[0]:
-                        continue
-                    backend_origin = parse_utc_datetime(timestamp_dataset[0])
-                    if backend_origin is not None:
-                        origins.append(backend_origin)
-            except Exception:
-                continue
-        return min(origins) if origins else None
+            origin = self._timeline_origin_for_input(input_item)
+            if origin is not None:
+                selected_origins.append(origin)
+        if not selected_origins:
+            return 0
+        selected_origin = min(selected_origins)
+        return max(
+            0,
+            int(round((selected_origin - sample_origin).total_seconds() * 1000.0)),
+        )
 
     def _dataset_json_for_write(self, save_path: str):
         normalized, error = self._normalize_dataset_json(self.dataset_json)

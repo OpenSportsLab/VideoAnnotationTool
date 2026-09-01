@@ -441,6 +441,42 @@ def test_write_uses_backend_h5_timestamp_as_a_genuine_origin(
     )
 
 
+def test_selected_h5_inference_offset_uses_whole_sample_utc_origin(
+    explorer_panel_and_controller,
+    tmp_path,
+):
+    _panel, controller = explorer_panel_and_controller
+    h5_path = tmp_path / "tracking.h5"
+    with h5py.File(h5_path, "w") as h5_file:
+        h5_file.create_dataset(
+            "timestamp_utc",
+            data=np.asarray(
+                [
+                    b"2026-01-01 12:06:00.000000",
+                    b"2026-01-01 12:05:00.000000",
+                ]
+            ),
+        )
+    controller.project_root = str(tmp_path)
+    sample = {
+        "id": "synchronized-sample",
+        "inputs": [
+            {
+                "type": "video",
+                "path": "match.mp4",
+                "UTC_time_start": "2026-01-01 12:00:00.000000",
+            },
+            {"type": "player_joints_h5", "path": "tracking.h5"},
+        ],
+    }
+
+    assert controller.timeline_offset_ms_for_inputs(sample, [str(h5_path)]) == 300_000
+    assert controller.timeline_offset_ms_for_inputs(
+        sample,
+        [str(tmp_path / "match.mp4"), str(h5_path)],
+    ) == 0
+
+
 def test_removing_h5_utc_override_restores_backend_origin(
     explorer_panel_and_controller,
     tmp_path,

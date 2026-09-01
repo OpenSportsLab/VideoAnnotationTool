@@ -62,6 +62,12 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   forces relative alignment.
 - The sample origin is the earliest valid session origin; duration is the union
   through the latest session end. Relative inputs have offset zero.
+- Localization inference requests capture the offset between the earliest
+  selected input origin and the whole-sample origin. Providers add that offset
+  to input-relative predictions before results reach the mode controller; the
+  same projection applies when unselected modalities establish the earlier
+  sample origin. H5 origins use the cached earliest `timestamp_utc`, not row
+  order.
 - A running video may be the native group clock. Periodic drift correction must
   not seek that clock, but every explicit group seek must reposition it before
   the next clock tick; otherwise the old player position overwrites the seek.

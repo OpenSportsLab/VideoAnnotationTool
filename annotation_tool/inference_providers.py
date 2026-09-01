@@ -58,6 +58,16 @@ def _effective_weights(descriptor) -> str | None:
     return descriptor.weights or descriptor.id
 
 
+def _project_localization_events(events, timeline_offset_ms: int) -> None:
+    """Move input-relative predictions onto the whole-sample timeline."""
+    offset = max(0, int(timeline_offset_ms or 0))
+    if not offset:
+        return
+    for event in list(events or []):
+        if isinstance(event, dict) and "position_ms" in event:
+            event["position_ms"] = int(event.get("position_ms", 0) or 0) + offset
+
+
 def _find_h5_tracking_inputs(inputs) -> list[dict[str, Any]]:
     """Collect every ticked player-tracking H5 input (with its paired ball H5).
 
@@ -254,7 +264,9 @@ class LocalInferenceProvider:
             worker.run()
             if errors:
                 raise InferenceError(errors[-1], code="local_inference_failed")
-            results.append({"sample_id": item.sample_id, "events": captured[-1] if captured else []})
+            events = copy.deepcopy(captured[-1] if captured else [])
+            _project_localization_events(events, item.timeline_offset_ms)
+            results.append({"sample_id": item.sample_id, "events": events})
             progress("Running local inference", index + 1, len(request.items))
         return {"items": results}
 
@@ -464,7 +476,11 @@ class RemoteInferenceProvider:
         if not self.capabilities:
             self.discover_capabilities()
         wire_items = []
-        time_offsets = {}
+        time_offsets = {
+            item.item_id: max(0, int(item.timeline_offset_ms or 0))
+            for item in request.items
+            if int(item.timeline_offset_ms or 0) > 0
+        }
         all_inputs = sum(len(item.inputs) for item in request.items)
         prepared_count = 0
         for item in request.items:
@@ -496,7 +512,9 @@ class RemoteInferenceProvider:
                         )
                         clip_path, offset = clipper._clip_video_if_needed(tmp_dir)
                         asset = self._prepare_asset(clip_path, progress, cancel_event)
-                        time_offsets[item.item_id] = int(offset)
+                        time_offsets[item.item_id] = (
+                            int(time_offsets.get(item.item_id, 0)) + int(offset)
+                        )
                 if asset is None:
                     asset = self._prepare_asset(source.path, progress, cancel_event)
                 inputs.append(source.to_wire(asset))
@@ -549,9 +567,9 @@ class RemoteInferenceProvider:
                                 continue
                             item_id = str(raw_item.get("item_id") or (request.items[index].item_id if index < len(request.items) else ""))
                             offset = int(time_offsets.get(item_id, 0) or 0)
-                            for event in list(raw_item.get("events") or []):
-                                if isinstance(event, dict) and "position_ms" in event:
-                                    event["position_ms"] = int(event.get("position_ms", 0) or 0) + offset
+                            _project_localization_events(
+                                raw_item.get("events"), offset
+                            )
                     return validate_result_payload(request, result_payload)
                 if status in {"failed", "cancelled"}:
                     error = state.get("error") if isinstance(state.get("error"), dict) else {}

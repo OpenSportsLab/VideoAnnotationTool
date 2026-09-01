@@ -159,6 +159,10 @@ class InferenceItem:
     sample_id: str
     inputs: list[InferenceInput]
     sample: dict[str, Any] = field(default_factory=dict)
+    # Offset from the selected inference inputs' UTC origin to the whole
+    # sample timeline origin. Localization results are input-relative and must
+    # be projected by this amount before they become sample annotations.
+    timeline_offset_ms: int = 0
     item_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 

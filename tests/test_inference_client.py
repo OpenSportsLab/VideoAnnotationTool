@@ -166,6 +166,63 @@ def test_local_provider_reports_missing_native_caption_apis():
     assert "DenseDescriptionModel" in dense.unavailable_reason
 
 
+def test_local_localization_projects_input_relative_events_to_sample_timeline(
+    monkeypatch,
+    tmp_path,
+):
+    from controllers.localization import loc_inference as localization_module
+
+    class FakeSignal:
+        def __init__(self):
+            self.callback = None
+
+        def connect(self, callback):
+            self.callback = callback
+
+    class FakeWorker:
+        def __init__(self, *_args, **_kwargs):
+            self.finished_signal = FakeSignal()
+            self.error_signal = FakeSignal()
+
+        def run(self):
+            self.finished_signal.callback(
+                [{"label": "header", "position_ms": 1_250}]
+            )
+
+    monkeypatch.setattr(localization_module, "LocInferenceWorker", FakeWorker)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("DATA: {}\nMODEL: {}\nSYSTEM: {}\n", encoding="utf-8")
+    provider = LocalInferenceProvider(
+        MemorySettings(),
+        local_models=[
+            {
+                "task": "localization",
+                "id": "header-spotter",
+                "display_name": "Header spotter",
+                "config_path": str(config_path),
+                "checkpoint_free": True,
+            }
+        ],
+    )
+    request = InferenceRequest(
+        task="localization",
+        model_id="header-spotter",
+        backend="local",
+        parameters={"head": "Actions", "labels": ["header"]},
+        items=[
+            InferenceItem(
+                "sample",
+                [InferenceInput(str(tmp_path / "tracking.h5"), "player_joints_h5")],
+                timeline_offset_ms=300_000,
+            )
+        ],
+    )
+
+    result = provider.run(request, lambda *_args: None, threading.Event())
+
+    assert result.items[0]["events"][0]["position_ms"] == 301_250
+
+
 def test_local_vqa_uses_portable_runtime_config_and_opensportslib_03_answer(
     monkeypatch, tmp_path
 ):
@@ -599,6 +656,69 @@ def test_remote_provider_prefers_shared_mapping_and_polls_job(tmp_path):
     assert result.items[0]["captions"][0]["text"] == "Caption"
     asset = submitted["items"][0]["inputs"][0]["asset"]
     assert asset == {"kind": "shared", "uri": "shared://datasets/clip.mp4"}
+
+
+def test_remote_localization_projects_input_relative_events_to_sample_timeline(tmp_path):
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    tracking = media_root / "tracking.h5"
+    tracking.write_bytes(b"tracking")
+    settings = MemorySettings({
+        SHARED_MAPPINGS_KEY: json.dumps(
+            [{"local_root": str(media_root), "root_id": "datasets"}]
+        ),
+    })
+    submitted = {}
+    request = InferenceRequest(
+        task="localization",
+        model_id="spotter",
+        backend="remote",
+        items=[
+            InferenceItem(
+                "sample",
+                [InferenceInput(str(tracking), "player_joints_h5")],
+                timeline_offset_ms=300_000,
+            )
+        ],
+    )
+
+    def handler(http_request: httpx.Request):
+        if http_request.url.path.endswith("/capabilities"):
+            return httpx.Response(200, json={"poll_interval_seconds": 0.01})
+        if http_request.url.path.endswith("/jobs") and http_request.method == "POST":
+            submitted.update(json.loads(http_request.content))
+            return httpx.Response(200, json={"id": "job-1"})
+        if http_request.url.path.endswith("/jobs/job-1"):
+            return httpx.Response(
+                200,
+                json={
+                    "status": "succeeded",
+                    "result": {
+                        "items": [
+                            {
+                                "item_id": request.items[0].item_id,
+                                "events": [{"label": "header", "position_ms": 1_250}],
+                            }
+                        ]
+                    },
+                },
+            )
+        raise AssertionError(
+            f"Unexpected request: {http_request.method} {http_request.url}"
+        )
+
+    provider = RemoteInferenceProvider(
+        "http://server",
+        settings,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    result = provider.run(request, lambda *_args: None, threading.Event())
+
+    assert submitted["parameters"]["input_time_offsets_ms"] == {
+        request.items[0].item_id: 300_000
+    }
+    assert result.items[0]["events"][0]["position_ms"] == 301_250
 
 
 def test_remote_provider_streams_multipart_and_persists_completed_asset(tmp_path):

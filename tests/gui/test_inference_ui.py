@@ -564,6 +564,89 @@ def test_localization_run_uses_visible_active_head(qtbot):
 
 
 @pytest.mark.gui
+def test_localization_request_captures_selected_input_timeline_offset(
+    window,
+    synthetic_project_json,
+    monkeypatch,
+):
+    project_path = synthetic_project_json("localization", item_count=1)
+    assert window.dataset_explorer_controller.open_project_from_path(str(project_path))
+    sample = window.dataset_explorer_controller.dataset_json["data"][0]
+    sample["inputs"] = [
+        {
+            "path": "match.mp4",
+            "type": "video",
+            "UTC_time_start": "2026-01-01 12:00:00.000000",
+        },
+        {
+            "path": "tracking.h5",
+            "type": "player_joints_h5",
+            "UTC_time_start": "2026-01-01 12:05:00.000000",
+        },
+    ]
+    window.dataset_explorer_controller.current_selected_sample_id = str(sample["id"])
+    captured = {}
+
+    class DraftSignal:
+        def connect(self, _slot):
+            pass
+
+    class Label:
+        def setText(self, _text):
+            pass
+
+    class FakeDialog:
+        class DialogCode:
+            Accepted = 1
+
+        def __init__(self, _task, inputs, _context, **_kwargs):
+            captured["inputs"] = list(inputs)
+            self.refreshModelsRequested = DraftSignal()
+            self.availability_label = Label()
+
+        def set_models(self, *_args):
+            pass
+
+        def exec(self):
+            return self.DialogCode.Accepted
+
+        def payload(self):
+            return {
+                "backend": "local",
+                "model_id": "header-spotter",
+                "inputs": [captured["inputs"][1]],
+                "start_ms": 0,
+                "end_ms": 0,
+            }
+
+    monkeypatch.setattr("main_window.InferenceRunDialog", FakeDialog)
+    monkeypatch.setattr(
+        window.inference_controller,
+        "request_model_catalog",
+        lambda _task: True,
+    )
+
+    def enqueue(request):
+        captured["request"] = request
+        return InferenceQueueEntry(
+            request.request_id,
+            request.backend,
+            request.task,
+            request.model_id,
+            tuple(item.sample_id for item in request.items),
+            "running",
+        )
+
+    monkeypatch.setattr(window.inference_controller, "enqueue_inference", enqueue)
+    window._open_inference_run_dialog(
+        "localization",
+        {"head": "Actions", "labels": ["header"]},
+    )
+
+    assert captured["request"].items[0].timeline_offset_ms == 300_000
+
+
+@pytest.mark.gui
 def test_classification_dialog_lists_selected_sample_inputs_only_and_reuses_selection_for_batch(
     window, synthetic_project_json, monkeypatch
 ):

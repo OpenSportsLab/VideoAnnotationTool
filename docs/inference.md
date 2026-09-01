@@ -87,6 +87,15 @@ the generated inference manifest. A model publisher's hardcoded,
 machine-specific paths therefore cannot affect the run. The cached or manually
 selected source config and the dataset JSON remain unchanged.
 
+Localization predictions are returned relative to the selected inference
+inputs. For a UTC-synchronized sample, the application projects them back onto
+the whole-sample timeline before saving or displaying them. For example, if a
+selected H5 input starts five minutes after the sample's video origin, a model
+prediction at H5 position `00:01.250` becomes sample position `05:01.250`.
+The offset uses an explicit input `UTC_time_start` when present; otherwise,
+player H5 inputs use their earliest valid `timestamp_utc` value, even when the
+stored timestamp rows are not chronological.
+
 For command-line model checks, `tools/test-inference.py` applies the same basic
 principle: it writes a disposable runtime YAML instead of editing the supplied
 or Hugging Face-cached config. The runtime YAML replaces publisher-specific
