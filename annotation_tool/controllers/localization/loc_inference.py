@@ -197,6 +197,7 @@ class LocInferenceWorker(QThread):
         trusted_legacy=False,
         checkpoint_free=False,
         tracking_inputs=None,
+        dataset_root="",
     ):
         super().__init__()
         self.video_path = os.path.abspath(video_path)
@@ -223,6 +224,7 @@ class LocInferenceWorker(QThread):
         # the sample's own input dict (path already resolved to absolute) so
         # no field it carries (ball_path or otherwise) is silently dropped.
         self.tracking_inputs = [dict(t) for t in (tracking_inputs or [])]
+        self.dataset_root = os.path.abspath(dataset_root) if dataset_root else ""
 
     def _clip_video_if_needed(self, tmp_dir: str) -> tuple[str, int]:
         if self.start_ms <= 0 and self.end_ms <= 0:
@@ -277,6 +279,20 @@ class LocInferenceWorker(QThread):
             config_dict = yaml.safe_load(handle) or {}
 
         data_cfg = config_dict.setdefault("DATA", {})
+        common_cfg = data_cfg.get("common")
+        if isinstance(common_cfg, dict) and self.dataset_root:
+            # Canonical configs can carry the publisher's checkout at both
+            # the common and split levels. H5 loaders resolve companion paths
+            # such as ball_path from the split source_path, so both roots must
+            # be request-scoped.
+            common_cfg["data_root"] = self.dataset_root
+            splits_cfg = common_cfg.get("splits")
+            canonical_test_cfg = (
+                splits_cfg.get("test") if isinstance(splits_cfg, dict) else None
+            )
+            if isinstance(canonical_test_cfg, dict):
+                canonical_test_cfg["annotation_path"] = tmp_input_json
+                canonical_test_cfg["source_path"] = self.dataset_root
         model_labels = [str(label) for label in list(data_cfg.get("classes", [])) if str(label).strip()]
         if not model_labels:
             model_labels = list(self.labels)

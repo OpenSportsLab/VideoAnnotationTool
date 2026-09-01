@@ -174,6 +174,10 @@ class InferenceRequest:
     # dialog selects a model and runtime parameters but never edits this data.
     provider_config: dict[str, Any] = field(default_factory=dict)
     target_context: dict[str, Any] = field(default_factory=dict)
+    # Local filesystem root of the open dataset. Providers may use this to
+    # replace publisher-specific paths in disposable runtime configs; it is
+    # never included in a remote job payload.
+    dataset_root: str = ""
     request_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def __post_init__(self):

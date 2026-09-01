@@ -164,6 +164,11 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   relevant manual edit.
 - Local adapters call public OpenSportsLib task classes. Missing native
   Description/Dense APIs are advertised as unavailable rather than emulated.
+- Localization receives that dataset root in its request-scoped context and
+  overwrites canonical `DATA.common.data_root` and test-split `source_path`
+  only in the disposable runtime YAML; the test split's `annotation_path`
+  points to the generated manifest. Imported or cached model configs remain
+  unchanged.
 - Remote execution resolves shared assets or resumable uploads, submits an
   idempotent job, polls terminal state, and validates task-native results.
 - Mode controllers emit inference intent; `MainWindow.connect_signals()` adds

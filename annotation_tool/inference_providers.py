@@ -247,6 +247,7 @@ class LocalInferenceProvider:
                 trusted_legacy=descriptor.trusted_legacy,
                 checkpoint_free=descriptor.checkpoint_free,
                 tracking_inputs=tracking_inputs,
+                dataset_root=request.dataset_root,
             )
             worker.finished_signal.connect(captured.append)
             worker.error_signal.connect(errors.append)

@@ -80,6 +80,13 @@ unavailable, DALI dataset types are also replaced with their OpenCV
 equivalents. This permits CPU inference with repositories whose training
 configuration defaults to CUDA or DALI.
 
+The disposable local Localization config replaces `DATA.common.data_root` and
+`DATA.common.splits.test.source_path` with the folder containing the open
+dataset JSON. It also points the canonical test split's `annotation_path` to
+the generated inference manifest. A model publisher's hardcoded,
+machine-specific paths therefore cannot affect the run. The cached or manually
+selected source config and the dataset JSON remain unchanged.
+
 For command-line model checks, `tools/test-inference.py` applies the same basic
 principle: it writes a disposable runtime YAML instead of editing the supplied
 or Hugging Face-cached config. The runtime YAML replaces publisher-specific

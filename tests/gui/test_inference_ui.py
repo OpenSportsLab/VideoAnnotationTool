@@ -636,6 +636,7 @@ def test_classification_dialog_lists_selected_sample_inputs_only_and_reuses_sele
     assert len(captured["dialog_inputs"]) == 2
     assert {source.sample_id for source in captured["dialog_inputs"]} == {current_id}
     request = captured["request"]
+    assert request.dataset_root == str(project_path.parent)
     assert len(request.items) == 2
     assert [len(item.inputs) for item in request.items] == [1, 1]
     assert [os.path.basename(item.inputs[0].path) for item in request.items] == [

@@ -1411,6 +1411,7 @@ class VideoAnnotationWindow(QMainWindow):
             task=task,
             model_id=payload["model_id"],
             backend=payload["backend"],
+            dataset_root=str(self.dataset_explorer_controller.project_root or ""),
             provider_config=copy.deepcopy(
                 self.inference_controller.configuration_snapshot()
             ),

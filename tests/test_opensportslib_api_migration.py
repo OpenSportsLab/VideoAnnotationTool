@@ -460,6 +460,62 @@ def test_localization_runtime_config_does_not_inject_legacy_multi_gpu_alias(
     assert "multi_gpu" not in runtime["MODEL"]
 
 
+def test_localization_runtime_config_replaces_publisher_data_root(tmp_path):
+    config_path = tmp_path / "loc_config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "DATA": {
+                    "common": {
+                        "classes": ["header"],
+                        "data_root": "/home/giancos/FIFA_data",
+                        "splits": {
+                            "test": {
+                                "annotation_path": "/home/giancos/manifests/test.json",
+                                "source_path": "/home/giancos/FIFA_data",
+                            }
+                        },
+                    }
+                },
+                "MODEL": {},
+                "SYSTEM": {},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    dataset_root = tmp_path / "FIFA_data"
+    worker = localization_inference_module.LocInferenceWorker(
+        video_path="",
+        start_ms=0,
+        end_ms=0,
+        config_path=str(config_path),
+        model_id=None,
+        head_name="action",
+        labels=["header"],
+        input_fps=25.0,
+        checkpoint_free=True,
+        dataset_root=str(dataset_root),
+    )
+
+    runtime_path, _labels = worker._build_runtime_config(
+        str(tmp_path), str(tmp_path / "input.json")
+    )
+    with open(runtime_path, encoding="utf-8") as handle:
+        runtime = yaml.safe_load(handle)
+
+    assert runtime["DATA"]["common"]["data_root"] == str(dataset_root)
+    runtime_test = runtime["DATA"]["common"]["splits"]["test"]
+    assert runtime_test["annotation_path"] == str(tmp_path / "input.json")
+    assert runtime_test["source_path"] == str(dataset_root)
+    source_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert source_config["DATA"]["common"]["data_root"] == "/home/giancos/FIFA_data"
+    assert (
+        source_config["DATA"]["common"]["splits"]["test"]["source_path"]
+        == "/home/giancos/FIFA_data"
+    )
+
+
 def test_localization_runtime_config_keeps_forcing_legacy_multi_gpu_false(
     monkeypatch, tmp_path
 ):
