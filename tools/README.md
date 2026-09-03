@@ -232,6 +232,64 @@ python tools/merge_mvfouls_classification_into_vqa.py \
 
 ---
 
+## `merge_dataset_inputs.py`
+
+Merges N OSL JSON datasets that cover the same samples (e.g. one dataset per modality, such as
+video and tracking) into one dataset. Samples are matched by an id field (`game_id` by
+default); each matched sample's `inputs` lists are concatenated, every other sample field is
+treated as annotation content and merged per `--annotation-mode`, and the referenced media
+files are copied into a shared output media root, preserving each source's relative path
+layout.
+
+### Usage
+
+```bash
+python tools/merge_dataset_inputs.py --input JSON_PATH MEDIA_ROOT [--input JSON_PATH MEDIA_ROOT ...] --output-json OUTPUT_JSON --output-media-root OUTPUT_MEDIA_ROOT [options]
+```
+
+### Required arguments
+
+| Flag | Description |
+|---|---|
+| `--input JSON_PATH MEDIA_ROOT` | One source dataset's JSON and media root. Repeat for each source (≥2 required); order is preserved in the merged `inputs` list. |
+| `--output-json PATH` | Destination path for the merged JSON. |
+| `--output-media-root PATH` | Destination root for copied media files. |
+
+### Optional arguments
+
+| Flag | Default | Description |
+|---|---|---|
+| `--id-field NAME` | `game_id` | Sample field used to match samples across sources. |
+| `--dataset-name NAME` | (joined source names) | Override for the merged dataset's `dataset_name`. |
+| `--on-id-mismatch {error,intersect,union}` | `error` | How to handle sample ids missing from some source(s): abort, keep only ids common to all sources, or keep the union (partial sources contribute what they have). |
+| `--non-annotation-fields NAMES` | `game_id,split,inputs` | Comma-separated sample fields treated as structural, not annotation content. Every other field (e.g. `events`) is merged as annotation content. |
+| `--annotation-mode {concat,dedup,first}` | `dedup` | How to combine each annotation field across sources: concatenate with duplicates kept, concatenate and drop exact duplicates, or take the value from one source only. |
+| `--annotation-primary-input N` | `0` | Index into `--input` whose value is used when `--annotation-mode first`. |
+| `--overwrite` | off | Replace an existing output JSON file and existing media files. |
+| `--dry-run` | off | Print planned merge/copy stats without writing anything. |
+| `--indent N` | `2` | JSON indentation level for the output file. |
+
+### Examples
+
+```bash
+# Merge a video dataset and a tracking dataset covering the same games
+python tools/merge_dataset_inputs.py \
+    --input test_data/SNGAR-Action-Spotting-Video/main/test/test.json test_data/SNGAR-Action-Spotting-Video/main/test \
+    --input test_data/SNGAR-Action-Spotting-Tracking/main/test/test.json test_data/SNGAR-Action-Spotting-Tracking/main/test \
+    --output-json test_data/SNGAR-Action-Spotting-Merged/main/test/test.json \
+    --output-media-root test_data/SNGAR-Action-Spotting-Merged/main/test
+
+# Trust only the tracking source's event timestamps in case of an offset between modalities
+python tools/merge_dataset_inputs.py \
+    --input test_data/SNGAR-Action-Spotting-Video/main/test/test.json test_data/SNGAR-Action-Spotting-Video/main/test \
+    --input test_data/SNGAR-Action-Spotting-Tracking/main/test/test.json test_data/SNGAR-Action-Spotting-Tracking/main/test \
+    --output-json test_data/SNGAR-Action-Spotting-Merged/main/test/test.json \
+    --output-media-root test_data/SNGAR-Action-Spotting-Merged/main/test \
+    --annotation-mode first --annotation-primary-input 1
+```
+
+---
+
 ## `parquet_webdataset_to_osl_json.py`
 
 Reconstructs an OSL-style JSON annotation file from a dataset directory previously created by
