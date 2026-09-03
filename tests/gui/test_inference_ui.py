@@ -614,7 +614,7 @@ def test_localization_request_captures_selected_input_timeline_offset(
             return {
                 "backend": "local",
                 "model_id": "header-spotter",
-                "inputs": [captured["inputs"][1]],
+                "inputs": list(captured["inputs"]),
                 "start_ms": 0,
                 "end_ms": 0,
             }
@@ -643,7 +643,9 @@ def test_localization_request_captures_selected_input_timeline_offset(
         {"head": "Actions", "labels": ["header"]},
     )
 
-    assert captured["request"].items[0].timeline_offset_ms == 300_000
+    item = captured["request"].items[0]
+    assert item.timeline_offset_ms == 0
+    assert item.input_timeline_offsets_ms == (0, 300_000)
 
 
 @pytest.mark.gui

@@ -1399,18 +1399,23 @@ class VideoAnnotationWindow(QMainWindow):
                     if (sample_id, os.path.realpath(source.path)) in selected_sources
                 ]
             if selected_inputs:
+                input_timeline_offsets_ms = ()
+                timeline_offset_ms = 0
+                if task == "localization":
+                    input_timeline_offsets_ms = tuple(
+                        self.dataset_explorer_controller.timeline_offset_ms_for_inputs(
+                            sample,
+                            [source.path],
+                        )
+                        for source in selected_inputs
+                    )
+                    timeline_offset_ms = min(input_timeline_offsets_ms, default=0)
                 request_items.append(InferenceItem(
                     sample_id=sample_id,
                     inputs=selected_inputs,
                     sample=copy.deepcopy(sample),
-                    timeline_offset_ms=(
-                        self.dataset_explorer_controller.timeline_offset_ms_for_inputs(
-                            sample,
-                            [source.path for source in selected_inputs],
-                        )
-                        if task == "localization"
-                        else 0
-                    ),
+                    timeline_offset_ms=timeline_offset_ms,
+                    input_timeline_offsets_ms=input_timeline_offsets_ms,
                 ))
         if not request_items or len(request_items) != len(samples):
             QMessageBox.warning(self, "Inference", "Every batch sample must retain at least one input.")

@@ -163,6 +163,9 @@ class InferenceItem:
     # sample timeline origin. Localization results are input-relative and must
     # be projected by this amount before they become sample annotations.
     timeline_offset_ms: int = 0
+    # Per-input equivalents, aligned with `inputs`. Local adapters use these
+    # when a model consumes only a subset of the inputs selected in the dialog.
+    input_timeline_offsets_ms: tuple[int, ...] = ()
     item_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 

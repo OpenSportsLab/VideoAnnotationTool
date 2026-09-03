@@ -92,6 +92,10 @@ inputs. For a UTC-synchronized sample, the application projects them back onto
 the whole-sample timeline before saving or displaying them. For example, if a
 selected H5 input starts five minutes after the sample's video origin, a model
 prediction at H5 position `00:01.250` becomes sample position `05:01.250`.
+Offsets are tracked per input: if both video and joints are selected but a
+local tracking model actually consumes only the joints/ball H5 inputs, the H5
+offset is still applied and the unused video's earlier origin does not suppress
+it.
 The offset uses an explicit input `UTC_time_start` when present; otherwise,
 player H5 inputs use their earliest valid `timestamp_utc` value, even when the
 stored timestamp rows are not chronological.

@@ -166,7 +166,7 @@ def test_local_provider_reports_missing_native_caption_apis():
     assert "DenseDescriptionModel" in dense.unavailable_reason
 
 
-def test_local_localization_projects_input_relative_events_to_sample_timeline(
+def test_local_tracking_inference_uses_h5_offset_when_selected_video_is_ignored(
     monkeypatch,
     tmp_path,
 ):
@@ -212,8 +212,16 @@ def test_local_localization_projects_input_relative_events_to_sample_timeline(
         items=[
             InferenceItem(
                 "sample",
-                [InferenceInput(str(tmp_path / "tracking.h5"), "player_joints_h5")],
-                timeline_offset_ms=300_000,
+                [
+                    InferenceInput(str(tmp_path / "match.mp4"), "video"),
+                    InferenceInput(
+                        str(tmp_path / "tracking.h5"),
+                        "player_joints_h5",
+                        {"ball_path": str(tmp_path / "ball.h5")},
+                    ),
+                ],
+                timeline_offset_ms=0,
+                input_timeline_offsets_ms=(0, 300_000),
             )
         ],
     )

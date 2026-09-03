@@ -82,13 +82,35 @@ def _find_h5_tracking_inputs(inputs) -> list[dict[str, Any]]:
     """
     tracking_inputs = []
     for source in inputs:
-        if source.type not in {"player_joints_h5", "player_centroids_h5"}:
-            continue
-        if str(source.metadata.get("ball_path") or "").strip():
+        if _is_h5_tracking_input(source):
             tracking_inputs.append(
                 {"type": source.type, "path": source.path, **copy.deepcopy(source.metadata)}
             )
     return tracking_inputs
+
+
+def _is_h5_tracking_input(source) -> bool:
+    return (
+        source.type in {"player_joints_h5", "player_centroids_h5"}
+        and bool(str(source.metadata.get("ball_path") or "").strip())
+    )
+
+
+def _effective_localization_timeline_offset(item, uses_tracking_inputs: bool) -> int:
+    offsets = tuple(item.input_timeline_offsets_ms or ())
+    if len(offsets) != len(item.inputs):
+        return max(0, int(item.timeline_offset_ms or 0))
+    if uses_tracking_inputs:
+        effective_offsets = [
+            offset
+            for source, offset in zip(item.inputs, offsets)
+            if _is_h5_tracking_input(source)
+        ]
+    else:
+        effective_offsets = list(offsets[:1])
+    if not effective_offsets:
+        return max(0, int(item.timeline_offset_ms or 0))
+    return max(0, min(int(offset or 0) for offset in effective_offsets))
 
 
 class LocalInferenceProvider:
@@ -265,7 +287,11 @@ class LocalInferenceProvider:
             if errors:
                 raise InferenceError(errors[-1], code="local_inference_failed")
             events = copy.deepcopy(captured[-1] if captured else [])
-            _project_localization_events(events, item.timeline_offset_ms)
+            effective_offset_ms = _effective_localization_timeline_offset(
+                item,
+                uses_tracking_inputs=bool(tracking_inputs),
+            )
+            _project_localization_events(events, effective_offset_ms)
             results.append({"sample_id": item.sample_id, "events": events})
             progress("Running local inference", index + 1, len(request.items))
         return {"items": results}

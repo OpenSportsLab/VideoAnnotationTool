@@ -74,6 +74,8 @@ offset back onto the original sample timeline.
 - The shared run dialog supplies head, labels, range, model, and provider details.
 - UTC-synchronized inference results are projected from the selected inputs'
   origin onto the whole-sample timeline before they enter the event list.
+  Per-input offsets let the local adapter use the H5 origin when a tracking
+  model ignores another selected modality.
 - Runtime fallback supports both legacy (`dali`, `DATA.test.type`) and canonical
   (`DATA.common.runtime.loader_backend`) OpenSportsLib configuration shapes.
 - Accepting adds a metadata-free event; rejecting a transient prediction is
