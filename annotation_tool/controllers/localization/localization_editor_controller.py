@@ -5,7 +5,13 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from colors import localization_label_color_hex, normalize_hex_color
-from utils import annotation_at_position, parse_utc_datetime, project_temporal_annotations
+from utils import (
+    annotation_at_position,
+    annotation_utc_datetime,
+    format_utc_datetime,
+    parse_utc_datetime,
+    project_temporal_annotations,
+)
 from .label_color_settings import (
     get_saved_label_color,
     move_saved_head_colors,
@@ -124,6 +130,7 @@ class LocalizationEditorController(QObject):
         table.annotationConfirmRequested.connect(self._on_confirm_single_annotation)
         table.annotationRejectRequested.connect(self._on_reject_single_annotation)
         table.updateTimeForSelectedRequested.connect(self._on_update_time_for_selected)
+        table.annotationUtcCorrectRequested.connect(self._on_correct_event_utc_time)
 
     def shutdown_background_tasks(self, wait_ms: int = 2500) -> bool:
         return True
@@ -210,6 +217,81 @@ class LocalizationEditorController(QObject):
         current_ms = max(0, int(self._last_media_position_ms))
         new_event = annotation_at_position(old_event, current_ms, self._timeline_origin_utc)
         self._on_annotation_modified(old_event, new_event)
+
+    def _on_correct_event_utc_time(self, item):
+        if not self.current_video_path or not self.current_sample_id:
+            return
+
+        origin = self._timeline_origin_utc
+        old_utc = annotation_utc_datetime(item, origin)
+        if old_utc is None:
+            self.statusMessageRequested.emit(
+                "Cannot Correct UTC Time",
+                "This event has no resolvable UTC time (no timeline origin is set for this sample).",
+                4000,
+            )
+            return
+
+        current_text = f"{old_utc.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} UTC"
+        text, ok = QInputDialog.getText(
+            self.localization_panel,
+            "Correct UTC Time",
+            "Enter the correct UTC time for this event.\n"
+            "All other events in this sample will be shifted by the same amount:",
+            text=current_text,
+        )
+        if not ok:
+            return
+
+        new_utc = parse_utc_datetime(text)
+        if new_utc is None:
+            QMessageBox.warning(
+                self.localization_panel,
+                "Invalid UTC Time",
+                "Could not parse the UTC time. Expected format: YYYY-MM-DD HH:MM:SS.mmm",
+            )
+            return
+
+        delta = new_utc - old_utc
+        if not delta:
+            return
+
+        events = self._snapshot_events()
+        shifted_events = []
+        reselect_target = None
+        shifted_count = 0
+        for evt in events:
+            evt_utc = annotation_utc_datetime(evt, origin)
+            if evt_utc is None:
+                shifted_events.append(evt)
+                continue
+
+            new_evt_utc = evt_utc + delta
+            updated = copy.deepcopy(evt)
+            updated["timestamp_utc"] = format_utc_datetime(new_evt_utc)
+            if origin is not None:
+                updated["position_ms"] = int(round((new_evt_utc - origin).total_seconds() * 1000.0))
+            shifted_events.append(updated)
+            shifted_count += 1
+            if evt == item:
+                reselect_target = updated
+
+        if not shifted_count:
+            return
+
+        self.locEventsSetRequested.emit(self.current_sample_id, copy.deepcopy(shifted_events))
+        self._set_snapshot_events(shifted_events)
+
+        self._display_events_for_item(self.current_video_path)
+        self.refresh_tree_icons(self.current_video_path)
+        if reselect_target is not None:
+            self._reselect_event(reselect_target)
+
+        self.statusMessageRequested.emit(
+            "UTC Time Corrected",
+            f"Shifted {shifted_count} event(s) by {delta}.",
+            4000,
+        )
 
     # --- Head Management ---
     def handle_add_head(self):

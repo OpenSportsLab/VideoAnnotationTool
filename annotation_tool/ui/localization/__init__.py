@@ -242,6 +242,7 @@ class _TableAdapter(QObject):
     annotationConfirmRequested = pyqtSignal(dict)
     annotationRejectRequested = pyqtSignal(dict)
     updateTimeForSelectedRequested = pyqtSignal(dict)
+    annotationUtcCorrectRequested = pyqtSignal(dict)
 
     def __init__(
         self,
@@ -375,6 +376,7 @@ class _TableAdapter(QObject):
         if isinstance(item, dict) and "confidence_score" in item:
             act_confirm = menu.addAction("Confirm Annotation")
             act_reject = menu.addAction("Reject Annotation")
+        act_correct_utc = menu.addAction("Correct UTC Time…")
         act_delete = menu.addAction("Delete Event")
         selected_action = menu.exec(self.table.mapToGlobal(pos))
 
@@ -383,6 +385,9 @@ class _TableAdapter(QObject):
             return
         if act_reject is not None and selected_action == act_reject:
             self.annotationRejectRequested.emit(item)
+            return
+        if selected_action == act_correct_utc:
+            self.annotationUtcCorrectRequested.emit(item)
             return
         if selected_action == act_delete:
             self.annotationDeleted.emit(item)
