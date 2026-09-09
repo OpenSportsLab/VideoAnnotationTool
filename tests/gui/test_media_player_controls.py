@@ -98,6 +98,74 @@ def media_panel_and_controller(qtbot):
     controller = MediaController(panel.player, panel)
     yield panel, controller
     controller.stop()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("input_type", "suffix"),
+    [
+        ("video", ".mp4"),
+        ("frames_npy", ".npy"),
+        ("tracking_parquet", ".parquet"),
+        ("player_joints_h5", ".h5"),
+        ("player_centroids_h5", ".h5"),
+    ],
+)
+def test_missing_input_status_distinguishes_hf_download_state(
+    media_panel_and_controller, tmp_path, input_type, suffix
+):
+    panel, controller = media_panel_and_controller
+    missing_path = tmp_path / "inputs" / f"missing{suffix}"
+    source = {"type": input_type, "path": str(missing_path)}
+    controller.set_media_availability_context(
+        hf_source_available=True, downloading_paths=()
+    )
+
+    controller.route_media_group([source], source["path"], False)
+
+    pane = panel._viewer_panes[0]
+    assert "Input not downloaded" in pane.status_label.text()
+    assert "Download Input from Hugging Face..." in pane.status_label.text()
+    assert "Download Sample Inputs from Hugging Face..." in pane.status_label.text()
+    assert controller._sessions[0]["valid"] is False
+
+    controller.set_media_availability_context(
+        hf_source_available=True, downloading_paths=[str(missing_path)]
+    )
+
+    assert "Input download in progress" in pane.status_label.text()
+    assert "currently being downloaded" in pane.status_label.text()
+
+
+@pytest.mark.gui
+def test_missing_local_and_present_unsupported_video_have_distinct_statuses(
+    media_panel_and_controller, tmp_path
+):
+    panel, controller = media_panel_and_controller
+    missing_path = tmp_path / "missing.mp4"
+    controller.set_media_availability_context(
+        hf_source_available=False, downloading_paths=()
+    )
+
+    controller.route_media_group(
+        [{"type": "video", "path": str(missing_path)}],
+        str(missing_path),
+        False,
+    )
+
+    assert "Input file not found" in panel._viewer_panes[0].status_label.text()
+    assert str(missing_path) in panel._viewer_panes[0].status_label.text()
+
+    unsupported_path = tmp_path / "notes.txt"
+    unsupported_path.write_text("not a video", encoding="utf-8")
+    controller.route_media_group(
+        [{"type": "video", "path": str(unsupported_path)}],
+        str(unsupported_path),
+        False,
+    )
+
+    assert "Unsupported video" in panel._viewer_panes[0].status_label.text()
+    assert "not a supported video format" in panel._viewer_panes[0].status_label.text()
     panel.close()
 
 
@@ -356,9 +424,12 @@ def test_frames_npy_invalid_payload_reports_clear_error(
 def test_frames_npy_missing_numpy_dependency_reports_clear_error(
     media_panel_and_controller,
     monkeypatch,
+    tmp_path,
 ):
     _panel, controller = media_panel_and_controller
     errors = []
+    existing_path = tmp_path / "frames.npy"
+    existing_path.write_bytes(b"present")
 
     monkeypatch.setattr("controllers.media_controller.np", None)
     monkeypatch.setattr(
@@ -367,7 +438,7 @@ def test_frames_npy_missing_numpy_dependency_reports_clear_error(
         lambda error_details, **kwargs: errors.append((kwargs, error_details)),
     )
 
-    controller.load_and_play({"type": "frames_npy", "path": str(FRAME_STACK_PATH)})
+    controller.load_and_play({"type": "frames_npy", "path": str(existing_path)})
 
     assert errors
     assert errors[-1][0]["title"] == "NumPy Dependency Missing"
@@ -375,12 +446,12 @@ def test_frames_npy_missing_numpy_dependency_reports_clear_error(
 
 
 @pytest.mark.gui
-def test_frames_npy_missing_file_reports_clear_error(
+def test_frames_npy_missing_file_reports_status_without_loader_error(
     media_panel_and_controller,
     monkeypatch,
     tmp_path,
 ):
-    _panel, controller = media_panel_and_controller
+    panel, controller = media_panel_and_controller
     errors = []
     missing_path = tmp_path / "missing_frames.npy"
 
@@ -392,9 +463,9 @@ def test_frames_npy_missing_file_reports_clear_error(
 
     controller.load_and_play({"type": "frames_npy", "path": str(missing_path)})
 
-    assert errors
-    assert errors[-1][0]["title"] == "Media Load Error"
-    assert str(missing_path) in errors[-1][1]
+    assert errors == []
+    assert "Input file not found" in panel._viewer_panes[0].status_label.text()
+    assert str(missing_path) in panel._viewer_panes[0].status_label.text()
 
 
 @pytest.mark.gui
@@ -515,9 +586,12 @@ def test_tracking_parquet_missing_dependency_reports_clear_error(
     monkeypatch,
     module_name,
     expected_title,
+    tmp_path,
 ):
     _panel, controller = media_panel_and_controller
     errors = []
+    existing_path = tmp_path / "tracking.parquet"
+    existing_path.write_bytes(b"present")
 
     monkeypatch.setattr(f"controllers.media_controller.{module_name}", None)
     monkeypatch.setattr(
@@ -526,7 +600,9 @@ def test_tracking_parquet_missing_dependency_reports_clear_error(
         lambda error_details, **kwargs: errors.append((kwargs, error_details)),
     )
 
-    controller.load_and_play({"type": "tracking_parquet", "path": str(TRACKING_PARQUET_PATH)})
+    controller.load_and_play(
+        {"type": "tracking_parquet", "path": str(existing_path)}
+    )
 
     assert errors
     assert errors[-1][0]["title"] == expected_title
@@ -534,12 +610,12 @@ def test_tracking_parquet_missing_dependency_reports_clear_error(
 
 
 @pytest.mark.gui
-def test_tracking_parquet_missing_file_reports_clear_error(
+def test_tracking_parquet_missing_file_reports_status_without_loader_error(
     media_panel_and_controller,
     monkeypatch,
     tmp_path,
 ):
-    _panel, controller = media_panel_and_controller
+    panel, controller = media_panel_and_controller
     errors = []
     missing_path = tmp_path / "missing_tracking.parquet"
 
@@ -551,9 +627,9 @@ def test_tracking_parquet_missing_file_reports_clear_error(
 
     controller.load_and_play({"type": "tracking_parquet", "path": str(missing_path)})
 
-    assert errors
-    assert errors[-1][0]["title"] == "Media Load Error"
-    assert str(missing_path) in errors[-1][1]
+    assert errors == []
+    assert "Input file not found" in panel._viewer_panes[0].status_label.text()
+    assert str(missing_path) in panel._viewer_panes[0].status_label.text()
 
 
 @pytest.mark.gui
@@ -1106,12 +1182,12 @@ def test_player_joints_h5_missing_dependency_reports_clear_error(
 
 
 @pytest.mark.gui
-def test_player_joints_h5_missing_file_reports_clear_error(
+def test_player_joints_h5_missing_file_reports_status_without_loader_error(
     media_panel_and_controller,
     monkeypatch,
     tmp_path,
 ):
-    _panel, controller = media_panel_and_controller
+    panel, controller = media_panel_and_controller
     errors = []
     missing_path = tmp_path / "missing_joints.h5"
 
@@ -1123,9 +1199,9 @@ def test_player_joints_h5_missing_file_reports_clear_error(
 
     controller.load_and_play({"type": "player_joints_h5", "path": str(missing_path)})
 
-    assert errors
-    assert errors[-1][0]["title"] == "Media Load Error"
-    assert str(missing_path) in errors[-1][1]
+    assert errors == []
+    assert "Input file not found" in panel._viewer_panes[0].status_label.text()
+    assert str(missing_path) in panel._viewer_panes[0].status_label.text()
 
 
 @pytest.mark.gui
@@ -1369,12 +1445,12 @@ def test_player_centroids_h5_missing_dependency_reports_clear_error(
 
 
 @pytest.mark.gui
-def test_player_centroids_h5_missing_file_reports_clear_error(
+def test_player_centroids_h5_missing_file_reports_status_without_loader_error(
     media_panel_and_controller,
     monkeypatch,
     tmp_path,
 ):
-    _panel, controller = media_panel_and_controller
+    panel, controller = media_panel_and_controller
     errors = []
     missing_path = tmp_path / "missing_centroids.h5"
     monkeypatch.setattr(
@@ -1385,9 +1461,9 @@ def test_player_centroids_h5_missing_file_reports_clear_error(
 
     controller.load_and_play({"type": "player_centroids_h5", "path": str(missing_path)})
 
-    assert errors
-    assert errors[-1][0]["title"] == "Media Load Error"
-    assert str(missing_path) in errors[-1][1]
+    assert errors == []
+    assert "Input file not found" in panel._viewer_panes[0].status_label.text()
+    assert str(missing_path) in panel._viewer_panes[0].status_label.text()
 @pytest.mark.gui
 def test_grouped_h5_playback_uses_utc_union_and_multiple_panes(
     media_panel_and_controller,
@@ -1830,6 +1906,48 @@ def test_changing_utc_time_start_reloads_and_realigns_group(media_panel_and_cont
     assert controller._group_key != first_group_key
     assert controller._sessions[0]["origin_utc"] != first_origin
     assert controller._sessions[0]["origin_utc"].isoformat(sep=" ") == "2026-01-01 12:00:05"
+
+
+@pytest.mark.gui
+def test_refresh_source_reloads_only_target_and_preserves_paused_position(
+    media_panel_and_controller, monkeypatch, tmp_path
+):
+    _panel, controller = media_panel_and_controller
+    first_path = tmp_path / "first.npy"
+    second_path = tmp_path / "second.npy"
+    np.save(first_path, np.zeros((8, 4, 4, 3), dtype=np.uint8))
+    np.save(second_path, np.zeros((8, 4, 4, 3), dtype=np.uint8))
+    sources = [
+        {"type": "frames_npy", "path": str(first_path), "fps": 25.0},
+        {"type": "frames_npy", "path": str(second_path), "fps": 25.0},
+    ]
+    controller.route_media_group(sources, str(second_path), False)
+    controller.set_position(80)
+    first_session = controller._sessions[0]["controller"]
+    second_session = controller._sessions[1]["controller"]
+    load_calls = {"first": 0, "second": 0}
+    first_original = first_session.load_and_play
+    second_original = second_session.load_and_play
+
+    def _first_load(*args, **kwargs):
+        load_calls["first"] += 1
+        return first_original(*args, **kwargs)
+
+    def _second_load(*args, **kwargs):
+        load_calls["second"] += 1
+        return second_original(*args, **kwargs)
+
+    monkeypatch.setattr(first_session, "load_and_play", _first_load)
+    monkeypatch.setattr(second_session, "load_and_play", _second_load)
+    group_key = controller._group_key
+
+    assert controller.refresh_source(str(second_path)) is True
+
+    assert load_calls == {"first": 0, "second": 1}
+    assert controller._group_key == group_key
+    assert controller.current_source_path() == str(second_path)
+    assert controller.current_position_ms() == 80
+    assert controller.is_playing() is False
 
 
 @pytest.mark.gui

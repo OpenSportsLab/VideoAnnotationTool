@@ -145,6 +145,9 @@ class _SingleMediaController(QObject):
         self.media_panel = media_panel
         self.video_widget = getattr(media_panel, "video_widget", None)
         self._error_handler = error_handler
+        self._hf_source_available = False
+        self._downloading_media_path_keys: set[str] = set()
+        self._last_load_status = ""
 
         self._current_backend = None
         self._current_source = None
@@ -474,8 +477,16 @@ class _SingleMediaController(QObject):
     def load_and_play(self, source, auto_play: bool = True):
         normalized_source = self._normalize_media_source(source)
         self.stop()
+        self._last_load_status = ""
 
         if not normalized_source or not self._is_supported_media_source(normalized_source):
+            return
+
+        if not os.path.isfile(normalized_source["path"]):
+            self._last_load_status = self._media_availability_message(
+                normalized_source["path"]
+            )
+            self._show_status(self._last_load_status)
             return
 
         backend = self._backend_for_type(normalized_source.get("type"))
@@ -488,9 +499,42 @@ class _SingleMediaController(QObject):
             self._current_source = normalized_source
             return
 
+        if normalized_source.get("type") == self._BACKEND_VIDEO:
+            self._last_load_status = (
+                "Unsupported video\nThis file is not a supported video format."
+            )
+            self._show_status(self._last_load_status)
+
         self._active_backend = None
         self._current_backend = None
         self._current_source = None
+
+    def set_media_availability_context(
+        self, *, hf_source_available: bool, downloading_paths=()
+    ) -> None:
+        self._hf_source_available = bool(hf_source_available)
+        self._downloading_media_path_keys = {
+            self._fs_path_key(path) for path in downloading_paths if path
+        }
+
+    def _media_availability_message(self, path: str) -> str:
+        if self._fs_path_key(path) in self._downloading_media_path_keys:
+            return (
+                "Input download in progress\n"
+                "This file is currently being downloaded from Hugging Face."
+            )
+        if self._hf_source_available:
+            return (
+                "Input not downloaded\n"
+                "This file is not available locally. Right-click it in the Dataset "
+                "Explorer and choose 'Download Input from Hugging Face...', or use "
+                "'Download Sample Inputs from Hugging Face...' on its sample."
+            )
+        return f"Input file not found\n{path}"
+
+    def _show_status(self, message: str) -> None:
+        if self.media_panel is not None and hasattr(self.media_panel, "show_status"):
+            self.media_panel.show_status(message)
 
     def current_source_path(self) -> str:
         if self._active_backend is not None:
@@ -750,6 +794,8 @@ class MediaController(QObject):
         self._sync_was_playing = False
         self._pending_restore_anchor_utc = None
         self._pending_restore_position_ms = None
+        self._hf_source_available = False
+        self._downloading_media_paths: tuple[str, ...] = ()
         self._clock = QElapsedTimer()
         self._master_timer = QTimer(self)
         self._master_timer.setInterval(30)
@@ -821,7 +867,36 @@ class MediaController(QObject):
         error_override = self.__dict__.get("_trigger_error_dialog")
         if error_override is not None:
             self._single._trigger_error_dialog = error_override
+        self._single.set_media_availability_context(
+            hf_source_available=self._hf_source_available,
+            downloading_paths=self._downloading_media_paths,
+        )
         self._single.load_and_play(source, auto_play=auto_play)
+
+    def set_media_availability_context(
+        self, *, hf_source_available: bool, downloading_paths=()
+    ) -> None:
+        self._hf_source_available = bool(hf_source_available)
+        self._downloading_media_paths = tuple(
+            str(path) for path in downloading_paths if path
+        )
+        self._single.set_media_availability_context(
+            hf_source_available=self._hf_source_available,
+            downloading_paths=self._downloading_media_paths,
+        )
+        for record in self._sessions:
+            session = record.get("controller")
+            if session is not None:
+                session.set_media_availability_context(
+                    hf_source_available=self._hf_source_available,
+                    downloading_paths=self._downloading_media_paths,
+                )
+            source = record.get("source") or {}
+            source_path = str(source.get("path") or "")
+            if source_path and not os.path.isfile(source_path):
+                pane = record.get("pane")
+                if pane is not None and hasattr(pane, "show_status"):
+                    pane.show_status(self._single._media_availability_message(source_path))
 
     def route_media_group(
         self,
@@ -900,6 +975,10 @@ class MediaController(QObject):
                 session.video_widget = getattr(pane, "video_widget", None)
             else:
                 session = _SingleMediaController(pane.player, pane)
+            session.set_media_availability_context(
+                hf_source_available=self._hf_source_available,
+                downloading_paths=self._downloading_media_paths,
+            )
             record = self._session_record(source, pane, session)
             self._sessions.append(record)
             session._error_handler = self._pane_error_handler(pane, record)
@@ -913,7 +992,7 @@ class MediaController(QObject):
                 record["origin_utc"] = session.timeline_origin_utc()
             record["duration_ms"] = self._session_duration(session)
             if not record["valid"] and pane is not None and hasattr(pane, "show_status"):
-                pane.show_status("Unable to load this input")
+                pane.show_status(session._last_load_status or "Unable to load this input")
 
         self._recalculate_group_timeline()
         restore_anchor = self._pending_restore_anchor_utc
@@ -933,6 +1012,58 @@ class MediaController(QObject):
 
     def route_media_selection(self, source, ensure_playback: bool = False):
         self.route_media_group([source], str(source.get("path") if isinstance(source, dict) else source), ensure_playback)
+
+    def refresh_source(self, path: str) -> bool:
+        """Reload one active source without changing selection or playback state."""
+        if self._sync_record is not None:
+            return False
+        target_key = self._single._fs_path_key(path)
+        if not target_key:
+            return False
+        if not self._group_active:
+            if self._single._fs_path_key(self._single.current_source_path()) != target_key:
+                return False
+            was_playing = self._single.is_playing()
+            position_ms = self._single.current_position_ms()
+            source = self._single._current_source
+            if not isinstance(source, dict):
+                return False
+            self._single.load_and_play(source, auto_play=False)
+            self._single.set_position(position_ms)
+            if was_playing:
+                self._single.play()
+            return self._single._active_backend is not None
+
+        record = next(
+            (
+                item
+                for item in self._sessions
+                if self._single._fs_path_key(item["source"].get("path")) == target_key
+            ),
+            None,
+        )
+        if record is None or record.get("controller") is None:
+            return False
+
+        position_ms = self.current_position_ms()
+        session = record["controller"]
+        source = record["source"]
+        record["valid"] = False
+        record["duration_ms"] = 0
+        record["origin_utc"] = None
+        session.load_and_play(source, auto_play=False)
+        record["valid"] = session._active_backend is not None
+        if record["utc_start_present"]:
+            record["origin_utc"] = self._parse_utc_time_start(
+                source.get("UTC_time_start")
+            )
+            record["utc_start_invalid"] = record["origin_utc"] is None
+        else:
+            record["origin_utc"] = session.timeline_origin_utc()
+        record["duration_ms"] = self._session_duration(session)
+        self._recalculate_group_timeline()
+        self.set_position(position_ms)
+        return bool(record["valid"])
 
     def set_sample_context(self, sample_id: str):
         self._pending_sample_id = str(sample_id or "")

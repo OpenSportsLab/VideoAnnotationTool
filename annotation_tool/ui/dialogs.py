@@ -1018,6 +1018,7 @@ class HfDownloadDialog(QDialog):
     _KEY_SUCCESS_URLS = f"{_SETTINGS_PREFIX}/successful_urls"
     _KEY_OUTPUT_DIR = f"{_SETTINGS_PREFIX}/output_dir"
     _KEY_DRY_RUN = f"{_SETTINGS_PREFIX}/dry_run"
+    _KEY_ANNOTATIONS_ONLY = f"{_SETTINGS_PREFIX}/annotations_only"
     _KEY_TOKEN = f"{_SETTINGS_PREFIX}/token"
     _AVAILABLE_DATASET_TRANSFERS = [
         {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "test"},
@@ -1031,13 +1032,20 @@ class HfDownloadDialog(QDialog):
         None: "Format: unknown (fetch splits to detect)",
     }
 
-    def __init__(self, settings: QSettings | None = None, parent=None) -> None:
+    def __init__(
+        self,
+        settings: QSettings | None = None,
+        parent=None,
+        *,
+        supports_annotations_only: bool = True,
+    ) -> None:
         super().__init__(parent)
         self._settings = settings
         self._submitted = False
         self._detected_format: str | None = None
         self._branches_worker = None
         self._splits_worker = None
+        self._supports_annotations_only = bool(supports_annotations_only)
         self.setWindowTitle("Download Dataset from Hugging Face")
         self.setModal(True)
         self.setMinimumWidth(760)
@@ -1085,6 +1093,19 @@ class HfDownloadDialog(QDialog):
 
         self.dry_run_checkbox = QCheckBox("Dry-run (estimate only, no downloads)", self)
         form.addRow("", self.dry_run_checkbox)
+
+        self.annotations_only_checkbox = QCheckBox(
+            "Download dataset JSON only (no media)", self
+        )
+        self.annotations_only_checkbox.setEnabled(self._supports_annotations_only)
+        if not self._supports_annotations_only:
+            self.annotations_only_checkbox.setToolTip(
+                "Requires the newer local OpenSportsLib checkout."
+            )
+        self.annotations_only_checkbox.toggled.connect(
+            self._on_annotations_only_toggled
+        )
+        form.addRow("", self.annotations_only_checkbox)
 
         self.token_edit = QLineEdit(self)
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -1213,6 +1234,11 @@ class HfDownloadDialog(QDialog):
                 checked.append(item.text())
         return checked
 
+    def _on_annotations_only_toggled(self, checked: bool) -> None:
+        if checked:
+            self.dry_run_checkbox.setChecked(False)
+        self.dry_run_checkbox.setEnabled(not checked)
+
     def _fetch_branches(self) -> None:
         repo_id = self.repo_id_edit.text().strip()
         if not repo_id:
@@ -1339,6 +1365,13 @@ class HfDownloadDialog(QDialog):
         if self.dry_run_checkbox.isChecked() and self._detected_format == "parquet":
             QMessageBox.warning(self, "Unsupported Dry-Run", "Dry-run is available only for JSON downloads.")
             return False
+        if self.annotations_only_checkbox.isChecked() and not self._supports_annotations_only:
+            QMessageBox.warning(
+                self,
+                "Unsupported Download Mode",
+                "JSON-only downloads require the newer local OpenSportsLib checkout.",
+            )
+            return False
         return True
 
     def _on_submit(self) -> None:
@@ -1359,6 +1392,7 @@ class HfDownloadDialog(QDialog):
             "download_format": self._detected_format or "parquet",
             "output_dir": self.output_dir_edit.text().strip(),
             "dry_run": self.dry_run_checkbox.isChecked(),
+            "annotations_only": self.annotations_only_checkbox.isChecked(),
             "token": self.token_edit.text().strip() or None,
         }
 
@@ -1389,6 +1423,15 @@ class HfDownloadDialog(QDialog):
             self.dry_run_checkbox.setChecked(dry_run_raw.strip().lower() in {"1", "true", "yes", "on"})
         else:
             self.dry_run_checkbox.setChecked(bool(dry_run_raw))
+        annotations_only_raw = self._settings.value(self._KEY_ANNOTATIONS_ONLY, False)
+        if isinstance(annotations_only_raw, str):
+            annotations_only = annotations_only_raw.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            annotations_only = bool(annotations_only_raw)
+        self.annotations_only_checkbox.setChecked(
+            bool(annotations_only and self._supports_annotations_only)
+        )
+        self._on_annotations_only_toggled(self.annotations_only_checkbox.isChecked())
         self.token_edit.setText(str(self._settings.value(self._KEY_TOKEN, "") or ""))
 
     def _save_settings(self) -> None:
@@ -1400,6 +1443,10 @@ class HfDownloadDialog(QDialog):
         self._settings.setValue(self._KEY_SPLITS, "|".join(payload["splits"]))
         self._settings.setValue(self._KEY_OUTPUT_DIR, self.output_dir_edit.text().strip())
         self._settings.setValue(self._KEY_DRY_RUN, self.dry_run_checkbox.isChecked())
+        self._settings.setValue(
+            self._KEY_ANNOTATIONS_ONLY,
+            self.annotations_only_checkbox.isChecked(),
+        )
         self._settings.setValue(self._KEY_TOKEN, self.token_edit.text().strip())
         self._settings.sync()
 

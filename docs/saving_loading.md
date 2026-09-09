@@ -51,6 +51,10 @@ If the dataset is dirty and you close or quit, the app prompts:
 - **Close Without Saving**
 - **Cancel**
 
+If a Hugging Face dataset download is active, closing also shows a download
+warning. **Keep App Open** leaves the transfer running; **Stop Download and
+Quit** requests cancellation and continues the normal unsaved-changes flow.
+
 ## What Is Persisted
 
 - Standard OSL fields such as `labels`, `events`, `captions`,

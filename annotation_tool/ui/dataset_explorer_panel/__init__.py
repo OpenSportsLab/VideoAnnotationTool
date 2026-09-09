@@ -378,6 +378,7 @@ class DatasetExplorerPanel(QWidget):
     clearBallH5Requested = pyqtSignal(QModelIndex)
     addDataRequested = pyqtSignal()
     addInputRequested = pyqtSignal(QModelIndex)
+    downloadFromHfRequested = pyqtSignal(QModelIndex)
     sampleNavigateRequested = pyqtSignal(int)
     pageNavigateRequested = pyqtSignal(int)
     pageRequested = pyqtSignal(int)
@@ -421,6 +422,8 @@ class DatasetExplorerPanel(QWidget):
         self._header_unknown = {}
         self._header_draft = {}
         self._suspend_header_signals = False
+        self._hf_source_available = False
+        self._hf_download_running = False
 
         self._configure_widgets(tree_title, filter_items, clear_text)
         self.tree_model.pageChanged.connect(self._update_page_range)
@@ -591,6 +594,12 @@ class DatasetExplorerPanel(QWidget):
         else:
             self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
 
+    def set_hf_source_available(self, available: bool) -> None:
+        self._hf_source_available = bool(available)
+
+    def set_hf_download_running(self, running: bool) -> None:
+        self._hf_download_running = bool(running)
+
     def _show_context_menu(self, pos):
         index = self.tree.indexAt(pos)
         if not index.isValid():
@@ -614,6 +623,18 @@ class DatasetExplorerPanel(QWidget):
         else:
             add_input_action = None
 
+        if self._hf_source_available:
+            download_label = (
+                "Download Input from Hugging Face..."
+                if index.parent().isValid()
+                else "Download Sample Inputs from Hugging Face..."
+            )
+            download_hf_action = menu.addAction(download_label)
+            download_hf_action.setEnabled(not self._hf_download_running)
+            menu.addSeparator()
+        else:
+            download_hf_action = None
+
         remove_label = "Remove Input" if index.parent().isValid() else "Remove Sample"
         remove_action = menu.addAction(remove_label)
         selected = menu.exec(self.tree.mapToGlobal(pos))
@@ -623,6 +644,8 @@ class DatasetExplorerPanel(QWidget):
             self.clearBallH5Requested.emit(ball_target_index)
         elif add_input_action is not None and selected == add_input_action:
             self.addInputRequested.emit(index)
+        elif download_hf_action is not None and selected == download_hf_action:
+            self.downloadFromHfRequested.emit(index)
         elif selected == remove_action:
             self.removeItemRequested.emit(index)
 

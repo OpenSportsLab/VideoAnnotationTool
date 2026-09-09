@@ -86,6 +86,13 @@ def _install_opensportslib_stub() -> None:
     hf_transfer_module.dataset_repo_exists_on_hf = lambda *args, **kwargs: False
     hf_transfer_module.download_dataset_split_from_hf = lambda *args, **kwargs: {}
     hf_transfer_module.download_dataset_splits_from_hf = lambda *args, **kwargs: []
+    hf_transfer_module.download_dataset_missing_inputs_from_hf = (
+        lambda *args, **kwargs: {
+            "operation": "missing_assets",
+            "remaining_missing_count": 0,
+        }
+    )
+    hf_transfer_module.find_missing_dataset_inputs = lambda *args, **kwargs: []
     hf_transfer_module.list_dataset_branches_on_hf = lambda *args, **kwargs: []
     hf_transfer_module.list_dataset_splits_on_hf = lambda *args, **kwargs: {"format": None, "splits": []}
 
@@ -202,6 +209,10 @@ def window(qtbot, monkeypatch, tmp_path):
             pass
         try:
             self.localization_editor_controller.shutdown_background_tasks(wait_ms=100)
+        except Exception:
+            pass
+        try:
+            self._close_hf_download_status()
         except Exception:
             pass
         try:

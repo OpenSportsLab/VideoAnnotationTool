@@ -8,6 +8,10 @@ Provides the central grouped media/timeline panel used across all annotation mod
 - `MediaCenterPanel` dynamically creates one `MediaViewerPane` per sample input.
 - Each pane owns its `QMediaPlayer`, `QAudioOutput`, `QVideoWidget`, and raster-preview surface.
 - Playback business policy (routing/restart guards/backend selection/error dialogs) remains in `MediaController`.
+- Missing-input presentation for every supported backend distinguishes local
+  absence, Hugging Face metadata-only inputs, and active selective downloads.
+  Existing files that fail format, schema, or codec checks retain their
+  unsupported-input path.
 - `configure_playback_controls(speed_rates, seek_intervals)` rebuilds the two
   single-row button layouts. `speed_buttons` and signed-second `seek_buttons`
   are the value-keyed widget collections; rebuilding emits no media intent and
@@ -56,6 +60,8 @@ Provides the central grouped media/timeline panel used across all annotation mod
 - `update_sync_status(anchor, local_ms, duration_ms, proposed)`: update synchronization labels.
 - `set_mute_button_state(is_muted)`
 - `set_duration(ms)`, `set_markers(markers)`
+- `show_status(message)`: forwards an availability/load-state message to the
+  primary viewer pane for direct single-source routes.
 
 ## Key Functions and Responsibilities
 - `_setup_media_player()`: initializes the scrollable viewer host/grid.

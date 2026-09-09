@@ -54,6 +54,11 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `inputUtcStartRemovalRequested(path)`: requests removal of an explicit input UTC override.
 - Internal structure:
   `MediaController` owns the group clock and session records; format-specific playback lives under `media/`, with shared raster runtime in `media/raster_backend.py`.
+- `set_media_availability_context(...)` receives Hugging Face provenance and
+  absolute paths from the active selective request. Missing files for every
+  supported input backend are classified before backend loading, and invalid
+  panes are refreshed from “not downloaded” to “download in progress” without
+  rebuilding the tree or changing selection.
 
 ### UTC Synchronization Contract
 
@@ -98,13 +103,39 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 
 ### `HfTransferController`
 - `start_download(...)`: execute Hugging Face dataset download in a worker thread.
+- `start_asset_download(...)`: selectively download one sample or input from an
+  opened Hugging Face-sourced JSON. It uses the same worker slot, cancellation,
+  and single-transfer exclusion as full dataset downloads. Runtime capability
+  detection keeps full downloads usable with older OpenSportsLib releases.
+  When the installed API accepts `byte_progress_cb`, `_HfDownloadWorker` emits
+  `byteProgress(filename, downloaded_bytes, total_bytes)` for the status-bar
+  widget; the callback is omitted for older runtime APIs.
+- `is_download_running()`: lets `MainWindow` reject a second request without
+  replacing the active transfer's status. Dataset downloads remain on the
+  worker thread and are presented by a non-modal status-bar progress widget;
+  `MainWindow` mirrors the lifecycle into the explorer's context-action state
+  and prompts before quitting with an active download. Upload presentation
+  retains its existing busy dialog.
 - `start_upload(...)`: execute Hugging Face dataset upload from local dataset JSON inputs in a worker thread.
+- `supports_safe_parquet_uploads()` and `find_missing_inputs(...)` gate Parquet
+  conversion on a complete local dataset. `start_missing_inputs_download(...)`
+  uses the shared background download slot to hydrate missing primary and ball
+  inputs from pinned provenance. `MainWindow` owns the pending-upload state and
+  resumes only after a second successful preflight.
 - `start_model_import(...)`: inspect and cache one OpenSportsLib model repository
   through `_HfModelWorker`. Its started/progress/completed/failed/cancelled
   signals are routed by `MainWindow` to the active Settings draft; Settings
   widgets never hold the controller. `shutdown()` interrupts and waits for all
   dataset and model workers.
-- Emits start/progress/completion/failure signals for UI wiring in `main_window.py`.
+- Emits start/progress/byte-progress/completion/failure signals for UI wiring in
+  `main_window.py`.
+- `DatasetExplorerController.hfAssetDownloadRequested` carries the JSON path,
+  sample ID, optional raw input path, requested local destinations, and project
+  generation. `MainWindow.connect_signals()` owns the route to
+  `HfTransferController`; successful results emit `mediaRefreshRequested` only
+  for the still-current source. `MediaController.refresh_source()` reloads that
+  source while preserving position and playing/paused state, without rebuilding
+  the tree or changing selection.
 
 ### `InferenceController`
 - Owns independent Local and Remote FIFO queues. Each lane has at most one

@@ -43,6 +43,9 @@ Provides the left dock dataset explorer tree, header inspector tables, and explo
   - Emits a lightweight row update for status/display changes.
 - `DatasetExplorerPanel._set_context_menu_enabled(...)`
   - Enables remove context menu actions.
+- `set_hf_source_available(...)`, `set_hf_download_running(...)`
+  - Control whether selective Hugging Face actions are shown and whether the
+    visible actions are disabled while the shared download slot is occupied.
 - `set_header_rows(known, unknown, draft, key_order=None)`
   - Populates header inspector tables from controller data.
 - `_on_known_header_item_changed(...)`

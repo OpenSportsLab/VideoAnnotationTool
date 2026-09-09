@@ -66,8 +66,19 @@ standard project fields back out.
 | `metadata` | object | Dataset-level custom metadata. |
 | `labels` | object | Label schema shared by classification and localization heads. |
 | `data` | array | Sample list. This must be a list. |
+| `hf_repo_id` | string | Optional Hugging Face dataset repository provenance. |
+| `hf_branch` | string | Requested branch, tag, or revision. |
+| `hf_split` | string | Remote split name. |
+| `hf_format` | string | Remote format, `json` or `parquet`. |
+| `hf_commit` | string | Resolved immutable commit for selective downloads. |
 
 Unknown root keys are preserved, except retired legacy keys documented below.
+
+Successful Hugging Face downloads write all five `hf_*` provenance fields.
+Together they let the Dataset Explorer retrieve media later from the same
+immutable repository state. Files created by older versions may contain only
+repository, branch, and split; re-download those datasets before using
+selective media actions.
 
 ## Label Schema
 

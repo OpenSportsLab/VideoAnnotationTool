@@ -43,6 +43,13 @@ Relative paths in `data[].inputs[].path` are resolved from the directory that
 contains the dataset JSON. If the JSON was moved separately from its media
 folders, move the folders back beside the JSON or update the paths.
 
+For a Hugging Face-sourced metadata-only dataset, **Input not downloaded** is
+expected for any absent video, NumPy frame stack, tracking Parquet, or player H5
+input. Right-click its input or parent sample in the Dataset Explorer to download
+it. The pane says **Input download in progress** while that requested file is
+transferring. Unsupported-format/schema messages are reserved for files that
+exist locally but cannot be handled by their declared input type.
+
 !!! tip "Saving can repair path layout"
     After opening a dataset from the intended folder, **Save Dataset As** can
     rewrite input paths relative to the new JSON location.
@@ -59,11 +66,40 @@ huggingface-cli login
 - For upload failures:
   - `Repository Not Found`: create the repo or let the app create it from the prompt.
   - `Revision/Branch Not Found`: create the branch or let the app create it from the prompt.
+- If **Download dataset JSON only** is unavailable, the active OpenSportsLib
+  installation does not expose the selective-download API. Full dataset
+  downloads still work; install the local feature version to enable it.
+- If a dataset explorer download action asks you to re-download the dataset,
+  its JSON has legacy provenance without `hf_format` or `hf_commit`. Download
+  the split again so assets can be pinned to the same immutable commit.
+- Selective-download summaries distinguish requested files from collateral
+  files extracted from the same shard. Existing collateral is intentionally
+  skipped and is never affected by the overwrite choice.
+- Active downloads appear at the right side of the status bar. Some Hugging
+  Face operations do not expose byte totals, so the bar remains animated while
+  the stage text changes. During an individual file transfer, newer local
+  OpenSportsLib versions show the filename and downloaded size over the file's
+  total size. Older OpenSportsLib versions retain background downloads but show
+  only stage/count progress. Use the adjacent **Cancel** button to stop at the
+  next safe cancellation point.
+- Sample/input download actions are greyed out while a dataset download is
+  active because full and selective downloads share one worker slot. If you
+  attempt to quit, choose **Keep App Open** to finish the transfer or **Stop
+  Download and Quit** to cancel it and close the application.
+- Parquet upload stops before conversion if any primary input or `ball_path` is
+  missing. For datasets with complete `hf_repo_id`, `hf_split`, `hf_format`, and
+  `hf_commit` provenance, choose **Download Missing Files** to hydrate and
+  revalidate automatically. Without pinned provenance, restore the listed files
+  manually; the app will not upload incomplete shards.
 
 ## Download URL 404 / Not Found
 
 - Verify the repo ID, revision, split, and format in the dialog.
 - JSON mode expects `<split>.json`.
+- A JSON upload can be made from a partially downloaded dataset. Missing local
+  input references are skipped without failing the upload, and existing remote
+  files at those paths remain unchanged. Parquet + WebDataset upload still
+  requires every referenced input locally so that complete shards can be built.
 - Parquet mode expects a `<split>/` folder.
 - If a previously successful URL is now invalid, reselect or correct it in the
   dialog.

@@ -842,6 +842,9 @@ class MediaCenterPanel(QWidget):
     def show_loading_progress(self, message: str, current: int = 0, total: int = 0):
         self._viewer_panes[0].show_loading_progress(message, current, total)
 
+    def show_status(self, message: str):
+        self._viewer_panes[0].show_status(message)
+
     def clear_preview(self):
         for pane in self._viewer_panes:
             pane.clear_preview()

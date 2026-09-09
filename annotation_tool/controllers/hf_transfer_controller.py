@@ -1,3 +1,4 @@
+import inspect
 from typing import Any
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -11,11 +12,37 @@ from opensportslib.tools.hf_transfer import (
     upload_dataset_as_parquet_to_hf,
     upload_dataset_inputs_from_json_to_hf,
 )
+try:
+    from opensportslib.tools.hf_transfer import download_dataset_sample_inputs_from_hf
+except ImportError:
+    download_dataset_sample_inputs_from_hf = None
+try:
+    from opensportslib.tools.hf_transfer import (
+        download_dataset_missing_inputs_from_hf,
+        find_missing_dataset_inputs,
+    )
+except ImportError:
+    download_dataset_missing_inputs_from_hf = None
+    find_missing_dataset_inputs = None
+
 from hf_model_import import HfModelImportCancelled, resolve_hf_local_model
+
+
+def _supports_keyword(callable_object, keyword: str) -> bool:
+    """Return whether a runtime dependency accepts an optional keyword."""
+    try:
+        parameters = inspect.signature(callable_object).parameters
+    except (TypeError, ValueError):
+        return False
+    return keyword in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
 
 
 class _HfDownloadWorker(QThread):
     progress = pyqtSignal(str)
+    byteProgress = pyqtSignal(str, object, object)
     completed = pyqtSignal(dict)
     failed = pyqtSignal(str)
     cancelled = pyqtSignal(str)
@@ -26,16 +53,86 @@ class _HfDownloadWorker(QThread):
 
     def run(self) -> None:
         try:
+            operation = self._config.get("operation")
+            if operation == "missing_assets":
+                if download_dataset_missing_inputs_from_hf is None:
+                    raise RuntimeError(
+                        "Downloading all missing Hugging Face inputs requires the "
+                        "newer local OpenSportsLib checkout."
+                    )
+                missing_kwargs = {
+                    "token": self._config.get("token"),
+                    "progress_cb": self.progress.emit,
+                    "is_cancelled": self.isInterruptionRequested,
+                }
+                if _supports_keyword(
+                    download_dataset_missing_inputs_from_hf, "byte_progress_cb"
+                ):
+                    missing_kwargs["byte_progress_cb"] = self.byteProgress.emit
+                result = download_dataset_missing_inputs_from_hf(
+                    self._config.get("dataset_json_path", ""),
+                    **missing_kwargs,
+                )
+                result["project_generation"] = int(
+                    self._config.get("project_generation", -1)
+                )
+                self.completed.emit(result)
+                return
+            if operation == "assets":
+                if download_dataset_sample_inputs_from_hf is None:
+                    raise RuntimeError(
+                        "Selective Hugging Face downloads require the newer local "
+                        "OpenSportsLib checkout."
+                    )
+                selective_kwargs = {
+                    "input_path": self._config.get("input_path") or None,
+                    "overwrite": bool(self._config.get("overwrite", False)),
+                    "token": self._config.get("token"),
+                    "progress_cb": self.progress.emit,
+                    "is_cancelled": self.isInterruptionRequested,
+                }
+                if _supports_keyword(
+                    download_dataset_sample_inputs_from_hf, "byte_progress_cb"
+                ):
+                    selective_kwargs["byte_progress_cb"] = self.byteProgress.emit
+                result = download_dataset_sample_inputs_from_hf(
+                    self._config.get("dataset_json_path", ""),
+                    self._config.get("sample_id", ""),
+                    **selective_kwargs,
+                )
+                result["project_generation"] = int(
+                    self._config.get("project_generation", -1)
+                )
+                self.completed.emit(result)
+                return
+            download_kwargs = {
+                "download_format": str(
+                    self._config.get("download_format", "parquet") or "parquet"
+                ),
+                "dry_run": bool(self._config.get("dry_run", False)),
+                "token": self._config.get("token"),
+                "progress_cb": self.progress.emit,
+                "is_cancelled": self.isInterruptionRequested,
+            }
+            if download_dataset_sample_inputs_from_hf is not None:
+                download_kwargs["annotations_only"] = bool(
+                    self._config.get("annotations_only", False)
+                )
+            elif self._config.get("annotations_only", False):
+                raise RuntimeError(
+                    "JSON-only Hugging Face downloads require the newer local "
+                    "OpenSportsLib checkout."
+                )
+            if _supports_keyword(
+                download_dataset_splits_from_hf, "byte_progress_cb"
+            ):
+                download_kwargs["byte_progress_cb"] = self.byteProgress.emit
             results = download_dataset_splits_from_hf(
                 self._config.get("repo_id", ""),
                 self._config.get("revision", "main"),
                 list(self._config.get("splits", []) or []),
                 self._config.get("output_dir", ""),
-                download_format=str(self._config.get("download_format", "parquet") or "parquet"),
-                dry_run=bool(self._config.get("dry_run", False)),
-                token=self._config.get("token"),
-                progress_cb=self.progress.emit,
-                is_cancelled=self.isInterruptionRequested,
+                **download_kwargs,
             )
             self.completed.emit(
                 {
@@ -157,6 +254,7 @@ class _HfModelWorker(QThread):
 class HfTransferController(QObject):
     downloadStarted = pyqtSignal(str)
     downloadProgress = pyqtSignal(str)
+    downloadBytesProgress = pyqtSignal(str, object, object)
     downloadCompleted = pyqtSignal(dict)
     downloadFailed = pyqtSignal(str)
     downloadCancelled = pyqtSignal(str)
@@ -179,14 +277,38 @@ class HfTransferController(QObject):
         self._upload_worker: _HfUploadWorker | None = None
         self._model_worker: _HfModelWorker | None = None
 
+    @staticmethod
+    def supports_selective_downloads() -> bool:
+        return download_dataset_sample_inputs_from_hf is not None
+
+    @staticmethod
+    def supports_safe_parquet_uploads() -> bool:
+        return bool(
+            find_missing_dataset_inputs is not None
+            and download_dataset_missing_inputs_from_hf is not None
+        )
+
+    @staticmethod
+    def find_missing_inputs(dataset_json_path: str) -> list[dict[str, str]]:
+        if find_missing_dataset_inputs is None:
+            raise RuntimeError(
+                "Safe Parquet upload preflight requires the newer local "
+                "OpenSportsLib checkout."
+            )
+        return list(find_missing_dataset_inputs(dataset_json_path))
+
+    def is_download_running(self) -> bool:
+        return bool(self._download_worker and self._download_worker.isRunning())
+
     def start_download(self, config: dict[str, Any]) -> bool:
-        if self._download_worker and self._download_worker.isRunning():
+        if self.is_download_running():
             self.downloadFailed.emit("A Hugging Face download is already running.")
             return False
 
         worker = _HfDownloadWorker(config)
         self._download_worker = worker
         worker.progress.connect(self.downloadProgress)
+        worker.byteProgress.connect(self.downloadBytesProgress)
         worker.completed.connect(self.downloadCompleted)
         worker.failed.connect(self.downloadFailed)
         worker.cancelled.connect(self.downloadCancelled)
@@ -195,6 +317,16 @@ class HfTransferController(QObject):
         self.downloadStarted.emit("Starting Hugging Face download...")
         worker.start()
         return True
+
+    def start_asset_download(self, config: dict[str, Any]) -> bool:
+        payload = dict(config or {})
+        payload["operation"] = "assets"
+        return self.start_download(payload)
+
+    def start_missing_inputs_download(self, config: dict[str, Any]) -> bool:
+        payload = dict(config or {})
+        payload["operation"] = "missing_assets"
+        return self.start_download(payload)
 
     def start_upload(self, config: dict[str, Any]) -> bool:
         if self._upload_worker and self._upload_worker.isRunning():

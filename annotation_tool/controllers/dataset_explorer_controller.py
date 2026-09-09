@@ -237,6 +237,7 @@ class DatasetExplorerController(QObject):
     mediaRouteRequested = pyqtSignal(object, str, bool)
     mediaSelectionRouteRequested = pyqtSignal(object, str)
     mediaFocusRequested = pyqtSignal(str)
+    mediaRefreshRequested = pyqtSignal(str)
     mediaStopRequested = pyqtSignal()
     mediaResetRequested = pyqtSignal()
     statusMessageRequested = pyqtSignal(str, str, int)
@@ -257,6 +258,7 @@ class DatasetExplorerController(QObject):
     clearWorkspaceRequested = pyqtSignal()
     removeItemMutationRequested = pyqtSignal(str, str)
     ballH5AssociationMutationRequested = pyqtSignal(str, str, str)
+    hfAssetDownloadRequested = pyqtSignal(dict)
     settingsChanged = pyqtSignal(object)
     projectGenerationChanged = pyqtSignal(int)
 
@@ -433,6 +435,8 @@ class DatasetExplorerController(QObject):
             self.panel.associateBallH5Requested.connect(self.handle_associate_ball_h5)
         if hasattr(self.panel, "clearBallH5Requested"):
             self.panel.clearBallH5Requested.connect(self.handle_clear_ball_h5_association)
+        if hasattr(self.panel, "downloadFromHfRequested"):
+            self.panel.downloadFromHfRequested.connect(self.handle_hf_asset_download)
         self.panel.filter_combo.currentIndexChanged.connect(self.handle_filter_change)
         if hasattr(self.panel, "confidenceSortToggled"):
             self.panel.confidenceSortToggled.connect(self._on_confidence_sort_toggled)
@@ -484,6 +488,8 @@ class DatasetExplorerController(QObject):
             self.panel.clear_raw_json_text()
         if hasattr(self.panel, "tree") and self.panel.tree is not None:
             self.panel.tree.setCurrentIndex(QModelIndex())
+        if hasattr(self.panel, "set_hf_source_available"):
+            self.panel.set_hf_source_available(False)
 
         if full_reset:
             self.dataset_json = {}
@@ -994,6 +1000,8 @@ class DatasetExplorerController(QObject):
         self.json_loaded = True
         self.is_data_dirty = False
         self._json_preview_dirty = True
+        if hasattr(self.panel, "set_hf_source_available"):
+            self.panel.set_hf_source_available(bool(normalized.get("hf_repo_id")))
 
         self.workspaceViewRequested.emit()
         self._refresh_header_panel()
@@ -2566,6 +2574,112 @@ class DatasetExplorerController(QObject):
             return
 
         self.addInputMutationRequested.emit(str(sample_id), new_paths)
+
+    def handle_hf_asset_download(self, index: QModelIndex):
+        if not self.json_loaded or not self.current_json_path or not index.isValid():
+            return
+        action_idx = self._get_action_index(index)
+        sample_id = str(
+            action_idx.data(getattr(self.tree_model, "DataIdRole", 0x0101)) or ""
+        )
+        sample = self.get_sample(sample_id)
+        if not sample_id or not isinstance(sample, dict):
+            return
+
+        source = {
+            "repo_id": str(self.dataset_json.get("hf_repo_id") or "").strip(),
+            "format": str(self.dataset_json.get("hf_format") or "").strip(),
+            "commit": str(self.dataset_json.get("hf_commit") or "").strip(),
+        }
+        if not all(source.values()):
+            QMessageBox.information(
+                self.panel,
+                "Selective Download Unavailable",
+                "This dataset does not contain pinned Hugging Face format and commit "
+                "metadata. Download its JSON again with the newer local OpenSportsLib checkout.",
+            )
+            return
+
+        selected_inputs = [
+            item
+            for item in sample.get("inputs", [])
+            if isinstance(item, dict) and item.get("path")
+        ]
+        raw_input_path = None
+        if index.parent().isValid():
+            selected_resolved = str(
+                index.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
+            )
+            selected_key = self._fs_path_key(selected_resolved)
+            selected_inputs = [
+                item
+                for item in selected_inputs
+                if self._fs_path_key(self._resolve_media_path(item.get("path"))) == selected_key
+            ]
+            if not selected_inputs:
+                return
+            raw_input_path = str(selected_inputs[0].get("path") or "")
+
+        requested_paths: list[str] = []
+        seen: set[str] = set()
+        for input_item in selected_inputs:
+            for key in ("path", "ball_path"):
+                raw_path = str(input_item.get(key) or "").strip()
+                normalized = raw_path.replace("\\", "/")
+                if raw_path and normalized not in seen:
+                    seen.add(normalized)
+                    requested_paths.append(raw_path)
+
+        existing_paths = [
+            path
+            for path in requested_paths
+            if os.path.isfile(str(self._resolve_media_path(path) or ""))
+        ]
+        requested_local_paths = []
+        for path in requested_paths:
+            resolved_path = self._resolve_media_path(path)
+            if resolved_path:
+                requested_local_paths.append(str(resolved_path))
+        self.hfAssetDownloadRequested.emit(
+            {
+                "dataset_json_path": str(self.current_json_path),
+                "sample_id": sample_id,
+                "input_path": raw_input_path,
+                "requested_paths": requested_paths,
+                "requested_local_paths": requested_local_paths,
+                "existing_paths": existing_paths,
+                "project_generation": self.project_generation,
+            }
+        )
+
+    def refresh_media_after_hf_download(self, payload: dict) -> None:
+        if int(payload.get("project_generation", -1)) != self.project_generation:
+            return
+        if str(payload.get("sample_id") or "") != str(self.current_selected_sample_id or ""):
+            return
+        current = self.panel.tree.currentIndex()
+        if not current.isValid():
+            return
+        expected_input = str(payload.get("input_path") or "")
+        if expected_input:
+            if not current.parent().isValid():
+                return
+            current_path = str(
+                current.data(getattr(self.tree_model, "FilePathRole", 0x0100)) or ""
+            )
+            if self._fs_path_key(current_path) != self._fs_path_key(
+                self._resolve_media_path(expected_input)
+            ):
+                return
+        elif current.parent().isValid():
+            return
+        refresh_path = (
+            str(self._resolve_media_path(expected_input) or "")
+            if expected_input
+            else str(self._last_routed_media_path or "")
+        )
+        if refresh_path:
+            self.mediaRefreshRequested.emit(refresh_path)
 
     def handle_clear_workspace(self):
         if not self.json_loaded:

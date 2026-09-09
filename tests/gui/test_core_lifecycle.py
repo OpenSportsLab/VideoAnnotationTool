@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QModelIndex, Qt
+from PyQt6.QtCore import QModelIndex, QSignalBlocker, Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QDialogButtonBox, QMessageBox
 
@@ -1190,6 +1190,167 @@ def test_hf_download_dialog_checked_splits_produce_payload(window, tmp_path):
 
 
 @pytest.mark.gui
+def test_hf_download_dialog_annotations_only_disables_dry_run(window, tmp_path):
+    from ui.dialogs import HfDownloadDialog
+
+    dialog = HfDownloadDialog(
+        settings=None,
+        parent=window,
+        supports_annotations_only=True,
+    )
+    dialog.repo_id_edit.setText("OpenSportsLab/repo")
+    dialog.revision_combo.setEditText("main")
+    dialog.output_dir_edit.setText(str(tmp_path))
+    dialog._on_splits_fetched({"format": "parquet", "splits": ["test"]})
+    dialog.dry_run_checkbox.setChecked(True)
+
+    dialog.annotations_only_checkbox.setChecked(True)
+
+    assert dialog.dry_run_checkbox.isChecked() is False
+    assert dialog.dry_run_checkbox.isEnabled() is False
+    assert dialog.get_payload()["annotations_only"] is True
+    dialog.close()
+
+
+@pytest.mark.gui
+def test_explorer_builds_selective_input_request_with_companion(window, tmp_path):
+    clip_path = tmp_path / "clips" / "one.mp4"
+    ball_path = tmp_path / "clips" / "ball.h5"
+    clip_path.parent.mkdir(parents=True)
+    clip_path.write_bytes(b"clip")
+    ball_path.write_bytes(b"ball")
+    json_path = tmp_path / "test.json"
+    dataset = {
+        "version": "2.0",
+        "hf_repo_id": "OpenSportsLab/repo",
+        "hf_branch": "main",
+        "hf_split": "test",
+        "hf_format": "parquet",
+        "hf_commit": "abc123",
+        "data": [
+            {
+                "id": "sample-1",
+                "inputs": [
+                    {
+                        "path": "clips/one.mp4",
+                        "ball_path": "clips/ball.h5",
+                        "type": "video",
+                    }
+                ],
+            }
+        ],
+    }
+    json_path.write_text(json.dumps(dataset), encoding="utf-8")
+    controller = window.dataset_explorer_controller
+    assert controller.load_project(dataset, str(json_path)) is True
+    sample_index = controller.tree_model.index(0, 0)
+    input_index = controller.tree_model.index(0, 0, sample_index)
+    requests = []
+    controller.hfAssetDownloadRequested.disconnect(window._start_hf_asset_download)
+    controller.hfAssetDownloadRequested.connect(requests.append)
+
+    controller.handle_hf_asset_download(input_index)
+
+    assert window.dataset_explorer_panel._hf_source_available is True
+    assert requests[0]["sample_id"] == "sample-1"
+    assert requests[0]["input_path"] == "clips/one.mp4"
+    assert requests[0]["requested_paths"] == ["clips/one.mp4", "clips/ball.h5"]
+    assert requests[0]["requested_local_paths"] == [str(clip_path), str(ball_path)]
+    assert requests[0]["existing_paths"] == ["clips/one.mp4", "clips/ball.h5"]
+
+    refreshed = []
+    controller.mediaRefreshRequested.connect(refreshed.append)
+    blocker = QSignalBlocker(controller.panel.tree.selectionModel())
+    controller.panel.tree.setCurrentIndex(input_index)
+    del blocker
+    controller.current_selected_sample_id = "sample-1"
+    controller.refresh_media_after_hf_download(
+        {
+            "sample_id": "sample-1",
+            "input_path": "clips/one.mp4",
+            "project_generation": controller.project_generation,
+        }
+    )
+    assert refreshed == [str(clip_path)]
+
+    controller.refresh_media_after_hf_download(
+        {
+            "sample_id": "sample-1",
+            "input_path": "clips/one.mp4",
+            "project_generation": controller.project_generation - 1,
+        }
+    )
+    assert refreshed == [str(clip_path)]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    ("choice", "expected_overwrite"),
+    [("Replace Existing", True), ("Keep Existing", False)],
+)
+def test_selective_download_prompt_applies_only_to_requested_files(
+    window, monkeypatch, choice, expected_overwrite
+):
+    import main_window as main_window_module
+
+    class _FakeMessageBox:
+        Icon = QMessageBox.Icon
+        ButtonRole = QMessageBox.ButtonRole
+        StandardButton = QMessageBox.StandardButton
+
+        def __init__(self, parent=None):
+            self._buttons = {}
+
+        def setIcon(self, _icon):
+            pass
+
+        def setWindowTitle(self, _title):
+            pass
+
+        def setText(self, _text):
+            pass
+
+        def setInformativeText(self, _text):
+            pass
+
+        def addButton(self, label, _role=None):
+            button = object()
+            self._buttons[str(label)] = button
+            return button
+
+        def exec(self):
+            return 0
+
+        def clickedButton(self):
+            return self._buttons[choice]
+
+    started = []
+    monkeypatch.setattr(main_window_module, "QMessageBox", _FakeMessageBox)
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "supports_selective_downloads",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "start_asset_download",
+        lambda payload: started.append(payload) or True,
+    )
+
+    assert window._start_hf_asset_download(
+        {
+            "dataset_json_path": "/tmp/test.json",
+            "sample_id": "sample-1",
+            "requested_paths": ["requested.mp4"],
+            "existing_paths": ["requested.mp4"],
+        }
+    ) is True
+
+    assert started[0]["overwrite"] is expected_overwrite
+    assert "existing_paths" not in started[0]
+
+
+@pytest.mark.gui
 def test_hf_upload_dialog_prefill_prefers_json_metadata_over_settings(window, tmp_path):
     from ui.dialogs import HfUploadDialog
 
@@ -1279,6 +1440,131 @@ def test_hf_upload_dialog_greys_out_shard_size_when_json_selected(window, tmp_pa
 
 
 @pytest.mark.gui
+def test_parquet_upload_hydrates_missing_inputs_then_revalidates_and_resumes(
+    window, monkeypatch, tmp_path
+):
+    import main_window as main_window_module
+
+    json_path = tmp_path / "test.json"
+    json_path.write_text("{}", encoding="utf-8")
+    missing_path = tmp_path / "clips" / "missing.mp4"
+    missing = [
+        {
+            "sample_id": "sample-1",
+            "path": "clips/missing.mp4",
+            "local_path": str(missing_path),
+            "role": "primary",
+        }
+    ]
+    payload = {
+        "upload_as_json": False,
+        "repo_id": "OpenSportsLab/destination",
+        "json_path": str(json_path),
+        "revision": "dev",
+        "split": "test",
+        "token": "hf_test",
+    }
+    missing_state = {"items": missing}
+    hydration_calls = []
+    upload_calls = []
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "supports_safe_parquet_uploads",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "find_missing_inputs",
+        lambda _path: list(missing_state["items"]),
+    )
+    monkeypatch.setattr(window, "_confirm_download_missing_inputs", lambda _items: True)
+    monkeypatch.setattr(
+        main_window_module,
+        "read_hf_source_metadata_from_dataset",
+        lambda _dataset: {
+            "repo_id": "OpenSportsLab/source",
+            "split": "test",
+            "format": "parquet",
+            "commit": "abc123",
+        },
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "start_missing_inputs_download",
+        lambda config: hydration_calls.append(config) or True,
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "start_upload",
+        lambda config: upload_calls.append(config) or True,
+    )
+
+    assert window._start_hf_upload_with_preflight(payload) is True
+
+    assert upload_calls == []
+    assert hydration_calls[0]["requested_local_paths"] == [str(missing_path)]
+    assert window._pending_hf_upload_after_hydration == payload
+
+    missing_state["items"] = []
+    window._on_hf_download_completed(
+        {
+            "operation": "missing_assets",
+            "project_generation": window.dataset_explorer_controller.project_generation,
+            "remaining_missing_count": 0,
+        }
+    )
+
+    assert upload_calls == [payload]
+    assert window._pending_hf_upload_after_hydration is None
+
+
+@pytest.mark.gui
+def test_parquet_upload_stays_blocked_when_missing_inputs_cannot_be_hydrated(
+    window, monkeypatch, tmp_path
+):
+    warnings = []
+    json_path = tmp_path / "test.json"
+    json_path.write_text("{}", encoding="utf-8")
+    missing = [
+        {
+            "sample_id": "sample-1",
+            "path": "clips/missing.mp4",
+            "local_path": str(tmp_path / "clips" / "missing.mp4"),
+            "role": "primary",
+        }
+    ]
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "supports_safe_parquet_uploads",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "find_missing_inputs",
+        lambda _path: missing,
+    )
+    monkeypatch.setattr(
+        "main_window.QMessageBox.warning",
+        lambda *args: warnings.append(args),
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "start_upload",
+        lambda _config: pytest.fail("Incomplete datasets must not be uploaded"),
+    )
+
+    assert window._start_hf_upload_with_preflight(
+        {
+            "upload_as_json": False,
+            "json_path": str(json_path),
+        }
+    ) is False
+
+    assert warnings
+    assert "pinned Hugging Face provenance" in warnings[0][-1]
+
+
+@pytest.mark.gui
 def test_data_menu_actions_dispatch_hf_download_and_upload(window, monkeypatch, tmp_path):
     opened_json = tmp_path / "opened_dataset.json"
     opened_json.write_text("{}", encoding="utf-8")
@@ -1323,26 +1609,247 @@ def test_data_menu_actions_dispatch_hf_download_and_upload(window, monkeypatch, 
 
 
 @pytest.mark.gui
-def test_hf_cancel_dispatches_to_download_controller(window, monkeypatch):
-    calls = {"download": 0}
-    window._active_hf_transfer_kind = "download"
-    window._hf_busy_dialog = type("_FakeDialog", (), {"set_cancel_enabled": lambda self, enabled: None})()
-
+def test_hf_download_uses_non_modal_status_bar_progress(window, monkeypatch, qtbot):
+    cancel_calls = []
     monkeypatch.setattr(
         window.hf_transfer_controller,
         "cancel_download",
-        lambda: calls.__setitem__("download", calls["download"] + 1) or True,
+        lambda: cancel_calls.append(True) or True,
+    )
+    window._last_hf_download_payload = {
+        "splits": ["train", "test"],
+        "operation": "dataset",
+    }
+
+    window._on_hf_download_started("Starting Hugging Face download...")
+    qtbot.wait(20)
+
+    widget = window._hf_download_status_widget
+    assert widget is not None
+    assert window._hf_busy_dialog is None
+    assert widget.parent() is window.statusBar()
+    assert widget.isVisible() is True
+    assert window.isEnabled() is True
+    assert widget.progress_bar.minimum() == 0
+    assert widget.progress_bar.maximum() == 0
+    assert window.dataset_explorer_panel._hf_download_running is True
+
+    window._on_hf_download_progress(
+        "[1/2] train: [2/4] Downloading clips/example.mp4"
     )
 
-    window._on_hf_transfer_cancel_requested()
-    assert calls["download"] == 1
-    window._hf_busy_dialog = None
+    assert "clips/example.mp4" in widget.label.text()
+    assert widget.progress_bar.maximum() == 1000
+    assert widget.progress_bar.value() == 250
+
+    window._on_hf_download_bytes_progress(
+        "test/shards/large.tar", 384 * 1024**2, 2 * 1024**3
+    )
+
+    assert "large.tar" in widget.label.text()
+    assert "384.0 MB / 2.0 GB" in widget.label.text()
+    assert widget.progress_bar.maximum() == 1000
+    assert widget.progress_bar.value() == 188
+
+    widget.cancel_button.click()
+    assert cancel_calls == [True]
+    assert widget.cancel_button.isEnabled() is False
+    assert widget.cancel_button.text() == "Cancelling..."
+
+    window._close_hf_download_status()
+    assert window._hf_download_status_widget is None
+
+
+@pytest.mark.gui
+def test_selective_download_lifecycle_updates_media_availability_context(
+    window, monkeypatch
+):
+    context_calls = []
+    window.dataset_explorer_controller.dataset_json = {
+        "hf_repo_id": "OpenSportsLab/repo"
+    }
+    window._last_hf_download_payload = {
+        "operation": "assets",
+        "requested_local_paths": ["/datasets/clips/one.mp4"],
+    }
+    monkeypatch.setattr(
+        window.media_controller,
+        "set_media_availability_context",
+        lambda **kwargs: context_calls.append(kwargs),
+    )
+    monkeypatch.setattr("main_window.QMessageBox.information", lambda *_args: None)
+
+    window._on_hf_download_started("Starting selective download...")
+
+    assert context_calls[-1] == {
+        "hf_source_available": True,
+        "downloading_paths": ("/datasets/clips/one.mp4",),
+    }
+
+    window._on_hf_download_cancelled("Cancelled")
+
+    assert context_calls[-1] == {
+        "hf_source_available": True,
+        "downloading_paths": (),
+    }
+
+
+@pytest.mark.gui
+def test_selective_context_download_action_is_disabled_while_download_runs(
+    window, monkeypatch, qtbot
+):
+    import ui.dataset_explorer_panel as explorer_panel_module
+
+    panel = window.dataset_explorer_panel
+    panel.tree_model.set_entries(
+        [
+            {
+                "id": "sample-1",
+                "data_id": "sample-1",
+                "media_sources": [
+                    {"path": "clips/one.mp4", "type": "video"}
+                ],
+            }
+        ]
+    )
+    panel.set_hf_source_available(True)
+    panel.set_hf_download_running(True)
+    sample_index = panel.tree_model.index(0, 0)
+    panel.tree.expand(sample_index)
+    qtbot.wait(20)
+    captured_actions = []
+
+    def _capture_menu(menu, *_args):
+        captured_actions.extend(
+            (action.text(), action.isEnabled()) for action in menu.actions()
+        )
+        return None
+
+    monkeypatch.setattr(explorer_panel_module.QMenu, "exec", _capture_menu)
+
+    panel._show_context_menu(panel.tree.visualRect(sample_index).center())
+    assert (
+        "Download Sample Inputs from Hugging Face...",
+        False,
+    ) in captured_actions
+
+    captured_actions.clear()
+    input_index = panel.tree_model.index(0, 0, sample_index)
+    panel._show_context_menu(panel.tree.visualRect(input_index).center())
+    assert ("Download Input from Hugging Face...", False) in captured_actions
+
+    captured_actions.clear()
+    panel.set_hf_download_running(False)
+    panel._show_context_menu(panel.tree.visualRect(input_index).center())
+    assert ("Download Input from Hugging Face...", True) in captured_actions
+
+
+class _CloseEventRecorder:
+    def __init__(self):
+        self.accepted = False
+        self.ignored = False
+
+    def accept(self):
+        self.accepted = True
+
+    def ignore(self):
+        self.ignored = True
+
+
+@pytest.mark.gui
+def test_quit_during_download_keep_open_choice_ignores_close(window, monkeypatch):
+    event = _CloseEventRecorder()
+    monkeypatch.setattr(
+        window.hf_transfer_controller, "is_download_running", lambda: True
+    )
+    monkeypatch.setattr(window, "_confirm_stop_download_and_quit", lambda: False)
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "check_and_close_current_project",
+        lambda: pytest.fail("Project closing must not start when keeping app open"),
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "cancel_download",
+        lambda: pytest.fail("Download must continue when keeping app open"),
+    )
+
+    type(window).closeEvent(window, event)
+
+    assert event.ignored is True
+    assert event.accepted is False
+
+
+@pytest.mark.gui
+def test_quit_during_download_stop_choice_cancels_then_closes(window, monkeypatch):
+    event = _CloseEventRecorder()
+    cancel_calls = []
+    monkeypatch.setattr(
+        window.hf_transfer_controller, "is_download_running", lambda: True
+    )
+    monkeypatch.setattr(window, "_confirm_stop_download_and_quit", lambda: True)
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "check_and_close_current_project",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "cancel_download",
+        lambda: cancel_calls.append(True) or True,
+    )
+    monkeypatch.setattr(window.inference_controller, "shutdown", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        window.classification_editor_controller,
+        "shutdown_background_tasks",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        window.localization_editor_controller,
+        "shutdown_background_tasks",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller, "shutdown", lambda **_kwargs: True
+    )
+
+    type(window).closeEvent(window, event)
+
+    assert cancel_calls == [True]
+    assert event.accepted is True
+    assert event.ignored is False
+
+
+@pytest.mark.gui
+def test_second_hf_download_request_does_not_replace_active_status(
+    window, monkeypatch
+):
+    active_payload = {"repo_id": "OpenSportsLab/active", "splits": ["test"]}
+    window._last_hf_download_payload = dict(active_payload)
+    window._on_hf_download_started("Downloading active dataset...")
+    active_widget = window._hf_download_status_widget
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "is_download_running",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "start_download",
+        lambda _payload: pytest.fail("A second download must not be started"),
+    )
+
+    assert window._start_hf_download({"repo_id": "OpenSportsLab/second"}) is False
+
+    assert window._hf_download_status_widget is active_widget
+    assert window._last_hf_download_payload == active_payload
+    assert "already running in the background" in window.statusBar().currentMessage()
+    window._close_hf_download_status()
 
 
 @pytest.mark.gui
 def test_hf_cancel_dispatches_to_upload_controller(window, monkeypatch):
     calls = {"upload": 0}
-    window._active_hf_transfer_kind = "upload"
     window._hf_busy_dialog = type("_FakeDialog", (), {"set_cancel_enabled": lambda self, enabled: None})()
 
     monkeypatch.setattr(
@@ -1351,7 +1858,7 @@ def test_hf_cancel_dispatches_to_upload_controller(window, monkeypatch):
         lambda: calls.__setitem__("upload", calls["upload"] + 1) or True,
     )
 
-    window._on_hf_transfer_cancel_requested()
+    window._on_hf_upload_cancel_requested()
     assert calls["upload"] == 1
     window._hf_busy_dialog = None
 
