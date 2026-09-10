@@ -22,6 +22,8 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
 - `main_window.py`
   - Composition root and signal wiring.
   - Owns docks/tabs layout, menu actions, shortcuts, and shell-level feedback.
+  - Uses a non-native `QMenuBar` so application menus remain inside the window
+    on macOS as well as other platforms.
   - Edit-menu actions are the single owners of the platform-standard undo and
     redo shortcuts; do not register parallel window shortcuts for them.
 - `controllers/`

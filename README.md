@@ -50,6 +50,8 @@ From the repository root, launch the app with:
 python annotation_tool/main.py
 ```
 A window will open where you can load your data and start working.
+The application menu bar is displayed inside the window on every platform,
+including macOS.
 
 For the temporal JSON contract and multi-input UTC workflow, see the
 [OSL JSON format](https://opensportslab.github.io/VideoAnnotationTool/OSL/) and

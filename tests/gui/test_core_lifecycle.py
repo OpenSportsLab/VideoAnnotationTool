@@ -991,6 +991,7 @@ def test_smart_filter_is_currently_empty_for_description_and_dense(
 
 @pytest.mark.gui
 def test_menu_bar_contains_file_data_edit_view_help_menus(window):
+    assert window.menuBar().isNativeMenuBar() is False
     menu_names = [action.text().replace("&", "") for action in window.menuBar().actions()]
     assert menu_names[:5] == ["File", "Data", "Edit", "View", "Help"]
     assert hasattr(window, "action_hf_download")
