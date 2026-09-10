@@ -7,9 +7,9 @@ import os
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QModelIndex, QSignalBlocker, Qt
+from PyQt6.QtCore import QEvent, QModelIndex, QSignalBlocker, Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import QDialogButtonBox, QMessageBox
+from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QMessageBox
 
 from app_info import APP_DISPLAY_NAME, APP_VERSION
 
@@ -1730,7 +1730,8 @@ def test_hf_download_uses_transfers_dock_progress(window, monkeypatch, qtbot):
     large_items = panel.file_list.findItems(
         "train/shards/large.tar", Qt.MatchFlag.MatchExactly, 0
     )
-    assert large_items[0].text(1).startswith("Running ·")
+    assert "Running" not in large_items[0].text(1)
+    assert "384.0 MB / 2.0 GB" == large_items[0].text(1)
     assert large_items[0].text(2) == "192.0 MB/s"
 
     window._on_hf_download_file_completed(
@@ -1808,12 +1809,41 @@ def test_hf_json_ready_prompts_once_before_download_completion(
         "open_project_from_path",
         opened.append,
     )
+    monkeypatch.setattr(
+        window,
+        "_queue_missing_inputs_for_json",
+        lambda *_args, **_kwargs: pytest.fail(
+            "Unticked media must not be inspected or queued"
+        ),
+    )
 
     window._on_hf_download_json_ready("test", str(json_path))
     window._on_hf_download_json_ready("test", str(json_path))
 
     assert opened == [str(json_path)]
     assert prompts == [True]
+
+
+@pytest.mark.gui
+def test_json_first_metadata_plan_never_adds_sample_rows_when_media_is_unticked(
+    window,
+):
+    window._last_hf_download_payload = {
+        "operation": "dataset",
+        "json_first": True,
+        "queue_media": False,
+        "download_format": "json",
+        "splits": ["test"],
+    }
+    window.hf_transfer_panel.begin("Downloading JSON")
+
+    window._on_hf_download_file_plan(["test.json"])
+    window._on_hf_download_file_plan(
+        ["test/clips/one.mp4", "test/clips/two.mp4"]
+    )
+
+    assert window.hf_transfer_panel.file_list.topLevelItemCount() == 1
+    assert window.hf_transfer_panel.file_list.topLevelItem(0).text(0) == "test.json"
 
 
 @pytest.mark.gui
@@ -1839,6 +1869,8 @@ def test_hf_json_ready_can_queue_remaining_media(window, monkeypatch, tmp_path):
         "find_missing_inputs",
         lambda _path: [
             {
+                "sample_id": "sample-1",
+                "input_path": "clips/missing.mp4",
                 "path": "clips/missing.mp4",
                 "local_path": str(missing_path),
             }
@@ -1846,18 +1878,71 @@ def test_hf_json_ready_can_queue_remaining_media(window, monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         window.hf_transfer_controller,
-        "queue_missing_inputs_download",
+        "queue_download",
         lambda payload: queued.append(payload) or True,
     )
 
     window._on_hf_download_json_ready("test", str(json_path))
 
     assert queued[0]["dataset_json_path"] == str(json_path)
+    assert queued[0]["operation"] == "assets"
+    assert queued[0]["sample_id"] == "sample-1"
     assert queued[0]["requested_local_paths"] == [str(missing_path)]
     assert queued[0]["preserve_transfer_files"] is True
     assert queued[0]["use_xet"] is True
     assert queued[0]["token"] == "hf_test"
     assert window.hf_transfer_panel.file_list.topLevelItem(0).text(1) == "Queued"
+
+
+@pytest.mark.gui
+def test_missing_media_jobs_follow_list_order_and_activate_first_row(
+    window, monkeypatch, tmp_path
+):
+    json_path = tmp_path / "test.json"
+    json_path.write_text("{}", encoding="utf-8")
+    missing = [
+        {
+            "sample_id": sample_id,
+            "input_path": path,
+            "path": path,
+            "local_path": str(tmp_path / path),
+        }
+        for sample_id, path in (
+            ("sample-1", "clips/one.mp4"),
+            ("sample-2", "clips/two.mp4"),
+            ("sample-3", "clips/three.mp4"),
+        )
+    ]
+    jobs = []
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "find_missing_inputs",
+        lambda _path: missing,
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller,
+        "queue_download",
+        lambda payload: jobs.append(payload) or True,
+    )
+
+    assert window._queue_missing_inputs_for_json(
+        str(json_path), show_empty_message=False
+    ) is True
+    assert [job["sample_id"] for job in jobs] == [
+        "sample-1",
+        "sample-2",
+        "sample-3",
+    ]
+    assert [
+        window.hf_transfer_panel.file_list.topLevelItem(row).text(0)
+        for row in range(3)
+    ] == ["clips/one.mp4", "clips/two.mp4", "clips/three.mp4"]
+
+    window._on_hf_download_started("Starting first input", jobs[0])
+
+    assert window.hf_transfer_panel.file_list.topLevelItem(0).text(1) == ""
+    assert window.hf_transfer_panel.file_list.topLevelItem(1).text(1) == "Queued"
+    assert window.hf_transfer_panel.file_list.topLevelItem(2).text(1) == "Queued"
 
 
 @pytest.mark.gui
@@ -1905,6 +1990,43 @@ def test_hf_transfer_idle_state_shows_empty_progress_controls(window):
 
 
 @pytest.mark.gui
+def test_clear_removes_waiting_jobs_and_next_sample_is_only_row(window, tmp_path):
+    panel = window.hf_transfer_panel
+    old_jobs = [
+        {
+            "operation": "assets",
+            "sample_id": sample_id,
+            "requested_paths": [path],
+            "requested_local_paths": [str(tmp_path / path)],
+        }
+        for sample_id, path in (
+            ("old-1", "clips/old-1.mp4"),
+            ("old-2", "clips/old-2.mp4"),
+        )
+    ]
+    window.hf_transfer_controller._queued_asset_downloads.extend(old_jobs)
+    panel.plan_files(["clips/old-1.mp4", "clips/old-2.mp4"])
+
+    window._on_hf_transfer_clear_requested()
+
+    assert window.hf_transfer_controller.queued_download_count() == 0
+    assert panel.file_list.topLevelItemCount() == 0
+
+    new_job = {
+        "operation": "assets",
+        "sample_id": "new",
+        "requested_paths": ["clips/new.mp4"],
+        "requested_local_paths": [str(tmp_path / "clips/new.mp4")],
+        "preserve_transfer_files": True,
+    }
+    window._on_hf_download_started("Starting new sample", new_job)
+
+    assert panel.file_list.topLevelItemCount() == 1
+    assert panel.file_list.topLevelItem(0).text(0) == "clips/new.mp4"
+    assert panel.file_list.topLevelItem(0).text(1) == ""
+
+
+@pytest.mark.gui
 def test_hf_transfer_panel_counts_repeated_files_in_separate_queue_items(window):
     panel = window.hf_transfer_panel
     panel.begin("Starting first item...", operation="Selective downloads")
@@ -1942,7 +2064,65 @@ def test_hf_transfer_panel_reuses_preplanned_queued_rows(window):
     assert panel.overall_label.text() == "Files: 1 / 3"
     assert panel.file_list.findItems(
         "clips/one.mp4", Qt.MatchFlag.MatchExactly, 0
-    )[0].text(1).startswith("Running ·")
+    )[0].text(1) == "5 B / 10 B"
+
+
+@pytest.mark.gui
+def test_queued_file_that_already_exists_is_shown_completed(window, tmp_path):
+    existing = tmp_path / "clips" / "existing.mp4"
+    existing.parent.mkdir()
+    existing.write_bytes(b"video")
+
+    window._on_hf_download_queued(
+        {
+            "operation": "assets",
+            "requested_paths": ["clips/existing.mp4"],
+            "requested_local_paths": [str(existing)],
+        },
+        1,
+    )
+
+    item = window.hf_transfer_panel.file_list.topLevelItem(0)
+    assert item.text(0) == "clips/existing.mp4"
+    assert item.text(1) == "Completed"
+
+
+@pytest.mark.gui
+def test_opportunistically_downloaded_queued_file_is_marked_completed(
+    window, monkeypatch
+):
+    panel = window.hf_transfer_panel
+    panel.begin("Downloading first input", operation="Selective media download")
+    panel.plan_files(["clips/one.mp4", "clips/two.mp4"])
+    panel.set_files_active(["clips/one.mp4"])
+    window.hf_transfer_controller._queued_asset_downloads.append(
+        {
+            "operation": "assets",
+            "sample_id": "sample-2",
+            "requested_paths": ["clips/two.mp4"],
+        }
+    )
+    window._last_hf_download_payload = {
+        "operation": "assets",
+        "sample_id": "sample-1",
+    }
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "refresh_media_after_hf_download",
+        lambda _payload: None,
+    )
+
+    window._on_hf_asset_download_completed(
+        {
+            "operation": "assets",
+            "sample_id": "sample-1",
+            "requested_downloaded_paths": ["clips/one.mp4"],
+            "opportunistic_downloaded_paths": ["clips/two.mp4"],
+        }
+    )
+
+    assert panel.file_list.topLevelItem(0).text(1) == "Completed"
+    assert panel.file_list.topLevelItem(1).text(1) == "Completed"
 
 
 @pytest.mark.gui
@@ -2127,6 +2307,97 @@ class _CloseEventRecorder:
 
     def ignore(self):
         self.ignored = True
+
+
+@pytest.mark.gui
+def test_quit_shortcut_closes_loaded_project_without_closing_app(window, monkeypatch):
+    project_close_calls = []
+    app_close_calls = []
+    window.dataset_explorer_controller.json_loaded = True
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "close_project",
+        lambda: project_close_calls.append(True),
+    )
+    monkeypatch.setattr(window, "close", lambda: app_close_calls.append(True))
+
+    assert window.quit_shortcut.key() == QKeySequence(
+        QKeySequence.StandardKey.Quit
+    )
+    assert (
+        window.quit_shortcut.context()
+        == Qt.ShortcutContext.ApplicationShortcut
+    )
+    window.quit_shortcut.activated.emit()
+
+    assert project_close_calls == [True]
+    assert app_close_calls == []
+
+
+@pytest.mark.gui
+def test_quit_shortcut_closes_app_when_no_project_is_loaded(window, monkeypatch):
+    project_close_calls = []
+    app_close_calls = []
+    window.dataset_explorer_controller.json_loaded = False
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "close_project",
+        lambda: project_close_calls.append(True),
+    )
+    monkeypatch.setattr(window, "close", lambda: app_close_calls.append(True))
+
+    window.quit_shortcut.activated.emit()
+
+    assert project_close_calls == []
+    assert app_close_calls == [True]
+
+
+@pytest.mark.gui
+def test_native_macos_quit_event_closes_project_and_is_consumed(window, monkeypatch):
+    project_close_calls = []
+    window.dataset_explorer_controller.json_loaded = True
+
+    def _close_project():
+        project_close_calls.append(True)
+        window.dataset_explorer_controller.json_loaded = False
+
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "close_project",
+        _close_project,
+    )
+    quit_event = QEvent(QEvent.Type.Quit)
+
+    consumed = window.eventFilter(QApplication.instance(), quit_event)
+
+    assert consumed is True
+    assert project_close_calls == [True]
+    assert window.dataset_explorer_controller.json_loaded is False
+
+    second_quit_event = QEvent(QEvent.Type.Quit)
+    assert window.eventFilter(QApplication.instance(), second_quit_event) is False
+
+
+@pytest.mark.gui
+def test_native_quit_followup_after_shortcut_is_consumed_once(window, monkeypatch):
+    window.dataset_explorer_controller.json_loaded = True
+
+    def _close_project():
+        window.dataset_explorer_controller.json_loaded = False
+
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "close_project",
+        _close_project,
+    )
+
+    window.quit_shortcut.activated.emit()
+
+    assert window._suppress_next_native_quit is True
+    assert window.eventFilter(
+        QApplication.instance(), QEvent(QEvent.Type.Quit)
+    ) is True
+    assert window._suppress_next_native_quit is False
 
 
 @pytest.mark.gui

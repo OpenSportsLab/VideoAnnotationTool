@@ -49,22 +49,29 @@ The **Transfers** dock starts hidden and is also available from **View →
 Transfers**. After submission, downloads run in the background, the main annotation
 workflow remains interactive, and the dock opens below Dataset
 Explorer and shows completed files out of the expected file count, current-file
-byte progress and download speed, and a compact list with **Queued**,
-**Running**, and **Completed** states. The third column retains each file's
-whole-transfer average speed.
+byte progress and download speed, and a compact list with **Queued** or
+**Completed** states. An active row shows its byte count without a redundant
+“Running” label, while the third column shows its whole-transfer average speed.
 Downloads process repository files individually so each file's transferred
 bytes can be reported; Xet acceleration remains active within those downloads.
 When no download is active, the dock remains visible with empty, determinate
 progress bars and an empty table. **Stop** pauses at the next safe point without
-discarding rows or waiting jobs; **Play** resumes the FIFO. Only **Clear** removes
-the displayed history, and it does not cancel downloads. **Download Missing
+discarding rows or waiting jobs; **Play** resumes the FIFO. **Clear** removes the
+displayed history and all waiting jobs without interrupting a transfer already
+in progress. **Download Missing
 Samples** queues every absent input referenced by the open JSON. One low-level
 download runs at a time.
 
 The app asks whether to open each JSON as soon as it becomes usable. If **Queue
 sample media** was checked in the download dialog, all missing referenced inputs are appended to
 the application queue and shown as **Queued** before they run. That JSON is not
-offered a second time when the transfer finishes.
+offered a second time when the transfer finishes. When the checkbox is cleared,
+media paths are neither discovered for display nor added to the queue.
+Missing inputs are enqueued as ordered per-input jobs, preserving their order in
+the JSON and in the Transfers table. When a job starts, its first row immediately
+leaves the Queued state before any lower row can become active. If an earlier
+Parquet/WebDataset job extracts a later queued input opportunistically, that row
+is marked **Completed** immediately instead of remaining **Queued**.
 
 For successful non-dry-run JSON downloads, source metadata is written into the
 JSON root:
@@ -101,6 +108,9 @@ sample/input requests join a FIFO queue and start automatically after the active
 request finishes. The Transfers dock shows how many requests are waiting and
 keeps the file history across stop/resume and across the queue. A full dataset
 download still disables selective actions.
+
+After Clear, a newly requested sample is the only waiting item. If no transfer
+is active, that request starts immediately without requiring Play.
 
 If requested files already exist, one prompt offers **Replace Existing**,
 **Keep Existing**, or **Cancel**. Replace applies only to the explicitly

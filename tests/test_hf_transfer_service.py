@@ -149,6 +149,31 @@ def test_pause_preserves_active_and_queued_downloads_until_resume(monkeypatch):
     assert [item["sample_id"] for item in controller._queued_asset_downloads] == ["two"]
 
 
+def test_clear_discards_waiting_jobs_and_next_sample_auto_starts(monkeypatch):
+    controller = HfTransferController()
+    controller._download_queue_paused = True
+    controller._queued_asset_downloads.extend(
+        [
+            {"operation": "assets", "sample_id": "old-1"},
+            {"operation": "assets", "sample_id": "old-2"},
+        ]
+    )
+
+    assert controller.clear_queued_downloads() == 2
+    assert controller.queued_download_count() == 0
+    assert controller.is_download_queue_paused() is False
+
+    started = []
+    monkeypatch.setattr(
+        controller,
+        "_start_download_now",
+        lambda payload: started.append(payload) or True,
+    )
+
+    assert controller.start_asset_download({"sample_id": "new"}) is True
+    assert [payload["sample_id"] for payload in started] == ["new"]
+
+
 def test_download_worker_routes_to_library_api(monkeypatch):
     calls = {}
 

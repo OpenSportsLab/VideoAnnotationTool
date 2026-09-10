@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import re
-from time import monotonic
-
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QHeaderView,
@@ -26,16 +23,9 @@ class HfTransferPanel(QWidget):
     playRequested = pyqtSignal()
     downloadMissingRequested = pyqtSignal()
     clearRequested = pyqtSignal()
-    _PROGRESS_PATTERN = re.compile(r"\[(\d+)/(\d+)\]")
-    _REFERENCED_FILES_PATTERN = re.compile(r"Downloading (\d+) referenced files")
-
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("HfTransferPanel")
-        self._files: dict[str, dict] = {}
-        self._active_files: dict[str, str] = {}
-        self._expected_file_count = 0
-        self._file_count_offset = 0
         self._running = False
 
         layout = QVBoxLayout(self)
@@ -136,26 +126,10 @@ class HfTransferPanel(QWidget):
         operation: str = "",
         preserve_files: bool = False,
     ) -> None:
-        if not preserve_files:
-            self._files.clear()
-            self._expected_file_count = 0
-            self.file_list.clear()
-        self._active_files = {
-            record["item"].text(0): key
-            for key, record in self._files.items()
-            if not record["complete"]
-        }
-        self._file_count_offset = sum(
-            bool(record["complete"]) for record in self._files.values()
-        )
         self.state_label.setText(
             operation or self._one_line(message) or "Hugging Face download in progress"
         )
         self._running = True
-        self._update_file_count()
-        self.current_file_label.setText("Waiting for the first file…")
-        self.current_file_label.setToolTip("")
-        self._set_fraction(self.file_progress_bar, 0)
         self.summary_label.clear()
         self.progress_widget.setVisible(True)
         self.play_stop_button.setText("Stop")
@@ -186,128 +160,69 @@ class HfTransferPanel(QWidget):
             self.play_stop_button.setEnabled(queued > 0)
 
     def set_stage_progress(self, message: str) -> None:
-        text = self._one_line(message)
-        if not text:
-            return
-        referenced_match = self._REFERENCED_FILES_PATTERN.search(text)
-        if referenced_match:
-            self._expected_file_count = max(
-                self._expected_file_count,
-                len(self._files) + int(referenced_match.group(1)),
-            )
-        matches = [
-            (int(current), int(total))
-            for current, total in self._PROGRESS_PATTERN.findall(text)
-            if int(total) > 0
-        ]
-        if matches and "download" in text.lower():
-            _, file_total = matches[-1]
-            self._expected_file_count = max(
-                self._expected_file_count,
-                self._file_count_offset + file_total,
-            )
-        self._update_file_count()
+        # Detailed queue state is rendered exclusively from controller snapshots.
+        return
 
-    def plan_files(self, filenames: list[str]) -> None:
-        for filename in filenames or []:
-            path = str(filename or "").strip()
-            if not path or path in self._active_files:
-                continue
-            record_key, _record = self._add_file_record(path, "Queued")
-            self._active_files[path] = record_key
-        self._expected_file_count = max(self._expected_file_count, len(self._files))
-        self._update_file_count()
+    def set_queue_entries(self, entries: object) -> None:
+        """Render a controller-owned queue snapshot without mutating queue state."""
+        queue_entries = [dict(entry) for entry in list(entries or [])]
+        self.file_list.clear()
+        completed = 0
+        active_entry = None
+        for entry in queue_entries:
+            path = str(entry.get("path") or "file")
+            status = str(entry.get("status") or "queued").lower()
+            downloaded = max(0, int(entry.get("downloaded_bytes") or 0))
+            total = max(0, int(entry.get("total_bytes") or 0))
+            speed = max(0.0, float(entry.get("average_speed") or 0.0))
+            speed_text = f"{_format_bytes(speed)}/s" if speed > 0 else "—"
+            if status == "completed":
+                status_text = "Completed"
+                completed += 1
+            elif status == "active":
+                status_text = (
+                    f"{_format_bytes(downloaded)} / {_format_bytes(total)}"
+                    if total
+                    else f"{_format_bytes(downloaded)} downloaded"
+                )
+                if active_entry is None:
+                    active_entry = entry
+            elif status == "failed":
+                status_text = "Failed"
+            else:
+                status_text = "Queued"
+            item = QTreeWidgetItem([path, status_text, speed_text])
+            item.setToolTip(0, path)
+            self.file_list.addTopLevelItem(item)
 
-    def set_file_progress(
-        self,
-        filename: str,
-        downloaded_bytes: int,
-        total_bytes: int,
-        *,
-        now: float | None = None,
-    ) -> None:
-        downloaded = max(0, int(downloaded_bytes or 0))
-        total = max(0, int(total_bytes or 0))
-        path = str(filename or "file")
-        timestamp = monotonic() if now is None else float(now)
-        record_key = self._pending_record_key(path)
-        record = self._files.get(record_key) if record_key is not None else None
-        if record is None:
-            record_key, record = self._add_file_record(path, "Queued")
-            self._active_files[path] = record_key
-            self._expected_file_count = max(self._expected_file_count, len(self._files))
-
-        if record["start_time"] is None:
-            record["start_time"] = timestamp
-            record["start_bytes"] = downloaded
-        elapsed = timestamp - float(record["start_time"])
-        transferred = max(0, downloaded - int(record["start_bytes"]))
-        if elapsed > 0 and transferred > 0:
-            record["speed"] = transferred / elapsed
-        record["last_bytes"] = downloaded
-
-        speed = float(record["speed"])
-        speed_text = f"{_format_bytes(speed)}/s" if speed > 0 else "—"
-        if total:
-            detail = f"{_format_bytes(downloaded)} / {_format_bytes(total)}"
-            self._set_fraction(self.file_progress_bar, downloaded / total)
-        else:
-            detail = f"{_format_bytes(downloaded)} downloaded"
-            self._set_fraction(self.file_progress_bar, 0)
-        complete = bool(total and downloaded >= total)
-        record["complete"] = complete
-        record["item"].setText(
-            1, "Completed" if complete else f"Running · {detail}"
+        total_files = len(queue_entries)
+        self.overall_label.setText(f"Files: {completed} / {total_files}")
+        self._set_count_progress(
+            self.overall_progress_bar,
+            completed,
+            max(1, total_files),
+            f"{completed} / {total_files} files",
         )
-        record["item"].setText(2, speed_text)
-        self.current_file_label.setText(f"{path}  ·  {detail}  ·  {speed_text}")
-        self.current_file_label.setToolTip(path)
-        self.file_list.scrollToItem(record["item"])
-        self._update_file_count()
-
-    def set_file_completed(self, filename: str) -> None:
-        path = str(filename or "file")
-        record_key = self._pending_record_key(path)
-        record = self._files.get(record_key) if record_key is not None else None
-        if record is None:
-            record_key, record = self._add_file_record(path, "Completed")
-            self._active_files[path] = record_key
-        record["complete"] = True
-        record["item"].setText(1, "Completed")
-        self._expected_file_count = max(self._expected_file_count, len(self._files))
-        self._update_file_count()
-
-    def _add_file_record(self, path: str, status: str) -> tuple[str, dict]:
-        item = QTreeWidgetItem([path, status, "—"])
-        item.setToolTip(0, path)
-        self.file_list.addTopLevelItem(item)
-        record = {
-            "item": item,
-            "start_time": None,
-            "start_bytes": 0,
-            "last_bytes": 0,
-            "speed": 0.0,
-            "complete": status == "Completed",
-        }
-        record_key = path
-        suffix = 2
-        while record_key in self._files:
-            record_key = f"{path}#{suffix}"
-            suffix += 1
-        self._files[record_key] = record
-        return record_key, record
-
-    def _pending_record_key(self, path: str) -> str | None:
-        record_key = self._active_files.get(path)
-        if record_key is not None:
-            return record_key
-        normalized = path.replace("\\", "/")
-        for planned_path, candidate_key in self._active_files.items():
-            planned = planned_path.replace("\\", "/")
-            if normalized.endswith(f"/{planned}"):
-                self._active_files[path] = candidate_key
-                return candidate_key
-        return None
+        if active_entry is None:
+            self.current_file_label.setText("No active download")
+            self.current_file_label.setToolTip("")
+            self._set_fraction(self.file_progress_bar, 0)
+        else:
+            path = str(active_entry.get("path") or "file")
+            downloaded = max(0, int(active_entry.get("downloaded_bytes") or 0))
+            total = max(0, int(active_entry.get("total_bytes") or 0))
+            speed = max(0.0, float(active_entry.get("average_speed") or 0.0))
+            detail = (
+                f"{_format_bytes(downloaded)} / {_format_bytes(total)}"
+                if total
+                else f"{_format_bytes(downloaded)} downloaded"
+            )
+            speed_text = f"{_format_bytes(speed)}/s" if speed > 0 else "—"
+            self.current_file_label.setText(f"{path}  ·  {detail}  ·  {speed_text}")
+            self.current_file_label.setToolTip(path)
+            self._set_fraction(
+                self.file_progress_bar, downloaded / total if total else 0
+            )
 
     def set_stopping(self) -> None:
         self.play_stop_button.setEnabled(False)
@@ -316,9 +231,6 @@ class HfTransferPanel(QWidget):
     def set_paused(self, message: str = "Downloads stopped") -> None:
         self._running = False
         self.state_label.setText(message)
-        for record in self._files.values():
-            if not record["complete"] and record["item"].text(1).startswith("Running"):
-                record["item"].setText(1, "Queued")
         self.current_file_label.setText("No active download")
         self._set_fraction(self.file_progress_bar, 0)
         self.play_stop_button.setText("Play")
@@ -338,51 +250,15 @@ class HfTransferPanel(QWidget):
         self.clear_button.setEnabled(True)
 
     def clear_summary(self) -> None:
-        self._files.clear()
-        self._active_files.clear()
-        self._expected_file_count = 0
-        self._file_count_offset = 0
-        self.file_list.clear()
+        self.set_queue_entries([])
         self.state_label.setText("No recent Hugging Face transfer")
         self.summary_label.clear()
-        self.overall_label.setText("Files: 0 / 0")
-        self._set_count_progress(self.overall_progress_bar, 0, 1, "0 / 0 files")
-        self.current_file_label.setText("No active download")
-        self._set_fraction(self.file_progress_bar, 0)
         self.progress_widget.setVisible(True)
         self.set_queue_count(0)
         self._running = False
         self.play_stop_button.setText("Play")
         self.play_stop_button.setEnabled(False)
         self.clear_button.setEnabled(True)
-
-    def clear_files(self) -> None:
-        """Clear displayed file history without changing queue/run state."""
-        self._files.clear()
-        self._active_files.clear()
-        self._expected_file_count = 0
-        self._file_count_offset = 0
-        self.file_list.clear()
-        self.summary_label.clear()
-        self.overall_label.setText("Files: 0 / 0")
-        self._set_count_progress(self.overall_progress_bar, 0, 1, "0 / 0 files")
-        self.current_file_label.setText(
-            "Waiting for the first file…" if self._running else "No active download"
-        )
-        self._set_fraction(self.file_progress_bar, 0)
-
-    def _update_file_count(self) -> None:
-        completed = sum(bool(record["complete"]) for record in self._files.values())
-        total = max(self._expected_file_count, len(self._files), 1)
-        self.overall_label.setText(
-            f"Files: {completed} / {total}" if self._files or self._expected_file_count else "Files: discovering…"
-        )
-        self._set_count_progress(
-            self.overall_progress_bar,
-            completed,
-            total,
-            f"{completed} / {total} files",
-        )
 
     @staticmethod
     def _one_line(message: str) -> str:

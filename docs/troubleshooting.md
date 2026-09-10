@@ -85,12 +85,15 @@ huggingface-cli login
   open it from **View → Transfers**, or let an active download open it below
   Dataset Explorer. It keeps
   completed-file progress separate from current-file byte progress and speed,
-  with one row per planned file and **Queued**, **Running**, or **Completed**
-  status. The speed column is the whole-file average. Byte progress works with Xet, though
+  with one row per planned file and **Queued** or **Completed** status. Active
+  rows show their byte count without a “Running” prefix, and the speed column is
+  the whole-file average. Byte progress works with Xet, though
   repository files are handled individually rather than through a concurrent
   snapshot operation. Idle and completed views keep empty determinate bars and
   the table visible. Use **Stop** to pause at the next safe point and **Play** to
-  resume without clearing the list. Only **Clear** removes displayed rows.
+  resume without clearing the list. **Clear** removes displayed rows and all
+  waiting jobs, but leaves an active transfer running. A new sample request
+  starts automatically whenever no transfer is active.
 - Sample/input download actions remain enabled during another selective
   download; new requests wait in FIFO order. They are greyed out only during a
   full dataset download. Stopping preserves queued selective requests. If

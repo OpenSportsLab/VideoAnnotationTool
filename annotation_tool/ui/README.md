@@ -20,8 +20,10 @@ Provides all QWidget classes, `.ui` bindings, and adapter surfaces for controlle
   queue count, and Play/Stop, download-missing, and Clear intents. The dock starts
   hidden like the other optional workspace docks; after it is opened or a transfer
   starts, determinate progress controls remain visible in an empty state when idle.
-  File rows use Queued, Running, and Completed states and retain whole-file
-  average speed; stopping or resuming does not discard rows.
+  File rows use Queued and Completed states; active rows show byte progress and
+  retain whole-file average speed without a redundant Running prefix. Stopping
+  or resuming does not discard rows, and queued paths already present locally
+  are reconciled to Completed.
 - `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`: right editor panels.
 
 ## Key Functions and Responsibilities

@@ -105,6 +105,10 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `start_download(...)`: execute Hugging Face dataset download in a worker thread.
   `queue_download(...)`, `pause_download_queue()`, and `resume_download_queue()`
   implement the application-owned FIFO and preserve pending jobs when stopped.
+  `clear_queued_downloads()` discards waiting jobs without interrupting the
+  active worker; a new sample auto-starts whenever that worker slot is idle.
+  JSON-first media hydration is expanded into ordered per-input jobs here rather
+  than delegated as one bulk library queue operation.
 - `start_asset_download(...)`: selectively download one sample or input from an
   opened Hugging Face-sourced JSON. Additional selective requests join a FIFO
   queue behind the active selective worker. Cancelling for application shutdown

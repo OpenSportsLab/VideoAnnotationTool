@@ -55,6 +55,11 @@ If a Hugging Face dataset download is active, closing also shows a download
 warning. **Keep App Open** leaves the transfer running; **Stop Download and
 Quit** requests cancellation and continues the normal unsaved-changes flow.
 
+`Ctrl/Cmd+Q` is deliberately two-step: while a dataset is open it runs the
+normal dataset-close flow and leaves the application open. Press it again with
+no dataset open to close the application. On macOS, the window also intercepts
+the native application Quit event so it cannot bypass this first step.
+
 ## What Is Persisted
 
 - Standard OSL fields such as `labels`, `events`, `captions`,
