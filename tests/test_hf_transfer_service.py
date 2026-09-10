@@ -261,7 +261,7 @@ def test_download_worker_forwards_file_byte_progress(monkeypatch):
             "revision": "main",
             "splits": ["test"],
             "output_dir": "/tmp/output",
-            "use_xet": False,
+            "use_xet": True,
             "progress_mode": "bytes",
         }
     )

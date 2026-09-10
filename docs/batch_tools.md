@@ -20,8 +20,9 @@ The download dialog asks for:
 - **Download dataset JSON only (no media)**, off by default
 - **Use Xet for this download**, on by default for faster transfers; uncheck it
   only as a fallback when an Xet-backed download fails or times out
-- **Progress detail**: **File progress** is the fast, Xet-compatible default;
-  **Byte progress** reports exact transferred sizes through classic HTTP
+- **Progress detail**: **File progress** has the least overhead and is the
+  default; **Byte progress** reports exact transferred sizes and also supports
+  Xet
 
 It supports JSON split downloads (`<split>.json`) and Parquet/WebDataset split
 downloads (`<split>/`). Files are written under
@@ -41,20 +42,20 @@ previous Hugging Face process setting is restored. A checked option explicitly
 sets `HF_HUB_DISABLE_XET=0` during the transfer so Xet is used when available;
 an unchecked option sets it to `1`.
 
-Choosing **Byte progress** automatically unchecks **Use Xet**, because the
-custom byte callback uses the classic sequential HTTP path. Checking **Use
-Xet** again switches progress back to **File progress**.
+**Use Xet** and **Byte progress** can be selected together. OpenSportsLib adapts
+Xet's native byte updates to the application progress bar. With Xet disabled,
+the same mode obtains byte updates from the classic HTTP fallback.
 
 After submission, downloads run in the background and the main annotation
 workflow remains interactive. The **Transfers** dock opens below Dataset
 Explorer and shows both the current stage/item count and the current
 repository-relative filename with its transferred size (for example,
 `384.0 MB / 2.0 GB`) in Byte-progress mode. These are separate progress bars,
-so file-byte progress does not replace overall progress. In the default
-File-progress/Xet mode, the app prioritizes the accelerated downloader and does
-not request the custom byte callback that would force classic, sequential HTTP
-downloads; stage/item progress remains visible while the file bar may remain
-animated. Its **Cancel** button requests
+so file-byte progress does not replace overall progress. File-progress mode has
+less bookkeeping overhead and may use concurrent snapshot downloads, while
+Byte-progress mode downloads repository files individually so it can report
+each file's transferred bytes; Xet acceleration remains active within those
+downloads. Its **Cancel** button requests
 cancellation without opening a blocking progress dialog. The dock hides after a
 terminal transfer and can be reopened from **View → Transfers** to inspect the
 latest session summary or clear it. Only one full or selective dataset download

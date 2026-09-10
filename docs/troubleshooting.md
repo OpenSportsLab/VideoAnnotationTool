@@ -83,10 +83,10 @@ huggingface-cli login
   skipped and is never affected by the overwrite choice.
 - Active downloads open the **Transfers** dock below Dataset Explorer. It keeps
   overall stage/count progress separate from the current file's downloaded
-  size and byte progress. The default **File progress** mode favors the
-  accelerated Xet path over custom byte callbacks, because **Byte progress**
-  requires classic sequential HTTP. Choose Byte progress only when exact byte
-  totals matter more than transfer speed. Older
+  size and byte progress. The default **File progress** mode has the least
+  bookkeeping overhead. **Byte progress** can run with Xet and reports exact
+  transferred sizes, though repository files are handled individually rather
+  than through a concurrent snapshot operation. Older
   OpenSportsLib versions retain background downloads but show only stage/count
   progress. Use **Cancel** in the dock to stop at the next safe cancellation
   point. The dock hides when the transfer ends; reopen it from **View →

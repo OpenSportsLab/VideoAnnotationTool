@@ -1145,14 +1145,14 @@ class HfDownloadDialog(QDialog):
 
         self.progress_mode_combo = QComboBox(self)
         self.progress_mode_combo.addItem(
-            "File progress (faster, Xet-compatible)", self._PROGRESS_FILES
+            "File progress (fastest)", self._PROGRESS_FILES
         )
         self.progress_mode_combo.addItem(
-            "Byte progress (classic HTTP)", self._PROGRESS_BYTES
+            "Byte progress (works with Xet)", self._PROGRESS_BYTES
         )
         self.progress_mode_combo.setToolTip(
-            "File progress preserves accelerated downloads. Byte progress "
-            "reports exact transferred sizes but requires classic HTTP."
+            "File progress has the least overhead. Byte progress reports exact "
+            "transferred sizes and keeps Xet enabled when selected."
         )
         form.addRow("Progress detail", self.progress_mode_combo)
 
@@ -1179,11 +1179,6 @@ class HfDownloadDialog(QDialog):
         layout.addWidget(buttons)
 
         self._load_settings()
-        self.use_xet_checkbox.toggled.connect(self._on_use_xet_toggled)
-        self.progress_mode_combo.currentIndexChanged.connect(
-            self._on_progress_mode_changed
-        )
-        self._on_use_xet_toggled(self.use_xet_checkbox.isChecked())
 
     @classmethod
     def _normalize_transfer(cls, transfer: dict | None) -> dict:
@@ -1296,16 +1291,6 @@ class HfDownloadDialog(QDialog):
     def _progress_mode(self) -> str:
         mode = self.progress_mode_combo.currentData()
         return mode if mode in {self._PROGRESS_FILES, self._PROGRESS_BYTES} else self._PROGRESS_FILES
-
-    def _on_use_xet_toggled(self, checked: bool) -> None:
-        if checked and self._progress_mode() == self._PROGRESS_BYTES:
-            self.progress_mode_combo.setCurrentIndex(
-                self.progress_mode_combo.findData(self._PROGRESS_FILES)
-            )
-
-    def _on_progress_mode_changed(self, _index: int) -> None:
-        if self._progress_mode() == self._PROGRESS_BYTES:
-            self.use_xet_checkbox.setChecked(False)
 
     def _fetch_branches(self) -> None:
         repo_id = self.repo_id_edit.text().strip()
