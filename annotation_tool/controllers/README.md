@@ -104,23 +104,28 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 ### `HfTransferController`
 - `start_download(...)`: execute Hugging Face dataset download in a worker thread.
   `queue_download(...)`, `pause_download_queue()`, and `resume_download_queue()`
-  implement the application-owned FIFO and preserve pending jobs when stopped.
-  `clear_queued_downloads()` discards waiting jobs without interrupting the
-  active worker; a new sample auto-starts whenever that worker slot is idle.
+  implement the controller-owned FIFO and preserve the active job at the front
+  when stopped. The controller is the sole owner of ordered per-file entries,
+  their queued/active/completed/failed state, byte totals, and average speed;
+  `downloadQueueChanged` publishes read-only snapshots to the Transfers panel.
+  `clear_queued_downloads()` removes completed and waiting entries without
+  interrupting an active worker; a new sample auto-starts whenever that worker
+  slot is idle.
   JSON-first media hydration is expanded into ordered per-input jobs here rather
   than delegated as one bulk library queue operation.
 - `start_asset_download(...)`: selectively download one sample or input from an
   opened Hugging Face-sourced JSON. Additional selective requests join a FIFO
   queue behind the active selective worker. Cancelling for application shutdown
-  clears the active worker and pending requests; the Transfers Stop action instead
-  pauses and requeues the active job. Runtime capability detection keeps full
+  clears the active worker and pending requests; the Transfers **Stop download**
+  action instead pauses and requeues the active job. Runtime capability detection keeps full
   downloads usable with older OpenSportsLib releases.
   When the installed API accepts `byte_progress_cb`, `_HfDownloadWorker` emits
   `byteProgress(filename, downloaded_bytes, total_bytes)` for the Transfers
   dock; the callback is omitted for older runtime APIs. Optional OpenSportsLib
   lifecycle callbacks are adapted to file-plan, file-completed, and JSON-ready
-  Qt signals. OpenSportsLib reports facts only; this application owns queue
-  policy, row states, completion aggregation, and open-JSON prompts.
+  Qt signals. OpenSportsLib reports facts only; `HfTransferController` owns queue
+  policy, row states, and completion aggregation, while `MainWindow` owns the
+  cross-module open-JSON prompts.
 - `is_download_running()` and `queued_download_count()`: expose active/queued
   state without replacing the active transfer payload. Dataset downloads remain on the
   worker thread and are presented by a non-modal Transfers dock with separate

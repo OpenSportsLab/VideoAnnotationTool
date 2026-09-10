@@ -17,9 +17,13 @@ Provides all QWidget classes, `.ui` bindings, and adapter surfaces for controlle
 - `media_player/`: center media timeline/player panel.
 - `hf_transfer_panel.py`: presentation-only Hugging Face Transfers dock content
   with completed-file count, current-file byte/speed progress, a per-file list,
-  queue count, and Play/Stop, download-missing, and Clear intents. The dock starts
+  queue count, and Download/Stop download, queue-missing, and Clear intents. The dock starts
   hidden like the other optional workspace docks; after it is opened or a transfer
   starts, determinate progress controls remain visible in an empty state when idle.
+  Closing a project hides the dock when no download is active; an active download
+  keeps it visible on the welcome screen.
+  Successful selective-media completion leaves the file rows intact, returns
+  the controls to an idle state, and does not render a completion summary.
   File rows use Queued and Completed states; active rows show byte progress and
   retain whole-file average speed without a redundant Running prefix. Stopping
   or resuming does not discard rows, and queued paths already present locally
@@ -35,9 +39,10 @@ Provides all QWidget classes, `.ui` bindings, and adapter surfaces for controlle
 ## Business Rules
 - UI should not own dataset mutation rules.
 - UI should not bypass controller pathways for persistence.
-- `HfTransferPanel` owns no download state or worker references; `MainWindow`
-  supplies immutable progress/terminal snapshots and routes its cancel and clear
-  signals.
+- `HfTransferPanel` owns no download state or worker references. It renders
+  immutable queue snapshots emitted by `HfTransferController`; `MainWindow`
+  only wires those snapshots and the panel's Download, Stop download, Clear,
+  and queue-missing intents.
 
 ## Conventions
 - Keep `.ui` files mostly static layout.

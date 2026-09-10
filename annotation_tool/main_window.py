@@ -258,8 +258,6 @@ class VideoAnnotationWindow(QMainWindow):
         self._hf_busy_dialog = None
         self._last_hf_download_payload: dict | None = None
         self._hf_downloading_media_paths: tuple[str, ...] = ()
-        self._hf_asset_queue_results: list[dict] = []
-        self._hf_asset_queue_errors: list[str] = []
         self._offered_hf_json_paths: set[str] = set()
         self._last_hf_upload_payload: dict | None = None
         self._pending_hf_upload_after_hydration: dict | None = None
@@ -267,6 +265,7 @@ class VideoAnnotationWindow(QMainWindow):
         self._last_restored_mute_state: bool | None = None
         self._workspace_visible = False
         self._updating_view_state = False
+        self._application_quit_in_progress = False
         self._data_dock_preferred_visible = True
         self._editor_dock_preferred_visible = True
         self._inference_jobs_dock_preferred_visible = False
@@ -307,6 +306,8 @@ class VideoAnnotationWindow(QMainWindow):
         self.center_stack.setCurrentIndex(0)
         self.set_project_ui_enabled(False)
         self._set_side_docks_visible(False)
+        if not self.hf_transfer_controller.is_download_running():
+            self.hf_transfer_dock.hide()
         self._set_dock_view_actions_enabled(False)
         if hasattr(self, "welcome_controller"):
             self.welcome_controller.refresh_recent_projects()
@@ -404,6 +405,8 @@ class VideoAnnotationWindow(QMainWindow):
     def eventFilter(self, watched, event) -> bool:
         application = QApplication.instance()
         if watched is application and event.type() == QEvent.Type.Quit:
+            if self._application_quit_in_progress:
+                return False
             if self._suppress_next_native_quit:
                 self._suppress_next_native_quit = False
                 event.ignore()
@@ -1974,6 +1977,9 @@ class VideoAnnotationWindow(QMainWindow):
             self._close_hf_busy_dialog()
             self.media_controller.stop()
             self._workspace_visible = False
+            # Closing the last window produces a native Quit event on macOS.
+            # Do not reinterpret that event as Cmd+Q's close-project-first step.
+            self._application_quit_in_progress = True
             event.accept()
         else:
             event.ignore()
@@ -2204,16 +2210,7 @@ class VideoAnnotationWindow(QMainWindow):
         payload = dict(started_payload or self._last_hf_download_payload or {})
         self._last_hf_download_payload = dict(payload)
         is_selective = payload.get("operation") == "assets"
-        continuing_queue = bool(
-            payload.get("preserve_transfer_files")
-            or (
-                is_selective
-                and (self._hf_asset_queue_results or self._hf_asset_queue_errors)
-            )
-        )
-        if is_selective and not continuing_queue:
-            self._hf_asset_queue_results.clear()
-            self._hf_asset_queue_errors.clear()
+        continuing_queue = bool(payload.get("preserve_transfer_files"))
         if not is_selective and not continuing_queue:
             self._offered_hf_json_paths.clear()
         self.dataset_explorer_panel.set_hf_download_running(
@@ -2541,7 +2538,6 @@ class VideoAnnotationWindow(QMainWindow):
             failed_payload.get("operation") == "assets"
             and self.hf_transfer_controller.queued_download_count() > 0
         ):
-            self._hf_asset_queue_errors.append(str(error))
             self._last_hf_download_payload = None
             self._hf_downloading_media_paths = (
                 self.hf_transfer_controller.queued_requested_local_paths()
@@ -2566,9 +2562,6 @@ class VideoAnnotationWindow(QMainWindow):
                 )
 
         self._last_hf_download_payload = None
-        if failed_payload.get("operation") == "assets":
-            self._hf_asset_queue_results.clear()
-            self._hf_asset_queue_errors.clear()
         self.dataset_explorer_panel.set_hf_download_running(False)
         self._hf_downloading_media_paths = (
             self.hf_transfer_controller.queued_requested_local_paths()
@@ -2596,8 +2589,6 @@ class VideoAnnotationWindow(QMainWindow):
         if cancelled_payload.get("operation") == "missing_assets":
             self._pending_hf_upload_after_hydration = None
         self._last_hf_download_payload = None
-        self._hf_asset_queue_results.clear()
-        self._hf_asset_queue_errors.clear()
         queued_downloads = self.hf_transfer_controller.queued_download_count()
         self.dataset_explorer_panel.set_hf_download_running(queued_downloads > 0)
         self._hf_downloading_media_paths = (
@@ -2778,7 +2769,6 @@ class VideoAnnotationWindow(QMainWindow):
         )
 
     def _on_hf_asset_download_completed(self, payload: dict) -> None:
-        self._hf_asset_queue_results.append(dict(payload))
         self._last_hf_download_payload = None
         self._hf_downloading_media_paths = (
             self.hf_transfer_controller.queued_requested_local_paths()
@@ -2797,45 +2787,12 @@ class VideoAnnotationWindow(QMainWindow):
             return
 
         self.dataset_explorer_panel.set_hf_download_running(False)
-        results = list(self._hf_asset_queue_results)
-
-        def _total(key: str) -> int:
-            return sum(int(result.get(key) or 0) for result in results)
-
-        requested_downloaded = _total("requested_downloaded_count")
-        requested_overwritten = _total("requested_overwritten_count")
-        requested_skipped = _total("requested_skipped_count")
-        opportunistic = _total("opportunistic_downloaded_count")
-        missing = _total("missing_count")
-        failed = _total("failed_count") + len(self._hf_asset_queue_errors)
-        lines = [
-            f"Requested files downloaded: {requested_downloaded}",
-            f"Requested files replaced: {requested_overwritten}",
-            f"Requested existing files kept: {requested_skipped}",
-            f"Additional missing files extracted from the shard: {opportunistic}",
-        ]
-        if missing:
-            lines.append(f"Requested files unavailable: {missing}")
-        if failed:
-            lines.append(f"Files that failed: {failed}")
-        message = "\n".join(lines)
-        self._finish_hf_transfer(
-            "Selective Hugging Face downloads completed",
-            message,
-            {"operation": "assets"},
-        )
-        if missing or failed:
-            QMessageBox.warning(self, "HF Selective Download Complete", message)
-        else:
-            QMessageBox.information(self, "HF Selective Download Complete", message)
+        self.hf_transfer_panel.set_idle()
         self.show_temp_msg(
             "HF Download",
-            f"Downloaded {requested_downloaded + requested_overwritten} requested and "
-            f"{opportunistic} additional files.",
+            "Selective media download completed.",
             3500,
         )
-        self._hf_asset_queue_results.clear()
-        self._hf_asset_queue_errors.clear()
 
     def _on_hf_upload_completed(self, result: dict) -> None:
         self._close_hf_busy_dialog()

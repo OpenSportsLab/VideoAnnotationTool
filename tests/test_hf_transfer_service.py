@@ -149,6 +149,108 @@ def test_pause_preserves_active_and_queued_downloads_until_resume(monkeypatch):
     assert [item["sample_id"] for item in controller._queued_asset_downloads] == ["two"]
 
 
+def test_controller_owns_ordered_file_queue_and_stop_requeues_current():
+    interruptions = []
+    controller = HfTransferController()
+    first = {
+        "operation": "assets",
+        "sample_id": "one",
+        "requested_paths": ["clips/one.mp4"],
+    }
+    controller._ensure_config_entries(first)
+    controller._active_download_config = first
+    controller._mark_config_active(first)
+    controller._download_worker = type(
+        "_Worker",
+        (),
+        {
+            "isRunning": lambda self: True,
+            "requestInterruption": lambda self: interruptions.append(True),
+        },
+    )()
+
+    assert controller.start_asset_download(
+        {
+            "sample_id": "two",
+            "requested_paths": ["clips/two.mp4"],
+        }
+    ) is True
+    assert controller.start_asset_download(
+        {
+            "sample_id": "three",
+            "requested_paths": ["clips/three.mp4"],
+        }
+    ) is True
+    assert [entry["path"] for entry in controller.download_queue_snapshot()] == [
+        "clips/one.mp4",
+        "clips/two.mp4",
+        "clips/three.mp4",
+    ]
+    assert [entry["status"] for entry in controller.download_queue_snapshot()] == [
+        "active",
+        "queued",
+        "queued",
+    ]
+
+    assert controller.pause_download_queue() is True
+    assert interruptions == [True]
+    assert [entry["status"] for entry in controller.download_queue_snapshot()] == [
+        "queued",
+        "queued",
+        "queued",
+    ]
+    assert [job["sample_id"] for job in controller._queued_asset_downloads] == [
+        "one",
+        "two",
+        "three",
+    ]
+
+
+def test_clear_removes_completed_and_queued_entries_but_keeps_active():
+    controller = HfTransferController()
+    controller._download_entries = [
+        {"id": 1, "path": "done", "status": "completed"},
+        {"id": 2, "path": "active", "status": "active"},
+        {"id": 3, "path": "waiting", "status": "queued"},
+        {"id": 4, "path": "failed", "status": "failed"},
+    ]
+    controller._queued_asset_downloads.append({"sample_id": "waiting"})
+    controller._download_worker = type(
+        "_Worker", (), {"isRunning": lambda self: True}
+    )()
+
+    assert controller.clear_queued_downloads() == 1
+    snapshot = controller.download_queue_snapshot()
+    assert len(snapshot) == 1
+    assert snapshot[0]["id"] == 2
+    assert snapshot[0]["path"] == "active"
+    assert snapshot[0]["status"] == "active"
+
+
+def test_only_first_file_in_each_queue_job_is_active():
+    controller = HfTransferController()
+    payload = {
+        "operation": "assets",
+        "requested_paths": ["clips/one.mp4", "clips/two.mp4"],
+    }
+    controller._ensure_config_entries(payload)
+    controller._active_download_config = payload
+    controller._mark_config_active(payload)
+
+    assert [entry["status"] for entry in controller.download_queue_snapshot()] == [
+        "active",
+        "queued",
+    ]
+
+    controller._on_worker_byte_progress("clips/one.mp4", 10, 10)
+    controller._on_worker_byte_progress("clips/two.mp4", 1, 10)
+
+    assert [entry["status"] for entry in controller.download_queue_snapshot()] == [
+        "completed",
+        "active",
+    ]
+
+
 def test_clear_discards_waiting_jobs_and_next_sample_auto_starts(monkeypatch):
     controller = HfTransferController()
     controller._download_queue_paused = True

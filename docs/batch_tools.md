@@ -55,12 +55,17 @@ byte progress and download speed, and a compact list with **Queued** or
 Downloads process repository files individually so each file's transferred
 bytes can be reported; Xet acceleration remains active within those downloads.
 When no download is active, the dock remains visible with empty, determinate
-progress bars and an empty table. **Stop** pauses at the next safe point without
-discarding rows or waiting jobs; **Play** resumes the FIFO. **Clear** removes the
-displayed history and all waiting jobs without interrupting a transfer already
-in progress. **Download Missing
-Samples** queues every absent input referenced by the open JSON. One low-level
+progress bars and an empty table. The controller owns one FIFO; the dock is only
+a view of that queue. **Stop download** cancels the current low-level transfer
+and puts its item back at the front, preserving all rows; **Download** then runs
+queued items one after another in list order. **Clear** removes completed and
+queued items without interrupting a transfer already in progress. **Queue
+missing samples** adds every absent input referenced by the open JSON. One low-level
 download runs at a time.
+
+Closing the current project hides the Transfers dock when it is idle. If a
+download is still active, the dock remains visible on the welcome screen so its
+progress and controls stay accessible.
 
 The app asks whether to open each JSON as soon as it becomes usable. If **Queue
 sample media** was checked in the download dialog, all missing referenced inputs are appended to
@@ -110,15 +115,15 @@ keeps the file history across stop/resume and across the queue. A full dataset
 download still disables selective actions.
 
 After Clear, a newly requested sample is the only waiting item. If no transfer
-is active, that request starts immediately without requiring Play.
+is active, that request starts immediately without pressing **Download**.
 
 If requested files already exist, one prompt offers **Replace Existing**,
 **Keep Existing**, or **Cancel**. Replace applies only to the explicitly
 requested files; other files found while unpacking a Parquet/WebDataset shard
 are written only when missing. A required shard is downloaded once, all missing
 safely mapped assets in it are extracted opportunistically, and the temporary
-shard is removed. One completion message aggregates requested, opportunistic,
-overwritten, skipped, missing, and failed counts across the queue.
+shard is removed. Successful selective-media completion is reported only in the
+status bar; it does not open a dialog or add a summary to the Transfers dock.
 
 If you close the application while a dataset download is active, a warning
 offers **Keep App Open** to let it finish or **Stop Download and Quit**. Keeping
@@ -129,7 +134,7 @@ datasets that lack `hf_format` or `hf_commit` must be downloaded again. The
 JSON-first workflow and selective actions require the newer local OpenSportsLib
 transfer API.
 
-Media can be completed later with **Download Missing Samples** after opening the
+Media can be completed later with **Queue missing samples** after opening the
 downloaded `<split>.json`.
 
 ### Upload Dataset to HF...

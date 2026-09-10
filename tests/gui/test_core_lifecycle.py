@@ -118,17 +118,48 @@ def test_import_project_routed_flow_all_modes(window, monkeypatch, qtbot, synthe
 
 @pytest.mark.gui
 # Workflow: Create/load a project, trigger close flow, and verify full reset back to welcome view.
-def test_close_project_returns_to_welcome(window, monkeypatch):
+def test_close_project_returns_to_welcome_and_hides_idle_transfers(
+    window, monkeypatch, qtbot
+):
     window.dataset_explorer_controller.create_new_project("localization")
     assert window.dataset_explorer_controller.json_loaded is True
+    window.hf_transfer_dock.show()
+    qtbot.wait(20)
+    assert window.hf_transfer_dock.isVisible() is True
 
     monkeypatch.setattr(window.dataset_explorer_controller, "check_and_close_current_project", lambda: True)
+    monkeypatch.setattr(
+        window.hf_transfer_controller, "is_download_running", lambda: False
+    )
 
     window.dataset_explorer_controller.close_project()
 
     assert window.dataset_explorer_controller.json_loaded is False
     assert window.center_stack.currentIndex() == 0
     assert window.tree_model.rowCount() == 0
+    assert window.hf_transfer_dock.isHidden() is True
+
+
+@pytest.mark.gui
+def test_close_project_keeps_transfers_visible_while_download_runs(
+    window, monkeypatch, qtbot
+):
+    window.dataset_explorer_controller.create_new_project("localization")
+    window.hf_transfer_dock.show()
+    qtbot.wait(20)
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "check_and_close_current_project",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller, "is_download_running", lambda: True
+    )
+
+    window.dataset_explorer_controller.close_project()
+
+    assert window.center_stack.currentIndex() == 0
+    assert window.hf_transfer_dock.isVisible() is True
 
 
 @pytest.mark.gui
@@ -1680,6 +1711,9 @@ def test_hf_download_uses_transfers_dock_progress(window, monkeypatch, qtbot):
     qtbot.wait(20)
 
     panel = window.hf_transfer_panel
+    assert panel.play_stop_button.text() == "Stop download"
+    assert panel.download_missing_button.text() == "Queue missing samples"
+    assert panel.clear_button.text() == "Clear"
     assert window._hf_busy_dialog is None
     assert window.hf_transfer_dock.widget() is panel
     assert window.dockWidgetArea(window.hf_transfer_dock) == Qt.DockWidgetArea.LeftDockWidgetArea
@@ -1692,12 +1726,12 @@ def test_hf_download_uses_transfers_dock_progress(window, monkeypatch, qtbot):
     assert window.dataset_explorer_panel._hf_download_running is True
     assert not window.statusBar().findChildren(type(panel))
 
-    window._on_hf_download_file_plan(
+    panel.set_queue_entries(
         [
-            "train.json",
-            "train/shards/large.tar",
-            "train/shards/next.tar",
-            "train/shards/last.tar",
+            {"path": "train.json", "status": "queued"},
+            {"path": "train/shards/large.tar", "status": "queued"},
+            {"path": "train/shards/next.tar", "status": "queued"},
+            {"path": "train/shards/last.tar", "status": "queued"},
         ]
     )
     assert panel.file_list.topLevelItemCount() == 4
@@ -1713,11 +1747,19 @@ def test_hf_download_uses_transfers_dock_progress(window, monkeypatch, qtbot):
     assert panel.overall_progress_bar.maximum() == 4
     assert panel.overall_progress_bar.value() == 0
 
-    panel.set_file_progress(
-        "train/shards/large.tar", 0, 2 * 1024**3, now=10.0
-    )
-    panel.set_file_progress(
-        "train/shards/large.tar", 384 * 1024**2, 2 * 1024**3, now=12.0
+    panel.set_queue_entries(
+        [
+            {"path": "train.json", "status": "queued"},
+            {
+                "path": "train/shards/large.tar",
+                "status": "active",
+                "downloaded_bytes": 384 * 1024**2,
+                "total_bytes": 2 * 1024**3,
+                "average_speed": 192 * 1024**2,
+            },
+            {"path": "train/shards/next.tar", "status": "queued"},
+            {"path": "train/shards/last.tar", "status": "queued"},
+        ]
     )
 
     assert "train/shards/large.tar" in panel.current_file_label.text()
@@ -1734,13 +1776,21 @@ def test_hf_download_uses_transfers_dock_progress(window, monkeypatch, qtbot):
     assert "384.0 MB / 2.0 GB" == large_items[0].text(1)
     assert large_items[0].text(2) == "192.0 MB/s"
 
-    window._on_hf_download_file_completed(
-        "train/shards/large.tar", "/tmp/train/shards/large.tar"
+    queue = window.hf_transfer_panel
+    queue.set_queue_entries(
+        [
+            {"path": "train.json", "status": "queued"},
+            {"path": "train/shards/large.tar", "status": "completed"},
+            {"path": "train/shards/next.tar", "status": "queued"},
+            {"path": "train/shards/last.tar", "status": "queued"},
+        ]
     )
-    assert large_items[0].text(1) == "Completed"
+    assert panel.file_list.topLevelItem(1).text(1) == "Completed"
     assert panel.overall_progress_bar.value() == 1
 
-    window._on_hf_download_bytes_progress("unknown.bin", 512 * 1024**2, 0)
+    panel.set_queue_entries(
+        [{"path": "unknown.bin", "status": "active", "downloaded_bytes": 512 * 1024**2}]
+    )
     assert panel.file_progress_bar.maximum() == 1000
     assert panel.file_progress_bar.value() == 0
     assert "512.0 MB downloaded" in panel.current_file_label.text()
@@ -1752,6 +1802,7 @@ def test_hf_download_uses_transfers_dock_progress(window, monkeypatch, qtbot):
 
     window._finish_hf_transfer("Hugging Face download completed", "1 file downloaded", {})
     assert window.hf_transfer_dock.isVisible() is True
+    assert panel.play_stop_button.text() == "Download"
     assert "1 file downloaded" in panel.summary_label.text()
     assert panel.progress_widget.isVisible() is True
     panel.clear_button.click()
@@ -1770,8 +1821,6 @@ def test_hf_dry_run_stays_visible_with_empty_progress_controls(window):
 
     window._on_hf_download_started("Starting dry run...")
     window._on_hf_download_progress("[1/3] Inspecting files")
-    window._on_hf_download_bytes_progress("test.json", 10, 100)
-
     assert window.hf_transfer_dock.isVisible() is True
     assert panel.progress_widget.isVisible() is True
     assert "Inspecting files" in panel.summary_label.text()
@@ -1835,10 +1884,10 @@ def test_json_first_metadata_plan_never_adds_sample_rows_when_media_is_unticked(
         "download_format": "json",
         "splits": ["test"],
     }
-    window.hf_transfer_panel.begin("Downloading JSON")
-
-    window._on_hf_download_file_plan(["test.json"])
-    window._on_hf_download_file_plan(
+    controller = window.hf_transfer_controller
+    controller._active_download_config = dict(window._last_hf_download_payload)
+    controller._on_worker_file_plan(["test.json"])
+    controller._on_worker_file_plan(
         ["test/clips/one.mp4", "test/clips/two.mp4"]
     )
 
@@ -1876,10 +1925,13 @@ def test_hf_json_ready_can_queue_remaining_media(window, monkeypatch, tmp_path):
             }
         ],
     )
+    def _record_queue(payload):
+        queued.append(payload)
+        window.hf_transfer_controller._ensure_config_entries(payload)
+        return True
+
     monkeypatch.setattr(
-        window.hf_transfer_controller,
-        "queue_download",
-        lambda payload: queued.append(payload) or True,
+        window.hf_transfer_controller, "queue_download", _record_queue
     )
 
     window._on_hf_download_json_ready("test", str(json_path))
@@ -1919,10 +1971,13 @@ def test_missing_media_jobs_follow_list_order_and_activate_first_row(
         "find_missing_inputs",
         lambda _path: missing,
     )
+    def _record_queue(payload):
+        jobs.append(payload)
+        window.hf_transfer_controller._ensure_config_entries(payload)
+        return True
+
     monkeypatch.setattr(
-        window.hf_transfer_controller,
-        "queue_download",
-        lambda payload: jobs.append(payload) or True,
+        window.hf_transfer_controller, "queue_download", _record_queue
     )
 
     assert window._queue_missing_inputs_for_json(
@@ -1938,9 +1993,13 @@ def test_missing_media_jobs_follow_list_order_and_activate_first_row(
         for row in range(3)
     ] == ["clips/one.mp4", "clips/two.mp4", "clips/three.mp4"]
 
-    window._on_hf_download_started("Starting first input", jobs[0])
+    window.hf_transfer_controller._active_download_config = jobs[0]
+    window.hf_transfer_controller._mark_config_active(jobs[0])
 
-    assert window.hf_transfer_panel.file_list.topLevelItem(0).text(1) == ""
+    assert (
+        window.hf_transfer_panel.file_list.topLevelItem(0).text(1)
+        == "0 B downloaded"
+    )
     assert window.hf_transfer_panel.file_list.topLevelItem(1).text(1) == "Queued"
     assert window.hf_transfer_panel.file_list.topLevelItem(2).text(1) == "Queued"
 
@@ -1987,6 +2046,7 @@ def test_hf_transfer_idle_state_shows_empty_progress_controls(window):
     assert panel.progress_widget.isHidden() is False
     assert panel.overall_progress_bar.maximum() != 0
     assert panel.file_progress_bar.maximum() != 0
+    assert panel.play_stop_button.text() == "Download"
 
 
 @pytest.mark.gui
@@ -2004,8 +2064,9 @@ def test_clear_removes_waiting_jobs_and_next_sample_is_only_row(window, tmp_path
             ("old-2", "clips/old-2.mp4"),
         )
     ]
-    window.hf_transfer_controller._queued_asset_downloads.extend(old_jobs)
-    panel.plan_files(["clips/old-1.mp4", "clips/old-2.mp4"])
+    for job in old_jobs:
+        window.hf_transfer_controller._ensure_config_entries(job)
+        window.hf_transfer_controller._queued_asset_downloads.append(job)
 
     window._on_hf_transfer_clear_requested()
 
@@ -2019,27 +2080,23 @@ def test_clear_removes_waiting_jobs_and_next_sample_is_only_row(window, tmp_path
         "requested_local_paths": [str(tmp_path / "clips/new.mp4")],
         "preserve_transfer_files": True,
     }
-    window._on_hf_download_started("Starting new sample", new_job)
+    window.hf_transfer_controller._ensure_config_entries(new_job)
+    window.hf_transfer_controller._mark_config_active(new_job)
 
     assert panel.file_list.topLevelItemCount() == 1
     assert panel.file_list.topLevelItem(0).text(0) == "clips/new.mp4"
-    assert panel.file_list.topLevelItem(0).text(1) == ""
+    assert panel.file_list.topLevelItem(0).text(1) == "0 B downloaded"
 
 
 @pytest.mark.gui
 def test_hf_transfer_panel_counts_repeated_files_in_separate_queue_items(window):
     panel = window.hf_transfer_panel
-    panel.begin("Starting first item...", operation="Selective downloads")
-    panel.set_stage_progress("[1/1] Downloading shared.tar")
-    panel.set_file_progress("shared.tar", 10, 10, now=1.0)
-
-    panel.begin(
-        "Starting queued item...",
-        operation="Selective downloads",
-        preserve_files=True,
+    panel.set_queue_entries(
+        [
+            {"path": "shared.tar", "status": "completed"},
+            {"path": "shared.tar", "status": "active", "total_bytes": 10},
+        ]
     )
-    panel.set_stage_progress("[1/1] Downloading shared.tar")
-    panel.set_file_progress("shared.tar", 0, 10, now=2.0)
 
     assert panel.file_list.topLevelItemCount() == 2
     assert panel.overall_label.text() == "Files: 1 / 2"
@@ -2048,17 +2105,18 @@ def test_hf_transfer_panel_counts_repeated_files_in_separate_queue_items(window)
 @pytest.mark.gui
 def test_hf_transfer_panel_reuses_preplanned_queued_rows(window):
     panel = window.hf_transfer_panel
-    panel.begin("Downloading JSON", operation="Dataset download")
-    panel.set_file_progress("test.json", 10, 10, now=1.0)
-    panel.plan_files(["clips/one.mp4", "clips/two.mp4"])
-
-    panel.begin(
-        "Downloading missing media",
-        operation="Missing inputs download",
-        preserve_files=True,
+    panel.set_queue_entries(
+        [
+            {"path": "test.json", "status": "completed"},
+            {
+                "path": "clips/one.mp4",
+                "status": "active",
+                "downloaded_bytes": 5,
+                "total_bytes": 10,
+            },
+            {"path": "clips/two.mp4", "status": "queued"},
+        ]
     )
-    panel.set_stage_progress("[1/2] Downloading clips/one.mp4")
-    panel.set_file_progress("repo-folder/clips/one.mp4", 5, 10, now=2.0)
 
     assert panel.file_list.topLevelItemCount() == 3
     assert panel.overall_label.text() == "Files: 1 / 3"
@@ -2073,13 +2131,12 @@ def test_queued_file_that_already_exists_is_shown_completed(window, tmp_path):
     existing.parent.mkdir()
     existing.write_bytes(b"video")
 
-    window._on_hf_download_queued(
+    window.hf_transfer_controller._ensure_config_entries(
         {
             "operation": "assets",
             "requested_paths": ["clips/existing.mp4"],
             "requested_local_paths": [str(existing)],
-        },
-        1,
+        }
     )
 
     item = window.hf_transfer_panel.file_list.topLevelItem(0)
@@ -2092,16 +2149,21 @@ def test_opportunistically_downloaded_queued_file_is_marked_completed(
     window, monkeypatch
 ):
     panel = window.hf_transfer_panel
-    panel.begin("Downloading first input", operation="Selective media download")
-    panel.plan_files(["clips/one.mp4", "clips/two.mp4"])
-    panel.set_files_active(["clips/one.mp4"])
-    window.hf_transfer_controller._queued_asset_downloads.append(
-        {
-            "operation": "assets",
-            "sample_id": "sample-2",
-            "requested_paths": ["clips/two.mp4"],
-        }
-    )
+    first_job = {
+        "operation": "assets",
+        "sample_id": "sample-1",
+        "requested_paths": ["clips/one.mp4"],
+    }
+    second_job = {
+        "operation": "assets",
+        "sample_id": "sample-2",
+        "requested_paths": ["clips/two.mp4"],
+    }
+    window.hf_transfer_controller._ensure_config_entries(first_job)
+    window.hf_transfer_controller._active_download_config = first_job
+    window.hf_transfer_controller._mark_config_active(first_job)
+    window.hf_transfer_controller._ensure_config_entries(second_job)
+    window.hf_transfer_controller._queued_asset_downloads.append(second_job)
     window._last_hf_download_payload = {
         "operation": "assets",
         "sample_id": "sample-1",
@@ -2112,7 +2174,7 @@ def test_opportunistically_downloaded_queued_file_is_marked_completed(
         lambda _payload: None,
     )
 
-    window._on_hf_asset_download_completed(
+    window.hf_transfer_controller._on_worker_download_completed(
         {
             "operation": "assets",
             "sample_id": "sample-1",
@@ -2126,7 +2188,7 @@ def test_opportunistically_downloaded_queued_file_is_marked_completed(
 
 
 @pytest.mark.gui
-def test_selective_queue_finishes_as_one_batch(window, monkeypatch):
+def test_selective_queue_completion_uses_status_bar_only(window, monkeypatch):
     refreshes = []
     notices = []
     monkeypatch.setattr(
@@ -2165,9 +2227,11 @@ def test_selective_queue_finishes_as_one_batch(window, monkeypatch):
     window._on_hf_asset_download_completed(second)
 
     assert [payload["sample_id"] for payload in refreshes] == ["one", "two"]
-    assert "Requested files downloaded: 2" in notices[-1][1]
+    assert notices == []
     assert window.dataset_explorer_panel._hf_download_running is False
-    assert window._hf_asset_queue_results == []
+    assert window.hf_transfer_panel.state_label.text() == "No active download"
+    assert window.hf_transfer_panel.summary_label.text() == ""
+    assert "Selective media download completed." in window.statusBar().currentMessage()
 
 
 @pytest.mark.gui
@@ -2462,6 +2526,49 @@ def test_quit_during_download_stop_choice_cancels_then_closes(window, monkeypatc
     assert cancel_calls == [True]
     assert event.accepted is True
     assert event.ignored is False
+    assert window._application_quit_in_progress is True
+
+
+@pytest.mark.gui
+def test_window_close_with_loaded_project_does_not_consume_followup_quit(
+    window, monkeypatch
+):
+    event = _CloseEventRecorder()
+    project_close_calls = []
+    window.dataset_explorer_controller.json_loaded = True
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "check_and_close_current_project",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        window.dataset_explorer_controller,
+        "close_project",
+        lambda: project_close_calls.append(True),
+    )
+    monkeypatch.setattr(window.inference_controller, "shutdown", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        window.classification_editor_controller,
+        "shutdown_background_tasks",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        window.localization_editor_controller,
+        "shutdown_background_tasks",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        window.hf_transfer_controller, "shutdown", lambda **_kwargs: True
+    )
+
+    type(window).closeEvent(window, event)
+    consumed = window.eventFilter(
+        QApplication.instance(), QEvent(QEvent.Type.Quit)
+    )
+
+    assert event.accepted is True
+    assert consumed is False
+    assert project_close_calls == []
 
 
 @pytest.mark.gui

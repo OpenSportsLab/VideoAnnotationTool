@@ -359,7 +359,19 @@ class HfTransferController(QObject):
         )
 
     def download_queue_snapshot(self) -> list[dict[str, Any]]:
-        return [dict(entry) for entry in self._download_entries]
+        public_fields = (
+            "id",
+            "path",
+            "local_path",
+            "status",
+            "downloaded_bytes",
+            "total_bytes",
+            "average_speed",
+        )
+        return [
+            {field: entry.get(field) for field in public_fields}
+            for entry in self._download_entries
+        ]
 
     def _emit_download_queue(self) -> None:
         self.downloadQueueChanged.emit(self.download_queue_snapshot())
@@ -409,12 +421,15 @@ class HfTransferController(QObject):
         return [entry for entry in self._download_entries if entry["id"] in wanted]
 
     def _mark_config_active(self, payload: dict[str, Any]) -> None:
+        activated = False
         for entry in self._entries_for_ids(self._ensure_config_entries(payload)):
             if entry["status"] == "completed":
                 continue
-            entry["status"] = "active"
-            entry["_start_time"] = None
-            entry["_start_bytes"] = int(entry["downloaded_bytes"])
+            entry["status"] = "active" if not activated else "queued"
+            if not activated:
+                entry["_start_time"] = None
+                entry["_start_bytes"] = int(entry["downloaded_bytes"])
+                activated = True
         self._emit_download_queue()
 
     def _matching_active_entry(self, filename: str) -> dict[str, Any] | None:
@@ -433,7 +448,9 @@ class HfTransferController(QObject):
                 return entry
         return None
 
-    def _add_active_file_entry(self, filename: str) -> dict[str, Any]:
+    def _add_active_file_entry(
+        self, filename: str, *, status: str = "active"
+    ) -> dict[str, Any]:
         payload = self._active_download_config or {}
         entry_id = self._next_download_entry_id
         self._next_download_entry_id += 1
@@ -441,7 +458,7 @@ class HfTransferController(QObject):
             "id": entry_id,
             "path": str(filename),
             "local_path": "",
-            "status": "active",
+            "status": status,
             "downloaded_bytes": 0,
             "total_bytes": 0,
             "average_speed": 0.0,
@@ -496,6 +513,12 @@ class HfTransferController(QObject):
     def start_asset_download(self, config: dict[str, Any]) -> bool:
         payload = dict(config or {})
         payload["operation"] = "assets"
+        if self.is_download_running() and not self._download_queue_paused:
+            active_operation = str(
+                (self._active_download_config or {}).get("operation") or "dataset"
+            )
+            if active_operation != "assets":
+                return False
         self._ensure_config_entries(payload)
         if self._download_queue_paused and not self.is_download_running():
             self._download_queue_paused = False
@@ -513,11 +536,6 @@ class HfTransferController(QObject):
             self.downloadQueued.emit(dict(payload), len(self._queued_asset_downloads))
             return True
         if self.is_download_running():
-            active_operation = str(
-                (self._active_download_config or {}).get("operation") or "dataset"
-            )
-            if active_operation != "assets":
-                return False
             self._queued_asset_downloads.append(payload)
             self.downloadQueued.emit(dict(payload), len(self._queued_asset_downloads))
             return True
@@ -691,7 +709,17 @@ class HfTransferController(QObject):
             ]
         for filename in planned:
             if self._matching_active_entry(filename) is None:
-                self._add_active_file_entry(filename)
+                self._add_active_file_entry(filename, status="queued")
+        entries = self._entries_for_ids(
+            list(payload.get("_queue_entry_ids", ()))
+        )
+        if not any(entry["status"] == "active" for entry in entries):
+            first_pending = next(
+                (entry for entry in entries if entry["status"] != "completed"),
+                None,
+            )
+            if first_pending is not None:
+                first_pending["status"] = "active"
         if planned:
             self._emit_download_queue()
         self.downloadFilePlan.emit(planned)
@@ -712,9 +740,26 @@ class HfTransferController(QObject):
         transferred = max(0, downloaded - int(entry["_start_bytes"]))
         if elapsed > 0 and transferred > 0:
             entry["average_speed"] = transferred / elapsed
+        active_ids = set(
+            int(value)
+            for value in (self._active_download_config or {}).get(
+                "_queue_entry_ids", ()
+            )
+        )
+        for other in self._download_entries:
+            if (
+                other is not entry
+                and other["id"] in active_ids
+                and other["status"] == "active"
+            ):
+                other["status"] = "queued"
         entry["downloaded_bytes"] = downloaded
         entry["total_bytes"] = total
-        entry["status"] = "completed" if total and downloaded >= total else "active"
+        entry["status"] = (
+            "completed"
+            if total and downloaded >= total
+            else "queued" if self._download_queue_paused else "active"
+        )
         self._emit_download_queue()
         self.downloadBytesProgress.emit(filename, downloaded, total)
 
@@ -750,8 +795,6 @@ class HfTransferController(QObject):
             str(path).replace("\\", "/") for path in completed_paths
         }
         for entry in self._download_entries:
-            if entry["id"] not in active_ids:
-                continue
             normalized = str(entry["path"]).replace("\\", "/")
             local_exists = bool(
                 entry["local_path"] and os.path.isfile(entry["local_path"])
@@ -764,7 +807,7 @@ class HfTransferController(QObject):
             )
             if reported_complete or local_exists:
                 entry["status"] = "completed"
-            elif entry["status"] == "active":
+            elif entry["id"] in active_ids and entry["status"] == "active":
                 entry["status"] = "failed"
         self._emit_download_queue()
         self.downloadCompleted.emit(payload)

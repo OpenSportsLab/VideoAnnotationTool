@@ -90,10 +90,11 @@ huggingface-cli login
   the whole-file average. Byte progress works with Xet, though
   repository files are handled individually rather than through a concurrent
   snapshot operation. Idle and completed views keep empty determinate bars and
-  the table visible. Use **Stop** to pause at the next safe point and **Play** to
-  resume without clearing the list. **Clear** removes displayed rows and all
-  waiting jobs, but leaves an active transfer running. A new sample request
-  starts automatically whenever no transfer is active.
+  the table visible. The table is a read-only view of the controller's FIFO.
+  Use **Stop download** to cancel and return the current item to the front, and
+  **Download** to resume items sequentially without clearing the list. **Clear** removes
+  completed and waiting rows, but leaves an active transfer running. A new
+  sample request starts automatically whenever no transfer is active.
 - Sample/input download actions remain enabled during another selective
   download; new requests wait in FIFO order. They are greyed out only during a
   full dataset download. Stopping preserves queued selective requests. If

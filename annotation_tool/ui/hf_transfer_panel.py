@@ -78,25 +78,29 @@ class HfTransferPanel(QWidget):
         self.file_list.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         progress_layout.addWidget(self.file_list)
 
-        controls = QHBoxLayout()
-        controls.addStretch(1)
-        self.play_stop_button = QPushButton("Play", self.progress_widget)
+        primary_controls = QHBoxLayout()
+        primary_controls.addStretch(1)
+        self.play_stop_button = QPushButton("Download", self.progress_widget)
         self.play_stop_button.setObjectName("hfTransferPlayStopButton")
         self.play_stop_button.clicked.connect(self._request_play_stop)
-        controls.addWidget(self.play_stop_button)
+        primary_controls.addWidget(self.play_stop_button)
+        self.clear_button = QPushButton("Clear", self.progress_widget)
+        self.clear_button.setObjectName("hfTransferClearButton")
+        self.clear_button.clicked.connect(self.clearRequested.emit)
+        primary_controls.addWidget(self.clear_button)
+        progress_layout.addLayout(primary_controls)
+
+        secondary_controls = QHBoxLayout()
+        secondary_controls.addStretch(1)
         self.download_missing_button = QPushButton(
-            "Download Missing Samples", self.progress_widget
+            "Queue missing samples", self.progress_widget
         )
         self.download_missing_button.setObjectName("hfTransferDownloadMissingButton")
         self.download_missing_button.clicked.connect(
             self.downloadMissingRequested.emit
         )
-        controls.addWidget(self.download_missing_button)
-        self.clear_button = QPushButton("Clear", self.progress_widget)
-        self.clear_button.setObjectName("hfTransferClearButton")
-        self.clear_button.clicked.connect(self.clearRequested.emit)
-        controls.addWidget(self.clear_button)
-        progress_layout.addLayout(controls)
+        secondary_controls.addWidget(self.download_missing_button)
+        progress_layout.addLayout(secondary_controls)
         layout.addWidget(self.progress_widget)
 
         self.summary_label = QLabel("", self)
@@ -132,7 +136,7 @@ class HfTransferPanel(QWidget):
         self._running = True
         self.summary_label.clear()
         self.progress_widget.setVisible(True)
-        self.play_stop_button.setText("Stop")
+        self.play_stop_button.setText("Stop download")
         self.play_stop_button.setEnabled(True)
         self.clear_button.setEnabled(True)
 
@@ -141,7 +145,7 @@ class HfTransferPanel(QWidget):
         self.state_label.setText("Hugging Face dry run in progress")
         self.summary_label.setText(self._one_line(message) or "Inspecting files…")
         self._running = True
-        self.play_stop_button.setText("Stop")
+        self.play_stop_button.setText("Stop download")
         self.play_stop_button.setEnabled(True)
         self.clear_button.setEnabled(True)
 
@@ -233,7 +237,7 @@ class HfTransferPanel(QWidget):
         self.state_label.setText(message)
         self.current_file_label.setText("No active download")
         self._set_fraction(self.file_progress_bar, 0)
-        self.play_stop_button.setText("Play")
+        self.play_stop_button.setText("Download")
         self.play_stop_button.setEnabled(True)
         self.clear_button.setEnabled(True)
 
@@ -245,7 +249,20 @@ class HfTransferPanel(QWidget):
         self.current_file_label.setText("No active download")
         self._set_fraction(self.file_progress_bar, 0)
         self.progress_widget.setVisible(True)
-        self.play_stop_button.setText("Play")
+        self.play_stop_button.setText("Download")
+        self.play_stop_button.setEnabled(False)
+        self.clear_button.setEnabled(True)
+
+    def set_idle(self) -> None:
+        """Show an idle queue without adding a transfer-completion summary."""
+        self._running = False
+        self.state_label.setText("No active download")
+        self.summary_label.clear()
+        self.set_queue_count(0)
+        self.current_file_label.setText("No active download")
+        self._set_fraction(self.file_progress_bar, 0)
+        self.progress_widget.setVisible(True)
+        self.play_stop_button.setText("Download")
         self.play_stop_button.setEnabled(False)
         self.clear_button.setEnabled(True)
 
@@ -256,7 +273,7 @@ class HfTransferPanel(QWidget):
         self.progress_widget.setVisible(True)
         self.set_queue_count(0)
         self._running = False
-        self.play_stop_button.setText("Play")
+        self.play_stop_button.setText("Download")
         self.play_stop_button.setEnabled(False)
         self.clear_button.setEnabled(True)
 
