@@ -26,6 +26,14 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
     on macOS as well as other platforms.
   - Edit-menu actions are the single owners of the platform-standard undo and
     redo shortcuts; do not register parallel window shortcuts for them.
+  - Hugging Face Xet remains enabled by default. Download/upload dialogs pass
+    independent `use_xet` intents; transfer workers scope the corresponding
+    runtime override to one operation (`HF_HUB_DISABLE_XET=0` when checked,
+    `1` when unchecked) and restore the prior process setting.
+    Download `progress_mode` is either `files` (default, Xet-aware/concurrent
+    path) or `bytes` (classic sequential HTTP with byte-level progress). The UI
+    keeps `use_xet` and `progress_mode` in a valid combination.
+    Upload timeout feedback recommends retrying with the upload override.
 - `controllers/`
   - Dataset lifecycle, mutation/undo-redo, media playback control, mode-specific editor logic.
 - `ui/`

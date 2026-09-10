@@ -26,6 +26,7 @@ except ImportError:
     find_missing_dataset_inputs = None
 
 from hf_model_import import HfModelImportCancelled, resolve_hf_local_model
+from hf_xet_settings import temporary_hf_xet_disabled
 
 
 def _supports_keyword(callable_object, keyword: str) -> bool:
@@ -52,7 +53,14 @@ class _HfDownloadWorker(QThread):
         self._config = dict(config)
 
     def run(self) -> None:
+        with temporary_hf_xet_disabled(
+            not bool(self._config.get("use_xet", True))
+        ):
+            self._run_transfer()
+
+    def _run_transfer(self) -> None:
         try:
+            report_bytes = self._config.get("progress_mode", "files") == "bytes"
             operation = self._config.get("operation")
             if operation == "missing_assets":
                 if download_dataset_missing_inputs_from_hf is None:
@@ -65,7 +73,7 @@ class _HfDownloadWorker(QThread):
                     "progress_cb": self.progress.emit,
                     "is_cancelled": self.isInterruptionRequested,
                 }
-                if _supports_keyword(
+                if report_bytes and _supports_keyword(
                     download_dataset_missing_inputs_from_hf, "byte_progress_cb"
                 ):
                     missing_kwargs["byte_progress_cb"] = self.byteProgress.emit
@@ -91,7 +99,7 @@ class _HfDownloadWorker(QThread):
                     "progress_cb": self.progress.emit,
                     "is_cancelled": self.isInterruptionRequested,
                 }
-                if _supports_keyword(
+                if report_bytes and _supports_keyword(
                     download_dataset_sample_inputs_from_hf, "byte_progress_cb"
                 ):
                     selective_kwargs["byte_progress_cb"] = self.byteProgress.emit
@@ -123,7 +131,7 @@ class _HfDownloadWorker(QThread):
                     "JSON-only Hugging Face downloads require the newer local "
                     "OpenSportsLib checkout."
                 )
-            if _supports_keyword(
+            if report_bytes and _supports_keyword(
                 download_dataset_splits_from_hf, "byte_progress_cb"
             ):
                 download_kwargs["byte_progress_cb"] = self.byteProgress.emit
@@ -193,6 +201,12 @@ class _HfUploadWorker(QThread):
         self._config = dict(config)
 
     def run(self) -> None:
+        with temporary_hf_xet_disabled(
+            not bool(self._config.get("use_xet", True))
+        ):
+            self._run_transfer()
+
+    def _run_transfer(self) -> None:
         try:
             if self._config.get("upload_as_json", True):
                 result = upload_dataset_inputs_from_json_to_hf(

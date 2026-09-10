@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 import opensportslib.tools.hf_transfer as hf_transfer
@@ -73,9 +75,81 @@ def test_download_worker_routes_to_library_api(monkeypatch):
     assert calls["dry_run"] is True
     assert calls["token"] == "hf_test"
     assert callable(calls["progress_cb"])
-    assert callable(calls["byte_progress_cb"])
+    assert "byte_progress_cb" not in calls
     assert callable(calls["is_cancelled"])
     assert completed_payloads == [{"results": [{"ok": True}], "dry_run": True, "output_dir": "/tmp/output"}]
+
+
+def test_download_worker_can_disable_xet_for_only_that_transfer(monkeypatch):
+    from huggingface_hub import constants
+
+    observed = []
+    previous_environment = os.environ.get("HF_HUB_DISABLE_XET")
+    previous_constant = constants.HF_HUB_DISABLE_XET
+
+    def _fake_download(*args, **kwargs):
+        del args, kwargs
+        observed.append(
+            (os.environ.get("HF_HUB_DISABLE_XET"), constants.HF_HUB_DISABLE_XET)
+        )
+        return []
+
+    monkeypatch.setattr(
+        hf_transfer_controller,
+        "download_dataset_splits_from_hf",
+        _fake_download,
+    )
+
+    _HfDownloadWorker(
+        {
+            "repo_id": "OpenSportsLab/repo",
+            "revision": "main",
+            "splits": ["test"],
+            "output_dir": "/tmp/output",
+            "use_xet": False,
+        }
+    ).run()
+
+    assert observed == [("1", True)]
+    assert os.environ.get("HF_HUB_DISABLE_XET") == previous_environment
+    assert constants.HF_HUB_DISABLE_XET is previous_constant
+
+
+def test_download_worker_explicitly_enables_xet_when_option_is_checked(
+    monkeypatch,
+):
+    from huggingface_hub import constants
+
+    observed = []
+    monkeypatch.setenv("HF_HUB_DISABLE_XET", "1")
+    monkeypatch.setattr(constants, "HF_HUB_DISABLE_XET", True)
+
+    def _fake_download(*args, **kwargs):
+        del args, kwargs
+        observed.append(
+            (os.environ.get("HF_HUB_DISABLE_XET"), constants.HF_HUB_DISABLE_XET)
+        )
+        return []
+
+    monkeypatch.setattr(
+        hf_transfer_controller,
+        "download_dataset_splits_from_hf",
+        _fake_download,
+    )
+
+    _HfDownloadWorker(
+        {
+            "repo_id": "OpenSportsLab/repo",
+            "revision": "main",
+            "splits": ["test"],
+            "output_dir": "/tmp/output",
+            "use_xet": True,
+        }
+    ).run()
+
+    assert observed == [("0", False)]
+    assert os.environ["HF_HUB_DISABLE_XET"] == "1"
+    assert constants.HF_HUB_DISABLE_XET is True
 
 
 def test_download_worker_routes_selective_asset_request(monkeypatch):
@@ -101,6 +175,8 @@ def test_download_worker_routes_selective_asset_request(monkeypatch):
             "overwrite": True,
             "token": "hf_test",
             "project_generation": 7,
+            "use_xet": False,
+            "progress_mode": "bytes",
         }
     )
     completed = []
@@ -139,6 +215,8 @@ def test_download_worker_routes_missing_input_hydration(monkeypatch):
             "dataset_json_path": "/tmp/test.json",
             "token": "hf_test",
             "project_generation": 9,
+            "use_xet": False,
+            "progress_mode": "bytes",
         }
     )
     completed = []
@@ -183,6 +261,8 @@ def test_download_worker_forwards_file_byte_progress(monkeypatch):
             "revision": "main",
             "splits": ["test"],
             "output_dir": "/tmp/output",
+            "use_xet": False,
+            "progress_mode": "bytes",
         }
     )
     byte_updates = []
@@ -321,6 +401,35 @@ def test_upload_worker_routes_json_mode_to_library_api(monkeypatch, tmp_path):
     assert callable(calls["progress_cb"])
     assert callable(calls["is_cancelled"])
     assert completed_payloads == [{"upload_kind": "json"}]
+
+
+def test_upload_worker_can_disable_xet_for_only_that_transfer(monkeypatch):
+    from huggingface_hub import constants
+
+    observed = []
+    previous_environment = os.environ.get("HF_HUB_DISABLE_XET")
+    previous_constant = constants.HF_HUB_DISABLE_XET
+
+    def _fake_upload(**kwargs):
+        del kwargs
+        observed.append(
+            (os.environ.get("HF_HUB_DISABLE_XET"), constants.HF_HUB_DISABLE_XET)
+        )
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        hf_transfer_controller,
+        "upload_dataset_inputs_from_json_to_hf",
+        _fake_upload,
+    )
+
+    _HfUploadWorker(
+        {"upload_as_json": True, "use_xet": False}
+    ).run()
+
+    assert observed == [("1", True)]
+    assert os.environ.get("HF_HUB_DISABLE_XET") == previous_environment
+    assert constants.HF_HUB_DISABLE_XET is previous_constant
 
 
 def test_upload_worker_routes_parquet_mode_to_library_api(monkeypatch, tmp_path):

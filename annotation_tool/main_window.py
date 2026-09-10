@@ -2313,6 +2313,15 @@ class VideoAnnotationWindow(QMainWindow):
                 self.show_temp_msg("HF Upload Failed", "Could not restart upload.", 5000)
                 return
 
+        if (
+            bool(payload.get("use_xet", True))
+            and ("timeout" in error_lower or "timed out" in error_lower)
+        ):
+            error = (
+                f"{error}\n\nThis upload appears to have timed out while Xet was enabled. "
+                "Retry it from Data → Upload Dataset to HF with “Use Xet for "
+                "this upload” unchecked."
+            )
         QMessageBox.critical(self, "HF Upload Failed", error)
         self.show_temp_msg("HF Upload Failed", error, 5000)
 

@@ -1214,6 +1214,56 @@ def test_hf_download_dialog_annotations_only_disables_dry_run(window, tmp_path):
 
 
 @pytest.mark.gui
+def test_hf_transfer_dialogs_persist_independent_xet_choices(window, tmp_path):
+    from ui.dialogs import HfDownloadDialog, HfUploadDialog
+
+    opened_json = tmp_path / "opened_dataset.json"
+    opened_json.write_text("{}", encoding="utf-8")
+    settings = window.dataset_explorer_controller.settings
+
+    download_dialog = HfDownloadDialog(settings=settings, parent=window)
+    assert download_dialog.use_xet_checkbox.isChecked() is True
+    assert download_dialog.get_payload()["progress_mode"] == "files"
+    download_dialog.progress_mode_combo.setCurrentIndex(
+        download_dialog.progress_mode_combo.findData("bytes")
+    )
+    assert download_dialog.use_xet_checkbox.isChecked() is False
+    download_dialog._save_settings()
+    assert download_dialog.get_payload()["use_xet"] is False
+    assert download_dialog.get_payload()["progress_mode"] == "bytes"
+    download_dialog.close()
+
+    upload_dialog = HfUploadDialog(
+        str(opened_json), settings=settings, parent=window
+    )
+    assert upload_dialog.use_xet_checkbox.isChecked() is True
+    upload_dialog.use_xet_checkbox.setChecked(False)
+    upload_dialog._save_settings()
+    assert upload_dialog.get_payload()["use_xet"] is False
+    upload_dialog.close()
+
+    assert not settings.value(HfDownloadDialog._KEY_USE_XET, True, type=bool)
+    assert settings.value(HfDownloadDialog._KEY_PROGRESS_MODE) == "bytes"
+    assert not settings.value(HfUploadDialog._KEY_USE_XET, True, type=bool)
+
+
+@pytest.mark.gui
+def test_hf_download_enabling_xet_restores_file_progress(window):
+    from ui.dialogs import HfDownloadDialog
+
+    dialog = HfDownloadDialog(settings=None, parent=window)
+    dialog.progress_mode_combo.setCurrentIndex(
+        dialog.progress_mode_combo.findData("bytes")
+    )
+    assert dialog.use_xet_checkbox.isChecked() is False
+
+    dialog.use_xet_checkbox.setChecked(True)
+
+    assert dialog.get_payload()["progress_mode"] == "files"
+    dialog.close()
+
+
+@pytest.mark.gui
 def test_explorer_builds_selective_input_request_with_companion(window, tmp_path):
     clip_path = tmp_path / "clips" / "one.mp4"
     ball_path = tmp_path / "clips" / "ball.h5"
@@ -2037,6 +2087,24 @@ def test_upload_failure_repo_missing_prompts_create_and_retries(window, monkeypa
     assert question_calls["count"] == 1
     assert create_calls == [("OpenSportsLab/OSL-test-auto-upload", "hf_test_token")]
     assert retry_calls == [payload]
+
+
+@pytest.mark.gui
+def test_upload_timeout_suggests_retrying_without_xet(window, monkeypatch):
+    critical_calls = []
+    window._last_hf_upload_payload = {"use_xet": True}
+    monkeypatch.setattr(
+        "main_window.QMessageBox.critical",
+        lambda *args, **kwargs: critical_calls.append(args),
+    )
+
+    window._on_hf_upload_failed(
+        "Timeout: Request error while sending a large file"
+    )
+
+    assert critical_calls
+    assert "Use Xet for this upload" in critical_calls[-1][2]
+    assert "unchecked" in critical_calls[-1][2]
 
 
 @pytest.mark.gui

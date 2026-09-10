@@ -18,6 +18,10 @@ The download dialog asks for:
 - optional token
 - dry-run mode
 - **Download dataset JSON only (no media)**, off by default
+- **Use Xet for this download**, on by default for faster transfers; uncheck it
+  only as a fallback when an Xet-backed download fails or times out
+- **Progress detail**: **File progress** is the fast, Xet-compatible default;
+  **Byte progress** reports exact transferred sizes through classic HTTP
 
 It supports JSON split downloads (`<split>.json`) and Parquet/WebDataset split
 downloads (`<split>/`). Files are written under
@@ -25,13 +29,32 @@ downloads (`<split>/`). Files are written under
 JSON, or reconstructs it from Parquet metadata without downloading media
 shards. Dry run is disabled while JSON-only mode is selected.
 
+Xet is Hugging Face's accelerated transfer backend and is enabled by default
+for faster transfers. Very large files (for example, over 20 GB) can sometimes
+time out with Xet; retry through classic HTTP by unchecking the relevant
+option. The download and upload
+dialogs save independent **Use Xet** choices. Unchecking the upload option is
+the recommended workaround for known Xet timeouts on very large uploads; when
+an upload fails with a timeout while Xet is enabled, the app displays that advice.
+Each choice applies only for the duration of that transfer, after which the
+previous Hugging Face process setting is restored. A checked option explicitly
+sets `HF_HUB_DISABLE_XET=0` during the transfer so Xet is used when available;
+an unchecked option sets it to `1`.
+
+Choosing **Byte progress** automatically unchecks **Use Xet**, because the
+custom byte callback uses the classic sequential HTTP path. Checking **Use
+Xet** again switches progress back to **File progress**.
+
 After submission, downloads run in the background and the main annotation
 workflow remains interactive. The **Transfers** dock opens below Dataset
 Explorer and shows both the current stage/item count and the current
 repository-relative filename with its transferred size (for example,
-`384.0 MB / 2.0 GB`). These are separate progress bars, so file-byte progress
-does not replace overall progress. Operations for which Hugging Face does not
-provide a byte total remain animated. Its **Cancel** button requests
+`384.0 MB / 2.0 GB`) in Byte-progress mode. These are separate progress bars,
+so file-byte progress does not replace overall progress. In the default
+File-progress/Xet mode, the app prioritizes the accelerated downloader and does
+not request the custom byte callback that would force classic, sequential HTTP
+downloads; stage/item progress remains visible while the file bar may remain
+animated. Its **Cancel** button requests
 cancellation without opening a blocking progress dialog. The dock hides after a
 terminal transfer and can be reopened from **View → Transfers** to inspect the
 latest session summary or clear it. Only one full or selective dataset download
@@ -104,6 +127,8 @@ Upload modes:
   already stored remotely but absent locally are left untouched.
 - **Parquet + WebDataset** converts locally, then uploads generated
   Parquet/WebDataset artifacts.
+- **Use Xet for this upload** is checked by default. Uncheck it to retry through
+  classic HTTP when Xet times out, typically on a very large file.
 
 Before a Parquet upload, the app verifies every primary input and `ball_path`.
 It never creates or uploads partial shards. If files are missing and the JSON

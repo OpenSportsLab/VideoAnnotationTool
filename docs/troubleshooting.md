@@ -66,6 +66,12 @@ huggingface-cli login
 - For upload failures:
   - `Repository Not Found`: create the repo or let the app create it from the prompt.
   - `Revision/Branch Not Found`: create the branch or let the app create it from the prompt.
+  - Xet timeout on a large file: retry from **Data → Upload Dataset to HF**
+    with **Use Xet for this upload** unchecked. Xet remains enabled by
+    default because it normally provides faster transfers.
+- If an Xet-backed download itself fails or times out, retry with **Use Xet for
+  this download** unchecked. Download and upload choices are stored separately
+  and apply only to their respective transfer.
 - If **Download dataset JSON only** is unavailable, the active OpenSportsLib
   installation does not expose the selective-download API. Full dataset
   downloads still work; install the local feature version to enable it.
@@ -77,8 +83,10 @@ huggingface-cli login
   skipped and is never affected by the overwrite choice.
 - Active downloads open the **Transfers** dock below Dataset Explorer. It keeps
   overall stage/count progress separate from the current file's downloaded
-  size and byte progress. Some Hugging Face operations do not expose byte
-  totals, so the file bar remains animated while the stage text changes. Older
+  size and byte progress. The default **File progress** mode favors the
+  accelerated Xet path over custom byte callbacks, because **Byte progress**
+  requires classic sequential HTTP. Choose Byte progress only when exact byte
+  totals matter more than transfer speed. Older
   OpenSportsLib versions retain background downloads but show only stage/count
   progress. Use **Cancel** in the dock to stop at the next safe cancellation
   point. The dock hides when the transfer ends; reopen it from **View →

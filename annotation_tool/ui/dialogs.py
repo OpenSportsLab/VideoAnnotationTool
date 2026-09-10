@@ -45,6 +45,7 @@ from localization_settings import (
     MAX_LOCALIZATION_PREROLL_MS,
     load_localization_preroll_ms,
 )
+from hf_xet_settings import setting_bool
 
 
 class HfLocalModelDialog(QDialog):
@@ -1032,7 +1033,11 @@ class HfDownloadDialog(QDialog):
     _KEY_OUTPUT_DIR = f"{_SETTINGS_PREFIX}/output_dir"
     _KEY_DRY_RUN = f"{_SETTINGS_PREFIX}/dry_run"
     _KEY_ANNOTATIONS_ONLY = f"{_SETTINGS_PREFIX}/annotations_only"
+    _KEY_USE_XET = f"{_SETTINGS_PREFIX}/use_xet"
+    _KEY_PROGRESS_MODE = f"{_SETTINGS_PREFIX}/progress_mode"
     _KEY_TOKEN = f"{_SETTINGS_PREFIX}/token"
+    _PROGRESS_FILES = "files"
+    _PROGRESS_BYTES = "bytes"
     _AVAILABLE_DATASET_TRANSFERS = [
         {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "test"},
         {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "valid"},
@@ -1120,6 +1125,37 @@ class HfDownloadDialog(QDialog):
         )
         form.addRow("", self.annotations_only_checkbox)
 
+        self.use_xet_checkbox = QCheckBox(
+            "Use Xet for this download", self
+        )
+        self.use_xet_checkbox.setChecked(True)
+        self.use_xet_checkbox.setToolTip(
+            "Recommended for faster downloads. Uncheck this only if an "
+            "Xet-backed download fails or times out."
+        )
+        form.addRow("", self.use_xet_checkbox)
+        xet_download_help = QLabel(
+            "Xet is Hugging Face’s accelerated transfer backend. It is normally "
+            "faster; if a very large transfer (for example, over 20 GB) times "
+            "out, uncheck this option and retry.",
+            self,
+        )
+        xet_download_help.setWordWrap(True)
+        form.addRow("", xet_download_help)
+
+        self.progress_mode_combo = QComboBox(self)
+        self.progress_mode_combo.addItem(
+            "File progress (faster, Xet-compatible)", self._PROGRESS_FILES
+        )
+        self.progress_mode_combo.addItem(
+            "Byte progress (classic HTTP)", self._PROGRESS_BYTES
+        )
+        self.progress_mode_combo.setToolTip(
+            "File progress preserves accelerated downloads. Byte progress "
+            "reports exact transferred sizes but requires classic HTTP."
+        )
+        form.addRow("Progress detail", self.progress_mode_combo)
+
         self.token_edit = QLineEdit(self)
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.token_edit.setPlaceholderText("Optional token override")
@@ -1143,6 +1179,11 @@ class HfDownloadDialog(QDialog):
         layout.addWidget(buttons)
 
         self._load_settings()
+        self.use_xet_checkbox.toggled.connect(self._on_use_xet_toggled)
+        self.progress_mode_combo.currentIndexChanged.connect(
+            self._on_progress_mode_changed
+        )
+        self._on_use_xet_toggled(self.use_xet_checkbox.isChecked())
 
     @classmethod
     def _normalize_transfer(cls, transfer: dict | None) -> dict:
@@ -1251,6 +1292,20 @@ class HfDownloadDialog(QDialog):
         if checked:
             self.dry_run_checkbox.setChecked(False)
         self.dry_run_checkbox.setEnabled(not checked)
+
+    def _progress_mode(self) -> str:
+        mode = self.progress_mode_combo.currentData()
+        return mode if mode in {self._PROGRESS_FILES, self._PROGRESS_BYTES} else self._PROGRESS_FILES
+
+    def _on_use_xet_toggled(self, checked: bool) -> None:
+        if checked and self._progress_mode() == self._PROGRESS_BYTES:
+            self.progress_mode_combo.setCurrentIndex(
+                self.progress_mode_combo.findData(self._PROGRESS_FILES)
+            )
+
+    def _on_progress_mode_changed(self, _index: int) -> None:
+        if self._progress_mode() == self._PROGRESS_BYTES:
+            self.use_xet_checkbox.setChecked(False)
 
     def _fetch_branches(self) -> None:
         repo_id = self.repo_id_edit.text().strip()
@@ -1406,6 +1461,8 @@ class HfDownloadDialog(QDialog):
             "output_dir": self.output_dir_edit.text().strip(),
             "dry_run": self.dry_run_checkbox.isChecked(),
             "annotations_only": self.annotations_only_checkbox.isChecked(),
+            "use_xet": self.use_xet_checkbox.isChecked(),
+            "progress_mode": self._progress_mode(),
             "token": self.token_edit.text().strip() or None,
         }
 
@@ -1445,6 +1502,15 @@ class HfDownloadDialog(QDialog):
             bool(annotations_only and self._supports_annotations_only)
         )
         self._on_annotations_only_toggled(self.annotations_only_checkbox.isChecked())
+        self.use_xet_checkbox.setChecked(
+            setting_bool(self._settings.value(self._KEY_USE_XET, True), True)
+        )
+        progress_mode = str(
+            self._settings.value(self._KEY_PROGRESS_MODE, self._PROGRESS_FILES)
+            or self._PROGRESS_FILES
+        )
+        progress_index = self.progress_mode_combo.findData(progress_mode)
+        self.progress_mode_combo.setCurrentIndex(max(0, progress_index))
         self.token_edit.setText(str(self._settings.value(self._KEY_TOKEN, "") or ""))
 
     def _save_settings(self) -> None:
@@ -1460,6 +1526,11 @@ class HfDownloadDialog(QDialog):
             self._KEY_ANNOTATIONS_ONLY,
             self.annotations_only_checkbox.isChecked(),
         )
+        self._settings.setValue(
+            self._KEY_USE_XET,
+            self.use_xet_checkbox.isChecked(),
+        )
+        self._settings.setValue(self._KEY_PROGRESS_MODE, self._progress_mode())
         self._settings.setValue(self._KEY_TOKEN, self.token_edit.text().strip())
         self._settings.sync()
 
@@ -1518,6 +1589,7 @@ class HfUploadDialog(QDialog):
     _KEY_UPLOAD_AS_JSON = f"{_SETTINGS_PREFIX}/upload_as_json"
     _KEY_SHARD_SIZE = f"{_SETTINGS_PREFIX}/shard_size"
     _KEY_SAMPLES_PER_SHARD = f"{_SETTINGS_PREFIX}/samples_per_shard"
+    _KEY_USE_XET = f"{_SETTINGS_PREFIX}/use_xet"
 
     def __init__(
         self,
@@ -1555,6 +1627,24 @@ class HfUploadDialog(QDialog):
         self.upload_as_json_checkbox = QCheckBox("Upload as JSON (unchecked: upload as Parquet + WebDataset)", self)
         self.upload_as_json_checkbox.setChecked(True)
         form.addRow("", self.upload_as_json_checkbox)
+
+        self.use_xet_checkbox = QCheckBox(
+            "Use Xet for this upload", self
+        )
+        self.use_xet_checkbox.setChecked(True)
+        self.use_xet_checkbox.setToolTip(
+            "Recommended for faster transfers. Uncheck this if Xet times out "
+            "while uploading very large files."
+        )
+        form.addRow("", self.use_xet_checkbox)
+        xet_upload_help = QLabel(
+            "Xet is Hugging Face’s accelerated transfer backend. It is normally "
+            "faster; uploads of very large files (for example, over 20 GB) may "
+            "time out, so uncheck this option and retry if that happens.",
+            self,
+        )
+        xet_upload_help.setWordWrap(True)
+        form.addRow("", xet_upload_help)
 
         self.shard_size_spin = QSpinBox(self)
         self.shard_size_spin.setRange(1, 1_000_000)
@@ -1637,6 +1727,7 @@ class HfUploadDialog(QDialog):
             "commit_message": self.commit_message_edit.text().strip() or "Upload dataset inputs from JSON",
             "token": self.token_edit.text().strip() or None,
             "upload_as_json": self.upload_as_json_checkbox.isChecked(),
+            "use_xet": self.use_xet_checkbox.isChecked(),
             "shard_mode": "size",
             "shard_size": int(self.shard_size_spin.value()) * self._SHARD_SIZE_UNIT_BYTES,
         }
@@ -1663,6 +1754,9 @@ class HfUploadDialog(QDialog):
                 )
             else:
                 self.upload_as_json_checkbox.setChecked(bool(upload_as_json_raw))
+            self.use_xet_checkbox.setChecked(
+                setting_bool(self._settings.value(self._KEY_USE_XET, True), True)
+            )
             has_saved_shard_size = self._settings.contains(self._KEY_SHARD_SIZE)
             saved_shard_size = self._settings.value(self._KEY_SHARD_SIZE, self._DEFAULT_SHARD_SIZE_BYTES)
             try:
@@ -1705,6 +1799,9 @@ class HfUploadDialog(QDialog):
         self._settings.setValue(self._KEY_COMMIT_MESSAGE, self.commit_message_edit.text().strip())
         self._settings.setValue(self._KEY_TOKEN, self.token_edit.text().strip())
         self._settings.setValue(self._KEY_UPLOAD_AS_JSON, self.upload_as_json_checkbox.isChecked())
+        self._settings.setValue(
+            self._KEY_USE_XET, self.use_xet_checkbox.isChecked()
+        )
         self._settings.setValue(
             self._KEY_SHARD_SIZE,
             int(self.shard_size_spin.value()) * self._SHARD_SIZE_UNIT_BYTES,
