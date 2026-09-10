@@ -59,6 +59,8 @@ offset back onto the original sample timeline.
   - `_on_label_add_req`, `_on_label_rename_req`, `_on_label_delete_req`
 - Event functions:
   - `_on_spotting_triggered`, `_on_annotation_modified`, `_on_delete_single_annotation`
+  - `_event_seek_position` applies the configured navigation pre-roll while
+    clamping seeks to timeline zero; it never changes event data.
 - Prediction flows:
   - `_request_shared_inference`, `apply_shared_inference_result`,
     `_on_confirm_single_annotation`, `_on_reject_single_annotation`
@@ -83,8 +85,14 @@ offset back onto the original sample timeline.
   tracked delete path. Manual edits invalidate pending rows.
 - Single-row review selects the following row after refresh, or the preceding row
   when the reviewed row was last; ordinary selection signaling seeks playback.
+- Previous/next navigation advances from the selected table row when present, so
+  a pre-roll seek cannot repeatedly resolve back to the same event. With no row
+  selected, navigation resolves the nearest event from the playhead.
 - Main-window shortcuts invoke the panel's selected-row intent surface. The
   controller remains unaware of key bindings and `QSettings` shortcut values.
+- `set_navigation_preroll_ms(int)` receives the normalized application setting
+  from `MainWindow`; row selection and previous/next navigation emit the adjusted
+  media seek while event timestamps remain canonical.
 - Table confidence-cell confirmation prompt supports `Yes` (confirm), `No` (reject), `Cancel` (no-op).
 - Rejecting an inferred row removes it from the review table.
 - Unknown predicted labels are mapped via popup per inference run.

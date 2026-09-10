@@ -35,6 +35,16 @@ Use `LOC` for point events on the timeline.
 4. Use the spotting controls to add the event.
 5. Edit or delete rows in the event table when needed.
 
+Selecting an event seeks playback to its timestamp. To see context before the
+action, set **Localization event pre-roll** under **Edit → Settings… → Media
+Controls**; for example, `1000 ms` seeks to one second before the selected event.
+The setting changes navigation only and never changes the stored event time.
+
+With a row selected, **Set to Current Video Time** updates that event to the
+playhead. Its default shortcut is `Ctrl+Return`, configurable on the **Shortcuts**
+settings page. The edit is saved through the normal history path and supports
+undo/redo.
+
 Events are stored in `events[]` with `head`, `label`, and `position_ms`. When the
 sample has an absolute origin, they also contain an authoritative
 `timestamp_utc`. The Time column displays `YYYY-MM-DD HH:MM:SS.mmm UTC` whenever

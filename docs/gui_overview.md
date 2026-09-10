@@ -23,11 +23,17 @@ The **Edit → Settings…** dialog contains application-wide preferences. On it
 **Media Controls** page, comma-separated playback factors and seek intervals
 change the two media-control rows immediately when **Apply** or **OK** is used.
 
-The **Shortcuts** page configures localization prediction review. By default,
-`Ctrl+Enter` accepts the selected confidence-scored localization row and
-`Ctrl+Backspace` rejects it. Both bindings are required, must differ, and cannot
-overlap an existing application shortcut. They are stored as application
-preferences rather than in dataset JSON.
+The **Shortcuts** page configures project, media, and Localization bindings.
+Quit, Undo, and Redo keep their platform-standard shortcuts. All configurable
+bindings are required and cannot overlap. In Localization, `Ctrl+Return` sets
+the selected event to the current playhead, `Ctrl+Enter` accepts a selected
+confidence-scored row, and `Ctrl+Backspace` rejects it. Bindings are stored as
+application preferences rather than in dataset JSON.
+
+The **Media Controls** page also provides **Localization event pre-roll**. A
+value such as `1000 ms` makes row selection and previous/next event navigation
+seek one second before the event, clamped to the start of the timeline. This is
+a playback preference and does not alter annotation timestamps.
 
 The **Inference** settings tab selects Local or Remote execution, configures the
 server URL, tests `/api/v1/capabilities`, maps local directories to advertised

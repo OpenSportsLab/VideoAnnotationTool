@@ -68,6 +68,7 @@ class LocalizationEditorController(QObject):
         self._is_media_playing = False
         self._last_media_position_ms = 0
         self._media_duration_ms = 0
+        self._navigation_preroll_ms = 0
         self._active_mode_index = 0
         self._timeline_origin_utc = None
         self._timeline_origins = {}
@@ -86,6 +87,9 @@ class LocalizationEditorController(QObject):
 
     def set_settings(self, settings_obj) -> None:
         self.settings = settings_obj if settings_obj is not None else QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
+
+    def set_navigation_preroll_ms(self, value: int) -> None:
+        self._navigation_preroll_ms = max(0, int(value))
 
     # -------------------------------------------------------------------------
     # Lifecycle / Wiring
@@ -208,8 +212,9 @@ class LocalizationEditorController(QObject):
     # Selection / Playback / Annotation logic
     # -------------------------------------------------------------------------
     def _on_table_annotation_selected(self, ms: int):
-        self._last_media_position_ms = max(0, int(ms))
-        self.mediaSeekRequested.emit(int(ms))
+        target_ms = self._event_seek_position(ms)
+        self._last_media_position_ms = target_ms
+        self.mediaSeekRequested.emit(target_ms)
 
     def _on_update_time_for_selected(self, old_event):
         if not self.current_video_path:
@@ -961,23 +966,37 @@ class LocalizationEditorController(QObject):
             return
 
         sorted_events = sorted(events, key=lambda x: self._event_position_ms(x))
-        current_pos = max(0, int(self._last_media_position_ms))
         target_time = None
-        if step > 0:
-            for event in sorted_events:
-                if event.get("position_ms", 0) > current_pos + 100:
-                    target_time = event.get("position_ms")
-                    break
+        selection_model = self.localization_panel.table.table.selectionModel()
+        selected_rows = selection_model.selectedRows() if selection_model else []
+        if selected_rows:
+            adjacent_row = selected_rows[0].row() + (1 if step > 0 else -1)
+            adjacent_event = self.localization_panel.table.model.get_annotation_at(
+                adjacent_row
+            )
+            if adjacent_event:
+                target_time = self._event_position_ms(adjacent_event)
         else:
-            for event in reversed(sorted_events):
-                if event.get("position_ms", 0) < current_pos - 100:
-                    target_time = event.get("position_ms")
-                    break
+            current_pos = max(0, int(self._last_media_position_ms))
+            if step > 0:
+                for event in sorted_events:
+                    if self._event_position_ms(event) > current_pos + 100:
+                        target_time = self._event_position_ms(event)
+                        break
+            else:
+                for event in reversed(sorted_events):
+                    if self._event_position_ms(event) < current_pos - 100:
+                        target_time = self._event_position_ms(event)
+                        break
 
         if target_time is not None:
-            self._last_media_position_ms = max(0, int(target_time))
-            self.mediaSeekRequested.emit(int(target_time))
+            seek_position = self._event_seek_position(target_time)
+            self._last_media_position_ms = seek_position
+            self.mediaSeekRequested.emit(seek_position)
             self._select_row_by_time_in_table(self.localization_panel.table, target_time)
+
+    def _event_seek_position(self, event_position_ms: int) -> int:
+        return max(0, int(event_position_ms) - self._navigation_preroll_ms)
 
     def _select_row_by_time(self, time_ms):
         self._select_row_by_time_in_table(self.localization_panel.table, time_ms)

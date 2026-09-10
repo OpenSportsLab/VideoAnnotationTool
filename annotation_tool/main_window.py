@@ -74,12 +74,15 @@ from inference_types import (
 )
 from explorer_settings import EXPLORER_PAGE_SIZE_KEY, load_explorer_page_size
 from shortcut_settings import (
-    DEFAULT_LOCALIZATION_ACCEPT_SHORTCUT,
-    DEFAULT_LOCALIZATION_REJECT_SHORTCUT,
-    LOCALIZATION_ACCEPT_SHORTCUT_KEY,
-    LOCALIZATION_REJECT_SHORTCUT_KEY,
-    load_localization_review_shortcuts,
-    validate_localization_review_shortcuts,
+    DEFAULT_SHORTCUTS,
+    SHORTCUT_DEFINITIONS,
+    load_application_shortcuts,
+    validate_application_shortcuts,
+)
+from localization_settings import (
+    LOCALIZATION_PREROLL_MS_KEY,
+    load_localization_preroll_ms,
+    normalize_localization_preroll_ms,
 )
 
 from utils import create_checkmark_icon, resource_path
@@ -260,8 +263,7 @@ class VideoAnnotationWindow(QMainWindow):
         self._seek_interval_text = "1,5"
         self._speed_rates = (0.25, 0.5, 1.0, 2.0, 4.0)
         self._seek_intervals_seconds = (1.0, 5.0)
-        self._localization_accept_shortcut_text = DEFAULT_LOCALIZATION_ACCEPT_SHORTCUT
-        self._localization_reject_shortcut_text = DEFAULT_LOCALIZATION_REJECT_SHORTCUT
+        self._shortcut_values = dict(DEFAULT_SHORTCUTS)
 
         # Coalesce repeated status-triggered filter refreshes to avoid UI stalls
         # during rapid annotation mutations.
@@ -622,6 +624,9 @@ class VideoAnnotationWindow(QMainWindow):
             lambda _settings: self._restore_shortcut_settings_from_settings()
         )
         self.dataset_explorer_controller.settingsChanged.connect(
+            lambda _settings: self._restore_localization_preroll_from_settings()
+        )
+        self.dataset_explorer_controller.settingsChanged.connect(
             self.localization_editor_controller.set_settings
         )
         self.localization_editor_controller.set_settings(self.dataset_explorer_controller.settings)
@@ -647,6 +652,7 @@ class VideoAnnotationWindow(QMainWindow):
         self._restore_media_controls_from_settings()
         self._restore_explorer_settings_from_settings()
         self._restore_shortcut_settings_from_settings()
+        self._restore_localization_preroll_from_settings()
         # Dense add should always pause playback first; no auto-resume behavior.
         self.dense_panel.addEventRequested.connect(self.media_controller.pause)
         # Snapshot runtime media position on dense actions.
@@ -1112,57 +1118,59 @@ class VideoAnnotationWindow(QMainWindow):
 
     def _setup_shortcuts(self) -> None:
         """Register common keyboard shortcuts."""
-        QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self._safe_import_annotations)
-        
-        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self.dataset_explorer_controller.save_project)
-        QShortcut(QKeySequence("Ctrl+Shift+S"), self).activated.connect(
-            self.dataset_explorer_controller.export_project
-        )
+        callbacks = {
+            "open_dataset": self._safe_import_annotations,
+            "save_dataset": self.dataset_explorer_controller.save_project,
+            "save_dataset_as": self.dataset_explorer_controller.export_project,
+            "hf_download": self._open_hf_download_dialog,
+            "hf_upload": self._open_hf_upload_dialog,
+            "play_pause": self.media_controller.toggle_play_pause,
+            "step_backward": lambda: self.media_controller.step_frame(-1),
+            "step_forward": lambda: self.media_controller.step_frame(1),
+            "seek_backward_primary": lambda: self._seek_by_configured_interval(
+                0, -1
+            ),
+            "seek_forward_primary": lambda: self._seek_by_configured_interval(0, 1),
+            "seek_backward_secondary": lambda: self._seek_by_configured_interval(
+                1, -1
+            ),
+            "seek_forward_secondary": lambda: self._seek_by_configured_interval(
+                1, 1
+            ),
+            "localization_set_time": self._set_selected_localization_event_time,
+            "localization_accept": lambda: self._review_selected_localization_prediction(
+                accept=True
+            ),
+            "localization_reject": lambda: self._review_selected_localization_prediction(
+                accept=False
+            ),
+        }
+        self._shortcuts_by_name = {}
+        for name, callback in callbacks.items():
+            shortcut = QShortcut(QKeySequence(), self)
+            shortcut.activated.connect(callback)
+            self._shortcuts_by_name[name] = shortcut
 
-        QShortcut(QKeySequence("Ctrl+D"), self).activated.connect(
-            self._open_hf_download_dialog
-        )
-        QShortcut(QKeySequence("Ctrl+U"), self).activated.connect(
-            self._open_hf_upload_dialog
-        )
-
-        QShortcut(QKeySequence(Qt.Key.Key_Space), self).activated.connect(
-            self.media_controller.toggle_play_pause
-        )
-        QShortcut(QKeySequence(Qt.Key.Key_Left), self).activated.connect(
-            lambda: self.media_controller.step_frame(-1)
-        )
-        QShortcut(QKeySequence(Qt.Key.Key_Right), self).activated.connect(
-            lambda: self.media_controller.step_frame(1)
-        )
-        self.shortcut_seek_back_primary = QShortcut(QKeySequence("Ctrl+Left"), self)
-        self.shortcut_seek_fwd_primary = QShortcut(QKeySequence("Ctrl+Right"), self)
-        self.shortcut_seek_back_secondary = QShortcut(QKeySequence("Ctrl+Shift+Left"), self)
-        self.shortcut_seek_fwd_secondary = QShortcut(QKeySequence("Ctrl+Shift+Right"), self)
-        self.shortcut_seek_back_primary.activated.connect(
-            lambda: self._seek_by_configured_interval(0, -1)
-        )
-        self.shortcut_seek_fwd_primary.activated.connect(
-            lambda: self._seek_by_configured_interval(0, 1)
-        )
-        self.shortcut_seek_back_secondary.activated.connect(
-            lambda: self._seek_by_configured_interval(1, -1)
-        )
-        self.shortcut_seek_fwd_secondary.activated.connect(
-            lambda: self._seek_by_configured_interval(1, 1)
-        )
-        self.shortcut_localization_accept = QShortcut(QKeySequence(), self)
-        self.shortcut_localization_reject = QShortcut(QKeySequence(), self)
-        self.shortcut_localization_accept.activated.connect(
-            lambda: self._review_selected_localization_prediction(accept=True)
-        )
-        self.shortcut_localization_reject.activated.connect(
-            lambda: self._review_selected_localization_prediction(accept=False)
-        )
-        self._apply_localization_review_shortcuts(
-            self._localization_accept_shortcut_text,
-            self._localization_reject_shortcut_text,
-        )
+        self.shortcut_seek_back_primary = self._shortcuts_by_name[
+            "seek_backward_primary"
+        ]
+        self.shortcut_seek_fwd_primary = self._shortcuts_by_name["seek_forward_primary"]
+        self.shortcut_seek_back_secondary = self._shortcuts_by_name[
+            "seek_backward_secondary"
+        ]
+        self.shortcut_seek_fwd_secondary = self._shortcuts_by_name[
+            "seek_forward_secondary"
+        ]
+        self.shortcut_localization_set_time = self._shortcuts_by_name[
+            "localization_set_time"
+        ]
+        self.shortcut_localization_accept = self._shortcuts_by_name[
+            "localization_accept"
+        ]
+        self.shortcut_localization_reject = self._shortcuts_by_name[
+            "localization_reject"
+        ]
+        self._apply_application_shortcuts(self._shortcut_values)
         self._update_media_shortcut_state()
 
     def _show_shortcuts_popup(self) -> None:
@@ -1171,8 +1179,7 @@ class VideoAnnotationWindow(QMainWindow):
             "Shortcuts",
             build_shortcuts_help_text(
                 self._seek_intervals_seconds,
-                self._localization_accept_shortcut_text,
-                self._localization_reject_shortcut_text,
+                self._shortcut_values,
             ),
         )
 
@@ -1186,8 +1193,11 @@ class VideoAnnotationWindow(QMainWindow):
             parent=self,
         )
         dialog.mediaControlsApplyRequested.connect(self._save_and_apply_media_controls)
-        dialog.shortcutSettingsApplyRequested.connect(
-            self._save_and_apply_localization_review_shortcuts
+        dialog.applicationShortcutsApplyRequested.connect(
+            self._save_and_apply_application_shortcuts
+        )
+        dialog.localizationPrerollApplyRequested.connect(
+            self._save_and_apply_localization_preroll
         )
         dialog.explorerPageSizeApplyRequested.connect(
             self._save_and_apply_explorer_page_size
@@ -1698,30 +1708,55 @@ class VideoAnnotationWindow(QMainWindow):
             intervals.values,
         )
 
-    def _save_and_apply_localization_review_shortcuts(
-        self, accept_text: str, reject_text: str
-    ) -> None:
-        shortcuts = validate_localization_review_shortcuts(accept_text, reject_text)
+    def _save_and_apply_application_shortcuts(self, values) -> None:
+        shortcuts = validate_application_shortcuts(values)
         settings = getattr(self.dataset_explorer_controller, "settings", None)
         if settings is not None:
-            settings.setValue(LOCALIZATION_ACCEPT_SHORTCUT_KEY, shortcuts.accept)
-            settings.setValue(LOCALIZATION_REJECT_SHORTCUT_KEY, shortcuts.reject)
+            for definition in SHORTCUT_DEFINITIONS:
+                settings.setValue(
+                    definition.settings_key,
+                    shortcuts[definition.name],
+                )
             settings.sync()
-        self._apply_localization_review_shortcuts(shortcuts.accept, shortcuts.reject)
+        self._apply_application_shortcuts(shortcuts)
 
     def _restore_shortcut_settings_from_settings(self) -> None:
         settings = getattr(self.dataset_explorer_controller, "settings", None)
-        shortcuts = load_localization_review_shortcuts(settings)
-        self._apply_localization_review_shortcuts(shortcuts.accept, shortcuts.reject)
+        self._apply_application_shortcuts(load_application_shortcuts(settings))
 
-    def _apply_localization_review_shortcuts(
-        self, accept_text: str, reject_text: str
-    ) -> None:
-        self._localization_accept_shortcut_text = accept_text
-        self._localization_reject_shortcut_text = reject_text
-        if hasattr(self, "shortcut_localization_accept"):
-            self.shortcut_localization_accept.setKey(QKeySequence(accept_text))
-            self.shortcut_localization_reject.setKey(QKeySequence(reject_text))
+    def _apply_application_shortcuts(self, values) -> None:
+        shortcuts = validate_application_shortcuts(values)
+        self._shortcut_values = shortcuts
+        if hasattr(self, "_shortcuts_by_name"):
+            for name, shortcut in self._shortcuts_by_name.items():
+                shortcut.setKey(QKeySequence(shortcuts[name]))
+
+    def _save_and_apply_localization_preroll(self, value: int) -> None:
+        preroll_ms = normalize_localization_preroll_ms(value)
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is not None:
+            settings.setValue(LOCALIZATION_PREROLL_MS_KEY, preroll_ms)
+            settings.sync()
+        self.localization_editor_controller.set_navigation_preroll_ms(preroll_ms)
+
+    def _restore_localization_preroll_from_settings(self) -> None:
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        self.localization_editor_controller.set_navigation_preroll_ms(
+            load_localization_preroll_ms(settings)
+        )
+
+    def _set_selected_localization_event_time(self) -> None:
+        if (
+            not self._workspace_visible
+            or self.right_tabs.currentWidget() is not self.localization_panel
+        ):
+            return
+        handled = self.localization_panel.request_selected_event_time_update()
+        if not handled:
+            self.show_temp_msg(
+                "Localization",
+                "Select a localization event first.",
+            )
 
     def _review_selected_localization_prediction(self, *, accept: bool) -> None:
         if (

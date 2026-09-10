@@ -1,5 +1,9 @@
 # Keyboard Shortcuts
 
+All shortcuts listed below except Quit, Undo, and Redo can be changed under
+**Edit → Settings… → Shortcuts**. Bindings must be non-empty and unique; a
+multi-key binding also cannot begin with another configured binding.
+
 ## Project
 
 - `Ctrl+O`: Load dataset JSON
@@ -30,3 +34,13 @@ Their availability follows the current undo and redo history.
 During modality synchronization, the same controls affect only the selected
 modality. Left and Right step to the previous or next exact raster/H5 timestamp;
 video inputs use their FPS (falling back to 25 FPS).
+
+## Localization
+
+- `Ctrl+Return`: Set the selected event to the current video time
+- `Ctrl+Enter`: Accept the selected inferred event
+- `Ctrl+Backspace`: Reject the selected inferred event
+
+Localization shortcuts act only while the `LOC` editor is active. Setting an
+event time uses the normal tracked edit path and can be undone. Accept and reject
+require a selected confidence-scored event.

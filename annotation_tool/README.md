@@ -91,6 +91,14 @@ Localization and Dense Description tables show resolvable annotations as `YYYY-M
 - Application media-control preferences use `QSettings`, are parsed by
   `media_control_settings.py`, and are applied/wired only by `MainWindow`;
   they never enter `DatasetExplorerController.dataset_json`.
+- Configurable project/media/Localization bindings are defined and validated in
+  `shortcut_settings.py`. `MainWindow` owns their `QShortcut` instances and
+  dispatches Localization shortcuts through panel intent methods. Each binding
+  persists under `shortcuts/<name>` in application `QSettings`.
+- Localization navigation pre-roll uses `localization_settings.py` and is passed
+  from `MainWindow` to `LocalizationEditorController`; it affects seek targets
+  only and never mutates `events[]`. Its settings key is
+  `localization/navigation_preroll_ms`.
 - Dataset Explorer page size uses `QSettings`, is normalized by
   `explorer_settings.py`, and is applied through the explorer controller without
   mutating dataset JSON or routing media.

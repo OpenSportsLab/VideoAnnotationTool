@@ -35,10 +35,15 @@ from explorer_settings import (
     normalize_explorer_page_size,
 )
 from shortcut_settings import (
-    DEFAULT_LOCALIZATION_ACCEPT_SHORTCUT,
-    DEFAULT_LOCALIZATION_REJECT_SHORTCUT,
-    load_localization_review_shortcuts,
-    validate_localization_review_shortcuts,
+    DEFAULT_SHORTCUTS,
+    SHORTCUT_DEFINITIONS,
+    load_application_shortcuts,
+    validate_application_shortcuts,
+)
+from localization_settings import (
+    DEFAULT_LOCALIZATION_PREROLL_MS,
+    MAX_LOCALIZATION_PREROLL_MS,
+    load_localization_preroll_ms,
 )
 
 
@@ -394,7 +399,8 @@ class ApplicationSettingsDialog(QDialog):
     inferenceHfModelRequested = pyqtSignal(object)
     inferenceHfModelCancelRequested = pyqtSignal()
     explorerPageSizeApplyRequested = pyqtSignal(int)
-    shortcutSettingsApplyRequested = pyqtSignal(str, str)
+    applicationShortcutsApplyRequested = pyqtSignal(object)
+    localizationPrerollApplyRequested = pyqtSignal(int)
 
     def __init__(
         self,
@@ -431,6 +437,19 @@ class ApplicationSettingsDialog(QDialog):
         self.seek_intervals_edit.setPlaceholderText(DEFAULT_SEEK_INTERVALS)
         self.seek_intervals_edit.setToolTip("Comma-separated positive seek intervals in seconds.")
         form.addRow("Seek intervals (seconds):", self.seek_intervals_edit)
+
+        self.localization_preroll_spin = QSpinBox(media_page)
+        self.localization_preroll_spin.setObjectName("localizationPrerollSpin")
+        self.localization_preroll_spin.setRange(0, MAX_LOCALIZATION_PREROLL_MS)
+        self.localization_preroll_spin.setSingleStep(100)
+        self.localization_preroll_spin.setSuffix(" ms")
+        self.localization_preroll_spin.setValue(
+            load_localization_preroll_ms(settings)
+        )
+        self.localization_preroll_spin.setToolTip(
+            "When an event is selected, seek this many milliseconds before its timestamp."
+        )
+        form.addRow("Localization event pre-roll:", self.localization_preroll_spin)
 
         help_label = QLabel(
             "Examples: speed factors 2,4 create 0.25x through 4x; "
@@ -478,30 +497,26 @@ class ApplicationSettingsDialog(QDialog):
         shortcut_layout = QVBoxLayout(shortcut_page)
         shortcut_form = QFormLayout()
         shortcut_layout.addLayout(shortcut_form)
-        review_shortcuts = load_localization_review_shortcuts(settings)
-        self.localization_accept_shortcut_edit = QKeySequenceEdit(
-            QKeySequence(review_shortcuts.accept), shortcut_page
-        )
-        self.localization_accept_shortcut_edit.setObjectName(
-            "localizationAcceptShortcutEdit"
-        )
-        shortcut_form.addRow(
-            "Accept selected localization prediction:",
-            self.localization_accept_shortcut_edit,
-        )
-        self.localization_reject_shortcut_edit = QKeySequenceEdit(
-            QKeySequence(review_shortcuts.reject), shortcut_page
-        )
-        self.localization_reject_shortcut_edit.setObjectName(
-            "localizationRejectShortcutEdit"
-        )
-        shortcut_form.addRow(
-            "Reject selected localization prediction:",
-            self.localization_reject_shortcut_edit,
-        )
+        shortcut_values = load_application_shortcuts(settings)
+        self.shortcut_edits = {}
+        previous_group = None
+        for definition in SHORTCUT_DEFINITIONS:
+            if definition.group != previous_group:
+                group_label = QLabel(definition.group, shortcut_page)
+                group_label.setProperty("class", "settings_section_label")
+                shortcut_form.addRow(group_label)
+                previous_group = definition.group
+            editor = QKeySequenceEdit(
+                QKeySequence(shortcut_values[definition.name]), shortcut_page
+            )
+            editor.setObjectName(f"{definition.name}ShortcutEdit")
+            shortcut_form.addRow(f"{definition.label}:", editor)
+            self.shortcut_edits[definition.name] = editor
+
         shortcut_help = QLabel(
-            "These shortcuts work only while Localization is the active annotation editor. "
-            "They require a selected row with a confidence score.",
+            "Localization actions work only while Localization is the active editor. "
+            "Set time requires a selected event; prediction review also requires a confidence score. "
+            "Quit, Undo, and Redo retain their platform-standard bindings.",
             shortcut_page,
         )
         shortcut_help.setWordWrap(True)
@@ -559,12 +574,10 @@ class ApplicationSettingsDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         self.playback_factors_edit.textChanged.connect(lambda _text: self.validation_label.clear())
         self.seek_intervals_edit.textChanged.connect(lambda _text: self.validation_label.clear())
-        self.localization_accept_shortcut_edit.keySequenceChanged.connect(
-            lambda _sequence: self.shortcut_validation_label.clear()
-        )
-        self.localization_reject_shortcut_edit.keySequenceChanged.connect(
-            lambda _sequence: self.shortcut_validation_label.clear()
-        )
+        for editor in self.shortcut_edits.values():
+            editor.keySequenceChanged.connect(
+                lambda _sequence: self.shortcut_validation_label.clear()
+            )
         self.inference_setup_widget.testConnectionRequested.connect(lambda _config: self.inferenceTestRequested.emit())
         self.inference_setup_widget.remoteCatalogRefreshRequested.connect(
             lambda _config: self.inferenceRemoteCatalogRequested.emit()
@@ -620,12 +633,9 @@ class ApplicationSettingsDialog(QDialog):
         self.playback_factors_edit.setText(DEFAULT_PLAYBACK_FACTORS)
         self.seek_intervals_edit.setText(DEFAULT_SEEK_INTERVALS)
         self.explorer_page_size_spin.setValue(DEFAULT_EXPLORER_PAGE_SIZE)
-        self.localization_accept_shortcut_edit.setKeySequence(
-            QKeySequence(DEFAULT_LOCALIZATION_ACCEPT_SHORTCUT)
-        )
-        self.localization_reject_shortcut_edit.setKeySequence(
-            QKeySequence(DEFAULT_LOCALIZATION_REJECT_SHORTCUT)
-        )
+        self.localization_preroll_spin.setValue(DEFAULT_LOCALIZATION_PREROLL_MS)
+        for name, editor in self.shortcut_edits.items():
+            editor.setKeySequence(QKeySequence(DEFAULT_SHORTCUTS[name]))
         self.inference_remote_enabled_checkbox.setChecked(False)
         self.inference_server_url_edit.setText(DEFAULT_SERVER_URL)
         self.shared_mapping_table.setRowCount(0)
@@ -644,13 +654,13 @@ class ApplicationSettingsDialog(QDialog):
             return
 
         try:
-            shortcuts = validate_localization_review_shortcuts(
-                self.localization_accept_shortcut_edit.keySequence().toString(
-                    QKeySequence.SequenceFormat.PortableText
-                ),
-                self.localization_reject_shortcut_edit.keySequence().toString(
-                    QKeySequence.SequenceFormat.PortableText
-                ),
+            shortcuts = validate_application_shortcuts(
+                {
+                    name: editor.keySequence().toString(
+                        QKeySequence.SequenceFormat.PortableText
+                    )
+                    for name, editor in self.shortcut_edits.items()
+                }
             )
         except ValueError as exc:
             self.shortcut_validation_label.setText(str(exc))
@@ -665,7 +675,10 @@ class ApplicationSettingsDialog(QDialog):
             factors.values,
             intervals.values,
         )
-        self.shortcutSettingsApplyRequested.emit(shortcuts.accept, shortcuts.reject)
+        self.applicationShortcutsApplyRequested.emit(shortcuts)
+        self.localizationPrerollApplyRequested.emit(
+            self.localization_preroll_spin.value()
+        )
         self.inferenceSettingsApplyRequested.emit(inference_payload)
         parsed_server = urlparse(inference_payload["server_url"])
         if (

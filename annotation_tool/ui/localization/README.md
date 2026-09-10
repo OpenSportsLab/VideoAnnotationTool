@@ -52,6 +52,10 @@ live in the main-window Inference Jobs dock.
 - `LocalizationAnnotationPanel.request_selected_inference_review(accept=...)`
   - Exposes selected-row review to `MainWindow`, where configurable shortcuts
     are composed without coupling the controller to application settings.
+- `_TableAdapter.request_update_time_for_selected()` and
+  `LocalizationAnnotationPanel.request_selected_event_time_update()`
+  - Expose the existing Set to Current Video Time intent for the configurable
+    application shortcut; the panel does not mutate event data itself.
 - `_TableAdapter.set_timeline_origin(origin_utc)`
   - Supplies sample-scoped UTC display/edit context without coupling the panel
     to `MediaController`.
@@ -61,7 +65,8 @@ live in the main-window Inference Jobs dock.
 - Table edit emits old/new payloads; controller decides mutation validity.
 - Tabs adapter manages head/label UX including add/rename/delete requests.
 - Pending event actions are emitted as intent only; persistence remains in controller/history layer.
-- Invalid shortcut targets (no selection or a manual row) produce no table intent.
+- Invalid shortcut targets produce no table intent. Set time requires any event
+  row; prediction review additionally requires `confidence_score`.
 - Table row background color is derived from the same label-color mapping used for timeline markers.
 - A malformed annotation `timestamp_utc` displays relative `position_ms`; an
   invalid UTC edit is rejected without emitting a mutation.

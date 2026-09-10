@@ -331,17 +331,20 @@ class _TableAdapter(QObject):
             self.annotationSelected.emit(item.get("position_ms", 0))
 
     def _on_set_time_clicked(self):
-        if self.btn_set_time is None:
-            return
+        self.request_update_time_for_selected()
 
+    def request_update_time_for_selected(self) -> bool:
+        """Emit the same intent as the Set to Current Video Time button."""
         indexes = self.table.selectionModel().selectedRows()
         if not indexes:
-            return
+            return False
 
         row = indexes[0].row()
         item = self.model.get_annotation_at(row)
         if item:
             self.updateTimeForSelectedRequested.emit(item)
+            return True
+        return False
 
     def request_selected_inference_review(self, *, accept: bool) -> bool:
         """Emit a review intent for the selected confidence-scored row."""
@@ -799,5 +802,8 @@ class LocalizationAnnotationPanel(QWidget):
 
     def request_selected_inference_review(self, *, accept: bool) -> bool:
         return self.table.request_selected_inference_review(accept=accept)
+
+    def request_selected_event_time_update(self) -> bool:
+        return self.table.request_update_time_for_selected()
 
 __all__ = ["LocalizationAnnotationPanel"]
