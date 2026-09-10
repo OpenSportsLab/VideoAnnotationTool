@@ -72,27 +72,33 @@ huggingface-cli login
 - If an Xet-backed download itself fails or times out, retry with **Use Xet
   (faster)** unchecked. Download and upload choices are stored separately and
   apply only to their respective transfer.
-- If **Download dataset JSON only** is unavailable, the active OpenSportsLib
-  installation does not expose the selective-download API. Full dataset
-  downloads still work; install the local feature version to enable it.
+- If a JSON-first download is unavailable, the active OpenSportsLib installation
+  does not expose the required metadata-only/selective-download API. Install the
+  local feature version to enable it.
 - If a dataset explorer download action asks you to re-download the dataset,
   its JSON has legacy provenance without `hf_format` or `hf_commit`. Download
   the split again so assets can be pinned to the same immutable commit.
 - Selective-download summaries distinguish requested files from collateral
   files extracted from the same shard. Existing collateral is intentionally
   skipped and is never affected by the overwrite choice.
-- Active downloads open the **Transfers** dock below Dataset Explorer. It keeps
-  overall stage/count progress separate from the current file's downloaded
-  size and byte progress. Byte progress is always enabled and works with Xet,
-  though repository files are handled individually rather than through a
-  concurrent snapshot operation. Older
-  OpenSportsLib versions retain background downloads but show only stage/count
-  progress. Use **Cancel** in the dock to stop at the next safe cancellation
-  point. The dock hides when the transfer ends; reopen it from **View →
-  Transfers** to inspect or clear the latest summary.
-- Sample/input download actions are greyed out while a dataset download is
-  active because full and selective downloads share one worker slot. If you
-  attempt to quit, choose **Keep App Open** to finish the transfer or **Stop
+- The **Transfers** dock starts hidden like the other optional workspace docks;
+  open it from **View → Transfers**, or let an active download open it below
+  Dataset Explorer. It keeps
+  completed-file progress separate from current-file byte progress and speed,
+  with one row per planned file and **Queued** or **Completed** status. Active
+  rows show their byte count without a “Running” prefix, and the speed column is
+  the whole-file average. Byte progress works with Xet, though
+  repository files are handled individually rather than through a concurrent
+  snapshot operation. Idle and completed views keep empty determinate bars and
+  the table visible. The table is a read-only view of the controller's FIFO.
+  Use **Stop download** to cancel and return the current item to the front, and
+  **Download** to resume items sequentially without clearing the list. **Clear** removes
+  completed and waiting rows, but leaves an active transfer running. A new
+  sample request starts automatically whenever no transfer is active.
+- Sample/input download actions remain enabled during another selective
+  download; new requests wait in FIFO order. They are greyed out only during a
+  full dataset download. Stopping preserves queued selective requests. If
+  you attempt to quit, choose **Keep App Open** to finish the queue or **Stop
   Download and Quit** to cancel it and close the application.
 - Parquet upload stops before conversion if any primary input or `ball_path` is
   missing. For datasets with complete `hf_repo_id`, `hf_split`, `hf_format`, and

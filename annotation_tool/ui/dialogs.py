@@ -1031,8 +1031,7 @@ class HfDownloadDialog(QDialog):
     _KEY_SUCCESS_TRANSFERS = f"{_SETTINGS_PREFIX}/successful_transfers"
     _KEY_SUCCESS_URLS = f"{_SETTINGS_PREFIX}/successful_urls"
     _KEY_OUTPUT_DIR = f"{_SETTINGS_PREFIX}/output_dir"
-    _KEY_DRY_RUN = f"{_SETTINGS_PREFIX}/dry_run"
-    _KEY_ANNOTATIONS_ONLY = f"{_SETTINGS_PREFIX}/annotations_only"
+    _KEY_QUEUE_MEDIA = f"{_SETTINGS_PREFIX}/queue_media"
     _KEY_USE_XET = f"{_SETTINGS_PREFIX}/use_xet"
     _KEY_TOKEN = f"{_SETTINGS_PREFIX}/token"
     _AVAILABLE_DATASET_TRANSFERS = [
@@ -1106,23 +1105,15 @@ class HfDownloadDialog(QDialog):
         output_row.addWidget(browse_output_button, 0)
         form.addRow("Output Directory*", output_row)
 
-        self.dry_run_checkbox = QCheckBox("Dry-run (estimate only, no downloads)", self)
-        form.addRow("", self.dry_run_checkbox)
-
-        self.annotations_only_checkbox = QCheckBox(
-            "Download dataset JSON only (no media)", self
+        self.queue_media_checkbox = QCheckBox("Queue sample media", self)
+        self.queue_media_checkbox.setChecked(True)
+        self.queue_media_checkbox.setToolTip(
+            "After the dataset JSON is ready, add all missing sample media to "
+            "the transfer queue."
         )
-        self.annotations_only_checkbox.setEnabled(self._supports_annotations_only)
-        if not self._supports_annotations_only:
-            self.annotations_only_checkbox.setToolTip(
-                "Requires the newer local OpenSportsLib checkout."
-            )
-        self.annotations_only_checkbox.toggled.connect(
-            self._on_annotations_only_toggled
-        )
-        form.addRow("", self.annotations_only_checkbox)
+        form.addRow("", self.queue_media_checkbox)
 
-        self.use_xet_checkbox = QCheckBox("Use Xet (faster, might time out for verylarge transfers)", self)
+        self.use_xet_checkbox = QCheckBox("Use Xet (faster downloads)", self)
         self.use_xet_checkbox.setChecked(True)
         self.use_xet_checkbox.setToolTip(
             "Xet accelerates Hugging Face downloads. If a very large transfer "
@@ -1257,11 +1248,6 @@ class HfDownloadDialog(QDialog):
                 checked.append(item.text())
         return checked
 
-    def _on_annotations_only_toggled(self, checked: bool) -> None:
-        if checked:
-            self.dry_run_checkbox.setChecked(False)
-        self.dry_run_checkbox.setEnabled(not checked)
-
     def _fetch_branches(self) -> None:
         repo_id = self.repo_id_edit.text().strip()
         if not repo_id:
@@ -1385,14 +1371,11 @@ class HfDownloadDialog(QDialog):
         if not output_dir:
             QMessageBox.warning(self, "Missing Required Field", "Output directory is required.")
             return False
-        if self.dry_run_checkbox.isChecked() and self._detected_format == "parquet":
-            QMessageBox.warning(self, "Unsupported Dry-Run", "Dry-run is available only for JSON downloads.")
-            return False
-        if self.annotations_only_checkbox.isChecked() and not self._supports_annotations_only:
+        if not self._supports_annotations_only:
             QMessageBox.warning(
                 self,
                 "Unsupported Download Mode",
-                "JSON-only downloads require the newer local OpenSportsLib checkout.",
+                "JSON-first downloads require the newer local OpenSportsLib checkout.",
             )
             return False
         return True
@@ -1404,8 +1387,7 @@ class HfDownloadDialog(QDialog):
         self._save_settings()
         self._submitted = True
         self.downloadRequested.emit(payload)
-        if not payload.get("dry_run", False):
-            self.accept()
+        self.accept()
 
     def get_payload(self) -> dict:
         return {
@@ -1414,8 +1396,10 @@ class HfDownloadDialog(QDialog):
             "splits": self._checked_splits(),
             "download_format": self._detected_format or "parquet",
             "output_dir": self.output_dir_edit.text().strip(),
-            "dry_run": self.dry_run_checkbox.isChecked(),
-            "annotations_only": self.annotations_only_checkbox.isChecked(),
+            "dry_run": False,
+            "annotations_only": True,
+            "json_first": True,
+            "queue_media": self.queue_media_checkbox.isChecked(),
             "use_xet": self.use_xet_checkbox.isChecked(),
             "progress_mode": "bytes",
             "token": self.token_edit.text().strip() or None,
@@ -1443,20 +1427,9 @@ class HfDownloadDialog(QDialog):
         self.repo_id_edit.setText(repo_id)
         self.revision_combo.setEditText(revision)
         self.output_dir_edit.setText(str(self._settings.value(self._KEY_OUTPUT_DIR, "") or ""))
-        dry_run_raw = self._settings.value(self._KEY_DRY_RUN, False)
-        if isinstance(dry_run_raw, str):
-            self.dry_run_checkbox.setChecked(dry_run_raw.strip().lower() in {"1", "true", "yes", "on"})
-        else:
-            self.dry_run_checkbox.setChecked(bool(dry_run_raw))
-        annotations_only_raw = self._settings.value(self._KEY_ANNOTATIONS_ONLY, False)
-        if isinstance(annotations_only_raw, str):
-            annotations_only = annotations_only_raw.strip().lower() in {"1", "true", "yes", "on"}
-        else:
-            annotations_only = bool(annotations_only_raw)
-        self.annotations_only_checkbox.setChecked(
-            bool(annotations_only and self._supports_annotations_only)
+        self.queue_media_checkbox.setChecked(
+            setting_bool(self._settings.value(self._KEY_QUEUE_MEDIA, True), True)
         )
-        self._on_annotations_only_toggled(self.annotations_only_checkbox.isChecked())
         self.use_xet_checkbox.setChecked(
             setting_bool(self._settings.value(self._KEY_USE_XET, True), True)
         )
@@ -1470,10 +1443,9 @@ class HfDownloadDialog(QDialog):
         self._settings.setValue(self._KEY_REVISION, payload["revision"])
         self._settings.setValue(self._KEY_SPLITS, "|".join(payload["splits"]))
         self._settings.setValue(self._KEY_OUTPUT_DIR, self.output_dir_edit.text().strip())
-        self._settings.setValue(self._KEY_DRY_RUN, self.dry_run_checkbox.isChecked())
         self._settings.setValue(
-            self._KEY_ANNOTATIONS_ONLY,
-            self.annotations_only_checkbox.isChecked(),
+            self._KEY_QUEUE_MEDIA,
+            self.queue_media_checkbox.isChecked(),
         )
         self._settings.setValue(
             self._KEY_USE_XET,

@@ -11,7 +11,7 @@ multi-key binding also cannot begin with another configured binding.
 - `Ctrl+Shift+S`: Save dataset as
 - `Ctrl+D`: Open HF download dialog
 - `Ctrl+U`: Open HF upload dialog
-- `Ctrl/Cmd+Q`: Quit
+- `Ctrl/Cmd+Q`: close the open dataset; when no dataset is open, quit the app
 
 ## Undo/Redo
 

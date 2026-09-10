@@ -38,6 +38,244 @@ def test_download_running_reports_shared_full_and_selective_worker_slot():
     assert controller.is_download_running() is True
 
 
+def test_selective_downloads_queue_behind_active_selective_download():
+    controller = HfTransferController()
+    worker = type(
+        "_Worker",
+        (),
+        {
+            "isRunning": lambda self: True,
+            "requestInterruption": lambda self: None,
+        },
+    )()
+    controller._download_worker = worker
+    controller._active_download_config = {"operation": "assets", "sample_id": "one"}
+    queued = []
+    controller.downloadQueued.connect(
+        lambda payload, position: queued.append((payload, position))
+    )
+
+    assert controller.start_asset_download(
+        {"sample_id": "two", "requested_local_paths": ["/data/two.mp4"]}
+    ) is True
+    assert controller.start_asset_download(
+        {"sample_id": "three", "requested_local_paths": ["/data/three.mp4"]}
+    ) is True
+
+    assert controller.queued_download_count() == 2
+    assert [entry[0]["sample_id"] for entry in queued] == ["two", "three"]
+    assert [entry[1] for entry in queued] == [1, 2]
+    assert controller.queued_requested_local_paths() == (
+        "/data/two.mp4",
+        "/data/three.mp4",
+    )
+
+    assert controller.cancel_download() is True
+    assert controller.queued_download_count() == 0
+
+
+def test_full_download_does_not_accept_selective_queue_item():
+    controller = HfTransferController()
+    controller._download_worker = type(
+        "_Worker", (), {"isRunning": lambda self: True}
+    )()
+    controller._active_download_config = {"operation": "dataset"}
+
+    assert controller.start_asset_download({"sample_id": "two"}) is False
+    assert controller.queued_download_count() == 0
+
+
+def test_next_selective_download_starts_after_worker_cleanup(monkeypatch):
+    controller = HfTransferController()
+    worker = type(
+        "_Worker",
+        (),
+        {
+            "isRunning": lambda self: True,
+            "deleteLater": lambda self: None,
+        },
+    )()
+    controller._download_worker = worker
+    controller._active_download_config = {"operation": "assets", "sample_id": "one"}
+    assert controller.start_asset_download({"sample_id": "two"}) is True
+    started = []
+    monkeypatch.setattr(
+        controller,
+        "_start_download_now",
+        lambda payload: started.append(payload) or True,
+    )
+
+    controller._cleanup_download_worker(worker)
+
+    assert [payload["sample_id"] for payload in started] == ["two"]
+    assert controller.queued_download_count() == 0
+
+
+def test_pause_preserves_active_and_queued_downloads_until_resume(monkeypatch):
+    interruptions = []
+    controller = HfTransferController()
+    worker = type(
+        "_Worker",
+        (),
+        {
+            "isRunning": lambda self: True,
+            "requestInterruption": lambda self: interruptions.append(True),
+            "deleteLater": lambda self: None,
+        },
+    )()
+    controller._download_worker = worker
+    controller._active_download_config = {"operation": "assets", "sample_id": "one"}
+    controller.queue_download({"operation": "assets", "sample_id": "two"})
+
+    assert controller.pause_download_queue() is True
+    assert controller.is_download_queue_paused() is True
+    assert interruptions == [True]
+    assert [item["sample_id"] for item in controller._queued_asset_downloads] == [
+        "one",
+        "two",
+    ]
+
+    controller._cleanup_download_worker(worker)
+    started = []
+    monkeypatch.setattr(
+        controller,
+        "_start_download_now",
+        lambda payload: started.append(payload) or True,
+    )
+
+    assert controller.resume_download_queue() is True
+    assert controller.is_download_queue_paused() is False
+    assert [item["sample_id"] for item in started] == ["one"]
+    assert [item["sample_id"] for item in controller._queued_asset_downloads] == ["two"]
+
+
+def test_controller_owns_ordered_file_queue_and_stop_requeues_current():
+    interruptions = []
+    controller = HfTransferController()
+    first = {
+        "operation": "assets",
+        "sample_id": "one",
+        "requested_paths": ["clips/one.mp4"],
+    }
+    controller._ensure_config_entries(first)
+    controller._active_download_config = first
+    controller._mark_config_active(first)
+    controller._download_worker = type(
+        "_Worker",
+        (),
+        {
+            "isRunning": lambda self: True,
+            "requestInterruption": lambda self: interruptions.append(True),
+        },
+    )()
+
+    assert controller.start_asset_download(
+        {
+            "sample_id": "two",
+            "requested_paths": ["clips/two.mp4"],
+        }
+    ) is True
+    assert controller.start_asset_download(
+        {
+            "sample_id": "three",
+            "requested_paths": ["clips/three.mp4"],
+        }
+    ) is True
+    assert [entry["path"] for entry in controller.download_queue_snapshot()] == [
+        "clips/one.mp4",
+        "clips/two.mp4",
+        "clips/three.mp4",
+    ]
+    assert [entry["status"] for entry in controller.download_queue_snapshot()] == [
+        "active",
+        "queued",
+        "queued",
+    ]
+
+    assert controller.pause_download_queue() is True
+    assert interruptions == [True]
+    assert [entry["status"] for entry in controller.download_queue_snapshot()] == [
+        "queued",
+        "queued",
+        "queued",
+    ]
+    assert [job["sample_id"] for job in controller._queued_asset_downloads] == [
+        "one",
+        "two",
+        "three",
+    ]
+
+
+def test_clear_removes_completed_and_queued_entries_but_keeps_active():
+    controller = HfTransferController()
+    controller._download_entries = [
+        {"id": 1, "path": "done", "status": "completed"},
+        {"id": 2, "path": "active", "status": "active"},
+        {"id": 3, "path": "waiting", "status": "queued"},
+        {"id": 4, "path": "failed", "status": "failed"},
+    ]
+    controller._queued_asset_downloads.append({"sample_id": "waiting"})
+    controller._download_worker = type(
+        "_Worker", (), {"isRunning": lambda self: True}
+    )()
+
+    assert controller.clear_queued_downloads() == 1
+    snapshot = controller.download_queue_snapshot()
+    assert len(snapshot) == 1
+    assert snapshot[0]["id"] == 2
+    assert snapshot[0]["path"] == "active"
+    assert snapshot[0]["status"] == "active"
+
+
+def test_only_first_file_in_each_queue_job_is_active():
+    controller = HfTransferController()
+    payload = {
+        "operation": "assets",
+        "requested_paths": ["clips/one.mp4", "clips/two.mp4"],
+    }
+    controller._ensure_config_entries(payload)
+    controller._active_download_config = payload
+    controller._mark_config_active(payload)
+
+    assert [entry["status"] for entry in controller.download_queue_snapshot()] == [
+        "active",
+        "queued",
+    ]
+
+    controller._on_worker_byte_progress("clips/one.mp4", 10, 10)
+    controller._on_worker_byte_progress("clips/two.mp4", 1, 10)
+
+    assert [entry["status"] for entry in controller.download_queue_snapshot()] == [
+        "completed",
+        "active",
+    ]
+
+
+def test_clear_discards_waiting_jobs_and_next_sample_auto_starts(monkeypatch):
+    controller = HfTransferController()
+    controller._download_queue_paused = True
+    controller._queued_asset_downloads.extend(
+        [
+            {"operation": "assets", "sample_id": "old-1"},
+            {"operation": "assets", "sample_id": "old-2"},
+        ]
+    )
+
+    assert controller.clear_queued_downloads() == 2
+    assert controller.queued_download_count() == 0
+    assert controller.is_download_queue_paused() is False
+
+    started = []
+    monkeypatch.setattr(
+        controller,
+        "_start_download_now",
+        lambda payload: started.append(payload) or True,
+    )
+
+    assert controller.start_asset_download({"sample_id": "new"}) is True
+    assert [payload["sample_id"] for payload in started] == ["new"]
+
+
 def test_download_worker_routes_to_library_api(monkeypatch):
     calls = {}
 
@@ -248,8 +486,13 @@ def test_download_worker_forwards_file_byte_progress(monkeypatch):
         byte_progress_cb=None,
         **kwargs,
     ):
-        del repo_id, revision, splits, output_dir, kwargs
+        del repo_id, revision, splits, output_dir
+        kwargs["file_plan_cb"](["test.json", "test/shards/large.tar"])
         byte_progress_cb("test/shards/large.tar", 384 * 1024**2, 2 * 1024**3)
+        kwargs["file_completed_cb"](
+            "test/shards/large.tar", "/tmp/output/test/shards/large.tar"
+        )
+        kwargs["json_ready_cb"]("test", "/tmp/output/test.json")
         return [{"ok": True}]
 
     monkeypatch.setattr(
@@ -266,10 +509,20 @@ def test_download_worker_forwards_file_byte_progress(monkeypatch):
         }
     )
     byte_updates = []
+    plans = []
+    completed_files = []
+    ready_json = []
     worker.byteProgress.connect(
         lambda filename, downloaded, total: byte_updates.append(
             (filename, downloaded, total)
         )
+    )
+    worker.filePlan.connect(plans.append)
+    worker.fileCompleted.connect(
+        lambda filename, path: completed_files.append((filename, path))
+    )
+    worker.jsonReady.connect(
+        lambda split, path: ready_json.append((split, path))
     )
 
     worker.run()
@@ -277,6 +530,11 @@ def test_download_worker_forwards_file_byte_progress(monkeypatch):
     assert byte_updates == [
         ("test/shards/large.tar", 384 * 1024**2, 2 * 1024**3)
     ]
+    assert plans == [["test.json", "test/shards/large.tar"]]
+    assert completed_files == [
+        ("test/shards/large.tar", "/tmp/output/test/shards/large.tar")
+    ]
+    assert ready_json == [("test", "/tmp/output/test.json")]
 
 
 def test_download_worker_does_not_pass_byte_callback_to_older_api(monkeypatch):
