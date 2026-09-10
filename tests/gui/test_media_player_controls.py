@@ -1744,6 +1744,39 @@ def test_group_clock_does_not_seek_video_for_normal_position_reporting_lag(
 
 
 @pytest.mark.gui
+def test_paused_video_explicit_seek_bypasses_drift_tolerance(
+    media_panel_and_controller,
+    monkeypatch,
+):
+    _panel, controller = media_panel_and_controller
+    session = controller._single
+    seek_calls = []
+    session._current_backend = session._BACKEND_VIDEO
+    monkeypatch.setattr(session, "current_position_ms", lambda: 0)
+    monkeypatch.setattr(session, "set_position", seek_calls.append)
+    controller._group_active = True
+    controller._group_duration_ms = 1000
+    controller._sessions = [
+        {
+            "source": {"type": "video", "path": "/tmp/video.mp4", "fps": 25.0},
+            "pane": None,
+            "controller": session,
+            "origin_utc": None,
+            "offset_ms": 0,
+            "duration_ms": 1000,
+            "valid": True,
+            "utc_start_present": False,
+            "utc_start_invalid": False,
+        }
+    ]
+
+    controller.step_frame(1)
+
+    assert controller.current_position_ms() == 40
+    assert seek_calls == [40]
+
+
+@pytest.mark.gui
 def test_running_video_clock_skips_drift_seek_but_accepts_explicit_seek(
     media_panel_and_controller,
     monkeypatch,

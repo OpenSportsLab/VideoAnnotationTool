@@ -1709,7 +1709,7 @@ class MediaController(QObject):
                 fps = float(record["source"].get("fps") or 0.0)
                 frame_ms = int(round(1000.0 / fps)) if fps > 0 else 0
                 threshold = max(self._VIDEO_DRIFT_TOLERANCE_MS, frame_ms)
-                if record is video_clock and seek_video_clock:
+                if seek_video_clock:
                     session.set_position(local)
                 elif record is not video_clock and force_video_seek and drift > threshold:
                     session.set_position(local)
