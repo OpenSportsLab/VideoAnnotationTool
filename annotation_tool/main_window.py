@@ -852,6 +852,9 @@ class VideoAnnotationWindow(QMainWindow):
     def _setup_menu_bar(self) -> None:
         from PyQt6.QtGui import QActionGroup
         menu_bar = self.menuBar()
+        # Keep application commands visible in the window on macOS instead of
+        # moving them to the system-wide menu bar.
+        menu_bar.setNativeMenuBar(False)
         file_menu = menu_bar.addMenu("&File")
 
         self.action_create = QAction("Create New Dataset", self)
