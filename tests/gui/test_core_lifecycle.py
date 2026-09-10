@@ -1609,8 +1609,9 @@ def test_data_menu_actions_dispatch_hf_download_and_upload(window, monkeypatch, 
 
 
 @pytest.mark.gui
-def test_hf_download_uses_non_modal_status_bar_progress(window, monkeypatch, qtbot):
+def test_hf_download_uses_transfers_dock_progress(window, monkeypatch, qtbot):
     cancel_calls = []
+    window.show_workspace()
     monkeypatch.setattr(
         window.hf_transfer_controller,
         "cancel_download",
@@ -1624,40 +1625,51 @@ def test_hf_download_uses_non_modal_status_bar_progress(window, monkeypatch, qtb
     window._on_hf_download_started("Starting Hugging Face download...")
     qtbot.wait(20)
 
-    widget = window._hf_download_status_widget
-    assert widget is not None
+    panel = window.hf_transfer_panel
     assert window._hf_busy_dialog is None
-    assert widget.parent() is window.statusBar()
-    assert widget.isVisible() is True
+    assert window.hf_transfer_dock.widget() is panel
+    assert window.dockWidgetArea(window.hf_transfer_dock) == Qt.DockWidgetArea.LeftDockWidgetArea
+    assert window.hf_transfer_dock.isVisible() is True
     assert window.isEnabled() is True
-    assert widget.progress_bar.minimum() == 0
-    assert widget.progress_bar.maximum() == 0
+    assert panel.overall_progress_bar.minimum() == 0
+    assert panel.overall_progress_bar.maximum() == 0
     assert window.dataset_explorer_panel._hf_download_running is True
+    assert not window.statusBar().findChildren(type(panel))
 
     window._on_hf_download_progress(
         "[1/2] train: [2/4] Downloading clips/example.mp4"
     )
 
-    assert "clips/example.mp4" in widget.label.text()
-    assert widget.progress_bar.maximum() == 1000
-    assert widget.progress_bar.value() == 250
+    assert "clips/example.mp4" in panel.stage_label.text()
+    assert panel.overall_progress_bar.maximum() == 1000
+    assert panel.overall_progress_bar.value() == 250
 
     window._on_hf_download_bytes_progress(
         "test/shards/large.tar", 384 * 1024**2, 2 * 1024**3
     )
 
-    assert "large.tar" in widget.label.text()
-    assert "384.0 MB / 2.0 GB" in widget.label.text()
-    assert widget.progress_bar.maximum() == 1000
-    assert widget.progress_bar.value() == 188
+    assert "test/shards/large.tar" in panel.current_file_label.text()
+    assert "384.0 MB / 2.0 GB" in panel.current_file_label.text()
+    assert panel.overall_progress_bar.value() == 250
+    assert panel.file_progress_bar.maximum() == 1000
+    assert panel.file_progress_bar.value() == 188
 
-    widget.cancel_button.click()
+    window._on_hf_download_bytes_progress("unknown.bin", 512 * 1024**2, 0)
+    assert panel.file_progress_bar.maximum() == 0
+    assert "512.0 MB downloaded" in panel.current_file_label.text()
+
+    panel.cancel_button.click()
     assert cancel_calls == [True]
-    assert widget.cancel_button.isEnabled() is False
-    assert widget.cancel_button.text() == "Cancelling..."
+    assert panel.cancel_button.isEnabled() is False
+    assert panel.cancel_button.text() == "Cancelling…"
 
-    window._close_hf_download_status()
-    assert window._hf_download_status_widget is None
+    window._finish_hf_transfer("Hugging Face download completed", "1 file downloaded", {})
+    assert window.hf_transfer_dock.isHidden() is True
+    window.action_show_hf_transfers.trigger()
+    assert window.hf_transfer_dock.isVisible() is True
+    assert "1 file downloaded" in panel.summary_label.text()
+    panel.clear_button.click()
+    assert panel.summary_label.text() == ""
 
 
 @pytest.mark.gui
@@ -1692,6 +1704,8 @@ def test_selective_download_lifecycle_updates_media_availability_context(
         "hf_source_available": True,
         "downloading_paths": (),
     }
+    assert window.hf_transfer_dock.isHidden() is True
+    assert "Cancelled" in window.hf_transfer_panel.summary_label.text()
 
 
 @pytest.mark.gui
@@ -1821,13 +1835,13 @@ def test_quit_during_download_stop_choice_cancels_then_closes(window, monkeypatc
 
 
 @pytest.mark.gui
-def test_second_hf_download_request_does_not_replace_active_status(
+def test_second_hf_download_request_does_not_replace_active_transfer_panel(
     window, monkeypatch
 ):
     active_payload = {"repo_id": "OpenSportsLab/active", "splits": ["test"]}
     window._last_hf_download_payload = dict(active_payload)
     window._on_hf_download_started("Downloading active dataset...")
-    active_widget = window._hf_download_status_widget
+    active_panel = window.hf_transfer_panel
     monkeypatch.setattr(
         window.hf_transfer_controller,
         "is_download_running",
@@ -1841,10 +1855,10 @@ def test_second_hf_download_request_does_not_replace_active_status(
 
     assert window._start_hf_download({"repo_id": "OpenSportsLab/second"}) is False
 
-    assert window._hf_download_status_widget is active_widget
+    assert window.hf_transfer_panel is active_panel
     assert window._last_hf_download_payload == active_payload
     assert "already running in the background" in window.statusBar().currentMessage()
-    window._close_hf_download_status()
+    window.hf_transfer_dock.hide()
 
 
 @pytest.mark.gui
@@ -1969,6 +1983,7 @@ def test_download_not_found_removes_transfer_from_settings(window, monkeypatch):
 
     monkeypatch.setattr("main_window.QMessageBox.critical", lambda *args, **kwargs: None)
 
+    window._on_hf_download_started("Starting download...")
     window._on_hf_download_failed(
         "404 Client Error. Entry Not Found for url: "
         "https://huggingface.co/datasets/OpenSportsLab/repo/resolve/main/missing.json."
@@ -1976,6 +1991,8 @@ def test_download_not_found_removes_transfer_from_settings(window, monkeypatch):
 
     saved_transfers = HfDownloadDialog.get_successful_transfers_from_settings(settings)
     assert HfDownloadDialog._transfer_key(stale_transfer) not in saved_transfers
+    assert window.hf_transfer_dock.isHidden() is True
+    assert "download failed" in window.hf_transfer_panel.state_label.text().lower()
 
 
 @pytest.mark.gui

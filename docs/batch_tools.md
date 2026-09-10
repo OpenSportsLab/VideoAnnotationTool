@@ -26,12 +26,15 @@ JSON, or reconstructs it from Parquet metadata without downloading media
 shards. Dry run is disabled while JSON-only mode is selected.
 
 After submission, downloads run in the background and the main annotation
-workflow remains interactive. A compact status-bar widget shows the current
-stage. While a file is transferring, it shows the filename and transferred
-size over its total size (for example, `384.0 MB / 2.0 GB`) together with a
-determinate progress bar. Operations for which Hugging Face does not provide a
-byte total remain animated. Its **Cancel** button requests cancellation without
-opening a blocking progress dialog. Only one full or selective dataset download
+workflow remains interactive. The **Transfers** dock opens below Dataset
+Explorer and shows both the current stage/item count and the current
+repository-relative filename with its transferred size (for example,
+`384.0 MB / 2.0 GB`). These are separate progress bars, so file-byte progress
+does not replace overall progress. Operations for which Hugging Face does not
+provide a byte total remain animated. Its **Cancel** button requests
+cancellation without opening a blocking progress dialog. The dock hides after a
+terminal transfer and can be reopened from **View → Transfers** to inspect the
+latest session summary or clear it. Only one full or selective dataset download
 can run at a time.
 
 For successful non-dry-run JSON downloads, source metadata is written into the

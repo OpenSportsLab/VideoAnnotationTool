@@ -13,6 +13,8 @@ Provides all QWidget classes, `.ui` bindings, and adapter surfaces for controlle
 - `welcome_widget/`: landing page widget.
 - `dataset_explorer_panel/`: tree/filter/header inspector panel.
 - `media_player/`: center media timeline/player panel.
+- `hf_transfer_panel.py`: presentation-only Hugging Face Transfers dock content
+  with independent overall and current-file progress plus cancel/clear intents.
 - `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`: right editor panels.
 
 ## Key Functions and Responsibilities
@@ -24,6 +26,9 @@ Provides all QWidget classes, `.ui` bindings, and adapter surfaces for controlle
 ## Business Rules
 - UI should not own dataset mutation rules.
 - UI should not bypass controller pathways for persistence.
+- `HfTransferPanel` owns no download state or worker references; `MainWindow`
+  supplies immutable progress/terminal snapshots and routes its cancel and clear
+  signals.
 
 ## Conventions
 - Keep `.ui` files mostly static layout.

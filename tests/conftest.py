@@ -212,7 +212,7 @@ def window(qtbot, monkeypatch, tmp_path):
         except Exception:
             pass
         try:
-            self._close_hf_download_status()
+            self.hf_transfer_dock.hide()
         except Exception:
             pass
         try:

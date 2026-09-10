@@ -108,14 +108,14 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   and single-transfer exclusion as full dataset downloads. Runtime capability
   detection keeps full downloads usable with older OpenSportsLib releases.
   When the installed API accepts `byte_progress_cb`, `_HfDownloadWorker` emits
-  `byteProgress(filename, downloaded_bytes, total_bytes)` for the status-bar
-  widget; the callback is omitted for older runtime APIs.
+  `byteProgress(filename, downloaded_bytes, total_bytes)` for the Transfers
+  dock; the callback is omitted for older runtime APIs.
 - `is_download_running()`: lets `MainWindow` reject a second request without
-  replacing the active transfer's status. Dataset downloads remain on the
-  worker thread and are presented by a non-modal status-bar progress widget;
-  `MainWindow` mirrors the lifecycle into the explorer's context-action state
-  and prompts before quitting with an active download. Upload presentation
-  retains its existing busy dialog.
+  replacing the active transfer's state. Dataset downloads remain on the
+  worker thread and are presented by a non-modal Transfers dock with separate
+  overall and per-file progress; `MainWindow` mirrors the lifecycle into the
+  explorer's context-action state and prompts before quitting with an active
+  download. Upload presentation retains its existing busy dialog.
 - `start_upload(...)`: execute Hugging Face dataset upload from local dataset JSON inputs in a worker thread.
 - `supports_safe_parquet_uploads()` and `find_missing_inputs(...)` gate Parquet
   conversion on a complete local dataset. `start_missing_inputs_download(...)`

@@ -75,13 +75,14 @@ huggingface-cli login
 - Selective-download summaries distinguish requested files from collateral
   files extracted from the same shard. Existing collateral is intentionally
   skipped and is never affected by the overwrite choice.
-- Active downloads appear at the right side of the status bar. Some Hugging
-  Face operations do not expose byte totals, so the bar remains animated while
-  the stage text changes. During an individual file transfer, newer local
-  OpenSportsLib versions show the filename and downloaded size over the file's
-  total size. Older OpenSportsLib versions retain background downloads but show
-  only stage/count progress. Use the adjacent **Cancel** button to stop at the
-  next safe cancellation point.
+- Active downloads open the **Transfers** dock below Dataset Explorer. It keeps
+  overall stage/count progress separate from the current file's downloaded
+  size and byte progress. Some Hugging Face operations do not expose byte
+  totals, so the file bar remains animated while the stage text changes. Older
+  OpenSportsLib versions retain background downloads but show only stage/count
+  progress. Use **Cancel** in the dock to stop at the next safe cancellation
+  point. The dock hides when the transfer ends; reopen it from **View →
+  Transfers** to inspect or clear the latest summary.
 - Sample/input download actions are greyed out while a dataset download is
   active because full and selective downloads share one worker slot. If you
   attempt to quit, choose **Keep App Open** to finish the transfer or **Stop
