@@ -424,6 +424,7 @@ class DatasetExplorerPanel(QWidget):
         self._suspend_header_signals = False
         self._hf_source_available = False
         self._hf_download_running = False
+        self._hf_selective_queue_enabled = False
 
         self._configure_widgets(tree_title, filter_items, clear_text)
         self.tree_model.pageChanged.connect(self._update_page_range)
@@ -597,8 +598,11 @@ class DatasetExplorerPanel(QWidget):
     def set_hf_source_available(self, available: bool) -> None:
         self._hf_source_available = bool(available)
 
-    def set_hf_download_running(self, running: bool) -> None:
+    def set_hf_download_running(
+        self, running: bool, *, allow_selective_queue: bool = False
+    ) -> None:
         self._hf_download_running = bool(running)
+        self._hf_selective_queue_enabled = bool(running and allow_selective_queue)
 
     def _show_context_menu(self, pos):
         index = self.tree.indexAt(pos)
@@ -630,7 +634,9 @@ class DatasetExplorerPanel(QWidget):
                 else "Download Sample Inputs from Hugging Face..."
             )
             download_hf_action = menu.addAction(download_label)
-            download_hf_action.setEnabled(not self._hf_download_running)
+            download_hf_action.setEnabled(
+                not self._hf_download_running or self._hf_selective_queue_enabled
+            )
             menu.addSeparator()
         else:
             download_hf_action = None

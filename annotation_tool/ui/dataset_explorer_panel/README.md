@@ -45,7 +45,8 @@ Provides the left dock dataset explorer tree, header inspector tables, and explo
   - Enables remove context menu actions.
 - `set_hf_source_available(...)`, `set_hf_download_running(...)`
   - Control whether selective Hugging Face actions are shown and whether the
-    visible actions are disabled while the shared download slot is occupied.
+    visible actions are disabled. The active-download setter can keep them
+    enabled while selective requests are allowed to join the queue.
 - `set_header_rows(known, unknown, draft, key_order=None)`
   - Populates header inspector tables from controller data.
 - `_on_known_header_item_changed(...)`

@@ -1,4 +1,5 @@
 import inspect
+from collections import deque
 from typing import Any
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -44,6 +45,9 @@ def _supports_keyword(callable_object, keyword: str) -> bool:
 class _HfDownloadWorker(QThread):
     progress = pyqtSignal(str)
     byteProgress = pyqtSignal(str, object, object)
+    filePlan = pyqtSignal(object)
+    fileCompleted = pyqtSignal(str, str)
+    jsonReady = pyqtSignal(str, str)
     completed = pyqtSignal(dict)
     failed = pyqtSignal(str)
     cancelled = pyqtSignal(str)
@@ -135,6 +139,18 @@ class _HfDownloadWorker(QThread):
                 download_dataset_splits_from_hf, "byte_progress_cb"
             ):
                 download_kwargs["byte_progress_cb"] = self.byteProgress.emit
+            if _supports_keyword(
+                download_dataset_splits_from_hf, "file_plan_cb"
+            ):
+                download_kwargs["file_plan_cb"] = self.filePlan.emit
+            if _supports_keyword(
+                download_dataset_splits_from_hf, "file_completed_cb"
+            ):
+                download_kwargs["file_completed_cb"] = self.fileCompleted.emit
+            if _supports_keyword(
+                download_dataset_splits_from_hf, "json_ready_cb"
+            ):
+                download_kwargs["json_ready_cb"] = self.jsonReady.emit
             results = download_dataset_splits_from_hf(
                 self._config.get("repo_id", ""),
                 self._config.get("revision", "main"),
@@ -266,9 +282,13 @@ class _HfModelWorker(QThread):
 
 
 class HfTransferController(QObject):
-    downloadStarted = pyqtSignal(str)
+    downloadStarted = pyqtSignal(str, dict)
+    downloadQueued = pyqtSignal(dict, int)
     downloadProgress = pyqtSignal(str)
     downloadBytesProgress = pyqtSignal(str, object, object)
+    downloadFilePlan = pyqtSignal(object)
+    downloadFileCompleted = pyqtSignal(str, str)
+    downloadJsonReady = pyqtSignal(str, str)
     downloadCompleted = pyqtSignal(dict)
     downloadFailed = pyqtSignal(str)
     downloadCancelled = pyqtSignal(str)
@@ -288,6 +308,9 @@ class HfTransferController(QObject):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._download_worker: _HfDownloadWorker | None = None
+        self._active_download_config: dict[str, Any] | None = None
+        self._queued_asset_downloads: deque[dict[str, Any]] = deque()
+        self._download_queue_paused = False
         self._upload_worker: _HfUploadWorker | None = None
         self._model_worker: _HfModelWorker | None = None
 
@@ -314,33 +337,84 @@ class HfTransferController(QObject):
     def is_download_running(self) -> bool:
         return bool(self._download_worker and self._download_worker.isRunning())
 
+    def queued_download_count(self) -> int:
+        return len(self._queued_asset_downloads)
+
+    def is_download_queue_paused(self) -> bool:
+        return self._download_queue_paused
+
+    def queued_requested_local_paths(self) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                str(path)
+                for payload in self._queued_asset_downloads
+                for path in (payload.get("requested_local_paths", ()) or ())
+                if path
+            )
+        )
+
     def start_download(self, config: dict[str, Any]) -> bool:
         if self.is_download_running():
             self.downloadFailed.emit("A Hugging Face download is already running.")
             return False
 
-        worker = _HfDownloadWorker(config)
+        return self._start_download_now(config)
+
+    def _start_download_now(self, config: dict[str, Any]) -> bool:
+        payload = dict(config or {})
+
+        worker = _HfDownloadWorker(payload)
         self._download_worker = worker
+        self._active_download_config = payload
         worker.progress.connect(self.downloadProgress)
         worker.byteProgress.connect(self.downloadBytesProgress)
+        worker.filePlan.connect(self.downloadFilePlan)
+        worker.fileCompleted.connect(self.downloadFileCompleted)
+        worker.jsonReady.connect(self.downloadJsonReady)
         worker.completed.connect(self.downloadCompleted)
         worker.failed.connect(self.downloadFailed)
         worker.cancelled.connect(self.downloadCancelled)
         worker.finished.connect(lambda: self._cleanup_download_worker(worker))
 
-        self.downloadStarted.emit("Starting Hugging Face download...")
+        self.downloadStarted.emit("Starting Hugging Face download...", dict(payload))
         worker.start()
         return True
 
     def start_asset_download(self, config: dict[str, Any]) -> bool:
         payload = dict(config or {})
         payload["operation"] = "assets"
-        return self.start_download(payload)
+        if self._download_queue_paused:
+            self._queued_asset_downloads.append(payload)
+            self.downloadQueued.emit(dict(payload), len(self._queued_asset_downloads))
+            return True
+        if self.is_download_running():
+            active_operation = str(
+                (self._active_download_config or {}).get("operation") or "dataset"
+            )
+            if active_operation != "assets":
+                return False
+            self._queued_asset_downloads.append(payload)
+            self.downloadQueued.emit(dict(payload), len(self._queued_asset_downloads))
+            return True
+        return self._start_download_now(payload)
+
+    def queue_download(self, config: dict[str, Any]) -> bool:
+        payload = dict(config or {})
+        if self.is_download_running() or self._download_queue_paused:
+            self._queued_asset_downloads.append(payload)
+            self.downloadQueued.emit(dict(payload), len(self._queued_asset_downloads))
+            return True
+        return self._start_download_now(payload)
 
     def start_missing_inputs_download(self, config: dict[str, Any]) -> bool:
         payload = dict(config or {})
         payload["operation"] = "missing_assets"
         return self.start_download(payload)
+
+    def queue_missing_inputs_download(self, config: dict[str, Any]) -> bool:
+        payload = dict(config or {})
+        payload["operation"] = "missing_assets"
+        return self.queue_download(payload)
 
     def start_upload(self, config: dict[str, Any]) -> bool:
         if self._upload_worker and self._upload_worker.isRunning():
@@ -379,9 +453,33 @@ class HfTransferController(QObject):
     def cancel_download(self) -> bool:
         if not self._download_worker or not self._download_worker.isRunning():
             return False
+        self._queued_asset_downloads.clear()
+        self._download_queue_paused = False
         self.downloadProgress.emit("Cancellation requested for Hugging Face download...")
         self._download_worker.requestInterruption()
         return True
+
+    def pause_download_queue(self) -> bool:
+        if not self._download_worker or not self._download_worker.isRunning():
+            return False
+        if self._active_download_config:
+            self._queued_asset_downloads.appendleft(
+                dict(self._active_download_config)
+            )
+        self._download_queue_paused = True
+        self.downloadProgress.emit("Stopping after the current safe point...")
+        self._download_worker.requestInterruption()
+        return True
+
+    def resume_download_queue(self) -> bool:
+        if not self._download_queue_paused:
+            return False
+        self._download_queue_paused = False
+        if self.is_download_running():
+            return True
+        if not self._queued_asset_downloads:
+            return False
+        return self._start_download_now(self._queued_asset_downloads.popleft())
 
     def cancel_upload(self) -> bool:
         if not self._upload_worker or not self._upload_worker.isRunning():
@@ -400,6 +498,8 @@ class HfTransferController(QObject):
         return True
 
     def shutdown(self, wait_ms: int = 3000) -> bool:
+        self._queued_asset_downloads.clear()
+        self._download_queue_paused = False
         workers = [
             worker
             for worker in (
@@ -419,7 +519,14 @@ class HfTransferController(QObject):
     def _cleanup_download_worker(self, worker: _HfDownloadWorker) -> None:
         if self._download_worker is worker:
             self._download_worker = None
+            self._active_download_config = None
         worker.deleteLater()
+        if (
+            self._download_worker is None
+            and self._queued_asset_downloads
+            and not self._download_queue_paused
+        ):
+            self._start_download_now(self._queued_asset_downloads.popleft())
 
     def _cleanup_upload_worker(self, worker: _HfUploadWorker) -> None:
         if self._upload_worker is worker:

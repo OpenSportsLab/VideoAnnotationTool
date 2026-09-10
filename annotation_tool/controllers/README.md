@@ -103,23 +103,32 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 
 ### `HfTransferController`
 - `start_download(...)`: execute Hugging Face dataset download in a worker thread.
+  `queue_download(...)`, `pause_download_queue()`, and `resume_download_queue()`
+  implement the application-owned FIFO and preserve pending jobs when stopped.
 - `start_asset_download(...)`: selectively download one sample or input from an
-  opened Hugging Face-sourced JSON. It uses the same worker slot, cancellation,
-  and single-transfer exclusion as full dataset downloads. Runtime capability
-  detection keeps full downloads usable with older OpenSportsLib releases.
+  opened Hugging Face-sourced JSON. Additional selective requests join a FIFO
+  queue behind the active selective worker. Cancelling for application shutdown
+  clears the active worker and pending requests; the Transfers Stop action instead
+  pauses and requeues the active job. Runtime capability detection keeps full
+  downloads usable with older OpenSportsLib releases.
   When the installed API accepts `byte_progress_cb`, `_HfDownloadWorker` emits
   `byteProgress(filename, downloaded_bytes, total_bytes)` for the Transfers
-  dock; the callback is omitted for older runtime APIs.
-- `is_download_running()`: lets `MainWindow` reject a second request without
-  replacing the active transfer's state. Dataset downloads remain on the
+  dock; the callback is omitted for older runtime APIs. Optional OpenSportsLib
+  lifecycle callbacks are adapted to file-plan, file-completed, and JSON-ready
+  Qt signals. OpenSportsLib reports facts only; this application owns queue
+  policy, row states, completion aggregation, and open-JSON prompts.
+- `is_download_running()` and `queued_download_count()`: expose active/queued
+  state without replacing the active transfer payload. Dataset downloads remain on the
   worker thread and are presented by a non-modal Transfers dock with separate
-  overall and per-file progress; `MainWindow` mirrors the lifecycle into the
+  completed-file and byte/speed progress plus a per-file list. The dock remains
+  visible with empty determinate controls when idle. `MainWindow` mirrors the lifecycle into the
   explorer's context-action state and prompts before quitting with an active
   download. Upload presentation retains its existing busy dialog.
 - `start_upload(...)`: execute Hugging Face dataset upload from local dataset JSON inputs in a worker thread.
 - `supports_safe_parquet_uploads()` and `find_missing_inputs(...)` gate Parquet
   conversion on a complete local dataset. `start_missing_inputs_download(...)`
-  uses the shared background download slot to hydrate missing primary and ball
+  and `queue_missing_inputs_download(...)` use the shared background download
+  slot to hydrate missing primary and ball
   inputs from pinned provenance. `MainWindow` owns the pending-upload state and
   resumes only after a second successful preflight.
 - `start_model_import(...)`: inspect and cache one OpenSportsLib model repository

@@ -10,11 +10,18 @@ Provides all QWidget classes, `.ui` bindings, and adapter surfaces for controlle
 
 ## Public Surface
 - `dialogs.py`: shared dialogs.
+  The Hugging Face download dialog always requests JSON first and includes a
+  persisted **Queue sample media** option that controls subsequent hydration.
 - `welcome_widget/`: landing page widget.
 - `dataset_explorer_panel/`: tree/filter/header inspector panel.
 - `media_player/`: center media timeline/player panel.
 - `hf_transfer_panel.py`: presentation-only Hugging Face Transfers dock content
-  with independent overall and current-file progress plus cancel/clear intents.
+  with completed-file count, current-file byte/speed progress, a per-file list,
+  queue count, and Play/Stop, download-missing, and Clear intents. The dock starts
+  hidden like the other optional workspace docks; after it is opened or a transfer
+  starts, determinate progress controls remain visible in an empty state when idle.
+  File rows use Queued, Running, and Completed states and retain whole-file
+  average speed; stopping or resuming does not discard rows.
 - `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`: right editor panels.
 
 ## Key Functions and Responsibilities

@@ -16,18 +16,19 @@ The download dialog asks for:
 - format
 - output directory
 - optional token
-- dry-run mode
-- **Download dataset JSON only (no media)**, off by default
-- **Use Xet (faster)**, on by default; uncheck it
+- **Queue sample media**, on by default; after the JSON is ready, add all
+  referenced media that is missing locally to the transfer queue
+- **Use Xet (faster downloads)**, on by default; uncheck it
   only as a fallback when an Xet-backed download fails or times out
 
 Downloads always report byte-level progress, including when Xet is enabled.
 
 It supports JSON split downloads (`<split>.json`) and Parquet/WebDataset split
 downloads (`<split>/`). Files are written under
-`<output directory>/<revision>/<split>`. JSON-only mode fetches just the native
-JSON, or reconstructs it from Parquet metadata without downloading media
-shards. Dry run is disabled while JSON-only mode is selected.
+`<output directory>/<revision>/<split>`. Every GUI download fetches or reconstructs
+the dataset JSON first. When it is ready, a prompt offers **Open Dataset** and
+**Not Now**. The download-time **Queue sample media** checkbox controls whether
+the remaining media is queued at that point.
 
 Xet is Hugging Face's accelerated transfer backend and is enabled by default
 for faster transfers. Very large files (for example, over 20 GB) can sometimes
@@ -44,19 +45,26 @@ an unchecked option sets it to `1`.
 OpenSportsLib adapts Xet's native byte updates to the application progress bar.
 With Xet disabled, it obtains byte updates from the classic HTTP fallback.
 
-After submission, downloads run in the background and the main annotation
-workflow remains interactive. The **Transfers** dock opens below Dataset
-Explorer and shows both the current stage/item count and the current
-repository-relative filename with its transferred size (for example,
-`384.0 MB / 2.0 GB`). These are separate progress bars, so file-byte progress
-does not replace overall progress. Downloads process repository files
-individually so each file's transferred bytes can be reported; Xet acceleration
-remains active within those downloads.
-Its **Cancel** button requests
-cancellation without opening a blocking progress dialog. The dock hides after a
-terminal transfer and can be reopened from **View → Transfers** to inspect the
-latest session summary or clear it. Only one full or selective dataset download
-can run at a time.
+The **Transfers** dock starts hidden and is also available from **View →
+Transfers**. After submission, downloads run in the background, the main annotation
+workflow remains interactive, and the dock opens below Dataset
+Explorer and shows completed files out of the expected file count, current-file
+byte progress and download speed, and a compact list with **Queued**,
+**Running**, and **Completed** states. The third column retains each file's
+whole-transfer average speed.
+Downloads process repository files individually so each file's transferred
+bytes can be reported; Xet acceleration remains active within those downloads.
+When no download is active, the dock remains visible with empty, determinate
+progress bars and an empty table. **Stop** pauses at the next safe point without
+discarding rows or waiting jobs; **Play** resumes the FIFO. Only **Clear** removes
+the displayed history, and it does not cancel downloads. **Download Missing
+Samples** queues every absent input referenced by the open JSON. One low-level
+download runs at a time.
+
+The app asks whether to open each JSON as soon as it becomes usable. If **Queue
+sample media** was checked in the download dialog, all missing referenced inputs are appended to
+the application queue and shown as **Queued** before they run. That JSON is not
+offered a second time when the transfer finishes.
 
 For successful non-dry-run JSON downloads, source metadata is written into the
 JSON root:
@@ -88,30 +96,31 @@ the same pane changes to **Input download in progress** until the transfer
 finishes. A file that exists but cannot be handled by its declared input type is
 reported as unsupported instead.
 
-While any full or selective dataset download is running, both explorer download
-actions remain visible but are disabled. They become available again when the
-active download completes, fails, or is cancelled.
+During a selective download, both explorer actions remain enabled. Additional
+sample/input requests join a FIFO queue and start automatically after the active
+request finishes. The Transfers dock shows how many requests are waiting and
+keeps the file history across stop/resume and across the queue. A full dataset
+download still disables selective actions.
 
 If requested files already exist, one prompt offers **Replace Existing**,
 **Keep Existing**, or **Cancel**. Replace applies only to the explicitly
 requested files; other files found while unpacking a Parquet/WebDataset shard
 are written only when missing. A required shard is downloaded once, all missing
 safely mapped assets in it are extracted opportunistically, and the temporary
-shard is removed. The completion message reports requested, opportunistic,
-overwritten, skipped, missing, and failed counts.
+shard is removed. One completion message aggregates requested, opportunistic,
+overwritten, skipped, missing, and failed counts across the queue.
 
 If you close the application while a dataset download is active, a warning
 offers **Keep App Open** to let it finish or **Stop Download and Quit**. Keeping
 the app open does not interrupt the transfer.
 
 Selective actions require all five Hugging Face provenance fields. Older
-datasets that lack `hf_format` or `hf_commit` must be downloaded again. With an
-older OpenSportsLib installation, normal full downloads remain available while
-the JSON-only checkbox and selective actions explain that a newer local library
-is required.
+datasets that lack `hf_format` or `hf_commit` must be downloaded again. The
+JSON-first workflow and selective actions require the newer local OpenSportsLib
+transfer API.
 
-Completing a dataset later with a full download is supported even when the
-JSON-only download already created `<split>.json`.
+Media can be completed later with **Download Missing Samples** after opening the
+downloaded `<split>.json`.
 
 ### Upload Dataset to HF...
 
