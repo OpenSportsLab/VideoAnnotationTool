@@ -1223,11 +1223,8 @@ def test_hf_transfer_dialogs_persist_independent_xet_choices(window, tmp_path):
 
     download_dialog = HfDownloadDialog(settings=settings, parent=window)
     assert download_dialog.use_xet_checkbox.isChecked() is True
-    assert download_dialog.get_payload()["progress_mode"] == "files"
-    download_dialog.progress_mode_combo.setCurrentIndex(
-        download_dialog.progress_mode_combo.findData("bytes")
-    )
-    assert download_dialog.use_xet_checkbox.isChecked() is True
+    assert download_dialog.get_payload()["progress_mode"] == "bytes"
+    assert not hasattr(download_dialog, "progress_mode_combo")
     download_dialog.use_xet_checkbox.setChecked(False)
     download_dialog._save_settings()
     assert download_dialog.get_payload()["use_xet"] is False
@@ -1244,7 +1241,6 @@ def test_hf_transfer_dialogs_persist_independent_xet_choices(window, tmp_path):
     upload_dialog.close()
 
     assert not settings.value(HfDownloadDialog._KEY_USE_XET, True, type=bool)
-    assert settings.value(HfDownloadDialog._KEY_PROGRESS_MODE) == "bytes"
     assert not settings.value(HfUploadDialog._KEY_USE_XET, True, type=bool)
 
 
@@ -1253,9 +1249,6 @@ def test_hf_download_byte_progress_can_be_combined_with_xet(window):
     from ui.dialogs import HfDownloadDialog
 
     dialog = HfDownloadDialog(settings=None, parent=window)
-    dialog.progress_mode_combo.setCurrentIndex(
-        dialog.progress_mode_combo.findData("bytes")
-    )
 
     assert dialog.use_xet_checkbox.isChecked() is True
     assert dialog.get_payload()["progress_mode"] == "bytes"

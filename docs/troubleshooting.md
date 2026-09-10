@@ -69,9 +69,9 @@ huggingface-cli login
   - Xet timeout on a large file: retry from **Data → Upload Dataset to HF**
     with **Use Xet for this upload** unchecked. Xet remains enabled by
     default because it normally provides faster transfers.
-- If an Xet-backed download itself fails or times out, retry with **Use Xet for
-  this download** unchecked. Download and upload choices are stored separately
-  and apply only to their respective transfer.
+- If an Xet-backed download itself fails or times out, retry with **Use Xet
+  (faster)** unchecked. Download and upload choices are stored separately and
+  apply only to their respective transfer.
 - If **Download dataset JSON only** is unavailable, the active OpenSportsLib
   installation does not expose the selective-download API. Full dataset
   downloads still work; install the local feature version to enable it.
@@ -83,10 +83,9 @@ huggingface-cli login
   skipped and is never affected by the overwrite choice.
 - Active downloads open the **Transfers** dock below Dataset Explorer. It keeps
   overall stage/count progress separate from the current file's downloaded
-  size and byte progress. The default **File progress** mode has the least
-  bookkeeping overhead. **Byte progress** can run with Xet and reports exact
-  transferred sizes, though repository files are handled individually rather
-  than through a concurrent snapshot operation. Older
+  size and byte progress. Byte progress is always enabled and works with Xet,
+  though repository files are handled individually rather than through a
+  concurrent snapshot operation. Older
   OpenSportsLib versions retain background downloads but show only stage/count
   progress. Use **Cancel** in the dock to stop at the next safe cancellation
   point. The dock hides when the transfer ends; reopen it from **View →

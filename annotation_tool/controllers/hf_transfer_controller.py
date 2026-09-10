@@ -60,7 +60,7 @@ class _HfDownloadWorker(QThread):
 
     def _run_transfer(self) -> None:
         try:
-            report_bytes = self._config.get("progress_mode", "files") == "bytes"
+            report_bytes = self._config.get("progress_mode", "bytes") == "bytes"
             operation = self._config.get("operation")
             if operation == "missing_assets":
                 if download_dataset_missing_inputs_from_hf is None:

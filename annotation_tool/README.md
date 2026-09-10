@@ -30,10 +30,8 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
     independent `use_xet` intents; transfer workers scope the corresponding
     runtime override to one operation (`HF_HUB_DISABLE_XET=0` when checked,
     `1` when unchecked) and restore the prior process setting.
-    Download `progress_mode` is either `files` (default, lowest-overhead and
-    snapshot-capable) or `bytes` (per-file byte-level progress). Both modes can
-    use Xet; OpenSportsLib falls back to classic HTTP when Xet is disabled or
-    unavailable.
+    Downloads request per-file byte-level progress. This works with Xet;
+    OpenSportsLib falls back to classic HTTP when Xet is disabled or unavailable.
     Upload timeout feedback recommends retrying with the upload override.
 - `controllers/`
   - Dataset lifecycle, mutation/undo-redo, media playback control, mode-specific editor logic.

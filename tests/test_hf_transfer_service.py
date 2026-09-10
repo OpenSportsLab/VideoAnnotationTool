@@ -75,7 +75,7 @@ def test_download_worker_routes_to_library_api(monkeypatch):
     assert calls["dry_run"] is True
     assert calls["token"] == "hf_test"
     assert callable(calls["progress_cb"])
-    assert "byte_progress_cb" not in calls
+    assert callable(calls["byte_progress_cb"])
     assert callable(calls["is_cancelled"])
     assert completed_payloads == [{"results": [{"ok": True}], "dry_run": True, "output_dir": "/tmp/output"}]
 

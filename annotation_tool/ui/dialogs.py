@@ -1034,10 +1034,7 @@ class HfDownloadDialog(QDialog):
     _KEY_DRY_RUN = f"{_SETTINGS_PREFIX}/dry_run"
     _KEY_ANNOTATIONS_ONLY = f"{_SETTINGS_PREFIX}/annotations_only"
     _KEY_USE_XET = f"{_SETTINGS_PREFIX}/use_xet"
-    _KEY_PROGRESS_MODE = f"{_SETTINGS_PREFIX}/progress_mode"
     _KEY_TOKEN = f"{_SETTINGS_PREFIX}/token"
-    _PROGRESS_FILES = "files"
-    _PROGRESS_BYTES = "bytes"
     _AVAILABLE_DATASET_TRANSFERS = [
         {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "test"},
         {"repo_id": "OpenSportsLab/OSL-XFoul", "revision": "main-parquet", "split": "valid"},
@@ -1125,36 +1122,13 @@ class HfDownloadDialog(QDialog):
         )
         form.addRow("", self.annotations_only_checkbox)
 
-        self.use_xet_checkbox = QCheckBox(
-            "Use Xet for this download", self
-        )
+        self.use_xet_checkbox = QCheckBox("Use Xet (faster, might time out for verylarge transfers)", self)
         self.use_xet_checkbox.setChecked(True)
         self.use_xet_checkbox.setToolTip(
-            "Recommended for faster downloads. Uncheck this only if an "
-            "Xet-backed download fails or times out."
+            "Xet accelerates Hugging Face downloads. If a very large transfer "
+            "times out, uncheck this option and retry."
         )
         form.addRow("", self.use_xet_checkbox)
-        xet_download_help = QLabel(
-            "Xet is Hugging Face’s accelerated transfer backend. It is normally "
-            "faster; if a very large transfer (for example, over 20 GB) times "
-            "out, uncheck this option and retry.",
-            self,
-        )
-        xet_download_help.setWordWrap(True)
-        form.addRow("", xet_download_help)
-
-        self.progress_mode_combo = QComboBox(self)
-        self.progress_mode_combo.addItem(
-            "File progress (fastest)", self._PROGRESS_FILES
-        )
-        self.progress_mode_combo.addItem(
-            "Byte progress (works with Xet)", self._PROGRESS_BYTES
-        )
-        self.progress_mode_combo.setToolTip(
-            "File progress has the least overhead. Byte progress reports exact "
-            "transferred sizes and keeps Xet enabled when selected."
-        )
-        form.addRow("Progress detail", self.progress_mode_combo)
 
         self.token_edit = QLineEdit(self)
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -1287,10 +1261,6 @@ class HfDownloadDialog(QDialog):
         if checked:
             self.dry_run_checkbox.setChecked(False)
         self.dry_run_checkbox.setEnabled(not checked)
-
-    def _progress_mode(self) -> str:
-        mode = self.progress_mode_combo.currentData()
-        return mode if mode in {self._PROGRESS_FILES, self._PROGRESS_BYTES} else self._PROGRESS_FILES
 
     def _fetch_branches(self) -> None:
         repo_id = self.repo_id_edit.text().strip()
@@ -1447,7 +1417,7 @@ class HfDownloadDialog(QDialog):
             "dry_run": self.dry_run_checkbox.isChecked(),
             "annotations_only": self.annotations_only_checkbox.isChecked(),
             "use_xet": self.use_xet_checkbox.isChecked(),
-            "progress_mode": self._progress_mode(),
+            "progress_mode": "bytes",
             "token": self.token_edit.text().strip() or None,
         }
 
@@ -1490,12 +1460,6 @@ class HfDownloadDialog(QDialog):
         self.use_xet_checkbox.setChecked(
             setting_bool(self._settings.value(self._KEY_USE_XET, True), True)
         )
-        progress_mode = str(
-            self._settings.value(self._KEY_PROGRESS_MODE, self._PROGRESS_FILES)
-            or self._PROGRESS_FILES
-        )
-        progress_index = self.progress_mode_combo.findData(progress_mode)
-        self.progress_mode_combo.setCurrentIndex(max(0, progress_index))
         self.token_edit.setText(str(self._settings.value(self._KEY_TOKEN, "") or ""))
 
     def _save_settings(self) -> None:
@@ -1515,7 +1479,6 @@ class HfDownloadDialog(QDialog):
             self._KEY_USE_XET,
             self.use_xet_checkbox.isChecked(),
         )
-        self._settings.setValue(self._KEY_PROGRESS_MODE, self._progress_mode())
         self._settings.setValue(self._KEY_TOKEN, self.token_edit.text().strip())
         self._settings.sync()
 
