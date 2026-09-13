@@ -4,7 +4,7 @@ from media_control_settings import format_control_value
 from shortcut_settings import DEFAULT_SHORTCUTS
 
 APP_DISPLAY_NAME = "Video Annotation Tool"
-APP_VERSION = "v1.4.5"
+APP_VERSION = "v1.5.0"
 
 
 def build_shortcuts_help_text(
