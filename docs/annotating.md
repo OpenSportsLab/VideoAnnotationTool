@@ -35,6 +35,12 @@ Use `LOC` for point events on the timeline.
 4. Use the spotting controls to add the event.
 5. Edit or delete rows in the event table when needed.
 
+Select **Statistics…** beside **Events List** to see localization counts for the
+current video. The popup groups classes by head, includes defined classes with
+zero events, and counts both confirmed events and unconfirmed smart predictions.
+Annotations whose head or class is not in the current schema are also included.
+Opening the popup does not change the project or add an undo-history entry.
+
 Selecting an event seeks playback to its timestamp. To see context before the
 action, set **Localization event pre-roll** under **Edit → Settings… → Media
 Controls**; for example, `1000 ms` seeks to one second before the selected event.

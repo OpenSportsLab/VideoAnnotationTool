@@ -143,6 +143,7 @@ completion does not switch the active annotation or head tab.
 - Spot events at current playhead time
 - Head/label add/rename/delete + per-label colors
 - Event table supports edit, delete, confirm/reject smart events
+- **Statistics…** shows per-class counts for the selected video across all heads
 - Configured review shortcuts accept or reject the selected confidence-scored
   row while Localization is active, then advance to an adjacent row
 - Time shows full UTC when resolvable and relative time otherwise; media seeking

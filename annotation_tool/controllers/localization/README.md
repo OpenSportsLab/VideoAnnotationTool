@@ -46,7 +46,7 @@ offset back onto the original sample timeline.
 
 ## Key Functions and Responsibilities
 - `setup_connections()`
-  - Wires spotting tabs/table actions to controller behavior.
+  - Wires spotting tabs, table actions, and the statistics request to controller behavior.
 - `on_selected_sample_changed(sample)`
   - Loads selected sample snapshot into Localization panel.
 - `on_timeline_origin_changed(sample_id, origin_utc)`
@@ -61,6 +61,9 @@ offset back onto the original sample timeline.
   - `_on_spotting_triggered`, `_on_annotation_modified`, `_on_delete_single_annotation`
   - `_event_seek_position` applies the configured navigation pre-roll while
     clamping seeks to timeline zero; it never changes event data.
+- Statistics functions:
+  - `_show_statistics` and `_localization_statistics` compute current-sample
+    counts and pass them to the panel for display.
 - Prediction flows:
   - `_request_shared_inference`, `apply_shared_inference_result`,
     `_on_confirm_single_annotation`, `_on_reject_single_annotation`
@@ -96,6 +99,11 @@ offset back onto the original sample timeline.
 - Table confidence-cell confirmation prompt supports `Yes` (confirm), `No` (reject), `Cancel` (no-op).
 - Rejecting an inferred row removes it from the review table.
 - Unknown predicted labels are mapped via popup per inference run.
+- Statistics include all schema labels (including zero counts), pending
+  confidence-scored events, and observed labels missing from the schema. Invalid
+  event objects without a usable head or label are excluded.
+- Statistics are recomputed from the selected sample snapshot on every request
+  and do not emit mutation or media intents.
 
 ## Conventions
 - Emit mutation intents; do not apply persisted mutation policy locally.

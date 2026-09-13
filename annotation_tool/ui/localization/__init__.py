@@ -740,6 +740,7 @@ class LocalizationAnnotationPanel(QWidget):
 
     tabSwitched = pyqtSignal(int)
     eventNavigateRequested = pyqtSignal(int)
+    statisticsRequested = pyqtSignal()
     acceptAllPredictionsRequested = pyqtSignal()
     rejectAllPredictionsRequested = pyqtSignal()
 
@@ -779,6 +780,7 @@ class LocalizationAnnotationPanel(QWidget):
             self.tabs.tabBar().hide()
 
         self.tabs.currentChanged.connect(self.tabSwitched.emit)
+        self.btn_statistics.clicked.connect(self.statisticsRequested.emit)
         self.btn_prev_event.clicked.connect(lambda: self.eventNavigateRequested.emit(-1))
         self.btn_next_event.clicked.connect(lambda: self.eventNavigateRequested.emit(1))
 
@@ -799,6 +801,23 @@ class LocalizationAnnotationPanel(QWidget):
 
     def set_timeline_origin(self, origin_utc):
         self.table.set_timeline_origin(origin_utc)
+
+    def show_statistics(self, video_name, statistics, total):
+        lines = [f"Video: {video_name or 'Selected video'}", ""]
+        for head, class_counts in statistics:
+            lines.append(str(head).replace("_", " "))
+            for label, count in class_counts:
+                lines.append(f"  {str(label).replace('_', ' ')}: {int(count)}")
+            lines.append("")
+
+        if not statistics:
+            lines.extend(["No localization classes or valid events.", ""])
+        lines.append(f"Total events: {int(total)}")
+        QMessageBox.information(
+            self,
+            "Localization Statistics",
+            "\n".join(lines),
+        )
 
     def request_selected_inference_review(self, *, accept: bool) -> bool:
         return self.table.request_selected_inference_review(accept=accept)

@@ -1,4 +1,5 @@
 import copy
+import os
 
 from PyQt6.QtCore import QObject, QSettings, pyqtSignal
 from PyQt6.QtGui import QColor
@@ -111,6 +112,7 @@ class LocalizationEditorController(QObject):
 
     def setup_connections(self):
         self.localization_panel.eventNavigateRequested.connect(self._navigate_annotation)
+        self.localization_panel.statisticsRequested.connect(self._show_statistics)
         self.localization_panel.acceptAllPredictionsRequested.connect(self.accept_all_predictions)
         self.localization_panel.rejectAllPredictionsRequested.connect(self.reject_all_predictions)
 
@@ -825,6 +827,66 @@ class LocalizationEditorController(QObject):
         if not self.current_video_path:
             return
         self._display_events_for_item(self.current_video_path)
+
+    def _show_statistics(self):
+        if not self.current_sample_id:
+            return
+
+        statistics, total = self._localization_statistics(
+            self._schema_definitions,
+            self._snapshot_events(),
+        )
+        video_name = os.path.basename(str(self.current_video_path or ""))
+        self.localization_panel.show_statistics(video_name, statistics, total)
+
+    @staticmethod
+    def _localization_statistics(schema, events):
+        schema = schema if isinstance(schema, dict) else {}
+        observed = {}
+        total = 0
+
+        for event in events if isinstance(events, list) else []:
+            if not isinstance(event, dict):
+                continue
+            raw_head = event.get("head")
+            raw_label = event.get("label")
+            if raw_head is None or raw_label is None:
+                continue
+            head = str(raw_head)
+            label = str(raw_label)
+            if not head.strip() or not label.strip():
+                continue
+            head_counts = observed.setdefault(head, {})
+            head_counts[label] = head_counts.get(label, 0) + 1
+            total += 1
+
+        schema_heads = sorted(
+            str(head) for head in schema if str(head).strip()
+        )
+        extra_heads = sorted(head for head in observed if head not in schema_heads)
+        statistics = []
+
+        for head in [*schema_heads, *extra_heads]:
+            definition = schema.get(head, {})
+            raw_labels = definition.get("labels", []) if isinstance(definition, dict) else []
+            schema_labels = []
+            for raw_label in raw_labels if isinstance(raw_labels, list) else []:
+                label = str(raw_label)
+                if label.strip() and label not in schema_labels:
+                    schema_labels.append(label)
+
+            head_counts = observed.get(head, {})
+            extra_labels = sorted(
+                label for label in head_counts if label not in schema_labels
+            )
+            class_counts = [
+                (label, head_counts.get(label, 0))
+                for label in [*schema_labels, *extra_labels]
+            ]
+            if class_counts:
+                statistics.append((head, class_counts))
+
+        return statistics, total
 
     def refresh_tree_icons(self, path=None):
         if path:

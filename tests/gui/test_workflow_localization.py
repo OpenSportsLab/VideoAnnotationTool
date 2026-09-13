@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import QMessageBox
 
@@ -65,6 +65,156 @@ def test_localization_hides_outer_tab_bar_when_only_hand_annotation_remains(wind
     assert panel.tabs.count() == 1
     assert panel.tabs.tabText(0) == "Hand Annotation"
     assert panel.tabs.tabBar().isHidden() is True
+
+
+@pytest.mark.gui
+def test_localization_statistics_groups_schema_and_observed_classes():
+    try:
+        from annotation_tool.controllers.localization.localization_editor_controller import (
+            LocalizationEditorController,
+        )
+    except ModuleNotFoundError:
+        from controllers.localization.localization_editor_controller import (
+            LocalizationEditorController,
+        )
+
+    statistics, total = LocalizationEditorController._localization_statistics(
+        {
+            "ball_action": {
+                "type": "single_label",
+                "labels": ["pass", "shot", "pass"],
+            },
+            "player_action": {
+                "type": "single_label",
+                "labels": ["run", "jump"],
+            },
+        },
+        [
+            {"head": "ball_action", "label": "pass", "position_ms": 1000},
+            {
+                "head": "ball_action",
+                "label": "shot",
+                "position_ms": 2000,
+                "confidence_score": 0.7,
+            },
+            {"head": "ball_action", "label": "dribble", "position_ms": 3000},
+            {"head": "phase", "label": "start", "position_ms": 4000},
+            {"head": "", "label": "ignored", "position_ms": 5000},
+            {"head": "ball_action", "position_ms": 6000},
+            "not-an-event",
+        ],
+    )
+
+    assert statistics == [
+        ("ball_action", [("pass", 1), ("shot", 1), ("dribble", 1)]),
+        ("player_action", [("run", 0), ("jump", 0)]),
+        ("phase", [("start", 1)]),
+    ]
+    assert total == 4
+
+
+@pytest.mark.gui
+def test_localization_statistics_button_is_read_only_and_tracks_selected_video(
+    monkeypatch,
+    qtbot,
+    tmp_path,
+):
+    try:
+        from annotation_tool.controllers.localization.localization_editor_controller import (
+            LocalizationEditorController,
+        )
+        from annotation_tool.ui.localization import LocalizationAnnotationPanel
+    except ModuleNotFoundError:
+        from controllers.localization.localization_editor_controller import (
+            LocalizationEditorController,
+        )
+        from ui.localization import LocalizationAnnotationPanel
+
+    panel = LocalizationAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = LocalizationEditorController(panel)
+    controller.set_settings(
+        QSettings(str(tmp_path / "statistics-settings.ini"), QSettings.Format.IniFormat)
+    )
+    controller.setup_connections()
+    controller.on_schema_context_changed(
+        {
+            "ball_action": {
+                "type": "single_label",
+                "labels": ["pass", "shot"],
+            }
+        }
+    )
+
+    messages = []
+    monkeypatch.setattr(
+        importlib.import_module(panel.__class__.__module__).QMessageBox,
+        "information",
+        lambda _parent, title, message: messages.append((title, message)),
+    )
+    statistics_requests = []
+    panel.statisticsRequested.connect(lambda: statistics_requests.append(True))
+    mutation_requests = []
+    controller.locEventAddRequested.connect(
+        lambda *_args: mutation_requests.append("add")
+    )
+    controller.locEventModRequested.connect(
+        lambda *_args: mutation_requests.append("modify")
+    )
+    controller.locEventDelRequested.connect(
+        lambda *_args: mutation_requests.append("delete")
+    )
+    controller.locEventsSetRequested.connect(
+        lambda *_args: mutation_requests.append("set")
+    )
+
+    controller.on_selected_sample_changed(
+        {
+            "id": "clip_1",
+            "inputs": [{"path": "/data/test_video_1.mp4", "type": "video"}],
+            "events": [
+                {"head": "ball_action", "label": "pass", "position_ms": 1000}
+            ],
+        }
+    )
+
+    snapshot_before = copy.deepcopy(controller._current_sample_snapshot)
+    assert panel.btn_statistics.text() == "Statistics…"
+
+    qtbot.mouseClick(panel.btn_statistics, Qt.MouseButton.LeftButton)
+
+    assert statistics_requests == [True]
+    assert messages[-1][0] == "Localization Statistics"
+    assert "Video: test_video_1.mp4" in messages[-1][1]
+    assert "ball action\n  pass: 1\n  shot: 0" in messages[-1][1]
+    assert "Total events: 1" in messages[-1][1]
+    assert controller._current_sample_snapshot == snapshot_before
+    assert mutation_requests == []
+
+    controller.on_media_position_changed(2500)
+    controller._on_spotting_triggered("ball_action", "shot")
+    assert mutation_requests == ["add"]
+    mutation_requests.clear()
+    messages.clear()
+    qtbot.mouseClick(panel.btn_statistics, Qt.MouseButton.LeftButton)
+    assert "ball action\n  pass: 1\n  shot: 1" in messages[-1][1]
+    assert "Total events: 2" in messages[-1][1]
+    assert mutation_requests == []
+
+    controller.on_selected_sample_changed(
+        {
+            "id": "clip_2",
+            "inputs": [{"path": "/data/test_video_2.mp4", "type": "video"}],
+            "events": [],
+        }
+    )
+    messages.clear()
+    qtbot.mouseClick(panel.btn_statistics, Qt.MouseButton.LeftButton)
+
+    assert "Video: test_video_2.mp4" in messages[-1][1]
+    assert "ball action\n  pass: 0\n  shot: 0" in messages[-1][1]
+    assert "Total events: 0" in messages[-1][1]
+    assert mutation_requests == []
 
 
 @pytest.mark.gui

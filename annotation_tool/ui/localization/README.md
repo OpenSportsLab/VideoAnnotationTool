@@ -23,6 +23,7 @@ live in the main-window Inference Jobs dock.
 ### Panel Signals
 - `tabSwitched(int)`
 - `eventNavigateRequested(int)`
+- `statisticsRequested()`
 - `acceptAllPredictionsRequested()`
 - `rejectAllPredictionsRequested()`
 
@@ -36,7 +37,9 @@ live in the main-window Inference Jobs dock.
 
 ## Key Functions and Responsibilities
 - `LocalizationAnnotationPanel.__init__()`
-  - Loads `.ui`, builds adapters, wires navigation buttons.
+  - Loads `.ui`, builds adapters, and wires navigation and statistics intents.
+- `LocalizationAnnotationPanel.show_statistics(video_name, statistics, total)`
+  - Presents controller-computed per-head class counts in a read-only message box.
 - `_SpottingTabsAdapter.update_schema(label_definitions)`
   - Rebuilds head tabs and spotting buttons.
   - Spotting buttons use the same deterministic label colors as table rows and timeline markers.
@@ -65,6 +68,7 @@ live in the main-window Inference Jobs dock.
 - Table edit emits old/new payloads; controller decides mutation validity.
 - Tabs adapter manages head/label UX including add/rename/delete requests.
 - Pending event actions are emitted as intent only; persistence remains in controller/history layer.
+- Statistics are presentation-only and never mutate annotations or history.
 - Invalid shortcut targets produce no table intent. Set time requires any event
   row; prediction review additionally requires `confidence_score`.
 - Table row background color is derived from the same label-color mapping used for timeline markers.
