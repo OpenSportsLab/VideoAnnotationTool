@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 
 from controllers.command_types import CmdType
 from ui.dialogs import UnsavedChangesDialog
+from streaming_vqa import has_valid_entries, normalize_for_write as normalize_streaming_vqa_for_write
 from utils import (
     format_utc_datetime,
     natural_sort_key,
@@ -783,6 +784,10 @@ class DatasetExplorerController(QObject):
             if old_present and parsed_old == parsed_new:
                 return False
             if parse_utc_datetime(previous_timeline_origin_utc) is not None:
+                if "streaming_vqa" in sample:
+                    sample["streaming_vqa"] = normalize_streaming_vqa_for_write(
+                        sample["streaming_vqa"], previous_timeline_origin_utc
+                    )
                 for field_name in ("events", "dense_captions"):
                     if isinstance(sample.get(field_name), list):
                         sample[field_name] = normalize_temporal_annotations_for_write(
@@ -791,6 +796,8 @@ class DatasetExplorerController(QObject):
                         )
             input_item["UTC_time_start"] = parsed_new.strftime("%Y-%m-%d %H:%M:%S.%f")
             new_timeline_origin = self._timeline_origin_for_sample(sample)
+            if "streaming_vqa" in sample:
+                sample["streaming_vqa"] = normalize_streaming_vqa_for_write(sample["streaming_vqa"], new_timeline_origin)
             for field_name in ("events", "dense_captions"):
                 if isinstance(sample.get(field_name), list):
                     sample[field_name] = normalize_temporal_annotations_for_write(
@@ -819,6 +826,10 @@ class DatasetExplorerController(QObject):
             if "UTC_time_start" not in input_item:
                 return False
             if parse_utc_datetime(previous_timeline_origin_utc) is not None:
+                if "streaming_vqa" in sample:
+                    sample["streaming_vqa"] = normalize_streaming_vqa_for_write(
+                        sample["streaming_vqa"], previous_timeline_origin_utc
+                    )
                 for field_name in ("events", "dense_captions"):
                     if isinstance(sample.get(field_name), list):
                         sample[field_name] = normalize_temporal_annotations_for_write(
@@ -826,6 +837,8 @@ class DatasetExplorerController(QObject):
                         )
             input_item.pop("UTC_time_start", None)
             new_timeline_origin = self._timeline_origin_for_sample(sample)
+            if "streaming_vqa" in sample:
+                sample["streaming_vqa"] = normalize_streaming_vqa_for_write(sample["streaming_vqa"], new_timeline_origin)
             for field_name in ("events", "dense_captions"):
                 if isinstance(sample.get(field_name), list):
                     sample[field_name] = normalize_temporal_annotations_for_write(
@@ -913,6 +926,7 @@ class DatasetExplorerController(QObject):
             "captions",
             "dense_captions",
             "answers",
+            "streaming_vqa",
         ):
             sample.pop(field, None)
 
@@ -1872,10 +1886,13 @@ class DatasetExplorerController(QObject):
             return bool(sample.get("dense_captions"))
         if mode_idx == 4:
             return self._has_non_empty_answers(sample)
+        if mode_idx == 5:
+            # Imported invalid rows must still be reachable for repair.
+            return "streaming_vqa" in sample and sample["streaming_vqa"] != []
         return False
 
     def _available_mode_indices_for_sample(self, sample: dict):
-        return [mode_idx for mode_idx in (0, 1, 2, 3, 4) if self._sample_supports_mode(sample, mode_idx)]
+        return [mode_idx for mode_idx in (0, 1, 2, 3, 4, 5) if self._sample_supports_mode(sample, mode_idx)]
 
     def _reconcile_annotation_tab_for_sample(self, sample: dict) -> bool:
         available_modes = self._available_mode_indices_for_sample(sample)
@@ -2084,6 +2101,7 @@ class DatasetExplorerController(QObject):
             or bool(sample.get("dense_captions"))
             or has_caption_text
             or self._has_non_empty_answers(sample)
+            or has_valid_entries(sample.get("streaming_vqa"))
         )
         smart = (
             self._has_smart_labels(sample)
@@ -2874,6 +2892,13 @@ class DatasetExplorerController(QObject):
         written.pop("questions", None)
         for sample in written.get("data", []):
             timeline_origin = self._timeline_origin_for_sample(sample)
+            if "streaming_vqa" in sample:
+                if sample["streaming_vqa"] == []:
+                    sample.pop("streaming_vqa")
+                else:
+                    sample["streaming_vqa"] = normalize_streaming_vqa_for_write(
+                        sample["streaming_vqa"], timeline_origin
+                    )
             for field_name in ("events", "dense_captions"):
                 if isinstance(sample.get(field_name), list):
                     sample[field_name] = normalize_temporal_annotations_for_write(

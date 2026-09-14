@@ -4,7 +4,7 @@ All annotation tabs work on the currently selected sample from the Dataset
 Explorer. The JSON field names below match the canonical [OSL JSON Format](OSL.md)
 page.
 
-For samples with a UTC reference, localization events and dense captions use an
+For samples with a UTC reference, localization events, dense captions, and Streaming VQA questions use an
 absolute `timestamp_utc` as their stable time. The accompanying `position_ms`
 is projected onto the current shared media timeline for seeking and legacy
 compatibility. Adding, removing, filtering, or resynchronizing modalities can
@@ -114,3 +114,37 @@ Answers are stored as grouped `answers[]` entries with `question` and
 Select a question and use **Run Inference…** to run VQA. An unconfirmed
 answer carries confidence/model metadata; confirming it converts it to the
 normal answer string. See [Local and Remote Inference](inference.md).
+
+## Streaming VQA
+
+Use **Streaming VQA** for a multiple-choice question asked at time T about what
+has happened earlier in the selected sample. The answer must use only footage
+from sample start through T. The editor allows normal playback beyond T while
+authoring; selecting a question does not install a playback cutoff.
+
+1. Select a sample, open **Streaming VQA**, and seek to the desired ask time.
+2. Click **+ Add Question**. Playback pauses and the dialog captures the current
+   shared timeline position, including when an individual input is focused.
+3. Enter a question and fill the choices. The dialog starts with four empty
+   choices; add, remove, or reorder them with the adjacent controls.
+4. Select exactly one correct choice using its radio button. At least two
+   distinct, non-empty choices are required.
+5. Adjust ask time if needed, using `MM:SS.mmm` or an ISO UTC timestamp.
+6. Click **Save** to commit the complete question, or **Cancel** to discard the
+   dialog. Playback remains paused. Save the dataset to write changes to disk.
+
+Questions appear chronologically in the table with ask-time markers on the
+timeline. Selecting a row or clicking **Go to Ask Time** seeks to that time.
+The details show the choices and mark the correct answer. Use **Edit** or
+double-click to edit; **Delete** removes the selected question. Each committed
+add, edit, or deletion is one undoable action. Unchanged or cancelled dialogs
+do not add history entries.
+
+Removing the correct choice requires selecting a replacement before saving.
+Incomplete questions cannot be saved as drafts. Imported invalid rows show a
+warning and repair details; they remain in the file until explicitly repaired
+or deleted. **Show Labelled** includes samples with at least one valid question.
+If an edit causes the filter to hide the selected sample, selection clears.
+
+There are no evidence controls. This task supports manual annotation only;
+**Run Inference…** is disabled while its tab is active.

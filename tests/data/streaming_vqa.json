@@ -1,0 +1,27 @@
+{
+  "version": "2.0",
+  "date": "2026-09-14",
+  "dataset_name": "streaming-vqa-demo",
+  "description": "A multiple-choice question using only the clip history through its ask time.",
+  "modalities": ["video"],
+  "metadata": {},
+  "labels": {},
+  "data": [
+    {
+      "id": "clip_1",
+      "inputs": [{"type": "video", "path": "test_video_1.mp4"}],
+      "streaming_vqa": [
+        {
+          "id": "q1",
+          "position_ms": 5000,
+          "question": "Which person appeared before this moment?",
+          "options": [
+            {"id": "o1", "text": "The person on the left"},
+            {"id": "o2", "text": "The person on the right"}
+          ],
+          "correct_option_id": "o1"
+        }
+      ]
+    }
+  ]
+}

@@ -37,10 +37,13 @@ Save/export also:
 - Ensures sample IDs are unique.
 - Recomputes `modalities` from sample inputs.
 - Removes empty optional sample blocks such as `labels`, `events`, `captions`,
-  `dense_captions`, `answers`, and `metadata`.
+  `dense_captions`, `answers`, `streaming_vqa`, and `metadata`.
 - Normalizes Q/A payloads to grouped `answers[]` entries with non-empty answer
   text.
 - Removes retired smart keys such as `smart_labels` and `smart_events`.
+- Preserves Streaming VQA question/choice IDs and unknown fields, normalizes
+  valid ask times using the shared UTC origin, and preserves invalid imported
+  entries for explicit repair. Repeated questions are never merged.
 
 ## Close With Unsaved Changes
 
@@ -68,7 +71,7 @@ the application shutdown.
 ## What Is Persisted
 
 - Standard OSL fields such as `labels`, `events`, `captions`,
-  `dense_captions`, and grouped `answers`.
+  `dense_captions`, grouped `answers`, and `streaming_vqa`.
 - Unknown/custom root and sample fields when they do not conflict with retired
   fields.
 

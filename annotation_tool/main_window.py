@@ -34,6 +34,7 @@ from controllers.localization import LocalizationEditorController
 from controllers.description import DescEditorController
 from controllers.dense_description import DenseEditorController
 from controllers.question_answer import QAEditorController
+from controllers.streaming_vqa import StreamingVQAEditorController
 from controllers.history_manager import HistoryManager
 from controllers.media_controller import MediaController
 from controllers.dataset_explorer_controller import DatasetExplorerController
@@ -48,6 +49,7 @@ from ui.localization import LocalizationAnnotationPanel
 from ui.description import DescriptionAnnotationPanel
 from ui.dense_description import DenseAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
+from ui.streaming_vqa import StreamingVQAAnnotationPanel
 from ui.dialogs import (
     ApplicationSettingsDialog,
     BusyStatusDialog,
@@ -162,12 +164,14 @@ class VideoAnnotationWindow(QMainWindow):
         self.description_panel = DescriptionAnnotationPanel()
         self.dense_panel = DenseAnnotationPanel()
         self.qa_panel = QuestionAnswerAnnotationPanel()
+        self.streaming_vqa_panel = StreamingVQAAnnotationPanel()
         
         self.right_tabs.addTab(self.classification_panel, "CLS")
         self.right_tabs.addTab(self.localization_panel, "LOC")
         self.right_tabs.addTab(self.description_panel, "DESC")
         self.right_tabs.addTab(self.dense_panel, "DENSE")
         self.right_tabs.addTab(self.qa_panel, "Q/A")
+        self.right_tabs.addTab(self.streaming_vqa_panel, "Streaming VQA")
         
         self.editor_dock = QDockWidget("Annotation Editor", self)
         self.editor_dock.setObjectName("AnnotationEditorDock")
@@ -220,6 +224,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.qa_editor_controller = QAEditorController(
             question_answer_panel=self.qa_panel,
         )
+        self.streaming_vqa_editor_controller = StreamingVQAEditorController(self.streaming_vqa_panel)
 
         self.history_manager = HistoryManager(
             model=self.dataset_explorer_controller,
@@ -358,12 +363,13 @@ class VideoAnnotationWindow(QMainWindow):
         self.desc_editor_controller.reset_ui()
         self.dense_editor_controller.reset_ui()
         self.qa_editor_controller.reset_ui()
+        self.streaming_vqa_editor_controller.reset_ui()
 
     def set_project_ui_enabled(self, enabled: bool):
         """Enables/Disables all project-related docks and editors."""
         self.data_dock.setEnabled(enabled)
         self.editor_dock.setEnabled(enabled)
-        self.action_run_inference.setEnabled(enabled)
+        self.action_run_inference.setEnabled(enabled and self.right_tabs.currentIndex() != 5)
         self.qa_editor_controller.set_project_enabled(enabled)
         
         # Also explicitly disable the sub-editors to be safe
@@ -375,6 +381,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.description_panel.setEnabled(enabled)
         self.dense_panel.setEnabled(enabled)
         self.qa_editor_controller.set_sample_selection_enabled(enabled)
+        self.streaming_vqa_panel.setEnabled(enabled)
 
     def _set_side_docks_visible(self, visible: bool):
         """Show or hide project dock widgets without changing their preferences."""
@@ -525,6 +532,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.dataset_explorer_controller.sampleSelectionChanged.connect(
             self.qa_editor_controller.on_selected_sample_changed
         )
+        self.dataset_explorer_controller.sampleSelectionChanged.connect(
+            self.streaming_vqa_editor_controller.on_selected_sample_changed
+        )
         self.dataset_explorer_controller.qaQuestionCatalogChanged.connect(
             self.qa_editor_controller.on_question_catalog_changed
         )
@@ -587,6 +597,9 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.media_controller.timelineOriginChanged.connect(
             self.dense_editor_controller.on_timeline_origin_changed
+        )
+        self.media_controller.timelineOriginChanged.connect(
+            self.streaming_vqa_editor_controller.on_timeline_origin_changed
         )
         self.media_controller.inputUtcStartMutationRequested.connect(
             self._handle_input_utc_start_mutation
@@ -801,6 +814,22 @@ class VideoAnnotationWindow(QMainWindow):
             self.history_manager.execute_qa_answers_update
         )
 
+        self.streaming_vqa_panel.addRequested.connect(self.media_controller.pause)
+        self.streaming_vqa_panel.addRequested.connect(
+            lambda: self.streaming_vqa_editor_controller.on_media_position_changed(
+                self.media_controller.current_position_ms()
+            )
+        )
+        self.streaming_vqa_panel.editRequested.connect(self.media_controller.pause)
+        self.media_controller.positionChanged.connect(
+            self.streaming_vqa_editor_controller.on_media_position_changed
+        )
+        self.streaming_vqa_editor_controller.streamingVQAUpdateRequested.connect(
+            self.history_manager.execute_streaming_vqa_update
+        )
+        self.streaming_vqa_editor_controller.mediaSeekRequested.connect(self.media_controller.set_position)
+        self.streaming_vqa_editor_controller.markersUpdateRequested.connect(self.center_panel.set_markers)
+
         # --- History manager request signals ---
         self.history_manager.allItemStatusRefreshRequested.connect(self.dataset_explorer_controller.refresh_all_item_statuses)
         self.history_manager.saveStateRefreshRequested.connect(self.update_save_export_button_state)
@@ -824,6 +853,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.history_manager.datasetRestoreRequested.connect(self.dataset_explorer_controller.restore_dataset_json_from_history)
 
         # --- Mode change fanout ---
+        self.right_tabs.currentChanged.connect(
+            lambda index: self.action_run_inference.setEnabled(self._workspace_visible and index != 5)
+        )
         self.right_tabs.currentChanged.connect(self.dataset_explorer_controller.set_active_mode)
         self.right_tabs.currentChanged.connect(self.dataset_explorer_controller.handle_active_mode_changed)
         self.right_tabs.currentChanged.connect(self.classification_editor_controller.on_mode_changed)
@@ -831,6 +863,10 @@ class VideoAnnotationWindow(QMainWindow):
         self.right_tabs.currentChanged.connect(self.desc_editor_controller.on_mode_changed)
         self.right_tabs.currentChanged.connect(self.dense_editor_controller.on_mode_changed)
         self.right_tabs.currentChanged.connect(self.qa_editor_controller.on_mode_changed)
+        self.right_tabs.currentChanged.connect(self.streaming_vqa_editor_controller.on_mode_changed)
+        self.right_tabs.currentChanged.connect(
+            lambda index: self.center_panel.set_markers([]) if index in (0, 2, 4) else None
+        )
 
         # --- Controllers' internal panel wiring ---
         self.classification_editor_controller.setup_connections()
@@ -838,6 +874,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.desc_editor_controller.setup_connections()
         self.dense_editor_controller.setup_connections()
         self.qa_editor_controller.setup_connections()
+        self.streaming_vqa_editor_controller.setup_connections()
 
         current_mode = self.right_tabs.currentIndex()
         self.dataset_explorer_controller.set_active_mode(current_mode)
@@ -846,6 +883,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.desc_editor_controller.on_mode_changed(current_mode)
         self.dense_editor_controller.on_mode_changed(current_mode)
         self.qa_editor_controller.on_mode_changed(current_mode)
+        self.streaming_vqa_editor_controller.on_mode_changed(current_mode)
 
         # --- Hugging Face transfer wiring ---
         self.hf_transfer_panel.stopRequested.connect(
@@ -3009,7 +3047,7 @@ class VideoAnnotationWindow(QMainWindow):
         if filter_idx == 0:
             return
         self.dataset_explorer_controller.handle_filter_change(
-            filter_idx
+            filter_idx, selection_fallback="clear_selection"
         )
 
     def setup_dynamic_ui(self) -> None:

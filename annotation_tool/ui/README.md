@@ -28,11 +28,11 @@ Provides all QWidget classes, `.ui` bindings, and adapter surfaces for controlle
   retain whole-file average speed without a redundant Running prefix. Stopping
   or resuming does not discard rows, and queued paths already present locally
   are reconciled to Completed.
-- `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`: right editor panels.
+- `classification/`, `localization/`, `description/`, `dense_description/`, `question_answer/`, `streaming_vqa/`: right editor panels.
 
 ## Key Functions and Responsibilities
 - `__init__.py` files in each UI package:
-  - load `.ui` files using `uic.loadUi(...)`.
+  - load `.ui` files using `uic.loadUi(...)` or construct widgets in Python.
   - expose stable controller-facing attributes/signals.
   - add adapter logic where needed (localization/dense tables, tabs, smart widgets).
 

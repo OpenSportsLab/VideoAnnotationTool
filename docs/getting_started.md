@@ -69,6 +69,7 @@ Select a sample in the Dataset Explorer, then use the right-side annotation tabs
 | `DESC` | Clip-level text captions | `captions` |
 | `DENSE` | Timestamped dense captions | `dense_captions` |
 | `Q/A` | Per-sample question groups and answers | `answers` |
+| `Streaming VQA` | Multiple-choice questions about history through an ask time | `streaming_vqa` |
 
 See [Annotating](annotating.md) for the per-mode workflow.
 

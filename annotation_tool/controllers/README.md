@@ -233,6 +233,12 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - Upload manifests are application settings and never enter dataset JSON.
 
 ## Business Rules
+
+Streaming VQA is the sixth editor (tab 5), implemented by the panel-only
+`StreamingVQAEditorController`. It emits sample-list mutation intents to
+`HistoryManager.execute_streaming_vqa_update` and shared-timeline seek/marker
+intents through `MainWindow.connect_signals()`. Its modal commits are complete
+and atomic, with no inference or evidence. See [its contracts](streaming_vqa/README.md).
 - Dataset JSON mutation must preserve undo/redo correctness.
 - No-op mutation requests should not change stacks.
 - Save/export normalizes temporal annotations using a genuine resolved origin;

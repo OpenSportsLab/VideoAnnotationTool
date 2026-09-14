@@ -121,6 +121,7 @@ Each entry in `data` is one sample.
 | `captions` | array | Clip-level description captions. |
 | `dense_captions` | array | Timestamped dense descriptions. |
 | `answers` | array | Grouped question/answer annotations. |
+| `streaming_vqa` | array | Multiple-choice questions anchored at an ask time. |
 
 Unknown sample keys are preserved.
 
@@ -160,7 +161,7 @@ or malformed explicit value makes the input relative instead of falling back to
 backend timing. The original field is preserved in project JSON unless it is
 changed through synchronization or the viewer's Set/Correct/Remove UTC actions.
 
-Point annotations in `events[]` and `dense_captions[]` may contain both
+Point annotations in `events[]`, `dense_captions[]`, and `streaming_vqa[]` may contain both
 `timestamp_utc` and `position_ms`. A valid `timestamp_utc` is the authoritative
 real-world instant; `position_ms` is a backward-compatible projection relative
 to the currently resolved sample timeline origin:
@@ -392,6 +393,56 @@ The loader preserves manual strings and legacy smart answer objects. New Q/A,
 caption, and dense-caption predictions remain transient until accepted. Legacy
 smart captions and dense captions use the same optional `confidence_score` and
 `inference_model_id` fields on their existing objects.
+
+### Streaming VQA
+
+`streaming_vqa[]` stores multiple-choice questions asked at time **T**. The
+available history is all footage in the sample from its beginning through T;
+future footage is excluded from the task. Authoring playback is unrestricted.
+Ordinary Q/A remains in `answers[]`; Streaming VQA has no evidence fields.
+
+```json
+{
+  "streaming_vqa": [
+    {
+      "id": "q1",
+      "position_ms": 120000,
+      "question": "Who made the pass immediately before the last shot?",
+      "options": [
+        {"id": "o1", "text": "Player 7"},
+        {"id": "o2", "text": "Player 10"},
+        {"id": "o3", "text": "Player 9"},
+        {"id": "o4", "text": "Player 3"}
+      ],
+      "correct_option_id": "o2"
+    }
+  ]
+}
+```
+
+- `id`: non-empty string unique within the sample. The editor generates UUIDs
+  for new questions, preserving existing valid IDs on edit.
+- `position_ms`: integer ask time on the shared sample timeline, at or after
+  its beginning for relative annotations. Optional `timestamp_utc` follows the
+  shared authoritative-UTC contract above, including projections outside media.
+- `question`: non-empty text.
+- `options`: ordered list with at least two choices. Each has a stable non-empty
+  string `id` unique within the question and non-empty `text`. Texts must be
+  distinct after trimming whitespace (case-sensitive).
+- `correct_option_id`: exactly one existing choice ID. Reordering choices does
+  not change the correct answer; editing never renumbers choice IDs.
+
+Repeated question text, even at the same time, is preserved as separate entries.
+The table sorts by projected ask time without reordering the persisted array.
+Extra question and option fields survive editing. Empty `streaming_vqa` arrays
+are omitted on save/export. Valid entries gain UTC and refreshed relative times
+when an origin is available; malformed imported entries remain intact, are
+flagged for repair, and do not count as annotated. Invalid new/edited entries
+cannot be committed. Repairing missing or duplicate IDs generates new UUIDs.
+There are no persisted drafts or model predictions for this task.
+
+A complete relative-time example is available in
+[`tests/data/streaming_vqa.json`](https://github.com/OpenSportsLab/VideoAnnotationTool/blob/main/tests/data/streaming_vqa.json).
 
 ## Complete Examples
 
