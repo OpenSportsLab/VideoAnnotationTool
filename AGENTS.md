@@ -9,12 +9,12 @@ PyQt6 desktop annotation tool for OSL sports-video datasets.
 Must support:
 - Project lifecycle: create/open/close/save/export JSON.
 - Dataset curation: samples, metadata, schema (`labels`).
-- Modes: Classification, Localization, Description, Dense Description.
+- Modes: Classification, Localization, Description, Dense Description, Question/Answer, Streaming VQA.
 - Editing/review UX: tree + timeline + table + media controls + filter + undo/redo.
 
 Data model target:
 - Root: metadata + `labels` + `data`.
-- Sample: `inputs` and task keys like `labels`, `events`, `captions`, `dense_captions`.
+- Sample: `inputs` and task keys like `labels`, `events`, `captions`, `dense_captions`, `answers`, `streaming_vqa`.
 
 ## Architecture
 Layers:
@@ -67,6 +67,7 @@ Default signal flow:
 - Description controller consumes selected `sample` and emits caption-only updates.
 - Classification manual edits save immediately on effective change.
 - Dense add remains explicit modal (`Add New Description`), edits table-driven.
+- Streaming VQA uses complete modal commits, stable question/choice IDs, one correct choice, and no evidence fields.
 - Mute control: icon button on right side of timeline row.
 
 ## Refactoring Rules

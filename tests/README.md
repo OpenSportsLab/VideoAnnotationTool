@@ -10,6 +10,8 @@ This folder contains GUI smoke/persistence tests for the PyQt application.
   - Localization
   - Description
   - Dense Description
+  - Question/Answer
+  - Streaming VQA
 - Keep tests deterministic by patching file dialogs and avoiding real model inference.
 
 ## Structure
@@ -78,6 +80,12 @@ pytest --collect-only tests/gui
 ```
 
 ## Current Workflow Inventory
+
+`tests/gui/test_workflow_streaming_vqa.py` covers manual multiple-choice dialogs,
+stable IDs, validation, repeated questions, save/export/reopen, atomic history,
+filter clearing, ask-time navigation, UTC, and multiview synchronization.
+`tests/data/streaming_vqa.json` is a small format/demo fixture with illustrative
+annotations; its answers are not a reviewed benchmark.
 
 `tests/gui/` currently covers:
 

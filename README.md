@@ -9,6 +9,8 @@ A **PyQt6-based GUI** for analyzing and annotating **[OSL format](https://opensp
 
 - Open and visualize OSL-style data and annotations.
 - Annotate and edit events/actions with a user-friendly GUI.
+- Author Streaming VQA questions at a shared timeline ask time, with multiple
+  choices and one correct answer; see the [workflow](docs/annotating.md#streaming-vqa).
 - Keep Localization and Dense Description times stable across multi-modality
   changes with authoritative UTC timestamps and projected timeline positions.
 - Manage labels/categories and export results for downstream tasks.

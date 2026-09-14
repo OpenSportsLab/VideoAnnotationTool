@@ -109,7 +109,7 @@ layouts stay pinned to the modality being synchronized.
 
 ### Right: Annotation Tabs
 
-All five editors end with the same prediction-review footer. Accept/Reject and
+The five inference-enabled editors end with the same prediction-review footer. Accept/Reject and
 bulk review actions appear only when pending predictions exist. Task-specific
 prediction rows remain inline in the editor above it.
 
@@ -178,3 +178,15 @@ completion does not switch the active annotation or head tab.
 - Double-click or right-click an answer to edit it; right-click can also remove it
 - Multiple answers per question
 - Edits autosave after short idle delay
+
+#### Streaming VQA
+
+- Chronological table with **Ask time**, **Question**, and **Correct** columns
+- **+ Add Question** pauses playback and captures the shared playhead position
+- Modal add/edit dialog with ask time, question, reorderable choices, and one
+  correct-answer radio selection; only complete entries can be committed
+- Selected-question details plus **Go to Ask Time** and timeline markers
+- Normal playback beyond ask time; no evidence controls or inference footer
+- Invalid imported rows remain visible with repair details
+
+See [Streaming VQA annotation workflow](annotating.md#streaming-vqa).

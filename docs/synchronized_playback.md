@@ -116,7 +116,7 @@ paused, and changing samples or projects cancels synchronization without saving.
 
 ## Existing Timed Annotations
 
-Localization events and dense captions may store an authoritative
+Localization events, dense captions, and Streaming VQA questions may store an authoritative
 `timestamp_utc` together with a compatibility `position_ms`. Before changing an
 input origin, the tool promotes legacy relative annotations when the old sample
 origin is genuinely resolvable. It then leaves every valid annotation UTC

@@ -1,11 +1,13 @@
 # Video Annotation Tool
 
 ## Role
-Desktop PyQt6 application for video annotation across four modes:
+Desktop PyQt6 application for video annotation across six modes:
 - Classification
 - Localization (action spotting)
 - Description (sample-level captions)
 - Dense Description (timestamped text events)
+- Question/Answer (grouped sample-level answers)
+- Streaming VQA (multiple-choice questions anchored at ask times)
 
 ## Architecture Overview
 The app is organized into three runtime layers plus shell composition:
@@ -52,7 +54,7 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
 - Project root object (`dataset_json`) includes (non-exhaustive):
   - `version`, `date`, `dataset_name`, `description`, `metadata`, `labels`, `data`
 - Sample object (`dataset_json["data"][i]`) typically includes:
-  - `id`, `inputs`, `labels`, `events`, `captions`, `dense_captions`
+  - `id`, `inputs`, `labels`, `events`, `captions`, `dense_captions`, `answers`, `streaming_vqa`
   - Classification smart prediction marker: `labels[head].confidence_score` (optional float)
 - Input item:
   - `{ "type": "video", "path": "..." }`
@@ -90,6 +92,10 @@ For temporal annotations, a valid `timestamp_utc` is authoritative and `position
 Localization and Dense Description tables show resolvable annotations as `YYYY-MM-DD HH:MM:SS.mmm UTC`. Their Time cells accept ISO-compatible UTC edits; rows without usable UTC retain the relative `MM:SS.mmm` editor.
 - Caption list (Description): `[ { "variant": str?, "lang": str, "text": str, ...optional } ]`
 - Q/A list: `[ { "question": str, "answers": [str, ...] } ]`
+- Streaming VQA list: `[ { "id": str, "position_ms": int, "timestamp_utc": str?, "question": str, "options": [{"id": str, "text": str}], "correct_option_id": str } ]`.
+  This manual-only task has stable question/option IDs, exactly one correct
+  choice, atomic modal commits, and no evidence or drafts. See
+  [controller contracts](controllers/streaming_vqa/README.md).
 
 ## Conventions
 - Signal-first cross-module communication; `main_window.py` wires interactions.

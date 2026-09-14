@@ -3,6 +3,7 @@ import copy
 from PyQt6.QtCore import QModelIndex, QObject, pyqtSignal
 
 from controllers.command_types import CmdType
+from streaming_vqa import normalize_for_write as normalize_streaming_vqa_for_write
 from controllers.localization.label_color_settings import (
     move_saved_head_colors,
     remove_saved_head_colors,
@@ -85,6 +86,8 @@ class HistoryManager(QObject):
         sample = self.model.get_sample(sample_id)
         if origin is None or not isinstance(sample, dict):
             return
+        if "streaming_vqa" in sample:
+            sample["streaming_vqa"] = normalize_streaming_vqa_for_write(sample["streaming_vqa"], origin)
         for field_name in ("events", "dense_captions"):
             if isinstance(sample.get(field_name), list):
                 sample[field_name] = normalize_temporal_annotations_for_write(
@@ -628,6 +631,15 @@ class HistoryManager(QObject):
     def execute_sample_captions_update(self, sample_id: str, captions):
         self.execute_sample_field_update(sample_id, "captions", captions)
 
+    def execute_streaming_vqa_update(self, sample_id: str, entries):
+        if not isinstance(entries, list):
+            return
+        sample = self.model.get_sample(sample_id)
+        if not isinstance(sample, dict) or sample.get("streaming_vqa", []) == entries:
+            return
+        self.execute_sample_field_update(sample_id, "streaming_vqa", entries if entries else None)
+        self.filterRefreshRequested.emit(int(self._get_current_filter_index()), "clear_selection")
+
     def execute_dense_events_set(self, sample_id: str, events):
         video_path = self._path_for_sample(sample_id)
         if not video_path:
@@ -959,6 +971,8 @@ class HistoryManager(QObject):
             sample = self.model.get_sample(sample_id)
             if isinstance(sample, dict):
                 new_origin = self.model._timeline_origin_for_sample(sample)
+                if "streaming_vqa" in sample:
+                    sample["streaming_vqa"] = normalize_streaming_vqa_for_write(sample["streaming_vqa"], new_origin)
                 for field_name in ("events", "dense_captions"):
                     if isinstance(sample.get(field_name), list):
                         sample[field_name] = normalize_temporal_annotations_for_write(
@@ -1249,8 +1263,8 @@ class HistoryManager(QObject):
                 "clear_selection",
             )
 
-        # 4: Question/Answer Mode
-        elif tab_idx == 4:
+        # Question/Answer and Streaming VQA use sample-field history.
+        elif tab_idx in (4, 5):
             self.refreshUiAfterUndoRedoRequested.emit(
                 self._get_current_action_path() or "",
                 "clear_selection",

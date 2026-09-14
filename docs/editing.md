@@ -20,6 +20,9 @@ In the Dataset Explorer header table:
 - Description: edit caption text.
 - Dense: edit event text/time in the table.
 - Q/A: add question groups with a dialog, choose prior questions there or enter custom text, double-click or right-click to edit/remove groups, and use the **Answer** dialog plus answer-list right-click/double-click actions for answers.
+- Streaming VQA: add/edit complete timestamped multiple-choice questions in a
+  dialog, choose one correct option, and navigate with ask-time table rows.
+  See [the workflow](annotating.md#streaming-vqa).
 
 ## Add or Remove Data
 

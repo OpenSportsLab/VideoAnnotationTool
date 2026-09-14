@@ -8,12 +8,13 @@ The Video Annotation Tool is a PyQt6 desktop application for loading, editing, a
 
 - Create, open, close, save, and export dataset JSON projects.
 - Manage samples and multi-input clips from the Dataset Explorer.
-- Annotate across five modes:
+- Annotate across six modes:
   - Classification (`labels`)
   - Localization (`events`)
   - Description (`captions`)
   - Dense Description (`dense_captions`)
   - Question/Answer (`answers`)
+  - Streaming VQA (`streaming_vqa`): multiple-choice questions anchored in time
 - Use global undo/redo for tracked edits.
 - Preserve absolute Localization and Dense Description times while modalities
   are added, removed, filtered, or resynchronized.
