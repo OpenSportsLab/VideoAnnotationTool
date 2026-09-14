@@ -1493,6 +1493,26 @@ class DatasetExplorerController(QObject):
     def _display_name_for_sample(self, sample: dict) -> str:
         return str(sample.get("id") or "sample")
 
+    def refresh_sample_rename_availability(self) -> str:
+        """Keep shard lookup IDs stable until every referenced asset is local."""
+        reason = ""
+        if str(self.dataset_json.get("hf_format") or "").strip().lower() == "parquet":
+            missing = any(
+                not os.path.isfile(self._resolve_media_path(input_item[key]))
+                for sample in self.get_samples()
+                for input_item in sample.get("inputs", [])
+                if isinstance(input_item, dict)
+                for key in ("path", "ball_path")
+                if input_item.get(key)
+            )
+            if missing:
+                reason = (
+                    "Sample IDs cannot be renamed until all dataset media is downloaded. "
+                    "Parquet shards use the original IDs to find missing files."
+                )
+        self.tree_model.set_sample_rename_block_reason(reason)
+        return reason
+
     def _resolved_media_source_from_input(self, input_item: dict):
         if not isinstance(input_item, dict):
             return None
@@ -1617,6 +1637,7 @@ class DatasetExplorerController(QObject):
             self.sample_id_to_entry[sample_id] = entry
 
         self.action_item_data.sort(key=lambda item: natural_sort_key(item.get("name", "")))
+        self.refresh_sample_rename_availability()
 
     def _sample_from_index(self, index: QModelIndex):
         if not index.isValid():

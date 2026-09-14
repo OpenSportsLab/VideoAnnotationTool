@@ -2188,6 +2188,84 @@ def test_opportunistically_downloaded_queued_file_is_marked_completed(
 
 
 @pytest.mark.gui
+def test_missing_media_queue_failures_continue_without_popups(
+    window, monkeypatch, tmp_path, qtbot
+):
+    json_path = tmp_path / "test.json"
+    json_path.write_text("{}", encoding="utf-8")
+    window.dataset_explorer_controller.current_json_path = str(json_path)
+    missing = [
+        {
+            "sample_id": f"sample-{index}",
+            "input_path": f"clips/{index}.mp4",
+            "path": f"clips/{index}.mp4",
+            "local_path": str(tmp_path / "clips" / f"{index}.mp4"),
+        }
+        for index in range(20)
+    ]
+    attempted = []
+    notices = []
+    controller = window.hf_transfer_controller
+    monkeypatch.setattr(controller, "find_missing_inputs", lambda _path: missing)
+
+    def _fail_download(_json_path, sample_id, **_kwargs):
+        attempted.append(sample_id)
+        raise RuntimeError(f"Unable to extract {sample_id} from the Parquet shard")
+
+    monkeypatch.setattr(
+        "controllers.hf_transfer_controller.download_dataset_sample_inputs_from_hf",
+        _fail_download,
+    )
+    for method in ("critical", "information", "warning", "exec"):
+        monkeypatch.setattr(
+            QMessageBox, method, lambda *args, **kwargs: notices.append(args)
+        )
+
+    try:
+        window._on_hf_download_missing_requested()
+        qtbot.waitUntil(
+            lambda: len(attempted) == len(missing)
+            and controller._download_worker is None
+            and controller.queued_download_count() == 0,
+            timeout=10000,
+        )
+
+        assert attempted == [item["sample_id"] for item in missing]
+        assert notices == []
+        entries = controller.download_queue_snapshot()
+        assert len(entries) == len(missing)
+        assert all(entry["status"] == "failed" for entry in entries)
+        assert window.hf_transfer_panel.file_list.topLevelItemCount() == len(missing)
+        assert "sample-19" in window.hf_transfer_panel.summary_label.text()
+        assert "sample-19" in window.statusBar().currentMessage()
+        assert window.dataset_explorer_panel._hf_download_running is False
+    finally:
+        controller.shutdown()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("operation", ["assets", "missing_assets"])
+@pytest.mark.parametrize("outcome", ["failed", "cancelled"])
+def test_media_download_terminal_outcome_uses_dock_without_popup(
+    window, monkeypatch, operation, outcome
+):
+    notices = []
+    for method in ("critical", "information"):
+        monkeypatch.setattr(
+            QMessageBox, method, lambda *args, **kwargs: notices.append(args)
+        )
+    window._on_hf_download_started("Starting media download", {"operation": operation})
+
+    getattr(window, f"_on_hf_download_{outcome}")("Transfer stopped")
+
+    assert notices == []
+    assert window.hf_transfer_dock.isVisible()
+    assert outcome in window.hf_transfer_panel.state_label.text()
+    assert "Transfer stopped" in window.hf_transfer_panel.summary_label.text()
+    assert window.dataset_explorer_panel._hf_download_running is False
+
+
+@pytest.mark.gui
 def test_selective_queue_completion_uses_status_bar_only(window, monkeypatch):
     refreshes = []
     notices = []

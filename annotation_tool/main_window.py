@@ -916,6 +916,15 @@ class VideoAnnotationWindow(QMainWindow):
         self.hf_transfer_controller.downloadCompleted.connect(self._on_hf_download_completed)
         self.hf_transfer_controller.downloadFailed.connect(self._on_hf_download_failed)
         self.hf_transfer_controller.downloadCancelled.connect(self._on_hf_download_cancelled)
+        self.hf_transfer_controller.downloadCompleted.connect(
+            self.dataset_explorer_controller.refresh_sample_rename_availability
+        )
+        self.hf_transfer_controller.downloadFailed.connect(
+            self.dataset_explorer_controller.refresh_sample_rename_availability
+        )
+        self.hf_transfer_controller.downloadCancelled.connect(
+            self.dataset_explorer_controller.refresh_sample_rename_availability
+        )
 
         self.hf_transfer_controller.uploadStarted.connect(
             self._on_hf_upload_started
@@ -2584,11 +2593,9 @@ class VideoAnnotationWindow(QMainWindow):
             self.hf_transfer_panel.set_queue_count(
                 self.hf_transfer_controller.queued_download_count()
             )
-            QMessageBox.critical(
-                self,
-                "HF Selective Download Failed",
-                f"{error}\n\nThe remaining queued downloads will continue.",
-            )
+            message = f"{error}\n\nThe remaining queued downloads will continue."
+            self.hf_transfer_panel.summary_label.setText(message)
+            self.show_temp_msg("HF Selective Download Failed", message, 5000)
             return
         if failed_payload.get("operation") == "missing_assets":
             self._pending_hf_upload_after_hydration = None
@@ -2606,7 +2613,8 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self._sync_media_availability_context()
         self._finish_hf_transfer("Hugging Face download failed", error, failed_payload)
-        QMessageBox.critical(self, "HF Download Failed", error)
+        if failed_payload.get("operation") not in {"assets", "missing_assets"}:
+            QMessageBox.critical(self, "HF Download Failed", error)
         self.show_temp_msg("HF Download Failed", error, 5000)
 
     def _on_hf_download_cancelled(self, message: str) -> None:
@@ -2638,7 +2646,8 @@ class VideoAnnotationWindow(QMainWindow):
             message or "Download cancelled.",
             cancelled_payload,
         )
-        QMessageBox.information(self, "HF Download Cancelled", message or "Download cancelled.")
+        if cancelled_payload.get("operation") not in {"assets", "missing_assets"}:
+            QMessageBox.information(self, "HF Download Cancelled", message or "Download cancelled.")
         self.show_temp_msg("HF Download", "Download cancelled.", 3000)
 
     def _on_hf_download_completed(self, payload: dict) -> None:

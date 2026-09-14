@@ -2,6 +2,7 @@
 Dataset Explorer regression coverage across mixed datasets and cross-mode flows.
 """
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -624,6 +625,119 @@ def test_rename_sample_id_updates_tree_selection_and_dataset_json(
     assert window.dataset_explorer_controller.get_sample("clip_1") is None
     assert window.dataset_explorer_controller.current_selected_sample_id == "renamed_clip"
     assert window.dataset_explorer_controller.is_data_dirty is True
+
+
+@pytest.fixture
+def shard_rename_project(window, tmp_path):
+    local_video = Path(__file__).resolve().parents[1] / "data" / "test_video_1.mp4"
+    pending_path = tmp_path / "pending.mp4"
+    document = {
+        "hf_format": "parquet",
+        "data": [
+            {"id": "available", "inputs": [{"type": "video", "path": str(local_video)}]},
+            {"id": "pending", "inputs": [{"type": "video", "path": pending_path.name}]},
+        ],
+    }
+    return document, tmp_path / "dataset.json", pending_path
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("missing_key", ["path", "ball_path"])
+def test_partial_shard_dataset_blocks_all_sample_renames(
+    window, shard_rename_project, missing_key
+):
+    document, json_path, pending_path = shard_rename_project
+    if missing_key == "ball_path":
+        document["data"][1]["inputs"] = [{
+            "type": "player_joints_h5",
+            "path": document["data"][0]["inputs"][0]["path"],
+            "ball_path": str(pending_path),
+        }]
+    controller = window.dataset_explorer_controller
+    assert controller.load_project(document, str(json_path))
+    # A rejected rename must also preserve an existing redo entry.
+    window.history_manager.execute_header_draft_update({"description": "draft"})
+    window.history_manager.perform_undo()
+    before = controller.snapshot_dataset_json()
+    history_before = copy.deepcopy((controller.undo_stack, controller.redo_stack))
+    dirty_before = controller.is_data_dirty
+
+    for row, sample_id in enumerate(("available", "pending")):
+        index = window.tree_model.index(row, 0)
+        assert not (index.flags() & Qt.ItemFlag.ItemIsEditable)
+        assert "all dataset media" in index.data(Qt.ItemDataRole.ToolTipRole)
+        assert window.tree_model.setData(index, "renamed") is False
+        window.history_manager.execute_sample_id_rename(sample_id, "renamed")
+
+    assert controller.dataset_json == before
+    assert (controller.undo_stack, controller.redo_stack) == history_before
+    assert controller.is_data_dirty == dirty_before
+    assert "Rename unavailable" in window.statusBar().currentMessage()
+
+
+@pytest.mark.gui
+def test_shard_rename_rechecks_missing_files_when_edit_is_committed(
+    window, shard_rename_project, qtbot
+):
+    document, json_path, pending_path = shard_rename_project
+    pending_path.write_bytes(b"downloaded")
+    controller = window.dataset_explorer_controller
+    assert controller.load_project(document, str(json_path))
+    before = controller.snapshot_dataset_json()
+    index = window.tree_model.index(0, 0)
+    assert index.flags() & Qt.ItemFlag.ItemIsEditable
+    pending_path.unlink()
+
+    assert window.tree_model.setData(index, "renamed") is True
+    qtbot.waitUntil(lambda: "Rename unavailable" in window.statusBar().currentMessage())
+
+    assert controller.dataset_json == before
+    assert controller.undo_stack == []
+    assert controller.is_data_dirty is False
+    assert not (index.flags() & Qt.ItemFlag.ItemIsEditable)
+
+
+@pytest.mark.gui
+def test_completed_shard_download_unlocks_rename_without_tree_rebuild(
+    window, shard_rename_project, monkeypatch, qtbot
+):
+    document, json_path, pending_path = shard_rename_project
+    controller = window.dataset_explorer_controller
+    assert controller.load_project(document, str(json_path))
+    index = window.tree_model.index(0, 0)
+    assert not (index.flags() & Qt.ItemFlag.ItemIsEditable)
+    pending_path.write_bytes(b"downloaded")
+    with monkeypatch.context() as guard:
+        guard.setattr(controller, "populate_tree", lambda *args, **kwargs: pytest.fail("Unexpected tree rebuild"))
+        window.hf_transfer_controller.downloadCompleted.emit({"operation": "assets"})
+
+    assert index.flags() & Qt.ItemFlag.ItemIsEditable
+    assert index.data(Qt.ItemDataRole.ToolTipRole) is None
+    before = controller.snapshot_dataset_json()
+    assert window.tree_model.setData(index, "renamed") is True
+    qtbot.waitUntil(lambda: controller.get_sample("renamed") is not None)
+    after = controller.snapshot_dataset_json()
+    assert len(controller.undo_stack) == 1
+    window.history_manager.perform_undo()
+    assert controller.dataset_json == before
+    window.history_manager.perform_redo()
+    assert controller.dataset_json == after
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("remote_format", [None, "json"])
+def test_missing_media_does_not_lock_non_shard_sample_ids(
+    window, shard_rename_project, remote_format
+):
+    document, json_path, _pending_path = shard_rename_project
+    document["hf_format"] = remote_format
+    controller = window.dataset_explorer_controller
+    assert controller.load_project(document, str(json_path))
+    assert window.tree_model.index(0, 0).flags() & Qt.ItemFlag.ItemIsEditable
+    window.history_manager.execute_sample_id_rename("available", "renamed")
+    assert controller.get_sample("renamed") is not None
+    assert len(controller.undo_stack) == 1
+
 
 @pytest.mark.gui
 def test_active_tab_switch_reapplies_markers_without_leaking_stale_markers(

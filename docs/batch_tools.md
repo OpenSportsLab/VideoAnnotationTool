@@ -136,6 +136,14 @@ transfer API.
 
 Media can be completed later with **Queue missing samples** after opening the
 downloaded `<split>.json`.
+Once queued, sample downloads report failures and cancellation in the Transfers
+dock and status bar without opening pop-ups. This also applies to missing media
+queued automatically after converting a Parquet dataset. Failed files remain
+marked **Failed** in the file list, and remaining queued downloads continue.
+The final failed sample does not open a dialog either.
+For Parquet/shard datasets, sample IDs remain read-only across the dataset until
+all referenced media (including ball-tracking companions) is downloaded. This
+keeps sample lookup in the source Parquet intact during partial downloads.
 
 ### Upload Dataset to HF...
 

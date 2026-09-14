@@ -85,13 +85,14 @@ def test_full_download_does_not_accept_selective_queue_item():
     assert controller.queued_download_count() == 0
 
 
-def test_next_selective_download_starts_after_worker_cleanup(monkeypatch):
+@pytest.mark.parametrize("thread_running", [True, False])
+def test_next_selective_download_starts_after_worker_cleanup(monkeypatch, thread_running):
     controller = HfTransferController()
     worker = type(
         "_Worker",
         (),
         {
-            "isRunning": lambda self: True,
+            "isRunning": lambda self: thread_running,
             "deleteLater": lambda self: None,
         },
     )()

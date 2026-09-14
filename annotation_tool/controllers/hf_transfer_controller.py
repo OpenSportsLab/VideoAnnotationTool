@@ -340,7 +340,9 @@ class HfTransferController(QObject):
         return list(find_missing_dataset_inputs(dataset_json_path))
 
     def is_download_running(self) -> bool:
-        return bool(self._download_worker and self._download_worker.isRunning())
+        # A finished thread still owns the slot until its queued signals and
+        # cleanup run on the UI thread. Replacing it earlier loses that context.
+        return self._download_worker is not None
 
     def queued_download_count(self) -> int:
         return len(self._queued_asset_downloads)

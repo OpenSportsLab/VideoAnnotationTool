@@ -65,9 +65,11 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
         self._filter_index = 0
         self._page_number = 0
         self._page_size = self.DEFAULT_PAGE_SIZE
+        self._sample_rename_block_reason = ""
 
     def clear(self):
         self.beginResetModel()
+        self._sample_rename_block_reason = ""
         self._all_entries = []
         self._projected_entries = []
         self._entry_by_id = {}
@@ -292,6 +294,8 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
             return child_name
         if role == Qt.ItemDataRole.DecorationRole and is_sample:
             return node.get("status_icon")
+        if role == Qt.ItemDataRole.ToolTipRole and is_sample:
+            return self._sample_rename_block_reason or None
         if role == Qt.ItemDataRole.ToolTipRole and not is_sample:
             path = str(node.get("path") or "")
             ball_path = str(node.get("ball_path") or "")
@@ -313,11 +317,24 @@ class DatasetExplorerTreeModel(QAbstractItemModel):
             return Qt.ItemFlag.NoItemFlags
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
         node = index.internalPointer()
-        if isinstance(node, dict) and node.get("_node_kind") == "sample":
+        if (
+            isinstance(node, dict)
+            and node.get("_node_kind") == "sample"
+            and not self._sample_rename_block_reason
+        ):
             flags |= Qt.ItemFlag.ItemIsEditable
         return flags
 
+    def set_sample_rename_block_reason(self, reason: str) -> None:
+        if reason == self._sample_rename_block_reason:
+            return
+        self._sample_rename_block_reason = reason
+        if self.rowCount():
+            self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, 0))
+
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
+        if self._sample_rename_block_reason:
+            return False
         if role != Qt.ItemDataRole.EditRole or not index.isValid() or index.parent().isValid():
             return False
         old_sample_id = str(index.data(self.DataIdRole) or "")

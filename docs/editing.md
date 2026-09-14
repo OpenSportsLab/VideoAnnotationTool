@@ -4,6 +4,12 @@
 
 - Double-click a top-level sample row in the Dataset Explorer tree to rename its `id`.
 - IDs are kept unique (`__2`, `__3`, ...) when collisions occur.
+- For Parquet/shard datasets, all sample IDs are read-only while any referenced
+  media file is missing, including an input's `ball_path` companion. Hover over
+  a sample to see why renaming is unavailable. Download the missing media with
+  **Queue missing samples**; renaming becomes available when all referenced
+  files are local. This preserves the IDs needed to retrieve files from shards.
+- Local datasets and Hugging Face JSON datasets keep their normal rename behavior.
 
 ## Edit Header Fields
 

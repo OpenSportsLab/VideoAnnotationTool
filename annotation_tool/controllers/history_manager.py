@@ -798,6 +798,11 @@ class HistoryManager(QObject):
         if final_id == old_sample_id:
             return
 
+        block_reason = self.model.refresh_sample_rename_availability()
+        if block_reason:
+            self.statusMessageRequested.emit("Rename unavailable", block_reason, 5000)
+            return
+
         before_json = self.model.snapshot_dataset_json()
         sample["id"] = final_id
         self.model._rebuild_runtime_index()

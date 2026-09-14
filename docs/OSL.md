@@ -80,6 +80,12 @@ immutable repository state. Files created by older versions may contain only
 repository, branch, and split; re-download those datasets before using
 selective media actions.
 
+For a dataset with `hf_format: "parquet"`, sample `id` values also identify rows
+in the remote shard metadata. The app blocks sample renaming while any input
+`path` or `ball_path` references a missing local file. This is a dataset-wide
+editing restriction; it does not add or rewrite persisted fields. Fully local
+Parquet datasets and datasets with other formats permit normal ID edits.
+
 ## Label Schema
 
 The root `labels` object defines annotation heads. Each head name is a key, and

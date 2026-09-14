@@ -32,11 +32,23 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `_on_selection_changed()`, `_route_media_for_selection()`, `_focus_media_for_selection()`: selection context plus preserve-state route, ordinary route, or focus-only media intent emission.
 - `handle_add_sample()`, `handle_remove_item()`, `handle_clear_workspace()`: explorer mutation intent emission (`handle_add_sample()` accepts files/folders in one picker; files map to single-input samples, folders expand recursively to multi-input samples).
 - `restore_dataset_json_from_history()`: apply history snapshot restore.
+- `refresh_sample_rename_availability()`: owns the dataset-wide rename policy.
+  For `hf_format == "parquet"` (case-insensitive), any missing input `path` or
+  `ball_path`, resolved against the project root, locks all sample IDs. It sends
+  the reason to the tree model for read-only flags, edit rejection, and tooltips,
+  and returns that reason to callers. Runtime-index rebuilds refresh the policy;
+  `MainWindow.connect_signals()` also wires download completion/failure/cancellation
+  to refresh it without rebuilding the tree or restarting media. JSON/local
+  datasets are unaffected. The policy requires no remote lookup or schema change.
 
 ### `HistoryManager`
 - `perform_undo()`, `perform_redo()`: history transitions.
 - `execute_*` methods: forward mutation entrypoints for classification/localization/description/dense/explorer edits.
 - `_apply_state_change()`: command-type-specific replay for undo/redo.
+- `execute_sample_id_rename()` rechecks rename availability before mutation,
+  including delayed tree edits and direct requests. A blocked rename emits a
+  status message and preserves JSON, dirty state, undo, and redo. Allowed edits
+  retain the existing one-entry history contract; undo/redo restores snapshots.
 
 ### `MediaController`
 - `route_media_group(sources, focused_path, ensure_playback)`: canonical sample-level route. One session is created per input; focusing an existing pane does not reload the group.
@@ -126,8 +138,18 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   Qt signals. OpenSportsLib reports facts only; `HfTransferController` owns queue
   policy, row states, and completion aggregation, while `MainWindow` owns the
   cross-module open-JSON prompts.
+  `MainWindow` handles selective failures while the FIFO continues through
+  non-modal Transfers/status-bar messages. Terminal failure and cancellation for
+  `assets` and `missing_assets` also use the dock without a message box, including
+  the last queued input. Queue row failures remain owned by the controller;
+  notification handling must not enter a modal event loop as worker completion
+  can start the next queued job. No dataset fields are changed by this policy.
 - `is_download_running()` and `queued_download_count()`: expose active/queued
-  state without replacing the active transfer payload. Dataset downloads remain on the
+  state without replacing the active transfer payload. The download slot stays
+  occupied until `_cleanup_download_worker()` processes the finished signal,
+  even if the underlying thread has already exited. This preserves FIFO order
+  and worker ownership when jobs finish while more inputs are being queued.
+  Dataset downloads remain on the
   worker thread and are presented by a non-modal Transfers dock with separate
   completed-file and byte/speed progress plus a per-file list. The dock remains
   visible with empty determinate controls when idle. `MainWindow` mirrors the lifecycle into the
