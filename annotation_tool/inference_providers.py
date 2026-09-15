@@ -473,6 +473,7 @@ class RemoteInferenceProvider:
         "localization": "localization",
         "question_answer": "vqa",
     }
+    _VAT_TASKS = {server: vat for vat, server in _SERVER_TASKS.items()}
 
     def __init__(
         self,
@@ -534,62 +535,97 @@ class RemoteInferenceProvider:
         if self._catalog is not None:
             return self._catalog
         health = self.discover_capabilities()
-        model_ids = health.get("configured_models")
-        if not isinstance(model_ids, list):
+        registry = self._request("GET", "/models").json()
+        if not isinstance(registry, dict) or not isinstance(
+            registry.get("models"), list
+        ):
             raise InferenceError(
-                "Health response is missing configured_models.", code="invalid_response"
+                "Model registry response must contain a models list.",
+                code="invalid_response",
             )
         server_available = bool(
             health.get("status") == "ok"
             and health.get("redis_reachable")
             and health.get("worker_alive")
         )
-        unavailable_reason = "The server worker or Redis is unavailable."
+        defaults = self._discover_defaults()
         catalog = []
-        for model_id in (str(value) for value in model_ids if str(value).strip()):
-            for vat_task, server_task in self._SERVER_TASKS.items():
-                try:
-                    response = self._request(
-                        "GET",
-                        "/config-capabilities",
-                        params={"task_type": server_task, "model_id": model_id},
-                    )
-                except InferenceError as exc:
-                    if exc.code == "http_404":
-                        continue
-                    raise
-                capabilities = response.json()
-                if not isinstance(capabilities, dict):
-                    raise InferenceError(
-                        "Configuration capabilities response must be an object.",
-                        code="invalid_response",
-                    )
-                input_capabilities = capabilities.get("inputs")
-                if not isinstance(input_capabilities, dict):
-                    input_capabilities = {}
-                raw_max_inputs = capabilities.get(
-                    "max_inputs", input_capabilities.get("max_inputs")
+        for record in registry["models"]:
+            if not isinstance(record, dict):
+                raise InferenceError(
+                    "Every model registry entry must be an object.",
+                    code="invalid_response",
                 )
-                if raw_max_inputs in (None, ""):
-                    max_inputs = 1 if vat_task == "question_answer" else None
-                else:
-                    max_inputs = max(1, int(raw_max_inputs))
-                catalog.append(
-                    ModelDescriptor(
-                        id=model_id,
-                        display_name=model_id,
-                        task=vat_task,
-                        version=f"config-v{capabilities.get('version', 1)}",
-                        available=server_available,
-                        unavailable_reason="" if server_available else unavailable_reason,
-                        accepted_input_types=("video",),
-                        min_inputs=1,
-                        max_inputs=max_inputs,
-                        supports_time_range=vat_task == "localization",
-                    )
+            model_id = str(record.get("model_id") or "").strip()
+            server_task = str(record.get("task_type") or "").strip()
+            status = str(record.get("status") or "").strip().lower()
+            if not model_id or not server_task or not status:
+                raise InferenceError(
+                    "A model registry entry is missing model_id, task_type, or status.",
+                    code="invalid_response",
                 )
+            vat_task = self._VAT_TASKS.get(server_task)
+            if vat_task is None:
+                continue
+            available = server_available and status == "ready"
+            if not server_available:
+                reason = "The server worker or Redis is unavailable."
+            elif status == "registering":
+                reason = "Model registration is still in progress."
+            elif status == "unregistering":
+                reason = "Model removal is still in progress."
+            elif status == "failed":
+                reason = str(record.get("error") or "Model registration failed.")
+            elif status != "ready":
+                reason = f"The server reports model status {status!r}."
+            else:
+                reason = ""
+            generation = record.get("generation")
+            catalog.append(
+                ModelDescriptor(
+                    id=model_id,
+                    display_name=model_id,
+                    task=vat_task,
+                    version=(
+                        f"generation-{generation}"
+                        if generation not in (None, "")
+                        else ""
+                    ),
+                    available=available,
+                    unavailable_reason=reason,
+                    accepted_input_types=("video",),
+                    min_inputs=1,
+                    max_inputs=1 if vat_task == "question_answer" else None,
+                    supports_time_range=vat_task == "localization",
+                    status=status,
+                    is_default=defaults.get(server_task) == model_id,
+                )
+            )
         self._catalog = catalog
         return catalog
+
+    def _discover_defaults(self) -> dict[str, str]:
+        defaults = {}
+        for server_task in self._VAT_TASKS:
+            try:
+                payload = self._request(
+                    "GET",
+                    "/config-capabilities",
+                    params={"task_type": server_task},
+                ).json()
+            except InferenceError as exc:
+                if exc.code == "http_404":
+                    continue
+                raise
+            if not isinstance(payload, dict):
+                raise InferenceError(
+                    "Configuration capabilities response must be an object.",
+                    code="invalid_response",
+                )
+            model_id = str(payload.get("model_id") or "").strip()
+            if model_id:
+                defaults[server_task] = model_id
+        return defaults
 
     def list_models(self, task: str) -> list[ModelDescriptor]:
         if task not in self._SERVER_TASKS:
@@ -611,8 +647,13 @@ class RemoteInferenceProvider:
                 f"Unknown remote model: {request.model_id}", code="model_not_found"
             )
         if not descriptor.available:
+            server_degraded = descriptor.status == "ready"
             raise InferenceError(
-                descriptor.unavailable_reason, code="server_unavailable", retryable=True
+                descriptor.unavailable_reason,
+                code=(
+                    "server_unavailable" if server_degraded else "model_unavailable"
+                ),
+                retryable=server_degraded,
             )
 
         for item in request.items:
@@ -666,7 +707,6 @@ class RemoteInferenceProvider:
         }[request.task]
         try:
             return model_class(
-                weights=request.model_id,
                 remote=self.base_url,
                 remote_model_id=request.model_id,
             )
@@ -758,6 +798,7 @@ class RemoteInferenceProvider:
                 json.dump(manifest, handle)
             return runner.infer(
                 test_set=manifest_path,
+                remote_mode="full_test_set",
                 use_wandb=False,
                 remote_task_options=options,
             )
@@ -781,32 +822,13 @@ class RemoteInferenceProvider:
                     raise
                 self._vqa_sessions.discard(key)
 
-        job = runner.submit_video_inference(
-            task_type="vqa",
+        prediction = runner.infer(
             video_path=video_path,
             question=question,
-            model_id=request.model_id,
-            task_options=options,
+            use_wandb=False,
+            remote_task_options=options,
         )
-        if not isinstance(job, dict):
-            raise InferenceError(
-                "Remote VQA submission must return an object.", code="invalid_result"
-            )
-        job_id = str(job.get("job_id") or "")
-        if not job_id:
-            raise InferenceError("Remote job response is missing job_id.", code="invalid_response")
-        response = runner.wait_for_remote_result(job_id)
-        if not isinstance(response, dict):
-            raise InferenceError(
-                "Remote VQA result must be an object.", code="invalid_result"
-            )
-        try:
-            prediction = response["result"]["predictions"]
-        except (KeyError, TypeError) as exc:
-            raise InferenceError(
-                "Remote VQA result is missing predictions.", code="invalid_result"
-            ) from exc
-        session_id = str(job.get("session_id") or response.get("session_id") or "")
+        session_id = str(getattr(runner, "last_remote_session_id", None) or "")
         if session_id:
             self._vqa_sessions.put(key, session_id)
         return prediction

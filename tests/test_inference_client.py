@@ -575,6 +575,121 @@ def test_settings_remote_catalog_uses_unsaved_configuration(monkeypatch, tmp_pat
     }
 
 
+@pytest.mark.parametrize(
+    ("action", "payload", "expected_method", "expected_kwargs"),
+    [
+        (
+            "register_huggingface",
+            {"task": "question_answer", "repository_id": "org/vqa"},
+            "register_model",
+            {"task_type": "vqa", "huggingface_model_id": "org/vqa"},
+        ),
+        (
+            "register_local",
+            {
+                "task": "localization",
+                "model_id": "local:model",
+                "weights_path": "/srv/models/model.pth",
+                "config_path": "/srv/models/config.yaml",
+            },
+            "register_model",
+            {
+                "task_type": "localization",
+                "model_id": "local:model",
+                "weights_path": "/srv/models/model.pth",
+                "config_path": "/srv/models/config.yaml",
+            },
+        ),
+        (
+            "set_default",
+            {"task": "classification", "model_id": "cls"},
+            "set_default",
+            {"task_type": "classification", "model_id": "cls"},
+        ),
+        (
+            "unregister",
+            {"task": "classification", "model_id": "cls"},
+            "unregister_model",
+            {"model_id": "cls"},
+        ),
+    ],
+)
+def test_remote_registry_operations_use_session_credentials_and_official_client(
+    qtbot, monkeypatch, action, payload, expected_method, expected_kwargs
+):
+    calls = []
+
+    class Registry:
+        def __init__(self, remote, admin_token):
+            calls.append(("init", {"remote": remote, "admin_token": admin_token}))
+
+        def register_model(self, **kwargs):
+            calls.append(("register_model", kwargs))
+            return {"model_id": kwargs.get("model_id") or "registered"}
+
+        def set_default(self, task_type, model_id):
+            calls.append(
+                ("set_default", {"task_type": task_type, "model_id": model_id})
+            )
+            return {"model_id": model_id}
+
+        def unregister_model(self, model_id):
+            calls.append(("unregister_model", {"model_id": model_id}))
+            return {"model_id": model_id}
+
+    monkeypatch.setattr("opensportslib.RemoteModelRegistry", Registry)
+    controller = InferenceController(settings=MemorySettings())
+    request = {
+        **payload,
+        "server_url": "http://server/",
+        "admin_token": "session-secret",
+    }
+    with qtbot.waitSignal(
+        controller.remoteModelOperationSucceeded, timeout=1000
+    ) as completed:
+        assert controller.request_remote_model_operation(action, request)
+
+    assert completed.args[0] == action
+    assert calls[0] == (
+        "init",
+        {"remote": "http://server", "admin_token": "session-secret"},
+    )
+    assert calls[1] == (expected_method, expected_kwargs)
+    qtbot.waitUntil(lambda: controller.remote_registry_worker is None)
+    assert controller.shutdown()
+
+
+@pytest.mark.parametrize("status", [401, 409, 422, 503])
+def test_remote_registry_operation_reports_admin_errors(qtbot, monkeypatch, status):
+    class Registry:
+        def __init__(self, _remote, admin_token):
+            assert admin_token == "session-secret"
+
+        def set_default(self, _task, _model_id):
+            raise RuntimeError(f"Remote model registry returned HTTP {status}: rejected")
+
+    monkeypatch.setattr("opensportslib.RemoteModelRegistry", Registry)
+    controller = InferenceController(settings=MemorySettings())
+    with qtbot.waitSignal(
+        controller.remoteModelOperationFailed, timeout=1000
+    ) as failed:
+        assert controller.request_remote_model_operation(
+            "set_default",
+            {
+                "server_url": "http://server",
+                "admin_token": "session-secret",
+                "task": "classification",
+                "model_id": "model",
+            },
+        )
+
+    assert failed.args[0] == "set_default"
+    assert f"HTTP {status}" in failed.args[1]
+    assert "session-secret" not in failed.args[1]
+    qtbot.waitUntil(lambda: controller.remote_registry_worker is None)
+    assert controller.shutdown()
+
+
 def test_last_successful_model_choice_is_persisted_per_task():
     settings = MemorySettings()
 
@@ -639,30 +754,55 @@ def _remote_provider(task, model_id="model", *, sessions=None):
     return provider
 
 
-def test_official_server_discovery_maps_health_models_and_vqa():
-    models = {
-        "classification": "cls-model",
-        "localization": "loc-model",
-        "vqa": "vqa-model",
-    }
-
+def test_official_server_discovery_maps_registry_states_defaults_and_vqa():
     def handler(request):
         if request.url.path == "/health":
             return httpx.Response(200, json={
                 "status": "ok",
                 "redis_reachable": True,
                 "worker_alive": True,
-                "configured_models": list(models.values()),
+                "configured_models": ["cls-model", "vqa-model"],
             })
+        if request.url.path == "/models":
+            return httpx.Response(200, json={"models": [
+                {
+                    "model_id": "cls-model",
+                    "task_type": "classification",
+                    "status": "ready",
+                    "generation": 3,
+                },
+                {
+                    "model_id": "loc-model",
+                    "task_type": "localization",
+                    "status": "registering",
+                    "generation": 1,
+                },
+                {
+                    "model_id": "failed-model",
+                    "task_type": "localization",
+                    "status": "failed",
+                    "error": "bad checkpoint",
+                },
+                {
+                    "model_id": "vqa-model",
+                    "task_type": "vqa",
+                    "status": "ready",
+                },
+                {
+                    "model_id": "retiring-model",
+                    "task_type": "classification",
+                    "status": "unregistering",
+                },
+            ]})
         if request.url.path == "/config-capabilities":
+            assert "model_id" not in request.url.params
             task = str(request.url.params["task_type"])
-            model_id = str(request.url.params["model_id"])
-            if models.get(task) == model_id:
-                capabilities = {"capability_version": "1"}
-                if task == "classification":
-                    capabilities["max_inputs"] = 2
-                return httpx.Response(200, json=capabilities)
-            return httpx.Response(404, json={"detail": "not configured"})
+            defaults = {"classification": "cls-model", "vqa": "vqa-model"}
+            if task in defaults:
+                return httpx.Response(
+                    200, json={"model_id": defaults[task], "version": 1, "options": {}}
+                )
+            return httpx.Response(404, json={"detail": "no default"})
         raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
     provider = RemoteInferenceProvider(
@@ -671,21 +811,115 @@ def test_official_server_discovery_maps_health_models_and_vqa():
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
-    assert [model.id for model in provider.list_models("classification")] == ["cls-model"]
+    classification = provider.list_models("classification")
+    assert [model.id for model in classification] == [
+        "cls-model",
+        "retiring-model",
+    ]
+    assert classification[0].available is True
+    assert classification[0].is_default is True
+    assert classification[0].version == "generation-3"
+    assert classification[1].available is False
+    assert classification[1].status == "unregistering"
     localization = provider.list_models("localization")
-    assert [model.id for model in localization] == ["loc-model"]
+    assert [model.id for model in localization] == ["loc-model", "failed-model"]
     assert localization[0].supports_time_range is True
+    assert localization[0].available is False
+    assert "progress" in localization[0].unavailable_reason
+    assert localization[1].unavailable_reason == "bad checkpoint"
     assert [model.id for model in provider.list_models("question_answer")] == ["vqa-model"]
     assert provider.list_models("description") == []
     assert provider.list_models("dense_description") == []
     assert localization[0].max_inputs is None
-    assert provider.list_models("classification")[0].max_inputs == 2
+    assert provider.list_models("classification")[0].max_inputs is None
     assert provider.list_models("question_answer")[0].max_inputs == 1
 
     health = provider.discover_capabilities()
     assert health["redis_reachable"] is True
     assert health["worker_alive"] is True
-    assert health["configured_models"] == list(models.values())
+    assert health["configured_models"] == ["cls-model", "vqa-model"]
+
+
+@pytest.mark.parametrize("models_payload", [{}, {"models": ["bad"]}])
+def test_remote_registry_rejects_malformed_catalog(models_payload):
+    def handler(request):
+        if request.url.path == "/health":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "redis_reachable": True,
+                    "worker_alive": True,
+                },
+            )
+        if request.url.path == "/models":
+            return httpx.Response(200, json=models_payload)
+        if request.url.path == "/config-capabilities":
+            return httpx.Response(404, json={"detail": "no default"})
+        raise AssertionError(request.url)
+
+    provider = RemoteInferenceProvider(
+        "http://server",
+        MemorySettings(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(InferenceError) as error:
+        provider.list_models("classification")
+    assert error.value.code == "invalid_response"
+
+
+def test_remote_registry_ready_model_is_unavailable_when_server_is_degraded():
+    def handler(request):
+        if request.url.path == "/health":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "degraded",
+                    "redis_reachable": True,
+                    "worker_alive": False,
+                },
+            )
+        if request.url.path == "/models":
+            return httpx.Response(200, json={"models": [{
+                "model_id": "model",
+                "task_type": "classification",
+                "status": "ready",
+            }]})
+        if request.url.path == "/config-capabilities":
+            return httpx.Response(404, json={"detail": "no default"})
+        raise AssertionError(request.url)
+
+    provider = RemoteInferenceProvider(
+        "http://server",
+        MemorySettings(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    model = provider.list_models("classification")[0]
+    assert model.status == "ready"
+    assert model.available is False
+    assert "worker or Redis" in model.unavailable_reason
+
+
+def test_remote_registry_transitional_model_is_not_retryable(tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    provider = _remote_provider("classification")
+    provider._catalog = [
+        ModelDescriptor(
+            "model",
+            "model",
+            "classification",
+            available=False,
+            unavailable_reason="Model registration is still in progress.",
+            status="registering",
+        )
+    ]
+
+    with pytest.raises(InferenceError) as error:
+        provider.run(_request("classification", video), lambda *_args: None)
+
+    assert error.value.code == "model_unavailable"
+    assert error.value.retryable is False
 
 
 def test_remote_classification_uses_official_wrapper_and_normalizes_head(tmp_path, monkeypatch):
@@ -722,6 +956,28 @@ def test_remote_classification_uses_official_wrapper_and_normalizes_head(tmp_pat
         "ball_action": {"label": "shot", "confidence_score": 0.9}
     }
     assert progress[-1] == ("Completed remote inference (1/1)", 1, 1)
+
+
+def test_remote_wrapper_is_constructed_without_local_weights(monkeypatch):
+    captured = {}
+
+    class Runner:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("opensportslib.apis.ClassificationModel", Runner)
+    provider = _remote_provider("classification", "server-local:model")
+    request = _request(
+        "classification", "/unused.mp4", model_id="server-local:model"
+    )
+
+    built = provider._build_runner(request)
+
+    assert isinstance(built, Runner)
+    assert captured == {
+        "remote": "http://server",
+        "remote_model_id": "server-local:model",
+    }
 
 
 def test_remote_localization_clips_and_projects_events(tmp_path, monkeypatch):
@@ -783,19 +1039,13 @@ def test_remote_vqa_captures_and_reuses_video_session(tmp_path, monkeypatch):
     calls = []
 
     class Runner:
-        def submit_video_inference(self, **kwargs):
-            calls.append(("submit", kwargs))
-            return {"job_id": "job-1", "session_id": "session-1"}
-
-        def wait_for_remote_result(self, job_id):
-            calls.append(("wait", job_id))
-            return {
-                "session_id": "session-1",
-                "result": {"predictions": {"data": [{"answer_text": "A pass."}]}},
-            }
+        last_remote_session_id = None
 
         def infer(self, **kwargs):
             calls.append(("infer", kwargs))
+            if kwargs.get("video_path"):
+                self.last_remote_session_id = "session-1"
+                return {"data": [{"answer_text": "A pass."}]}
             return {"data": [{"answer_text": "A shot."}]}
 
     runner = Runner()
@@ -810,7 +1060,11 @@ def test_remote_vqa_captures_and_reuses_video_session(tmp_path, monkeypatch):
 
     assert first_result.items[0]["answer"] == "A pass."
     assert second_result.items[0]["answer"] == "A shot."
-    assert [name for name, _payload in calls] == ["submit", "wait", "infer"]
+    assert [name for name, _payload in calls] == ["infer", "infer"]
+    first_call = calls[0][1]
+    assert first_call["video_path"] == str(video)
+    assert first_call["question"] == "What happened first?"
+    assert first_call["use_wandb"] is False
     followup = calls[-1][1]
     assert followup == {
         "question": "What happened next?",
@@ -835,26 +1089,21 @@ def test_remote_vqa_session_cache_isolated_expires_and_recovers_stale_session(
     calls = []
 
     class Runner:
+        last_remote_session_id = None
+
         def infer(self, **kwargs):
             calls.append(("infer", kwargs))
-            raise RuntimeError(
-                f"Remote server returned HTTP {status}: session expired"
-            )
-
-        def submit_video_inference(self, **kwargs):
-            calls.append(("submit", kwargs))
-            return {"job_id": "job-2", "session_id": "fresh"}
-
-        def wait_for_remote_result(self, job_id):
-            return {
-                "session_id": "fresh",
-                "result": {"predictions": {"data": [{"answer_text": "Recovered"}]}},
-            }
+            if kwargs.get("session_id"):
+                raise RuntimeError(
+                    f"Remote server returned HTTP {status}: session expired"
+                )
+            self.last_remote_session_id = "fresh"
+            return {"data": [{"answer_text": "Recovered"}]}
 
     monkeypatch.setattr(provider, "_build_runner", lambda _request: Runner())
     result = provider.run(request, lambda *_args: None, threading.Event())
     assert result.items[0]["answer"] == "Recovered"
-    assert [name for name, _payload in calls] == ["infer", "submit"]
+    assert [name for name, _payload in calls] == ["infer", "infer"]
     assert sessions.get(key) == "fresh"
 
     other = provider._vqa_session_key(
@@ -889,6 +1138,7 @@ def test_remote_sends_multiple_videos_as_official_manifest(tmp_path, monkeypatch
 
     assert result.items[0]["labels"]["action"]["label"] == "shot"
     assert "video_path" not in captured
+    assert captured["remote_mode"] == "full_test_set"
     inputs = captured["manifest"]["data"][0]["inputs"]
     assert [source["path"] for source in inputs] == [str(video), str(second)]
     assert inputs[1]["view"] == "reverse"

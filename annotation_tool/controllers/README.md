@@ -229,18 +229,32 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   Classification and Localization requests with one or more videos, and
   one-video VQA requests. Single-video execution uses the direct upload path;
   multi-video samples use a disposable one-sample OSL manifest and the official
-  manifest/media upload path. Advertised maximum-input limits are enforced.
-  The provider discovers configured models through `/health` plus
-  `/config-capabilities`, translates the selected VAT head to and from OSL's
-  `action` schema, preserves Localization clip/timeline offsets, and validates
-  task-native results.
+  manifest/media upload path with `remote_mode="full_test_set"`. The provider
+  discovers the public model registry through `/health` and `/models`; all
+  lifecycle states are exposed to Settings, while only healthy `ready` models
+  are runnable. It detects task defaults through `/config-capabilities`,
+  translates the selected VAT head to and from OSL's `action` schema, preserves
+  Localization clip/timeline offsets, and validates task-native results.
+- Remote wrappers are constructed with only the server URL and registry model
+  ID. Server-local IDs therefore never trigger local weights/config resolution.
+  Initial VQA calls the updated direct `infer()` API and caches
+  `last_remote_session_id`; follow-ups continue using the controller-owned
+  session cache.
+- Authenticated registration, default selection, and unregistration use one
+  separate controller-owned registry worker. Settings emits intents and
+  `MainWindow.connect_signals()` routes them. The admin token is persisted in
+  application-local QSettings and copied into worker memory only for a registry
+  request; it never enters logs, inference requests, or project data. Server
+  actions are immediate and Settings polls public model states only while the
+  dialog is open.
 - `InferenceController` owns the thread-safe VQA session cache and supplies it
   to request-scoped providers. Keys include normalized server, model, sample,
   real video path, size, and modification time. Entries expire after 25 minutes
   and are cleared on project generation, remote-setting changes, and shutdown.
-  A first question uploads with `submit_video_inference()`; follow-ups reuse the
-  video through `infer(session_id=...)`. HTTP 404/410 retries once by uploading
-  afresh. Sessions are never conversational context or persisted project data.
+  A first question uses `infer(video_path=..., question=...)` and caches
+  `last_remote_session_id`; follow-ups reuse the video through
+  `infer(session_id=...)`. HTTP 404/410 retries once by uploading afresh.
+  Sessions are never conversational context or persisted project data.
 - Remote wrapper calls cannot be interrupted server-side. Active and waiting
   Remote cancellation immediately removes the request without retaining a
   history row. An active worker is detached, all late signals and output are

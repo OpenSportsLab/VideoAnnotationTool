@@ -70,6 +70,7 @@ from inference_settings import (
     LOCAL_MODELS_KEY,
     LOCAL_MODELS_SCHEMA_VERSION,
     LOCAL_MODELS_SCHEMA_VERSION_KEY,
+    REMOTE_ADMIN_TOKEN_KEY,
     REMOTE_ENABLED_KEY,
     SERVER_URL_KEY,
     load_last_model_choice,
@@ -1303,6 +1304,11 @@ class VideoAnnotationWindow(QMainWindow):
         dialog.inferenceRemoteCatalogRequested.connect(
             lambda: self._refresh_remote_model_catalog(dialog)
         )
+        dialog.inferenceRemoteModelOperationRequested.connect(
+            lambda action, payload: self._request_remote_model_operation(
+                dialog, action, payload
+            )
+        )
         dialog.inferenceHfModelRequested.connect(
             lambda payload: self._start_hf_model_import(dialog, payload)
         )
@@ -1311,15 +1317,49 @@ class VideoAnnotationWindow(QMainWindow):
         )
         catalog_slot = lambda models: dialog.set_remote_model_catalog(models)
         catalog_error_slot = lambda message: dialog.set_inference_connection_status(message, False)
+        operation_started_slot = lambda action: dialog.set_remote_model_operation_busy(
+            True, f"Starting {str(action).replace('_', ' ')}…"
+        )
+        operation_succeeded_slot = (
+            lambda action, result: self._on_remote_model_operation_succeeded(
+                dialog, action, result
+            )
+        )
+        operation_failed_slot = (
+            lambda action, message: dialog.set_remote_model_operation_busy(
+                False,
+                f"{str(action).replace('_', ' ').title()} failed: {message}",
+                success=False,
+            )
+        )
         self.inference_controller.remoteCatalogDiscovered.connect(catalog_slot)
         self.inference_controller.remoteCatalogFailed.connect(catalog_error_slot)
+        self.inference_controller.remoteModelOperationStarted.connect(
+            operation_started_slot
+        )
+        self.inference_controller.remoteModelOperationSucceeded.connect(
+            operation_succeeded_slot
+        )
+        self.inference_controller.remoteModelOperationFailed.connect(
+            operation_failed_slot
+        )
         dialog.exec()
+        dialog.stop_remote_model_polling()
         if self._active_hf_model_settings_dialog is dialog:
             self.hf_transfer_controller.cancel_model_import()
             self._active_hf_model_settings_dialog = None
         try:
             self.inference_controller.remoteCatalogDiscovered.disconnect(catalog_slot)
             self.inference_controller.remoteCatalogFailed.disconnect(catalog_error_slot)
+            self.inference_controller.remoteModelOperationStarted.disconnect(
+                operation_started_slot
+            )
+            self.inference_controller.remoteModelOperationSucceeded.disconnect(
+                operation_succeeded_slot
+            )
+            self.inference_controller.remoteModelOperationFailed.disconnect(
+                operation_failed_slot
+            )
         except Exception:
             pass
 
@@ -1333,6 +1373,9 @@ class VideoAnnotationWindow(QMainWindow):
         next_url = str(payload.get("server_url") or "").rstrip("/")
         settings.setValue(REMOTE_ENABLED_KEY, next_enabled)
         settings.setValue(SERVER_URL_KEY, next_url)
+        settings.setValue(
+            REMOTE_ADMIN_TOKEN_KEY, str(payload.get("admin_token") or "").strip()
+        )
         settings.setValue(LOCAL_MODELS_KEY, json.dumps(list(payload.get("local_models") or [])))
         settings.setValue(LOCAL_MODELS_SCHEMA_VERSION_KEY, LOCAL_MODELS_SCHEMA_VERSION)
         settings.sync()
@@ -1391,7 +1434,7 @@ class VideoAnnotationWindow(QMainWindow):
 
     def _refresh_remote_model_catalog(self, dialog) -> None:
         try:
-            config = dialog.inference_payload()
+            config = dialog.remote_inference_payload()
         except ValueError as exc:
             dialog.set_inference_connection_status(str(exc), False)
             return
@@ -1406,9 +1449,41 @@ class VideoAnnotationWindow(QMainWindow):
                 "Another model discovery request is still running.", False
             )
 
+    def _request_remote_model_operation(self, dialog, action, payload) -> None:
+        try:
+            started = self.inference_controller.request_remote_model_operation(
+                action, payload
+            )
+        except Exception as exc:
+            dialog.set_remote_model_operation_busy(
+                False, str(exc), success=False
+            )
+            return
+        if not started:
+            dialog.set_remote_model_operation_busy(
+                False,
+                "Another remote model operation is still running.",
+                success=False,
+            )
+
+    def _on_remote_model_operation_succeeded(
+        self, dialog, action: str, result
+    ) -> None:
+        model_id = str((result or {}).get("model_id") or "model")
+        messages = {
+            "register_huggingface": f"Registration accepted for {model_id}.",
+            "register_local": f"Registration accepted for {model_id}.",
+            "set_default": f"{model_id} is now the task default.",
+            "unregister": f"Unregistration accepted for {model_id}.",
+        }
+        dialog.set_remote_model_operation_busy(
+            False, messages.get(action, "Remote model operation accepted.")
+        )
+        self._refresh_remote_model_catalog(dialog)
+
     def _test_inference_connection(self, dialog) -> None:
         try:
-            config = dialog.inference_payload()
+            config = dialog.remote_inference_payload()
             if not config.get("remote_enabled", False):
                 dialog.set_inference_connection_status(
                     "Enable remote inference before testing the connection.", False

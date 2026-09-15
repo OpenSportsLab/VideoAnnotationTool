@@ -114,6 +114,22 @@ class _CatalogDiscoveryWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class _RemoteRegistryWorker(QThread):
+    succeeded = pyqtSignal(str, object)
+    failed = pyqtSignal(str, str)
+
+    def __init__(self, action: str, operation):
+        super().__init__()
+        self.action = action
+        self.operation = operation
+
+    def run(self):
+        try:
+            self.succeeded.emit(self.action, self.operation())
+        except Exception as exc:
+            self.failed.emit(self.action, str(exc))
+
+
 class InferenceController(QObject):
     modelsDiscovered = pyqtSignal(str, str, object)
     discoveryFailed = pyqtSignal(str, str, str)
@@ -121,6 +137,9 @@ class InferenceController(QObject):
     modelCatalogFailed = pyqtSignal(str, str)
     remoteCatalogDiscovered = pyqtSignal(object)
     remoteCatalogFailed = pyqtSignal(str)
+    remoteModelOperationStarted = pyqtSignal(str)
+    remoteModelOperationSucceeded = pyqtSignal(str, object)
+    remoteModelOperationFailed = pyqtSignal(str, str)
     inferenceStarted = pyqtSignal(str, str)
     inferenceProgress = pyqtSignal(str, str, int, int)
     inferenceCompleted = pyqtSignal(str, object)
@@ -146,6 +165,7 @@ class InferenceController(QObject):
         self._remote_vqa_sessions = RemoteVqaSessionCache()
         self._shutting_down = False
         self.discovery_worker: QThread | None = None
+        self.remote_registry_worker: QThread | None = None
 
     def configuration_snapshot(self) -> dict:
         return {
@@ -285,6 +305,68 @@ class InferenceController(QObject):
         self.discovery_worker = worker
         worker.start()
         return True
+
+    def request_remote_model_operation(
+        self, action: str, configuration: dict
+    ) -> bool:
+        if (
+            self._shutting_down
+            or (
+                self.remote_registry_worker is not None
+                and self.remote_registry_worker.isRunning()
+            )
+        ):
+            return False
+        action = str(action or "")
+        payload = copy.deepcopy(configuration or {})
+        server_url = normalize_server_url(str(payload.pop("server_url", "") or ""))
+        admin_token = str(payload.pop("admin_token", "") or "")
+        if not admin_token:
+            raise ValueError("Enter the server administration token.")
+
+        def operation():
+            from opensportslib import RemoteModelRegistry
+
+            registry = RemoteModelRegistry(server_url, admin_token=admin_token)
+            if action == "register_huggingface":
+                return registry.register_model(
+                    task_type=self._server_task(payload.get("task")),
+                    huggingface_model_id=str(payload.get("repository_id") or ""),
+                )
+            if action == "register_local":
+                return registry.register_model(
+                    task_type=self._server_task(payload.get("task")),
+                    model_id=str(payload.get("model_id") or "") or None,
+                    weights_path=str(payload.get("weights_path") or ""),
+                    config_path=str(payload.get("config_path") or "") or None,
+                )
+            if action == "set_default":
+                return registry.set_default(
+                    self._server_task(payload.get("task")),
+                    str(payload.get("model_id") or ""),
+                )
+            if action == "unregister":
+                return registry.unregister_model(str(payload.get("model_id") or ""))
+            raise ValueError(f"Unknown remote model operation: {action}")
+
+        worker = _RemoteRegistryWorker(action, operation)
+        worker.succeeded.connect(self.remoteModelOperationSucceeded.emit)
+        worker.failed.connect(self.remoteModelOperationFailed.emit)
+        worker.finished.connect(
+            lambda ref=worker: self._cleanup_remote_registry_worker(ref)
+        )
+        self.remote_registry_worker = worker
+        self.remoteModelOperationStarted.emit(action)
+        worker.start()
+        return True
+
+    @staticmethod
+    def _server_task(task) -> str:
+        task = str(task or "")
+        mapped = {"question_answer": "vqa"}.get(task, task)
+        if mapped not in {"classification", "localization", "vqa"}:
+            raise ValueError(f"Unsupported remote model task: {task}")
+        return mapped
 
     def test_connection(self, config=None) -> dict:
         provider = self._provider("remote", config)
@@ -612,6 +694,13 @@ class InferenceController(QObject):
             remaining = max(0, int((deadline - time.monotonic()) * 1000))
             if not self.discovery_worker.wait(remaining):
                 return False
+        if (
+            self.remote_registry_worker is not None
+            and self.remote_registry_worker.isRunning()
+        ):
+            remaining = max(0, int((deadline - time.monotonic()) * 1000))
+            if not self.remote_registry_worker.wait(remaining):
+                return False
         workers = {
             worker
             for worker in (*self._workers.values(), *self._detached_remote_workers)
@@ -629,6 +718,11 @@ class InferenceController(QObject):
     def _cleanup_discovery_worker(self, worker):
         if self.discovery_worker is worker:
             self.discovery_worker = None
+        worker.deleteLater()
+
+    def _cleanup_remote_registry_worker(self, worker):
+        if self.remote_registry_worker is worker:
+            self.remote_registry_worker = None
         worker.deleteLater()
 
     def _cleanup_worker(self, backend, worker):

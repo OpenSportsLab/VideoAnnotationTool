@@ -4,9 +4,10 @@ The application can run models in the local Python process through
 OpenSportsLib or use the official OpenSportsLib inference server. All annotation
 modes share the same model-selection, queue, review, and error workflow. Remote
 inference currently supports Classification and Localization with one or more
-videos per sample, and Q/A with exactly one video per sample. A server-advertised
-input limit is enforced when present. Remote Description, Dense Description,
-and H5 inference are not available.
+videos per sample, and Q/A with exactly one video per sample. Remote Description,
+Dense Description, and H5 inference are not available.
+VAT pins OpenSportsLib `0.3.1.dev12`, whose remote-only wrappers and public
+server model registry are required by this integration.
 
 ## Configure inference
 
@@ -51,19 +52,33 @@ surface; the run dialog never edits models or servers.
   on, enter the base URL (default `http://127.0.0.1:8000`) and use **Test
   Connection**. The client calls `/health` and reports API, Redis, worker, and
   configured-model health.
-- **Refresh Models** reads the server-owned model catalog into a read-only
-  table. VAT associates every configured model with a task by probing
-  `/config-capabilities`; server task `vqa` appears as Q/A. Remote models and
-  their inference defaults are configured by the server, not edited in VAT.
-  Shared-root and resumable-upload settings from older VAT versions are ignored.
+- **Refresh Models** reads the public server registry. The table shows every
+  `registering`, `ready`, `failed`, or `unregistering` model and marks task
+  defaults; only healthy `ready` models appear in **Run Inference…**. Server
+  task `vqa` appears as Q/A.
+- **Admin token** is saved in VAT's local application settings when you choose
+  **Apply** or **OK**. It is restored the next time Settings or VAT is opened,
+  but never enters project JSON or inference requests. VAT's settings storage
+  may not encrypt it, so use this only on a trusted workstation; clear the
+  field and apply the change to remove it. With a token, **Register Model…** adds
+  either a Hugging Face repository or server-local weights/config paths,
+  **Set as Default** changes the selected task default, and **Unregister**
+  removes a model after confirmation. These actions take effect immediately on
+  the external server; cancelling Settings does not undo them. Registration
+  and removal are asynchronous, and VAT refreshes transient status every two
+  seconds while Settings remains open.
+- Server-local paths must be visible to the server and are entered as text; VAT
+  deliberately does not open a client-side file picker for them. Shared-root
+  and resumable-upload settings from older VAT versions remain ignored.
 
 Connection tests and catalog refreshes use the current unsaved form values.
 Only **Apply** or **OK** persists the setup; **Cancel** leaves saved settings
 unchanged.
 
-The official server has no authentication. Localhost HTTP is allowed. An HTTP server on
-another host is marked as unauthenticated and unencrypted; use it only on a
-trusted private network.
+Inference and public registry reads require no authentication. Registry changes
+require the server's `OSL_MODEL_ADMIN_TOKEN`. Localhost HTTP is allowed. An HTTP
+server on another host is unencrypted, so use it only on a trusted private
+network.
 
 ## Run inference
 
@@ -285,35 +300,42 @@ uses the normal undoable history path.
 
 VAT uses the FastAPI and RQ server in the OpenSportsLib repository's `server/`
 folder. From that repository root, install the server in a Python 3.12+
-environment, configure the desired models, and start its API, Redis, and worker:
+environment and start its API, Redis, and worker:
 
 ```bash
-python -m pip install -e ./server
-bash server/scripts/setup_env.sh
+uv venv --python 3.12 .venv
+source .venv/bin/activate
+uv pip install -e ./server
 cd server
+bash scripts/setup_env.sh
 ./scripts/start_all.sh
 ```
 
-Review `server/.env` before starting it and enable only the intended models.
-The API and worker must share their Redis queue and runtime directory. VAT uses
+Review `server/.env` before starting it. Set `OSL_MODEL_ADMIN_TOKEN` to enable
+VAT's model-management actions; leaving it empty disables administration. The
+API and worker must share their Redis queue and runtime directory. VAT uses
 these official endpoints without an `/api/v1` prefix:
 
 | Endpoint | VAT use |
 |---|---|
 | `GET /health` | API, Redis, worker, and configured-model health |
-| `GET /config-capabilities?task_type=…&model_id=…` | Associate configured model IDs with Classification, Localization, or VQA |
+| `GET /models` | Public model IDs, tasks, and lifecycle states |
+| `GET /config-capabilities?task_type=…` | Identify each task's current default model |
+| `POST /models` | Authenticated Hugging Face or server-local registration |
+| `PUT /models/defaults/{task_type}` | Authenticated task-default update |
+| `DELETE /models/{model_id}` | Authenticated asynchronous removal |
 | `POST /predict` | Multipart video submission or session-based VQA follow-up |
 | `GET /jobs/{job_id}` | Poll asynchronous job status |
 | `GET /jobs/{job_id}/result` | Retrieve successful OSL predictions |
 
 Single-video Classification and Localization call the official wrapper's
 `infer(video_path=..., remote_task_options=...)`. Multi-video samples call
-`infer(test_set=...)` with a temporary one-sample OSL manifest, using the
-official manifest-and-media upload path. Classification batches are submitted
-one sample at a time in queue order. Initial VQA uses
-`submit_video_inference()` followed by `wait_for_remote_result()` so VAT can
-capture the returned session; follow-up questions call `infer()` with that
-session ID and no video.
+`infer(test_set=..., remote_mode="full_test_set")` with a temporary one-sample
+OSL manifest, using the official manifest-and-media upload path. Classification
+batches are submitted one sample at a time in queue order. Initial VQA calls
+`infer(video_path=..., question=...)` and caches the wrapper's
+`last_remote_session_id`; follow-up questions call `infer()` with that session
+ID and no video. VAT uses server defaults for advertised inference overrides.
 
 VAT normalizes the returned OSL `data` item into its existing private
 `InferenceResult` contract. Request-owned item and sample IDs remain canonical,
@@ -330,12 +352,21 @@ without exposing it to editor controllers. Shutdown clears it as well.
 
 `RemoteInferenceProvider` is the only official-server adapter. It discovers
 models, constructs `ClassificationModel`, `LocalizationModel`, or `VQAModel`
-with `weights=model_id`, `remote=server_url`, and
-`remote_model_id=model_id`, and translates results back to VAT's unchanged
-contracts. `InferenceRequest`, `InferenceResult`, editor and queue signals,
-pending-review behavior, history mutations, and persisted OSL JSON are
+with only `remote=server_url` and `remote_model_id=model_id`. Remote model IDs
+are independent of local weights and never trigger local config or Hugging Face
+resolution. `ModelDescriptor.status` and `is_default` expose registry state to
+Settings; `InferenceRequest`, `InferenceResult`, editor and queue signals,
+pending-review behavior, history mutations, and persisted OSL JSON remain
 unchanged. Effective acceptance still creates exactly one history entry;
 rejection and unreviewed inference create none.
+
+Authenticated registry operations run in a separate controller-owned worker,
+one at a time. `MainWindow` is the only cross-module route between Settings and
+that worker. The admin token is loaded from and saved to application-local
+QSettings, then copied into worker memory only for a registry operation. It
+never enters logs, inference requests, or project data. Closing Settings stops
+its presentation polling but does not roll back an operation already accepted
+by the server.
 
 Network failures and timeouts are retryable `InferenceError`s. HTTP 4xx and
 model execution failures are non-retryable, except cached-session HTTP 404/410,

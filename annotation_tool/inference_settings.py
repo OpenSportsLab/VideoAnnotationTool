@@ -11,6 +11,7 @@ from inference_types import INFERENCE_TASKS
 
 SERVER_URL_KEY = "inference/server_url"
 REMOTE_ENABLED_KEY = "inference/remote_enabled"
+REMOTE_ADMIN_TOKEN_KEY = "inference/remote_admin_token"
 LOCAL_MODELS_KEY = "inference/local_models"
 LOCAL_MODELS_SCHEMA_VERSION_KEY = "inference/local_models_schema_version"
 LOCAL_MODELS_SCHEMA_VERSION = 2

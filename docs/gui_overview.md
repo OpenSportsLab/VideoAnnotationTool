@@ -37,7 +37,10 @@ a playback preference and does not alter annotation timestamps.
 
 The **Inference** settings tab selects Local or Remote execution, configures the
 official OpenSportsLib server URL, tests `/health`, shows the discovered remote
-model catalog, and manages local model config/weights entries. Remote connection
+model registry and lifecycle states, and manages local model config/weights
+entries. A locally persisted admin token enables immediate server registration,
+task-default selection, and unregistration. The token may be stored unencrypted
+by the platform settings backend and never enters project JSON. Remote connection
 status includes Redis, worker, and configured-model health. **Add
 from Hugging Face…** downloads a validated OpenSportsLib configuration and
 checkpoint in the background and stages the cached paths until Settings is
