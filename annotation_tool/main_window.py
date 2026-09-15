@@ -72,8 +72,8 @@ from inference_settings import (
     LOCAL_MODELS_SCHEMA_VERSION_KEY,
     REMOTE_ENABLED_KEY,
     SERVER_URL_KEY,
-    SHARED_MAPPINGS_KEY,
     load_last_model_choice,
+    remote_inference_enabled,
     save_last_model_choice,
 )
 from inference_types import (
@@ -1327,12 +1327,17 @@ class VideoAnnotationWindow(QMainWindow):
         settings = getattr(self.dataset_explorer_controller, "settings", None)
         if settings is None:
             return
-        settings.setValue(REMOTE_ENABLED_KEY, bool(payload.get("remote_enabled", False)))
-        settings.setValue(SERVER_URL_KEY, str(payload.get("server_url") or ""))
-        settings.setValue(SHARED_MAPPINGS_KEY, json.dumps(list(payload.get("shared_mappings") or [])))
+        previous_enabled = remote_inference_enabled(settings)
+        next_enabled = bool(payload.get("remote_enabled", False))
+        previous_url = str(settings.value(SERVER_URL_KEY, "") or "").rstrip("/")
+        next_url = str(payload.get("server_url") or "").rstrip("/")
+        settings.setValue(REMOTE_ENABLED_KEY, next_enabled)
+        settings.setValue(SERVER_URL_KEY, next_url)
         settings.setValue(LOCAL_MODELS_KEY, json.dumps(list(payload.get("local_models") or [])))
         settings.setValue(LOCAL_MODELS_SCHEMA_VERSION_KEY, LOCAL_MODELS_SCHEMA_VERSION)
         settings.sync()
+        if previous_url != next_url or previous_enabled != next_enabled:
+            self.inference_controller.clear_remote_sessions()
 
     def _start_hf_model_import(self, dialog, payload: dict) -> None:
         if self._active_hf_model_settings_dialog is not None:
@@ -1410,12 +1415,14 @@ class VideoAnnotationWindow(QMainWindow):
                 )
                 return
             capabilities = self.inference_controller.test_connection(config)
-            version = str(capabilities.get("version") or "unknown")
-            shared_roots = list(capabilities.get("shared_roots") or [])
-            root_ids = [str(root.get("id") or "") for root in shared_roots if isinstance(root, dict) and root.get("id")]
-            root_text = f" Available root IDs: {', '.join(root_ids)}." if root_ids else ""
+            status = str(capabilities.get("status") or "unknown")
+            redis_status = "ready" if capabilities.get("redis_reachable") else "unavailable"
+            worker_status = "ready" if capabilities.get("worker_alive") else "unavailable"
+            configured = len(list(capabilities.get("configured_models") or []))
             dialog.set_inference_connection_status(
-                f"Connected to API version {version}; {len(shared_roots)} shared root(s) advertised.{root_text}", True
+                f"API {status}; Redis {redis_status}; worker {worker_status}; "
+                f"{configured} configured model(s).",
+                status == "ok" and redis_status == "ready" and worker_status == "ready",
             )
         except Exception as exc:
             dialog.set_inference_connection_status(str(exc), False)
@@ -1754,6 +1761,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.show_temp_msg("Inference", "Inference cancelled.", 1500)
 
     def _on_project_generation_changed(self, _generation: int) -> None:
+        self.inference_controller.clear_remote_sessions()
         if not self._pending_inference_requests:
             return
         for pending in self._pending_inference_requests.values():

@@ -11,12 +11,15 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QObject, QSettings, QThread, pyqtSignal
 
-from inference_providers import LocalInferenceProvider, RemoteInferenceProvider
+from inference_providers import (
+    LocalInferenceProvider,
+    RemoteInferenceProvider,
+    RemoteVqaSessionCache,
+)
 from inference_settings import (
     DEFAULT_SERVER_URL,
     SERVER_URL_KEY,
     load_local_models,
-    load_shared_mappings,
     normalize_server_url,
     remote_inference_enabled,
 )
@@ -135,10 +138,12 @@ class InferenceController(QObject):
         self.base_dir = base_dir or os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         self._queues = {"local": deque(), "remote": deque()}
         self._workers = {"local": None, "remote": None}
+        self._detached_remote_workers: set[QThread] = set()
         self._active_records = {"local": None, "remote": None}
         self._records = {}
         self._seen_request_ids = set()
         self._history = deque(maxlen=20)
+        self._remote_vqa_sessions = RemoteVqaSessionCache()
         self._shutting_down = False
         self.discovery_worker: QThread | None = None
 
@@ -146,7 +151,6 @@ class InferenceController(QObject):
         return {
             "remote_enabled": remote_inference_enabled(self.settings),
             "server_url": normalize_server_url(str(self.settings.value(SERVER_URL_KEY, DEFAULT_SERVER_URL) or DEFAULT_SERVER_URL)),
-            "shared_mappings": load_shared_mappings(self.settings),
             "local_models": load_local_models(self.settings),
         }
 
@@ -156,8 +160,14 @@ class InferenceController(QObject):
             models = config.get("local_models") if "local_models" in config else None
             return LocalInferenceProvider(self.settings, self.base_dir, local_models=models)
         url = normalize_server_url(str(config.get("server_url") or self.settings.value(SERVER_URL_KEY, DEFAULT_SERVER_URL) or DEFAULT_SERVER_URL))
-        mappings = config.get("shared_mappings") if "shared_mappings" in config else None
-        return RemoteInferenceProvider(url, self.settings, shared_mappings=mappings)
+        return RemoteInferenceProvider(
+            url,
+            self.settings,
+            vqa_sessions=self._remote_vqa_sessions,
+        )
+
+    def clear_remote_sessions(self) -> None:
+        self._remote_vqa_sessions.clear()
 
     def discover_models(self, task: str, backend: str | None = None, config=None):
         selected_backend = backend or "local"
@@ -482,6 +492,18 @@ class InferenceController(QObject):
             if active is not None and active.request.request_id == request_id:
                 if active.state not in {"running", "cancelling"}:
                     return False
+                if backend == "remote":
+                    worker = self._workers[backend]
+                    if worker is not None:
+                        worker.cancel()
+                        self._detached_remote_workers.add(worker)
+                    self._workers[backend] = None
+                    self._active_records[backend] = None
+                    self._records.pop(request_id, None)
+                    self.inferenceCancelled.emit(request_id)
+                    self._dispatch_next(backend)
+                    self._emit_queue_changed()
+                    return True
                 active.state = "cancelling"
                 active.message = "Cancelling inference"
                 self._append_log(active, "cancelling", active.message)
@@ -495,6 +517,11 @@ class InferenceController(QObject):
                 if record.request.request_id != request_id:
                     continue
                 queue.remove(record)
+                if backend == "remote":
+                    self._records.pop(request_id, None)
+                    self.inferenceCancelled.emit(request_id)
+                    self._emit_queue_changed()
+                    return True
                 self._terminalize(
                     record,
                     "cancelled",
@@ -574,22 +601,29 @@ class InferenceController(QObject):
         return any(
             worker is not None and worker.isRunning()
             for worker in self._workers.values()
-        )
+        ) or any(worker.isRunning() for worker in self._detached_remote_workers)
 
     def shutdown(self, wait_ms: int = 3000) -> bool:
         self._shutting_down = True
+        self.clear_remote_sessions()
         self.cancel_all()
         deadline = time.monotonic() + max(0, int(wait_ms)) / 1000.0
         if self.discovery_worker is not None and self.discovery_worker.isRunning():
             remaining = max(0, int((deadline - time.monotonic()) * 1000))
             if not self.discovery_worker.wait(remaining):
                 return False
-        for worker in tuple(self._workers.values()):
+        workers = {
+            worker
+            for worker in (*self._workers.values(), *self._detached_remote_workers)
+            if worker is not None
+        }
+        for worker in workers:
             if worker is None or not worker.isRunning():
                 continue
             remaining = max(0, int((deadline - time.monotonic()) * 1000))
             if not worker.wait(remaining):
                 return False
+        self.clear_remote_sessions()
         return True
 
     def _cleanup_discovery_worker(self, worker):
@@ -598,10 +632,13 @@ class InferenceController(QObject):
         worker.deleteLater()
 
     def _cleanup_worker(self, backend, worker):
+        self._detached_remote_workers.discard(worker)
         if self._workers.get(backend) is worker:
             self._workers[backend] = None
             self._active_records[backend] = None
         worker.deleteLater()
-        if not self._shutting_down:
+        if self._shutting_down:
+            self.clear_remote_sessions()
+        else:
             self._dispatch_next(backend)
         self._emit_queue_changed()

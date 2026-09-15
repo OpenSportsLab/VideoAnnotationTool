@@ -97,7 +97,6 @@ def test_inference_settings_payload_round_trip(qtbot, tmp_path):
     qtbot.addWidget(dialog)
     dialog.inference_remote_enabled_checkbox.setChecked(True)
     dialog.inference_server_url_edit.setText("http://127.0.0.1:9000/")
-    dialog._append_mapping(str(tmp_path), "datasets")
     dialog._append_local_model({
         "task": "question_answer",
         "id": "vqa",
@@ -108,7 +107,7 @@ def test_inference_settings_payload_round_trip(qtbot, tmp_path):
     payload = dialog.inference_payload()
     assert payload["remote_enabled"] is True
     assert payload["server_url"] == "http://127.0.0.1:9000"
-    assert payload["shared_mappings"][0]["root_id"] == "datasets"
+    assert "shared_mappings" not in payload
     assert any(model["task"] == "question_answer" for model in payload["local_models"])
 
 
@@ -121,6 +120,8 @@ def test_remote_setup_controls_are_settings_only_and_follow_enablement(qtbot):
     assert not dialog.inference_server_url_edit.isEnabled()
     assert not dialog.inference_test_button.isEnabled()
     assert not dialog.inference_refresh_models_button.isEnabled()
+    assert dialog.inference_server_url_edit.text() == "http://127.0.0.1:8000"
+    assert not hasattr(dialog, "shared_mapping_table")
     assert (
         dialog.remote_model_table.editTriggers()
         == QAbstractItemView.EditTrigger.NoEditTriggers
@@ -355,6 +356,45 @@ def test_run_dialog_contains_execution_controls_only(qtbot, tmp_path):
     assert "head" not in payload
     assert not hasattr(dialog, "configuration_widget")
     assert not hasattr(dialog, "backend_combo")
+
+
+@pytest.mark.gui
+def test_run_dialog_obeys_remote_model_multi_video_limit(qtbot):
+    inputs = [
+        InferenceInput("/tmp/front.mp4"),
+        InferenceInput("/tmp/reverse.mp4"),
+    ]
+    dialog = InferenceRunDialog("classification", inputs)
+    qtbot.addWidget(dialog)
+    dialog.set_models([
+        InferenceModelChoice(
+            "remote",
+            ModelDescriptor(
+                "multi", "Multi-view classifier", "classification", max_inputs=None
+            ),
+        )
+    ])
+
+    dialog._accept_if_valid()
+
+    assert dialog.result() == dialog.DialogCode.Accepted
+    assert dialog.payload()["inputs"] == inputs
+
+    limited = InferenceRunDialog("classification", inputs)
+    qtbot.addWidget(limited)
+    limited.set_models([
+        InferenceModelChoice(
+            "remote",
+            ModelDescriptor(
+                "single", "Single-view classifier", "classification", max_inputs=1
+            ),
+        )
+    ])
+
+    limited._accept_if_valid()
+
+    assert limited.result() == limited.DialogCode.Rejected
+    assert limited.availability_label.text() == "This model accepts at most 1 input(s)."
 
 
 @pytest.mark.gui

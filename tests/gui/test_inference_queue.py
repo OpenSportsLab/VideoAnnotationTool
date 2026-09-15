@@ -147,6 +147,58 @@ def test_queued_cancel_is_immediate_and_active_cancel_suppresses_late_success(
 
 
 @pytest.mark.gui
+def test_remote_cancel_forgets_job_and_dispatches_next_without_waiting(
+    qtbot, monkeypatch
+):
+    controller = InferenceController()
+    entered = {name: threading.Event() for name in ("active", "next")}
+    release = {name: threading.Event() for name in entered}
+
+    class SlowProvider:
+        def run(self, request, _progress, _cancel_event):
+            entered[request.model_id].set()
+            release[request.model_id].wait(2)
+            return _result(request)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        controller, "_provider", lambda *_args, **_kwargs: SlowProvider()
+    )
+    active = _request("remote", "active")
+    following = _request("remote", "next")
+    waiting = _request("remote", "forgotten-waiting")
+    controller.enqueue_inference(active)
+    controller.enqueue_inference(following)
+    controller.enqueue_inference(waiting)
+    qtbot.waitUntil(entered["active"].is_set)
+
+    cancelled = []
+    completed = []
+    controller.inferenceCancelled.connect(cancelled.append)
+    controller.inferenceCompleted.connect(
+        lambda request_id, _result: completed.append(request_id)
+    )
+    assert controller.cancel_request(waiting.request_id)
+    assert controller.cancel_request(active.request_id)
+
+    assert cancelled == [waiting.request_id, active.request_id]
+    assert not any(
+        entry.request_id in {waiting.request_id, active.request_id}
+        for entry in controller.queue_snapshot()
+    )
+    qtbot.waitUntil(entered["next"].is_set)
+
+    release["next"].set()
+    qtbot.waitUntil(lambda: completed == [following.request_id])
+    release["active"].set()
+    qtbot.waitUntil(lambda: not controller.has_running_inference())
+    assert completed == [following.request_id]
+    assert controller.shutdown()
+
+
+@pytest.mark.gui
 def test_waiting_request_keeps_submission_time_provider_snapshot(qtbot, monkeypatch):
     controller = InferenceController()
     entered = {"active": threading.Event(), "waiting": threading.Event()}

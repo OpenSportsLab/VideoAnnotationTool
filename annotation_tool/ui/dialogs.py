@@ -22,7 +22,6 @@ from inference_settings import (
     KNOWN_HF_LOCAL_MODEL_IDS,
     SERVER_URL_KEY,
     load_local_models,
-    load_shared_mappings,
     normalize_server_url,
     remote_inference_enabled,
     trusted_legacy_allowed,
@@ -188,26 +187,10 @@ class InferenceSetupWidget(QWidget):
         self.remote_model_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         remote_layout.addWidget(self.remote_model_table)
 
-        remote_layout.addWidget(QLabel("Shared storage mappings", self.remote_group))
-        self.mapping_table = QTableWidget(0, 2, self.remote_group)
-        self.mapping_table.setHorizontalHeaderLabels(["Local directory", "Server root ID"])
-        self.mapping_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        remote_layout.addWidget(self.mapping_table)
-        mapping_buttons = QHBoxLayout()
-        self.add_mapping_button = QPushButton("Add Mapping", self.remote_group)
-        self.remove_mapping_button = QPushButton("Remove Mapping", self.remote_group)
-        mapping_buttons.addWidget(self.add_mapping_button)
-        mapping_buttons.addWidget(self.remove_mapping_button)
-        mapping_buttons.addStretch(1)
-        remote_layout.addLayout(mapping_buttons)
         root.addWidget(self.remote_group)
 
-        for mapping in config.get("shared_mappings", []):
-            self.append_mapping(mapping.get("local_root", ""), mapping.get("root_id", ""))
         for model in config.get("local_models", []):
             self.append_local_model(model)
-        self.add_mapping_button.clicked.connect(lambda: self.append_mapping("", ""))
-        self.remove_mapping_button.clicked.connect(lambda: self._remove_row(self.mapping_table))
         self.add_local_model_button.clicked.connect(lambda: self.append_local_model({"task": "classification"}))
         self.add_hf_model_button.clicked.connect(self._request_hf_model)
         self.cancel_hf_model_button.clicked.connect(self.huggingFaceModelCancelRequested)
@@ -228,9 +211,6 @@ class InferenceSetupWidget(QWidget):
             self.test_button,
             self.refresh_remote_models_button,
             self.remote_model_table,
-            self.mapping_table,
-            self.add_mapping_button,
-            self.remove_mapping_button,
         ):
             widget.setEnabled(enabled)
         self._changed()
@@ -253,12 +233,6 @@ class InferenceSetupWidget(QWidget):
     def _remove_row(table):
         if table.currentRow() >= 0:
             table.removeRow(table.currentRow())
-
-    def append_mapping(self, local_root, root_id):
-        row = self.mapping_table.rowCount()
-        self.mapping_table.insertRow(row)
-        self.mapping_table.setItem(row, 0, QTableWidgetItem(str(local_root or "")))
-        self.mapping_table.setItem(row, 1, QTableWidgetItem(str(root_id or "")))
 
     def append_local_model(self, model):
         row = self.local_model_table.rowCount()
@@ -342,13 +316,6 @@ class InferenceSetupWidget(QWidget):
         )
 
     def payload(self):
-        mappings = []
-        for row in range(self.mapping_table.rowCount()):
-            values = [str(self.mapping_table.item(row, col).text() if self.mapping_table.item(row, col) else "").strip() for col in range(2)]
-            if bool(values[0]) != bool(values[1]):
-                raise ValueError("Each shared mapping requires both a local directory and server root ID.")
-            if values[0]:
-                mappings.append({"local_root": os.path.abspath(os.path.expanduser(values[0])), "root_id": values[1]})
         models = []
         for row in range(self.local_model_table.rowCount()):
             values = [str(self.local_model_table.item(row, col).text() if self.local_model_table.item(row, col) else "").strip() for col in range(5)]
@@ -385,7 +352,6 @@ class InferenceSetupWidget(QWidget):
         return {
             "remote_enabled": self.remote_enabled_checkbox.isChecked(),
             "server_url": normalize_server_url(self.server_url_edit.text()),
-            "shared_mappings": mappings,
             "local_models": models,
         }
 
@@ -536,7 +502,6 @@ class ApplicationSettingsDialog(QDialog):
         inference_config = {
             "remote_enabled": remote_inference_enabled(settings),
             "server_url": str(settings.value(SERVER_URL_KEY, DEFAULT_SERVER_URL) if settings is not None else DEFAULT_SERVER_URL),
-            "shared_mappings": load_shared_mappings(settings),
             "local_models": load_local_models(settings),
         }
         self.inference_setup_widget = InferenceSetupWidget(inference_config, parent=inference_page)
@@ -547,10 +512,7 @@ class ApplicationSettingsDialog(QDialog):
         self.inference_refresh_models_button = self.inference_setup_widget.refresh_remote_models_button
         self.inference_connection_status = self.inference_setup_widget.connection_status
         self.remote_model_table = self.inference_setup_widget.remote_model_table
-        self.shared_mapping_table = self.inference_setup_widget.mapping_table
         self.local_model_table = self.inference_setup_widget.local_model_table
-        self.add_mapping_button = self.inference_setup_widget.add_mapping_button
-        self.remove_mapping_button = self.inference_setup_widget.remove_mapping_button
         self.add_local_model_button = self.inference_setup_widget.add_local_model_button
         self.add_hf_model_button = self.inference_setup_widget.add_hf_model_button
         self.remove_local_model_button = self.inference_setup_widget.remove_local_model_button
@@ -589,14 +551,6 @@ class ApplicationSettingsDialog(QDialog):
         self.inference_setup_widget.huggingFaceModelCancelRequested.connect(
             self.inferenceHfModelCancelRequested
         )
-
-    def _append_mapping(self, local_root: str, root_id: str):
-        self.inference_setup_widget.append_mapping(local_root, root_id)
-
-    def _remove_selected_mapping(self):
-        row = self.shared_mapping_table.currentRow()
-        if row >= 0:
-            self.shared_mapping_table.removeRow(row)
 
     def _append_local_model(self, model: dict):
         self.inference_setup_widget.append_local_model(model)
@@ -639,7 +593,6 @@ class ApplicationSettingsDialog(QDialog):
             editor.setKeySequence(QKeySequence(DEFAULT_SHORTCUTS[name]))
         self.inference_remote_enabled_checkbox.setChecked(False)
         self.inference_server_url_edit.setText(DEFAULT_SERVER_URL)
-        self.shared_mapping_table.setRowCount(0)
         self.local_model_table.setRowCount(0)
         self.remote_model_table.setRowCount(0)
         self.validation_label.clear()

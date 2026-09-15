@@ -164,8 +164,8 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   are non-fatal when Local choices remain available. Identical model IDs remain
   distinct through their `(backend, model_id)` identity.
 - Application Settings is the sole setup surface. Run requests contain an
-  immutable snapshot of saved Local registry, Remote endpoint, enablement, and
-  shared mappings; the run dialog only chooses a model and runtime parameters.
+  immutable snapshot of the saved Local registry, Remote endpoint, and
+  enablement; the run dialog only chooses a model and runtime parameters.
 - The last successfully completed `(backend, model_id)` is stored per task and
   used as the preferred choice on the next run when still available.
 - `enqueue_inference()`, `cancel_request()`, `cancel_all()`, `queue_snapshot()`,
@@ -225,12 +225,32 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   only in the disposable runtime YAML; the test split's `annotation_path`
   points to the generated manifest. Imported or cached model configs remain
   unchanged.
-- Remote execution resolves shared assets or resumable uploads, submits an
-  idempotent job, polls terminal state, and validates task-native results.
+- Remote execution uses the official OpenSportsLib server client for
+  Classification and Localization requests with one or more videos, and
+  one-video VQA requests. Single-video execution uses the direct upload path;
+  multi-video samples use a disposable one-sample OSL manifest and the official
+  manifest/media upload path. Advertised maximum-input limits are enforced.
+  The provider discovers configured models through `/health` plus
+  `/config-capabilities`, translates the selected VAT head to and from OSL's
+  `action` schema, preserves Localization clip/timeline offsets, and validates
+  task-native results.
+- `InferenceController` owns the thread-safe VQA session cache and supplies it
+  to request-scoped providers. Keys include normalized server, model, sample,
+  real video path, size, and modification time. Entries expire after 25 minutes
+  and are cleared on project generation, remote-setting changes, and shutdown.
+  A first question uploads with `submit_video_inference()`; follow-ups reuse the
+  video through `infer(session_id=...)`. HTTP 404/410 retries once by uploading
+  afresh. Sessions are never conversational context or persisted project data.
+- Remote wrapper calls cannot be interrupted server-side. Active and waiting
+  Remote cancellation immediately removes the request without retaining a
+  history row. An active worker is detached, all late signals and output are
+  ignored, and the next Remote request starts immediately; the thread remains
+  owned until it exits and shutdown includes it in the normal bounded wait.
+  Local cancellation remains deferred. Official direct files and staged
+  multi-file archives are memory-buffered, with no shared-root or resumable path.
 - Mode controllers emit inference intent; `MainWindow.connect_signals()` adds
   canonical sample/schema context and routes results back. Mode controllers
   then emit ordinary mutation intents to `HistoryManager`.
-- Upload manifests are application settings and never enter dataset JSON.
 
 ## Business Rules
 
