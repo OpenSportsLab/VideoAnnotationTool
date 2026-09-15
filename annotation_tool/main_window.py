@@ -70,10 +70,11 @@ from inference_settings import (
     LOCAL_MODELS_KEY,
     LOCAL_MODELS_SCHEMA_VERSION,
     LOCAL_MODELS_SCHEMA_VERSION_KEY,
+    REMOTE_ADMIN_TOKEN_KEY,
     REMOTE_ENABLED_KEY,
     SERVER_URL_KEY,
-    SHARED_MAPPINGS_KEY,
     load_last_model_choice,
+    remote_inference_enabled,
     save_last_model_choice,
 )
 from inference_types import (
@@ -1312,6 +1313,11 @@ class VideoAnnotationWindow(QMainWindow):
         dialog.inferenceRemoteCatalogRequested.connect(
             lambda: self._refresh_remote_model_catalog(dialog)
         )
+        dialog.inferenceRemoteModelOperationRequested.connect(
+            lambda action, payload: self._request_remote_model_operation(
+                dialog, action, payload
+            )
+        )
         dialog.inferenceHfModelRequested.connect(
             lambda payload: self._start_hf_model_import(dialog, payload)
         )
@@ -1320,15 +1326,49 @@ class VideoAnnotationWindow(QMainWindow):
         )
         catalog_slot = lambda models: dialog.set_remote_model_catalog(models)
         catalog_error_slot = lambda message: dialog.set_inference_connection_status(message, False)
+        operation_started_slot = lambda action: dialog.set_remote_model_operation_busy(
+            True, f"Starting {str(action).replace('_', ' ')}…"
+        )
+        operation_succeeded_slot = (
+            lambda action, result: self._on_remote_model_operation_succeeded(
+                dialog, action, result
+            )
+        )
+        operation_failed_slot = (
+            lambda action, message: dialog.set_remote_model_operation_busy(
+                False,
+                f"{str(action).replace('_', ' ').title()} failed: {message}",
+                success=False,
+            )
+        )
         self.inference_controller.remoteCatalogDiscovered.connect(catalog_slot)
         self.inference_controller.remoteCatalogFailed.connect(catalog_error_slot)
+        self.inference_controller.remoteModelOperationStarted.connect(
+            operation_started_slot
+        )
+        self.inference_controller.remoteModelOperationSucceeded.connect(
+            operation_succeeded_slot
+        )
+        self.inference_controller.remoteModelOperationFailed.connect(
+            operation_failed_slot
+        )
         dialog.exec()
+        dialog.stop_remote_model_polling()
         if self._active_hf_model_settings_dialog is dialog:
             self.hf_transfer_controller.cancel_model_import()
             self._active_hf_model_settings_dialog = None
         try:
             self.inference_controller.remoteCatalogDiscovered.disconnect(catalog_slot)
             self.inference_controller.remoteCatalogFailed.disconnect(catalog_error_slot)
+            self.inference_controller.remoteModelOperationStarted.disconnect(
+                operation_started_slot
+            )
+            self.inference_controller.remoteModelOperationSucceeded.disconnect(
+                operation_succeeded_slot
+            )
+            self.inference_controller.remoteModelOperationFailed.disconnect(
+                operation_failed_slot
+            )
         except Exception:
             pass
 
@@ -1336,12 +1376,20 @@ class VideoAnnotationWindow(QMainWindow):
         settings = getattr(self.dataset_explorer_controller, "settings", None)
         if settings is None:
             return
-        settings.setValue(REMOTE_ENABLED_KEY, bool(payload.get("remote_enabled", False)))
-        settings.setValue(SERVER_URL_KEY, str(payload.get("server_url") or ""))
-        settings.setValue(SHARED_MAPPINGS_KEY, json.dumps(list(payload.get("shared_mappings") or [])))
+        previous_enabled = remote_inference_enabled(settings)
+        next_enabled = bool(payload.get("remote_enabled", False))
+        previous_url = str(settings.value(SERVER_URL_KEY, "") or "").rstrip("/")
+        next_url = str(payload.get("server_url") or "").rstrip("/")
+        settings.setValue(REMOTE_ENABLED_KEY, next_enabled)
+        settings.setValue(SERVER_URL_KEY, next_url)
+        settings.setValue(
+            REMOTE_ADMIN_TOKEN_KEY, str(payload.get("admin_token") or "").strip()
+        )
         settings.setValue(LOCAL_MODELS_KEY, json.dumps(list(payload.get("local_models") or [])))
         settings.setValue(LOCAL_MODELS_SCHEMA_VERSION_KEY, LOCAL_MODELS_SCHEMA_VERSION)
         settings.sync()
+        if previous_url != next_url or previous_enabled != next_enabled:
+            self.inference_controller.clear_remote_sessions()
 
     def _start_hf_model_import(self, dialog, payload: dict) -> None:
         if self._active_hf_model_settings_dialog is not None:
@@ -1395,7 +1443,7 @@ class VideoAnnotationWindow(QMainWindow):
 
     def _refresh_remote_model_catalog(self, dialog) -> None:
         try:
-            config = dialog.inference_payload()
+            config = dialog.remote_inference_payload()
         except ValueError as exc:
             dialog.set_inference_connection_status(str(exc), False)
             return
@@ -1410,21 +1458,55 @@ class VideoAnnotationWindow(QMainWindow):
                 "Another model discovery request is still running.", False
             )
 
+    def _request_remote_model_operation(self, dialog, action, payload) -> None:
+        try:
+            started = self.inference_controller.request_remote_model_operation(
+                action, payload
+            )
+        except Exception as exc:
+            dialog.set_remote_model_operation_busy(
+                False, str(exc), success=False
+            )
+            return
+        if not started:
+            dialog.set_remote_model_operation_busy(
+                False,
+                "Another remote model operation is still running.",
+                success=False,
+            )
+
+    def _on_remote_model_operation_succeeded(
+        self, dialog, action: str, result
+    ) -> None:
+        model_id = str((result or {}).get("model_id") or "model")
+        messages = {
+            "register_huggingface": f"Registration accepted for {model_id}.",
+            "register_local": f"Registration accepted for {model_id}.",
+            "set_default": f"{model_id} is now the task default.",
+            "unregister": f"Unregistration accepted for {model_id}.",
+        }
+        dialog.set_remote_model_operation_busy(
+            False, messages.get(action, "Remote model operation accepted.")
+        )
+        self._refresh_remote_model_catalog(dialog)
+
     def _test_inference_connection(self, dialog) -> None:
         try:
-            config = dialog.inference_payload()
+            config = dialog.remote_inference_payload()
             if not config.get("remote_enabled", False):
                 dialog.set_inference_connection_status(
                     "Enable remote inference before testing the connection.", False
                 )
                 return
             capabilities = self.inference_controller.test_connection(config)
-            version = str(capabilities.get("version") or "unknown")
-            shared_roots = list(capabilities.get("shared_roots") or [])
-            root_ids = [str(root.get("id") or "") for root in shared_roots if isinstance(root, dict) and root.get("id")]
-            root_text = f" Available root IDs: {', '.join(root_ids)}." if root_ids else ""
+            status = str(capabilities.get("status") or "unknown")
+            redis_status = "ready" if capabilities.get("redis_reachable") else "unavailable"
+            worker_status = "ready" if capabilities.get("worker_alive") else "unavailable"
+            configured = len(list(capabilities.get("configured_models") or []))
             dialog.set_inference_connection_status(
-                f"Connected to API version {version}; {len(shared_roots)} shared root(s) advertised.{root_text}", True
+                f"API {status}; Redis {redis_status}; worker {worker_status}; "
+                f"{configured} configured model(s).",
+                status == "ok" and redis_status == "ready" and worker_status == "ready",
             )
         except Exception as exc:
             dialog.set_inference_connection_status(str(exc), False)
@@ -1763,6 +1845,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.show_temp_msg("Inference", "Inference cancelled.", 1500)
 
     def _on_project_generation_changed(self, _generation: int) -> None:
+        self.inference_controller.clear_remote_sessions()
         if not self._pending_inference_requests:
             return
         for pending in self._pending_inference_requests.values():

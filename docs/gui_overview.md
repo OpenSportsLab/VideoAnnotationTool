@@ -36,8 +36,12 @@ seek one second before the event, clamped to the start of the timeline. This is
 a playback preference and does not alter annotation timestamps.
 
 The **Inference** settings tab selects Local or Remote execution, configures the
-server URL, tests `/api/v1/capabilities`, maps local directories to advertised
-server storage roots, and manages local model config/weights entries. **Add
+official OpenSportsLib server URL, tests `/health`, shows the discovered remote
+model registry and lifecycle states, and manages local model config/weights
+entries. A locally persisted admin token enables immediate server registration,
+task-default selection, and unregistration. The token may be stored unencrypted
+by the platform settings backend and never enters project JSON. Remote connection
+status includes Redis, worker, and configured-model health. **Add
 from Hugging Face…** downloads a validated OpenSportsLib configuration and
 checkpoint in the background and stages the cached paths until Settings is
 applied; **Add Manually** retains direct path entry. See

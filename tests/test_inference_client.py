@@ -1,5 +1,4 @@
 import json
-import hashlib
 import tempfile
 import threading
 from pathlib import Path
@@ -8,14 +7,16 @@ import httpx
 import pytest
 import yaml
 
-from inference_providers import LocalInferenceProvider, RemoteInferenceProvider
+from inference_providers import (
+    LocalInferenceProvider,
+    RemoteInferenceProvider,
+    RemoteVqaSessionCache,
+)
 from inference_settings import (
     LOCAL_MODELS_KEY,
     LOCAL_MODELS_SCHEMA_VERSION,
     LOCAL_MODELS_SCHEMA_VERSION_KEY,
     REMOTE_ENABLED_KEY,
-    SHARED_MAPPINGS_KEY,
-    UPLOAD_MANIFESTS_KEY,
     load_last_model_choice,
     load_local_models,
     save_last_model_choice,
@@ -556,9 +557,6 @@ def test_settings_remote_catalog_uses_unsaved_configuration(monkeypatch, tmp_pat
     draft = {
         "remote_enabled": True,
         "server_url": "http://draft-server:9000",
-        "shared_mappings": [
-            {"local_root": str(tmp_path), "root_id": "draft-root"}
-        ],
         "local_models": [],
     }
 
@@ -575,6 +573,121 @@ def test_settings_remote_catalog_uses_unsaved_configuration(monkeypatch, tmp_pat
             "question_answer",
         )
     }
+
+
+@pytest.mark.parametrize(
+    ("action", "payload", "expected_method", "expected_kwargs"),
+    [
+        (
+            "register_huggingface",
+            {"task": "question_answer", "repository_id": "org/vqa"},
+            "register_model",
+            {"task_type": "vqa", "huggingface_model_id": "org/vqa"},
+        ),
+        (
+            "register_local",
+            {
+                "task": "localization",
+                "model_id": "local:model",
+                "weights_path": "/srv/models/model.pth",
+                "config_path": "/srv/models/config.yaml",
+            },
+            "register_model",
+            {
+                "task_type": "localization",
+                "model_id": "local:model",
+                "weights_path": "/srv/models/model.pth",
+                "config_path": "/srv/models/config.yaml",
+            },
+        ),
+        (
+            "set_default",
+            {"task": "classification", "model_id": "cls"},
+            "set_default",
+            {"task_type": "classification", "model_id": "cls"},
+        ),
+        (
+            "unregister",
+            {"task": "classification", "model_id": "cls"},
+            "unregister_model",
+            {"model_id": "cls"},
+        ),
+    ],
+)
+def test_remote_registry_operations_use_session_credentials_and_official_client(
+    qtbot, monkeypatch, action, payload, expected_method, expected_kwargs
+):
+    calls = []
+
+    class Registry:
+        def __init__(self, remote, admin_token):
+            calls.append(("init", {"remote": remote, "admin_token": admin_token}))
+
+        def register_model(self, **kwargs):
+            calls.append(("register_model", kwargs))
+            return {"model_id": kwargs.get("model_id") or "registered"}
+
+        def set_default(self, task_type, model_id):
+            calls.append(
+                ("set_default", {"task_type": task_type, "model_id": model_id})
+            )
+            return {"model_id": model_id}
+
+        def unregister_model(self, model_id):
+            calls.append(("unregister_model", {"model_id": model_id}))
+            return {"model_id": model_id}
+
+    monkeypatch.setattr("opensportslib.RemoteModelRegistry", Registry)
+    controller = InferenceController(settings=MemorySettings())
+    request = {
+        **payload,
+        "server_url": "http://server/",
+        "admin_token": "session-secret",
+    }
+    with qtbot.waitSignal(
+        controller.remoteModelOperationSucceeded, timeout=1000
+    ) as completed:
+        assert controller.request_remote_model_operation(action, request)
+
+    assert completed.args[0] == action
+    assert calls[0] == (
+        "init",
+        {"remote": "http://server", "admin_token": "session-secret"},
+    )
+    assert calls[1] == (expected_method, expected_kwargs)
+    qtbot.waitUntil(lambda: controller.remote_registry_worker is None)
+    assert controller.shutdown()
+
+
+@pytest.mark.parametrize("status", [401, 409, 422, 503])
+def test_remote_registry_operation_reports_admin_errors(qtbot, monkeypatch, status):
+    class Registry:
+        def __init__(self, _remote, admin_token):
+            assert admin_token == "session-secret"
+
+        def set_default(self, _task, _model_id):
+            raise RuntimeError(f"Remote model registry returned HTTP {status}: rejected")
+
+    monkeypatch.setattr("opensportslib.RemoteModelRegistry", Registry)
+    controller = InferenceController(settings=MemorySettings())
+    with qtbot.waitSignal(
+        controller.remoteModelOperationFailed, timeout=1000
+    ) as failed:
+        assert controller.request_remote_model_operation(
+            "set_default",
+            {
+                "server_url": "http://server",
+                "admin_token": "session-secret",
+                "task": "classification",
+                "model_id": "model",
+            },
+        )
+
+    assert failed.args[0] == "set_default"
+    assert f"HTTP {status}" in failed.args[1]
+    assert "session-secret" not in failed.args[1]
+    qtbot.waitUntil(lambda: controller.remote_registry_worker is None)
+    assert controller.shutdown()
 
 
 def test_last_successful_model_choice_is_persisted_per_task():
@@ -594,20 +707,21 @@ def test_last_successful_model_choice_is_persisted_per_task():
     assert load_last_model_choice(settings, "description") is None
 
 
-def test_request_scoped_remote_mapping_does_not_use_saved_mapping(tmp_path):
-    saved_root = tmp_path / "saved"
-    draft_root = tmp_path / "draft"
-    saved_root.mkdir()
-    draft_root.mkdir()
-    target = draft_root / "clip.mp4"
-    target.write_bytes(b"video")
-    settings = MemorySettings({SHARED_MAPPINGS_KEY: json.dumps([{"local_root": str(saved_root), "root_id": "saved"}])})
-    provider = RemoteInferenceProvider(
-        "http://server", settings,
-        client=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(500))),
-        shared_mappings=[{"local_root": str(draft_root), "root_id": "draft"}],
+def test_inference_controller_owns_and_clears_remote_vqa_sessions():
+    controller = InferenceController(settings=MemorySettings())
+    provider = controller._provider(
+        "remote", {"server_url": "http://127.0.0.1:8000/"}
     )
-    assert provider._shared_asset(str(target)) == {"kind": "shared", "uri": "shared://draft/clip.mp4"}
+    key = ("server", "model", "sample", "path", 1, 2)
+    provider._vqa_sessions.put(key, "session")
+
+    assert provider.base_url == "http://127.0.0.1:8000"
+    assert provider._vqa_sessions is controller._remote_vqa_sessions
+    assert controller._remote_vqa_sessions.get(key) == "session"
+
+    controller.clear_remote_sessions()
+    assert controller._remote_vqa_sessions.get(key) is None
+    provider.close()
 
 
 def test_smart_qa_answer_normalization_preserves_metadata_and_manual_strings():
@@ -629,217 +743,545 @@ def test_smart_qa_answer_normalization_preserves_metadata_and_manual_strings():
     }]
 
 
-def test_remote_provider_prefers_shared_mapping_and_polls_job(tmp_path):
-    media_root = tmp_path / "media"
-    media_root.mkdir()
-    video = media_root / "clip.mp4"
-    video.write_bytes(b"video")
-    settings = MemorySettings({
-        SHARED_MAPPINGS_KEY: json.dumps([{"local_root": str(media_root), "root_id": "datasets"}]),
-    })
-    submitted = {}
+def _remote_provider(task, model_id="model", *, sessions=None):
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(500))
+    )
+    provider = RemoteInferenceProvider(
+        "http://server", MemorySettings(), client=client, vqa_sessions=sessions
+    )
+    provider._catalog = [ModelDescriptor(model_id, model_id, task)]
+    return provider
 
-    inference_request = _request("description", video)
 
-    def handler(http_request: httpx.Request):
-        if http_request.url.path.endswith("/capabilities"):
-            return httpx.Response(200, json={"version": "1", "poll_interval_seconds": 0.01})
-        if http_request.url.path.endswith("/jobs") and http_request.method == "POST":
-            submitted.update(json.loads(http_request.content))
-            return httpx.Response(200, json={"id": "job-1"})
-        if http_request.url.path.endswith("/jobs/job-1"):
+def test_official_server_discovery_maps_registry_states_defaults_and_vqa():
+    def handler(request):
+        if request.url.path == "/health":
             return httpx.Response(200, json={
-                "status": "succeeded",
-                "result": {"items": [{
-                    "item_id": inference_request.items[0].item_id,
-                    "captions": [{"lang": "en", "text": "Caption"}],
-                }]},
+                "status": "ok",
+                "redis_reachable": True,
+                "worker_alive": True,
+                "configured_models": ["cls-model", "vqa-model"],
             })
-        raise AssertionError(f"Unexpected request: {http_request.method} {http_request.url}")
+        if request.url.path == "/models":
+            return httpx.Response(200, json={"models": [
+                {
+                    "model_id": "cls-model",
+                    "task_type": "classification",
+                    "status": "ready",
+                    "generation": 3,
+                },
+                {
+                    "model_id": "loc-model",
+                    "task_type": "localization",
+                    "status": "registering",
+                    "generation": 1,
+                },
+                {
+                    "model_id": "failed-model",
+                    "task_type": "localization",
+                    "status": "failed",
+                    "error": "bad checkpoint",
+                },
+                {
+                    "model_id": "vqa-model",
+                    "task_type": "vqa",
+                    "status": "ready",
+                },
+                {
+                    "model_id": "retiring-model",
+                    "task_type": "classification",
+                    "status": "unregistering",
+                },
+            ]})
+        if request.url.path == "/config-capabilities":
+            assert "model_id" not in request.url.params
+            task = str(request.url.params["task_type"])
+            defaults = {"classification": "cls-model", "vqa": "vqa-model"}
+            if task in defaults:
+                return httpx.Response(
+                    200, json={"model_id": defaults[task], "version": 1, "options": {}}
+                )
+            return httpx.Response(404, json={"detail": "no default"})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
-    client = httpx.Client(transport=httpx.MockTransport(handler))
-    provider = RemoteInferenceProvider("http://server", settings, client=client)
-    result = provider.run(inference_request, lambda *_args: None, threading.Event())
+    provider = RemoteInferenceProvider(
+        "http://server",
+        MemorySettings(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
 
-    assert result.items[0]["captions"][0]["text"] == "Caption"
-    asset = submitted["items"][0]["inputs"][0]["asset"]
-    assert asset == {"kind": "shared", "uri": "shared://datasets/clip.mp4"}
+    classification = provider.list_models("classification")
+    assert [model.id for model in classification] == [
+        "cls-model",
+        "retiring-model",
+    ]
+    assert classification[0].available is True
+    assert classification[0].is_default is True
+    assert classification[0].version == "generation-3"
+    assert classification[1].available is False
+    assert classification[1].status == "unregistering"
+    localization = provider.list_models("localization")
+    assert [model.id for model in localization] == ["loc-model", "failed-model"]
+    assert localization[0].supports_time_range is True
+    assert localization[0].available is False
+    assert "progress" in localization[0].unavailable_reason
+    assert localization[1].unavailable_reason == "bad checkpoint"
+    assert [model.id for model in provider.list_models("question_answer")] == ["vqa-model"]
+    assert provider.list_models("description") == []
+    assert provider.list_models("dense_description") == []
+    assert localization[0].max_inputs is None
+    assert provider.list_models("classification")[0].max_inputs is None
+    assert provider.list_models("question_answer")[0].max_inputs == 1
+
+    health = provider.discover_capabilities()
+    assert health["redis_reachable"] is True
+    assert health["worker_alive"] is True
+    assert health["configured_models"] == ["cls-model", "vqa-model"]
 
 
-def test_remote_localization_projects_input_relative_events_to_sample_timeline(tmp_path):
-    media_root = tmp_path / "media"
-    media_root.mkdir()
-    tracking = media_root / "tracking.h5"
-    tracking.write_bytes(b"tracking")
-    settings = MemorySettings({
-        SHARED_MAPPINGS_KEY: json.dumps(
-            [{"local_root": str(media_root), "root_id": "datasets"}]
-        ),
-    })
-    submitted = {}
+@pytest.mark.parametrize("models_payload", [{}, {"models": ["bad"]}])
+def test_remote_registry_rejects_malformed_catalog(models_payload):
+    def handler(request):
+        if request.url.path == "/health":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "redis_reachable": True,
+                    "worker_alive": True,
+                },
+            )
+        if request.url.path == "/models":
+            return httpx.Response(200, json=models_payload)
+        if request.url.path == "/config-capabilities":
+            return httpx.Response(404, json={"detail": "no default"})
+        raise AssertionError(request.url)
+
+    provider = RemoteInferenceProvider(
+        "http://server",
+        MemorySettings(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(InferenceError) as error:
+        provider.list_models("classification")
+    assert error.value.code == "invalid_response"
+
+
+def test_remote_registry_ready_model_is_unavailable_when_server_is_degraded():
+    def handler(request):
+        if request.url.path == "/health":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "degraded",
+                    "redis_reachable": True,
+                    "worker_alive": False,
+                },
+            )
+        if request.url.path == "/models":
+            return httpx.Response(200, json={"models": [{
+                "model_id": "model",
+                "task_type": "classification",
+                "status": "ready",
+            }]})
+        if request.url.path == "/config-capabilities":
+            return httpx.Response(404, json={"detail": "no default"})
+        raise AssertionError(request.url)
+
+    provider = RemoteInferenceProvider(
+        "http://server",
+        MemorySettings(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    model = provider.list_models("classification")[0]
+    assert model.status == "ready"
+    assert model.available is False
+    assert "worker or Redis" in model.unavailable_reason
+
+
+def test_remote_registry_transitional_model_is_not_retryable(tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    provider = _remote_provider("classification")
+    provider._catalog = [
+        ModelDescriptor(
+            "model",
+            "model",
+            "classification",
+            available=False,
+            unavailable_reason="Model registration is still in progress.",
+            status="registering",
+        )
+    ]
+
+    with pytest.raises(InferenceError) as error:
+        provider.run(_request("classification", video), lambda *_args: None)
+
+    assert error.value.code == "model_unavailable"
+    assert error.value.retryable is False
+
+
+def test_remote_classification_uses_official_wrapper_and_normalizes_head(tmp_path, monkeypatch):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    request = _request("classification", video, model_id="cls-model")
+    request.parameters["head"] = "ball_action"
+    request.schema = {
+        "ball_action": {"type": "single_label", "labels": ["pass", "shot"]}
+    }
+    request.items[0].inputs[0].metadata["fps"] = 25
+    captured = {}
+
+    class Runner:
+        def infer(self, **kwargs):
+            captured.update(kwargs)
+            return {"data": [{"labels": {"action": {"label": "shot", "confidence_score": 0.9}}}]}
+
+    provider = _remote_provider("classification", "cls-model")
+    monkeypatch.setattr(provider, "_build_runner", lambda _request: Runner())
+    progress = []
+    result = provider.run(request, lambda *args: progress.append(args), threading.Event())
+
+    assert captured["video_path"] == str(video)
+    assert captured["use_wandb"] is False
+    options = captured["remote_task_options"]
+    assert options["label_schema"] == {
+        "action": {"type": "single_label", "labels": ["pass", "shot"]}
+    }
+    assert options["sample_id"] == "sample"
+    assert options["fps"] == 25
+    assert result.items[0]["sample_id"] == "sample"
+    assert result.items[0]["labels"] == {
+        "ball_action": {"label": "shot", "confidence_score": 0.9}
+    }
+    assert progress[-1] == ("Completed remote inference (1/1)", 1, 1)
+
+
+def test_remote_wrapper_is_constructed_without_local_weights(monkeypatch):
+    captured = {}
+
+    class Runner:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("opensportslib.apis.ClassificationModel", Runner)
+    provider = _remote_provider("classification", "server-local:model")
+    request = _request(
+        "classification", "/unused.mp4", model_id="server-local:model"
+    )
+
+    built = provider._build_runner(request)
+
+    assert isinstance(built, Runner)
+    assert captured == {
+        "remote": "http://server",
+        "remote_model_id": "server-local:model",
+    }
+
+
+def test_remote_localization_clips_and_projects_events(tmp_path, monkeypatch):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    clipped = tmp_path / "clip-range.mp4"
+    clipped.write_bytes(b"range")
     request = InferenceRequest(
         task="localization",
-        model_id="spotter",
+        model_id="loc-model",
+        backend="remote",
+        items=[InferenceItem(
+            "sample",
+            [InferenceInput(str(video))],
+            timeline_offset_ms=300_000,
+            sample={"metadata": {"match": "final"}},
+        )],
+        parameters={"start_ms": 1_000, "end_ms": 3_000, "head": "play"},
+        schema={"play": {"type": "single_label", "labels": ["header"]}},
+    )
+    captured = {}
+
+    class ClipWorker:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def _clip_video_if_needed(self, *_args, **_kwargs):
+            return str(clipped), 1_000
+
+    class Runner:
+        def infer(self, **kwargs):
+            captured.update(kwargs)
+            return {"data": [{"events": [{
+                "head": "action", "label": "header", "position_ms": 1_250
+            }]}]}
+
+    monkeypatch.setattr(
+        "controllers.localization.loc_inference.LocInferenceWorker", ClipWorker
+    )
+    provider = _remote_provider("localization", "loc-model")
+    monkeypatch.setattr(provider, "_build_runner", lambda _request: Runner())
+
+    result = provider.run(request, lambda *_args: None, threading.Event())
+
+    assert captured["video_path"] == str(clipped)
+    assert captured["remote_task_options"]["label_schema"] == {
+        "action": {"type": "single_label", "labels": ["header"]}
+    }
+    assert result.items[0]["events"] == [{
+        "head": "play", "label": "header", "position_ms": 302_250
+    }]
+
+
+def test_remote_vqa_captures_and_reuses_video_session(tmp_path, monkeypatch):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    sessions = RemoteVqaSessionCache()
+    provider = _remote_provider("question_answer", "vqa-model", sessions=sessions)
+    calls = []
+
+    class Runner:
+        last_remote_session_id = None
+
+        def infer(self, **kwargs):
+            calls.append(("infer", kwargs))
+            if kwargs.get("video_path"):
+                self.last_remote_session_id = "session-1"
+                return {"data": [{"answer_text": "A pass."}]}
+            return {"data": [{"answer_text": "A shot."}]}
+
+    runner = Runner()
+    monkeypatch.setattr(provider, "_build_runner", lambda _request: runner)
+    first = _request("question_answer", video, model_id="vqa-model")
+    first.parameters["question"] = "What happened first?"
+    second = _request("question_answer", video, model_id="vqa-model")
+    second.parameters["question"] = "What happened next?"
+
+    first_result = provider.run(first, lambda *_args: None, threading.Event())
+    second_result = provider.run(second, lambda *_args: None, threading.Event())
+
+    assert first_result.items[0]["answer"] == "A pass."
+    assert second_result.items[0]["answer"] == "A shot."
+    assert [name for name, _payload in calls] == ["infer", "infer"]
+    first_call = calls[0][1]
+    assert first_call["video_path"] == str(video)
+    assert first_call["question"] == "What happened first?"
+    assert first_call["use_wandb"] is False
+    followup = calls[-1][1]
+    assert followup == {
+        "question": "What happened next?",
+        "session_id": "session-1",
+    }
+
+
+@pytest.mark.parametrize("status", [404, 410])
+def test_remote_vqa_session_cache_isolated_expires_and_recovers_stale_session(
+    tmp_path, monkeypatch, status
+):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    now = [100.0]
+    sessions = RemoteVqaSessionCache(clock=lambda: now[0])
+    sessions.TTL_SECONDS = 10
+    provider = _remote_provider("question_answer", "vqa-model", sessions=sessions)
+    request = _request("question_answer", video, model_id="vqa-model")
+    request.parameters["question"] = "Question?"
+    key = provider._vqa_session_key(request, request.items[0])
+    sessions.put(key, "stale")
+    calls = []
+
+    class Runner:
+        last_remote_session_id = None
+
+        def infer(self, **kwargs):
+            calls.append(("infer", kwargs))
+            if kwargs.get("session_id"):
+                raise RuntimeError(
+                    f"Remote server returned HTTP {status}: session expired"
+                )
+            self.last_remote_session_id = "fresh"
+            return {"data": [{"answer_text": "Recovered"}]}
+
+    monkeypatch.setattr(provider, "_build_runner", lambda _request: Runner())
+    result = provider.run(request, lambda *_args: None, threading.Event())
+    assert result.items[0]["answer"] == "Recovered"
+    assert [name for name, _payload in calls] == ["infer", "infer"]
+    assert sessions.get(key) == "fresh"
+
+    other = provider._vqa_session_key(
+        _request("question_answer", video, model_id="other-model"), request.items[0]
+    )
+    assert sessions.get(other) is None
+    now[0] = 111.0
+    assert sessions.get(key) is None
+
+
+def test_remote_sends_multiple_videos_as_official_manifest(tmp_path, monkeypatch):
+    video = tmp_path / "clip.mp4"
+    second = tmp_path / "second.mp4"
+    video.write_bytes(b"video")
+    second.write_bytes(b"video-2")
+    provider = _remote_provider("classification")
+    multiple = _request("classification", video)
+    multiple.items[0].inputs.append(
+        InferenceInput(str(second), metadata={"view": "reverse"})
+    )
+    captured = {}
+
+    class Runner:
+        def infer(self, **kwargs):
+            captured.update(kwargs)
+            with open(kwargs["test_set"], encoding="utf-8") as handle:
+                captured["manifest"] = json.load(handle)
+            return {"data": [{"labels": {"action": {"label": "shot"}}}]}
+
+    monkeypatch.setattr(provider, "_build_runner", lambda _request: Runner())
+    result = provider.run(multiple, lambda *_args: None, threading.Event())
+
+    assert result.items[0]["labels"]["action"]["label"] == "shot"
+    assert "video_path" not in captured
+    assert captured["remote_mode"] == "full_test_set"
+    inputs = captured["manifest"]["data"][0]["inputs"]
+    assert [source["path"] for source in inputs] == [str(video), str(second)]
+    assert inputs[1]["view"] == "reverse"
+
+
+def test_remote_localization_clips_all_videos_before_manifest(tmp_path, monkeypatch):
+    videos = [tmp_path / "front.mp4", tmp_path / "reverse.mp4"]
+    for video in videos:
+        video.write_bytes(b"video")
+    request = InferenceRequest(
+        task="localization",
+        model_id="loc-model",
         backend="remote",
         items=[
             InferenceItem(
                 "sample",
-                [InferenceInput(str(tracking), "player_joints_h5")],
-                timeline_offset_ms=300_000,
+                [InferenceInput(str(video)) for video in videos],
+                timeline_offset_ms=10_000,
             )
         ],
+        parameters={"start_ms": 1_000, "end_ms": 3_000, "head": "play"},
     )
+    clipped_sources = []
+    captured = {}
 
-    def handler(http_request: httpx.Request):
-        if http_request.url.path.endswith("/capabilities"):
-            return httpx.Response(200, json={"poll_interval_seconds": 0.01})
-        if http_request.url.path.endswith("/jobs") and http_request.method == "POST":
-            submitted.update(json.loads(http_request.content))
-            return httpx.Response(200, json={"id": "job-1"})
-        if http_request.url.path.endswith("/jobs/job-1"):
-            return httpx.Response(
-                200,
-                json={
-                    "status": "succeeded",
-                    "result": {
-                        "items": [
+    class ClipWorker:
+        def __init__(self, path, *_args, **_kwargs):
+            self.path = path
+
+        def _clip_video_if_needed(self, output_dir):
+            clipped = Path(output_dir) / Path(self.path).name
+            clipped.write_bytes(b"clip")
+            clipped_sources.append(str(clipped))
+            return str(clipped), 1_000
+
+    class Runner:
+        def infer(self, **kwargs):
+            with open(kwargs["test_set"], encoding="utf-8") as handle:
+                captured.update(json.load(handle))
+            return {
+                "data": [
+                    {
+                        "events": [
                             {
-                                "item_id": request.items[0].item_id,
-                                "events": [{"label": "header", "position_ms": 1_250}],
+                                "head": "action",
+                                "label": "pass",
+                                "position_ms": 250,
                             }
                         ]
-                    },
-                },
-            )
-        raise AssertionError(
-            f"Unexpected request: {http_request.method} {http_request.url}"
-        )
+                    }
+                ]
+            }
 
-    provider = RemoteInferenceProvider(
-        "http://server",
-        settings,
-        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    monkeypatch.setattr(
+        "controllers.localization.loc_inference.LocInferenceWorker", ClipWorker
     )
+    provider = _remote_provider("localization", "loc-model")
+    monkeypatch.setattr(provider, "_build_runner", lambda _request: Runner())
 
     result = provider.run(request, lambda *_args: None, threading.Event())
 
-    assert submitted["parameters"]["input_time_offsets_ms"] == {
-        request.items[0].item_id: 300_000
-    }
-    assert result.items[0]["events"][0]["position_ms"] == 301_250
+    manifest_paths = [source["path"] for source in captured["data"][0]["inputs"]]
+    assert manifest_paths == clipped_sources
+    assert result.items[0]["events"] == [
+        {"head": "play", "label": "pass", "position_ms": 11_250}
+    ]
 
 
-def test_remote_provider_streams_multipart_and_persists_completed_asset(tmp_path):
-    video = tmp_path / "large.bin"
-    video.write_bytes(b"0123456789")
-    settings = MemorySettings()
-    uploaded = {}
-    completed_body = {}
+def test_remote_rejects_non_video_and_multiple_vqa_inputs(tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    provider = _remote_provider("classification")
 
-    inference_request = _request("description", video)
+    h5 = _request("classification", video)
+    h5.items[0].inputs[0] = InferenceInput(str(video), "player_joints_h5")
+    with pytest.raises(InferenceError, match="video inputs"):
+        provider.run(h5, lambda *_args: None, threading.Event())
 
-    def handler(request: httpx.Request):
-        path = request.url.path
-        if path.endswith("/capabilities"):
-            return httpx.Response(200, json={
-                "multipart_part_size": 4,
-                "max_parallel_parts": 2,
-                "poll_interval_seconds": 0.01,
-            })
-        if path.endswith("/uploads") and request.method == "POST":
-            return httpx.Response(200, json={
-                "id": "upload-1",
-                "part_size": 4,
-                "part_url_template": "http://storage/part/{part_number}",
-                "completed_parts": [],
-            })
-        if request.url.host == "storage" and request.method == "PUT":
-            body = request.read()
-            uploaded[int(path.rsplit("/", 1)[-1])] = body
-            return httpx.Response(200, headers={"ETag": f'"etag-{len(body)}"'})
-        if path.endswith("/uploads/upload-1/complete"):
-            completed_body.update(json.loads(request.content))
-            return httpx.Response(200, json={"asset_id": "asset-1"})
-        if path.endswith("/jobs") and request.method == "POST":
-            return httpx.Response(200, json={"id": "job-1"})
-        if path.endswith("/jobs/job-1"):
-            return httpx.Response(200, json={
-                "status": "succeeded",
-                "result": {"items": [{
-                    "item_id": inference_request.items[0].item_id,
-                    "captions": [{"text": "Done", "lang": "en"}],
-                }]},
-            })
-        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
-
-    client = httpx.Client(transport=httpx.MockTransport(handler))
-    provider = RemoteInferenceProvider("http://server", settings, client=client)
-    provider.run(inference_request, lambda *_args: None, threading.Event())
-
-    assert uploaded == {1: b"0123", 2: b"4567", 3: b"89"}
-    assert [part["number"] for part in completed_body["parts"]] == [1, 2, 3]
-    manifests = json.loads(settings.value(UPLOAD_MANIFESTS_KEY))
-    assert next(iter(manifests.values()))["asset_id"] == "asset-1"
+    vqa_provider = _remote_provider("question_answer")
+    vqa = _request("question_answer", video)
+    vqa.items[0].inputs.append(InferenceInput(str(video)))
+    with pytest.raises(InferenceError, match="exactly one video"):
+        vqa_provider.run(vqa, lambda *_args: None, threading.Event())
 
 
-def test_multipart_resume_skips_completed_parts_and_keeps_server_etag(tmp_path):
-    video = tmp_path / "resume.bin"
-    video.write_bytes(b"abcdefghij")
-    settings = MemorySettings()
-    client = httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(500)))
-    provider = RemoteInferenceProvider("http://server", settings, client=client)
-    key, stat = provider._manifest_key(str(video))
-    settings.setValue(UPLOAD_MANIFESTS_KEY, json.dumps({key: {
-        "upload_id": "upload-1", "path": str(video), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
-    }}))
-    uploaded_parts = []
-    completed_body = {}
-
-    def handler(request: httpx.Request):
-        path = request.url.path
-        if path.endswith("/uploads/upload-1") and request.method == "GET":
-            return httpx.Response(200, json={
-                "id": "upload-1", "part_size": 4,
-                "part_url_template": "http://storage/part/{part_number}",
-                "completed_parts": [{"number": 1, "etag": "server-etag-1", "sha256": "server-sha-1"}],
-            })
-        if request.url.host == "storage":
-            uploaded_parts.append(int(path.rsplit("/", 1)[-1]))
-            return httpx.Response(200, headers={"ETag": "etag"})
-        if path.endswith("/uploads/upload-1/complete"):
-            completed_body.update(json.loads(request.content))
-            return httpx.Response(200, json={"asset_id": "asset-resumed"})
-        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
-
-    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
-    provider.capabilities = {"max_parallel_parts": 2}
-    asset = provider._prepare_asset(str(video), lambda *_args: None, threading.Event())
-    assert asset == {"kind": "upload", "id": "asset-resumed"}
-    assert sorted(uploaded_parts) == [2, 3]
-    assert completed_body["parts"][0]["etag"] == "server-etag-1"
-
-
-def test_upload_part_retries_checksum_mismatch(tmp_path):
-    video = tmp_path / "checksum.bin"
-    video.write_bytes(b"payload")
-    expected = hashlib.sha256(b"payload").hexdigest()
-    attempts = 0
-
-    def handler(request: httpx.Request):
-        nonlocal attempts
-        attempts += 1
-        checksum = "wrong" if attempts == 1 else expected
-        return httpx.Response(200, headers={"ETag": "etag", "X-Content-SHA256": checksum})
-
-    provider = RemoteInferenceProvider(
-        "http://server", MemorySettings(),
-        client=httpx.Client(transport=httpx.MockTransport(handler)),
+def test_remote_provider_discards_cancelled_item_before_starting_next(
+    tmp_path, monkeypatch
+):
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+    first.write_bytes(b"video")
+    second.write_bytes(b"video")
+    request = InferenceRequest(
+        task="classification",
+        model_id="model",
+        backend="remote",
+        items=[
+            InferenceItem("one", [InferenceInput(str(first))]),
+            InferenceItem("two", [InferenceInput(str(second))]),
+        ],
     )
-    result = provider._upload_part_with_retry(
-        str(video), "upload", 1, len(b"payload"), len(b"payload"),
-        {"part_url_template": "http://server/api/v1/upload-part/{part_number}"},
-        threading.Event(),
+    cancel = threading.Event()
+    calls = []
+
+    class Runner:
+        def infer(self, **kwargs):
+            calls.append(kwargs["video_path"])
+            cancel.set()
+            return {"data": [{"labels": {"action": {"label": "shot"}}}]}
+
+    provider = _remote_provider("classification")
+    monkeypatch.setattr(provider, "_build_runner", lambda _request: Runner())
+    with pytest.raises(InferenceError) as error:
+        provider.run(request, lambda *_args: None, cancel)
+    assert error.value.code == "cancelled"
+    assert calls == [str(first)]
+
+
+def test_remote_malformed_result_and_network_error_mapping(tmp_path, monkeypatch):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"video")
+    request = _request("classification", video)
+    provider = _remote_provider("classification")
+
+    class Malformed:
+        def infer(self, **_kwargs):
+            return {"data": []}
+
+    monkeypatch.setattr(provider, "_build_runner", lambda _request: Malformed())
+    with pytest.raises(InferenceError) as malformed:
+        provider.run(request, lambda *_args: None, threading.Event())
+    assert malformed.value.code == "invalid_result"
+
+    mapped = provider._inference_error(httpx.ConnectError("offline"))
+    assert mapped.code == "network_error"
+    assert mapped.retryable is True
+    failed = provider._inference_error(
+        RuntimeError("Remote inference job `job` failed: model crashed")
     )
-    assert result[0] == 1
-    assert result[3] == expected
-    assert attempts == 2
+    assert failed.code == "inference_error"
+    assert failed.retryable is False
+    bad_request = provider._inference_error(
+        RuntimeError("Remote server returned HTTP 422: invalid options")
+    )
+    assert bad_request.code == "invalid_request"
+    assert bad_request.retryable is False

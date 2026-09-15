@@ -3,29 +3,20 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
-import math
 import os
-import random
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote
 
 import httpx
 import yaml
 
 from controllers.inference_runtime import configure_compute_device
-from inference_settings import (
-    load_local_models,
-    load_shared_mappings,
-    load_upload_manifests,
-    save_upload_manifests,
-)
+from inference_settings import load_local_models, normalize_server_url
 from inference_types import (
     InferenceError,
     InferenceRequest,
@@ -434,26 +425,78 @@ class LocalInferenceProvider:
             )
 
 
+@dataclass(frozen=True)
+class _RemoteVqaSession:
+    session_id: str
+    touched_at: float
+
+
+class RemoteVqaSessionCache:
+    """Process-local cache for short-lived server-side VQA video sessions."""
+
+    TTL_SECONDS = 25 * 60
+
+    def __init__(self, *, clock=time.monotonic):
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._sessions: dict[tuple, _RemoteVqaSession] = {}
+
+    def get(self, key: tuple) -> str | None:
+        now = self._clock()
+        with self._lock:
+            record = self._sessions.get(key)
+            if record is None:
+                return None
+            if now - record.touched_at >= self.TTL_SECONDS:
+                self._sessions.pop(key, None)
+                return None
+            return record.session_id
+
+    def put(self, key: tuple, session_id: str) -> None:
+        with self._lock:
+            self._sessions[key] = _RemoteVqaSession(str(session_id), self._clock())
+
+    def discard(self, key: tuple) -> None:
+        with self._lock:
+            self._sessions.pop(key, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._sessions.clear()
+
+
 class RemoteInferenceProvider:
-    """Versioned HTTP API client with shared-path and resumable multipart assets."""
+    """Adapter around the official OpenSportsLib remote inference client."""
 
-    API_PREFIX = "/api/v1"
+    _SERVER_TASKS = {
+        "classification": "classification",
+        "localization": "localization",
+        "question_answer": "vqa",
+    }
+    _VAT_TASKS = {server: vat for vat, server in _SERVER_TASKS.items()}
 
-    def __init__(self, base_url: str, settings=None, *, client: httpx.Client | None = None, shared_mappings=None):
-        self.base_url = str(base_url or "").rstrip("/")
+    def __init__(
+        self,
+        base_url: str,
+        settings=None,
+        *,
+        client: httpx.Client | None = None,
+        vqa_sessions: RemoteVqaSessionCache | None = None,
+    ):
+        self.base_url = normalize_server_url(base_url)
         self.settings = settings
         self.client = client or httpx.Client(timeout=httpx.Timeout(30.0, read=60.0))
         self._owns_client = client is None
+        self._vqa_sessions = vqa_sessions or RemoteVqaSessionCache()
         self.capabilities: dict[str, Any] = {}
-        self._progress_lock = threading.Lock()
-        self.shared_mappings = copy.deepcopy(shared_mappings) if shared_mappings is not None else None
+        self._catalog: list[ModelDescriptor] | None = None
 
     def close(self):
         if self._owns_client:
             self.client.close()
 
     def _url(self, path: str) -> str:
-        return f"{self.base_url}{self.API_PREFIX}{path}"
+        return f"{self.base_url}{path}"
 
     @staticmethod
     def _error_from_response(response: httpx.Response) -> InferenceError:
@@ -461,17 +504,20 @@ class RemoteInferenceProvider:
             payload = response.json()
         except Exception:
             payload = {}
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        if isinstance(detail, (list, dict)):
+            detail = json.dumps(detail)
+        message = str(detail or f"Server returned HTTP {response.status_code}.")
         return InferenceError(
-            str(payload.get("message") or f"Server returned HTTP {response.status_code}."),
-            code=str(payload.get("code") or f"http_{response.status_code}"),
-            retryable=bool(payload.get("retryable", response.status_code >= 500)),
-            details=payload.get("details"),
+            message,
+            code=f"http_{response.status_code}",
+            retryable=response.status_code >= 500 or response.status_code in {408, 429},
+            details=payload or None,
         )
 
-    def _request(self, method: str, path_or_url: str, **kwargs) -> httpx.Response:
-        url = path_or_url if path_or_url.startswith(("http://", "https://")) else self._url(path_or_url)
+    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         try:
-            response = self.client.request(method, url, **kwargs)
+            response = self.client.request(method, self._url(path), **kwargs)
         except httpx.HTTPError as exc:
             raise InferenceError(str(exc), code="network_error", retryable=True) from exc
         if response.status_code >= 400:
@@ -479,347 +525,401 @@ class RemoteInferenceProvider:
         return response
 
     def discover_capabilities(self) -> dict[str, Any]:
-        payload = self._request("GET", "/capabilities").json()
+        payload = self._request("GET", "/health").json()
         if not isinstance(payload, dict):
-            raise InferenceError("Capabilities response must be an object.", code="invalid_response")
+            raise InferenceError("Health response must be an object.", code="invalid_response")
         self.capabilities = payload
         return copy.deepcopy(payload)
 
+    def _discover_catalog(self) -> list[ModelDescriptor]:
+        if self._catalog is not None:
+            return self._catalog
+        health = self.discover_capabilities()
+        registry = self._request("GET", "/models").json()
+        if not isinstance(registry, dict) or not isinstance(
+            registry.get("models"), list
+        ):
+            raise InferenceError(
+                "Model registry response must contain a models list.",
+                code="invalid_response",
+            )
+        server_available = bool(
+            health.get("status") == "ok"
+            and health.get("redis_reachable")
+            and health.get("worker_alive")
+        )
+        defaults = self._discover_defaults()
+        catalog = []
+        for record in registry["models"]:
+            if not isinstance(record, dict):
+                raise InferenceError(
+                    "Every model registry entry must be an object.",
+                    code="invalid_response",
+                )
+            model_id = str(record.get("model_id") or "").strip()
+            server_task = str(record.get("task_type") or "").strip()
+            status = str(record.get("status") or "").strip().lower()
+            if not model_id or not server_task or not status:
+                raise InferenceError(
+                    "A model registry entry is missing model_id, task_type, or status.",
+                    code="invalid_response",
+                )
+            vat_task = self._VAT_TASKS.get(server_task)
+            if vat_task is None:
+                continue
+            available = server_available and status == "ready"
+            if not server_available:
+                reason = "The server worker or Redis is unavailable."
+            elif status == "registering":
+                reason = "Model registration is still in progress."
+            elif status == "unregistering":
+                reason = "Model removal is still in progress."
+            elif status == "failed":
+                reason = str(record.get("error") or "Model registration failed.")
+            elif status != "ready":
+                reason = f"The server reports model status {status!r}."
+            else:
+                reason = ""
+            generation = record.get("generation")
+            catalog.append(
+                ModelDescriptor(
+                    id=model_id,
+                    display_name=model_id,
+                    task=vat_task,
+                    version=(
+                        f"generation-{generation}"
+                        if generation not in (None, "")
+                        else ""
+                    ),
+                    available=available,
+                    unavailable_reason=reason,
+                    accepted_input_types=("video",),
+                    min_inputs=1,
+                    max_inputs=1 if vat_task == "question_answer" else None,
+                    supports_time_range=vat_task == "localization",
+                    status=status,
+                    is_default=defaults.get(server_task) == model_id,
+                )
+            )
+        self._catalog = catalog
+        return catalog
+
+    def _discover_defaults(self) -> dict[str, str]:
+        defaults = {}
+        for server_task in self._VAT_TASKS:
+            try:
+                payload = self._request(
+                    "GET",
+                    "/config-capabilities",
+                    params={"task_type": server_task},
+                ).json()
+            except InferenceError as exc:
+                if exc.code == "http_404":
+                    continue
+                raise
+            if not isinstance(payload, dict):
+                raise InferenceError(
+                    "Configuration capabilities response must be an object.",
+                    code="invalid_response",
+                )
+            model_id = str(payload.get("model_id") or "").strip()
+            if model_id:
+                defaults[server_task] = model_id
+        return defaults
+
     def list_models(self, task: str) -> list[ModelDescriptor]:
-        response = self._request("GET", "/models", params={"task": task})
-        payload = response.json()
-        raw_models = payload.get("models") if isinstance(payload, dict) else payload
-        if not isinstance(raw_models, list):
-            raise InferenceError("Models response must contain a models array.", code="invalid_response")
-        models = []
-        for raw in raw_models:
-            descriptor = ModelDescriptor.from_dict(raw)
-            if descriptor.task == task:
-                models.append(descriptor)
-        return models
+        if task not in self._SERVER_TASKS:
+            return []
+        return [model for model in self._discover_catalog() if model.task == task]
 
     def run(self, request: InferenceRequest, progress: ProgressCallback, cancel_event=None):
-        if not self.capabilities:
-            self.discover_capabilities()
-        wire_items = []
-        time_offsets = {
-            item.item_id: max(0, int(item.timeline_offset_ms or 0))
-            for item in request.items
-            if int(item.timeline_offset_ms or 0) > 0
-        }
-        all_inputs = sum(len(item.inputs) for item in request.items)
-        prepared_count = 0
+        if request.task not in self._SERVER_TASKS:
+            raise InferenceError(
+                f"The OpenSportsLib server does not support {request.task} inference.",
+                code="unsupported_task",
+            )
+        descriptor = next(
+            (model for model in self.list_models(request.task) if model.id == request.model_id),
+            None,
+        )
+        if descriptor is None:
+            raise InferenceError(
+                f"Unknown remote model: {request.model_id}", code="model_not_found"
+            )
+        if not descriptor.available:
+            server_degraded = descriptor.status == "ready"
+            raise InferenceError(
+                descriptor.unavailable_reason,
+                code=(
+                    "server_unavailable" if server_degraded else "model_unavailable"
+                ),
+                retryable=server_degraded,
+            )
+
         for item in request.items:
-            inputs = []
-            for source in item.inputs:
-                _check_cancelled(cancel_event)
-                asset = self._shared_asset(source.path)
-                if (
-                    asset is None
-                    and request.task == "localization"
-                    and source.type == "video"
-                    and (
-                        int(request.parameters.get("start_ms", 0) or 0) > 0
-                        or int(request.parameters.get("end_ms", 0) or 0) > 0
-                    )
-                ):
-                    from controllers.localization.loc_inference import LocInferenceWorker
-
-                    with tempfile.TemporaryDirectory(prefix="vat_remote_clip_") as tmp_dir:
-                        clipper = LocInferenceWorker(
-                            source.path,
-                            int(request.parameters.get("start_ms", 0) or 0),
-                            int(request.parameters.get("end_ms", 0) or 0),
-                            "",
-                            "",
-                            "",
-                            [],
-                            float(source.metadata.get("fps", 25.0) or 25.0),
-                        )
-                        clip_path, offset = clipper._clip_video_if_needed(tmp_dir)
-                        asset = self._prepare_asset(clip_path, progress, cancel_event)
-                        time_offsets[item.item_id] = (
-                            int(time_offsets.get(item.item_id, 0)) + int(offset)
-                        )
-                if asset is None:
-                    asset = self._prepare_asset(source.path, progress, cancel_event)
-                inputs.append(source.to_wire(asset))
-                prepared_count += 1
-                progress("Preparing inputs", prepared_count, max(1, all_inputs))
-            wire_items.append({
-                "item_id": item.item_id,
-                "sample_id": item.sample_id,
-                "inputs": inputs,
-            })
-
-        job_body = {
-            "idempotency_key": request.request_id,
-            "model_id": request.model_id,
-            "task": request.task,
-            "schema": copy.deepcopy(request.schema),
-            "parameters": copy.deepcopy(request.parameters),
-            "items": wire_items,
-        }
-        if time_offsets:
-            job_body["parameters"]["input_time_offsets_ms"] = copy.deepcopy(time_offsets)
-        progress("Submitting inference job", 0, 0)
-        job = self._request(
-            "POST", "/jobs", json=job_body, headers={"Idempotency-Key": request.request_id}
-        ).json()
-        job_id = str(job.get("id") or job.get("job_id") or "")
-        if not job_id:
-            raise InferenceError("Job response did not include an id.", code="invalid_response")
-
-        poll_seconds = float(self.capabilities.get("poll_interval_seconds", 1.0) or 1.0)
-        try:
-            while True:
-                if _cancelled(cancel_event):
-                    try:
-                        self._request("DELETE", f"/jobs/{quote(job_id, safe='')}")
-                    finally:
-                        raise InferenceError("Inference cancelled.", code="cancelled")
-                response = self._request("GET", f"/jobs/{quote(job_id, safe='')}")
-                state = response.json()
-                status = str(state.get("status") or "").lower()
-                progress(str(state.get("message") or status.title() or "Waiting for inference"), int(state.get("progress", 0) or 0), 100)
-                if status == "succeeded":
-                    result_payload = state.get("result")
-                    if not isinstance(result_payload, dict):
-                        result_payload = self._request("GET", f"/jobs/{quote(job_id, safe='')}/result").json()
-                    if time_offsets:
-                        raw_items = result_payload.get("items", []) if isinstance(result_payload, dict) else []
-                        for index, raw_item in enumerate(raw_items if isinstance(raw_items, list) else []):
-                            if not isinstance(raw_item, dict):
-                                continue
-                            item_id = str(raw_item.get("item_id") or (request.items[index].item_id if index < len(request.items) else ""))
-                            offset = int(time_offsets.get(item_id, 0) or 0)
-                            _project_localization_events(
-                                raw_item.get("events"), offset
-                            )
-                    return validate_result_payload(request, result_payload)
-                if status in {"failed", "cancelled"}:
-                    error = state.get("error") if isinstance(state.get("error"), dict) else {}
-                    raise InferenceError(
-                        str(error.get("message") or state.get("message") or f"Job {status}."),
-                        code=str(error.get("code") or status),
-                        retryable=bool(error.get("retryable", False)),
-                        details=error.get("details"),
-                    )
-                retry_after = response.headers.get("Retry-After")
-                try:
-                    delay = float(retry_after) if retry_after else poll_seconds
-                except ValueError:
-                    delay = poll_seconds
-                cancel_event.wait(max(0.1, min(delay, 10.0))) if cancel_event is not None else time.sleep(max(0.1, min(delay, 10.0)))
-        except Exception:
-            raise
-
-    def _shared_asset(self, path: str) -> dict[str, Any] | None:
-        target = os.path.realpath(path)
-        mappings = self.shared_mappings if self.shared_mappings is not None else load_shared_mappings(self.settings)
-        for mapping in mappings:
-            root = os.path.realpath(mapping["local_root"])
-            try:
-                if os.path.commonpath([target, root]) != root:
-                    continue
-            except ValueError:
-                continue
-            relative = os.path.relpath(target, root).replace(os.sep, "/")
-            return {"kind": "shared", "uri": f"shared://{mapping['root_id']}/{quote(relative)}"}
-        return None
-
-    def _manifest_key(self, path: str) -> tuple[str, os.stat_result]:
-        stat = os.stat(path)
-        raw = f"{self.base_url}|{os.path.realpath(path)}|{stat.st_size}|{stat.st_mtime_ns}"
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest(), stat
-
-    def _prepare_asset(self, path: str, progress, cancel_event):
-        if not os.path.isfile(path):
-            raise InferenceError(f"Input file does not exist: {path}", code="input_not_found")
-        shared = self._shared_asset(path)
-        if shared is not None:
-            return shared
-
-        key, stat = self._manifest_key(path)
-        manifests = load_upload_manifests(self.settings)
-        saved = manifests.get(key) if isinstance(manifests.get(key), dict) else {}
-        if saved.get("asset_id"):
-            return {"kind": "upload", "id": str(saved["asset_id"])}
-
-        upload_id = str(saved.get("upload_id") or "")
-        state = None
-        if upload_id:
-            try:
-                state = self._request("GET", f"/uploads/{quote(upload_id, safe='')}").json()
-            except InferenceError as exc:
-                if exc.code not in {"http_404", "upload_not_found"}:
-                    raise
-        if not isinstance(state, dict):
-            state = self._request("POST", "/uploads", json={
-                "filename": os.path.basename(path),
-                "size": stat.st_size,
-                "mtime_ns": stat.st_mtime_ns,
-            }).json()
-            upload_id = str(state.get("id") or state.get("upload_id") or "")
-            if not upload_id:
-                raise InferenceError("Upload response did not include an id.", code="invalid_response")
-            manifests[key] = {
-                "upload_id": upload_id,
-                "path": os.path.realpath(path),
-                "size": stat.st_size,
-                "mtime_ns": stat.st_mtime_ns,
-            }
-            save_upload_manifests(self.settings, manifests)
-
-        part_size = int(state.get("part_size") or self.capabilities.get("multipart_part_size") or 64 * 1024 * 1024)
-        if part_size <= 0:
-            raise InferenceError("Server returned an invalid multipart part size.", code="invalid_response")
-        completed = {int(part.get("number")) for part in state.get("completed_parts", []) if isinstance(part, dict) and part.get("number")}
-        total_parts = int(math.ceil(stat.st_size / part_size))
-        pending = [number for number in range(1, total_parts + 1) if number not in completed]
-        manifests = load_upload_manifests(self.settings)
-        manifest_entry = manifests.setdefault(key, {"upload_id": upload_id})
-        manifest_parts = manifest_entry.setdefault("parts", {})
-        for part in state.get("completed_parts", []) or []:
-            if not isinstance(part, dict) or not part.get("number"):
-                continue
-            manifest_parts[str(int(part["number"]))] = {
-                field: str(part.get(field) or "") for field in ("etag", "sha256")
-            }
-        save_upload_manifests(self.settings, manifests)
-        uploaded_bytes = min(stat.st_size, len(completed) * part_size)
-        progress("Uploading inputs", uploaded_bytes, stat.st_size)
-
-        max_workers = min(3, int(self.capabilities.get("max_parallel_parts", 3) or 3), max(1, len(pending)))
-        if pending:
-            try:
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {
-                    executor.submit(
-                        self._upload_part_with_retry,
-                        path,
-                        upload_id,
-                        number,
-                        part_size,
-                        stat.st_size,
-                        state,
-                        cancel_event,
-                    ): number
-                    for number in pending
-                    }
-                    for future in as_completed(futures):
-                        _check_cancelled(cancel_event)
-                        number, length, etag, checksum = future.result()
-                        uploaded_bytes += length
-                        progress("Uploading inputs", min(uploaded_bytes, stat.st_size), stat.st_size)
-                        manifests = load_upload_manifests(self.settings)
-                        entry = manifests.setdefault(key, {"upload_id": upload_id})
-                        parts = entry.setdefault("parts", {})
-                        parts[str(number)] = {"etag": etag, "sha256": checksum}
-                        save_upload_manifests(self.settings, manifests)
-            except InferenceError as exc:
-                if exc.code == "cancelled":
-                    try:
-                        self.abort_upload(upload_id)
-                    except InferenceError:
-                        pass
-                raise
-
-        manifests = load_upload_manifests(self.settings)
-        part_records = manifests.get(key, {}).get("parts", {})
-        complete = self._request("POST", f"/uploads/{quote(upload_id, safe='')}/complete", json={
-            "parts": [
-                {"number": number, **dict(part_records.get(str(number), {}))}
-                for number in range(1, total_parts + 1)
-            ]
-        }).json()
-        asset_id = str(complete.get("asset_id") or complete.get("id") or upload_id)
-        manifests.setdefault(key, {})["asset_id"] = asset_id
-        save_upload_manifests(self.settings, manifests)
-        return {"kind": "upload", "id": asset_id}
-
-    def _part_spec(self, state: dict, upload_id: str, number: int) -> dict[str, Any]:
-        for part in state.get("parts", []) or []:
-            if isinstance(part, dict) and int(part.get("number", 0) or 0) == number:
-                return part
-        template = state.get("part_url_template")
-        if template:
-            return {"number": number, "url": str(template).replace("{part_number}", str(number))}
-        return {"number": number, "url": self._url(f"/uploads/{quote(upload_id, safe='')}/parts/{number}")}
-
-    @staticmethod
-    def _part_checksum(path: str, offset: int, length: int, cancel_event) -> str:
-        digest = hashlib.sha256()
-        remaining = length
-        with open(path, "rb") as handle:
-            handle.seek(offset)
-            while remaining:
-                _check_cancelled(cancel_event)
-                chunk = handle.read(min(1024 * 1024, remaining))
-                if not chunk:
-                    raise InferenceError("Input file changed during upload.", code="input_changed")
-                digest.update(chunk)
-                remaining -= len(chunk)
-        return digest.hexdigest()
-
-    @staticmethod
-    def _part_stream(path: str, offset: int, length: int, cancel_event):
-        remaining = length
-        with open(path, "rb") as handle:
-            handle.seek(offset)
-            while remaining:
-                _check_cancelled(cancel_event)
-                chunk = handle.read(min(1024 * 1024, remaining))
-                if not chunk:
-                    raise InferenceError("Input file changed during upload.", code="input_changed")
-                remaining -= len(chunk)
-                yield chunk
-
-    def _upload_part_with_retry(self, path, upload_id, number, part_size, file_size, state, cancel_event):
-        offset = (number - 1) * part_size
-        length = min(part_size, file_size - offset)
-        checksum = self._part_checksum(path, offset, length, cancel_event)
-        last_error = None
-        current_state = state
-        for attempt in range(5):
-            _check_cancelled(cancel_event)
-            spec = self._part_spec(current_state, upload_id, number)
-            headers = {str(k): str(v) for k, v in dict(spec.get("headers") or {}).items()}
-            headers.setdefault("Content-Length", str(length))
-            checksum_header = str(spec.get("checksum_header") or "")
-            if not checksum_header and str(spec.get("url") or "").startswith(self.base_url):
-                checksum_header = "X-Content-SHA256"
-            if checksum_header:
-                headers.setdefault(checksum_header, checksum)
-            try:
-                response = self._request(
-                    str(spec.get("method") or "PUT").upper(),
-                    str(spec["url"]),
-                    headers=headers,
-                    content=self._part_stream(path, offset, length, cancel_event),
-                    timeout=httpx.Timeout(30.0, read=300.0, write=300.0),
+            if not item.inputs or any(source.type != "video" for source in item.inputs):
+                raise InferenceError(
+                    "Official remote inference requires video inputs.",
+                    code="invalid_request",
                 )
-                returned_checksum = str(
-                    response.headers.get("X-Content-SHA256")
-                    or response.headers.get("X-Checksum-SHA256")
-                    or ""
-                ).strip()
-                if returned_checksum and returned_checksum != checksum:
+            if request.task == "question_answer" and len(item.inputs) != 1:
+                raise InferenceError(
+                    "Remote VQA requires exactly one video input per sample.",
+                    code="invalid_request",
+                )
+            if descriptor.max_inputs is not None and len(item.inputs) > descriptor.max_inputs:
+                raise InferenceError(
+                    f"This remote model accepts at most {descriptor.max_inputs} video input(s) per sample.",
+                    code="invalid_request",
+                )
+            for source in item.inputs:
+                if not os.path.isfile(source.path):
                     raise InferenceError(
-                        f"Checksum mismatch for upload part {number}.",
-                        code="checksum_mismatch",
-                        retryable=True,
+                        f"Input file does not exist: {source.path}",
+                        code="input_not_found",
                     )
-                return number, length, response.headers.get("ETag", "").strip('"'), checksum
-            except InferenceError as exc:
-                last_error = exc
-                if not exc.retryable and exc.code not in {"http_401", "http_403", "http_408", "http_429"}:
-                    break
-                if exc.code in {"http_401", "http_403"}:
-                    current_state = self._request("GET", f"/uploads/{quote(upload_id, safe='')}").json()
-                delay = min(8.0, (2**attempt) * 0.25 + random.random() * 0.25)
-                cancel_event.wait(delay) if cancel_event is not None else time.sleep(delay)
-        raise last_error or InferenceError("Part upload failed.", code="upload_failed", retryable=True)
 
-    def abort_upload(self, upload_id: str):
-        self._request("DELETE", f"/uploads/{quote(str(upload_id), safe='')}")
+        runner = self._build_runner(request)
+        results = []
+        total = len(request.items)
+        progress("Starting remote inference", 0, total)
+        for index, item in enumerate(request.items, start=1):
+            _check_cancelled(cancel_event)
+            progress(f"Running remote inference ({index}/{total})", index - 1, total)
+            try:
+                raw = self._run_item(runner, request, item)
+            except InferenceError:
+                raise
+            except Exception as exc:
+                raise self._inference_error(exc) from exc
+            _check_cancelled(cancel_event)
+            results.append(self._normalize_item(request, item, raw))
+            progress(f"Completed remote inference ({index}/{total})", index, total)
+        return validate_result_payload(request, {"items": results})
+
+    def _build_runner(self, request: InferenceRequest):
+        from opensportslib.apis import ClassificationModel, LocalizationModel, VQAModel
+
+        model_class = {
+            "classification": ClassificationModel,
+            "localization": LocalizationModel,
+            "question_answer": VQAModel,
+        }[request.task]
+        try:
+            return model_class(
+                remote=self.base_url,
+                remote_model_id=request.model_id,
+            )
+        except Exception as exc:
+            mapped = self._inference_error(exc)
+            if mapped.retryable:
+                raise mapped from exc
+            raise InferenceError(
+                f"Could not load the remote model configuration for {request.model_id}: {exc}",
+                code="model_config_unavailable",
+            ) from exc
+
+    def _run_item(self, runner, request, item):
+        sources = item.inputs
+        if request.task == "localization" and (
+            int(request.parameters.get("start_ms", 0) or 0) > 0
+            or int(request.parameters.get("end_ms", 0) or 0) > 0
+        ):
+            from controllers.localization.loc_inference import LocInferenceWorker
+
+            with tempfile.TemporaryDirectory(prefix="vat_remote_clip_") as tmp_dir:
+                prepared_sources = []
+                clip_offsets = []
+                for index, source in enumerate(sources):
+                    clip_dir = os.path.join(tmp_dir, str(index))
+                    os.makedirs(clip_dir, exist_ok=True)
+                    clipper = LocInferenceWorker(
+                        source.path,
+                        int(request.parameters.get("start_ms", 0) or 0),
+                        int(request.parameters.get("end_ms", 0) or 0),
+                        "",
+                        "",
+                        "",
+                        [],
+                        float(source.metadata.get("fps", 25.0) or 25.0),
+                    )
+                    video_path, clip_offset = clipper._clip_video_if_needed(clip_dir)
+                    prepared = copy.deepcopy(source)
+                    prepared.path = video_path
+                    prepared_sources.append(prepared)
+                    clip_offsets.append(int(clip_offset or 0))
+                prediction = self._infer_inputs(
+                    runner, request, item, prepared_sources
+                )
+            offset = int(item.timeline_offset_ms or 0) + min(clip_offsets, default=0)
+        else:
+            prediction = self._infer_inputs(runner, request, item, sources)
+            offset = int(item.timeline_offset_ms or 0)
+        if request.task == "localization":
+            data = prediction.get("data") if isinstance(prediction, dict) else None
+            if isinstance(data, list):
+                for raw_item in data:
+                    if isinstance(raw_item, dict):
+                        _project_localization_events(raw_item.get("events"), offset)
+        return prediction
+
+    def _infer_inputs(self, runner, request, item, sources):
+        options = self._task_options(request, item)
+        if request.task == "question_answer":
+            return self._infer_vqa(
+                runner, request, item, sources[0].path, options
+            )
+        if len(sources) > 1:
+            return self._infer_manifest(runner, request, item, sources, options)
+        return runner.infer(
+            video_path=sources[0].path,
+            use_wandb=False,
+            remote_task_options=options,
+        )
+
+    @staticmethod
+    def _infer_manifest(runner, request, item, sources, options):
+        sample = {
+            "id": item.sample_id,
+            "inputs": [source.to_wire() for source in sources],
+            "metadata": copy.deepcopy(options.get("sample_metadata") or {}),
+        }
+        if request.task == "localization":
+            sample["events"] = []
+        manifest = {
+            "version": "2.0",
+            "task": request.task,
+            "labels": copy.deepcopy(options.get("label_schema") or {}),
+            "data": [sample],
+        }
+        with tempfile.TemporaryDirectory(prefix="vat_remote_manifest_") as tmp_dir:
+            manifest_path = os.path.join(tmp_dir, "request.json")
+            with open(manifest_path, "w", encoding="utf-8") as handle:
+                json.dump(manifest, handle)
+            return runner.infer(
+                test_set=manifest_path,
+                remote_mode="full_test_set",
+                use_wandb=False,
+                remote_task_options=options,
+            )
+
+    def _infer_vqa(self, runner, request, item, video_path, options):
+        question = str(request.parameters.get("question") or "").strip()
+        if not question:
+            raise InferenceError("VQA inference requires a question.", code="invalid_request")
+        key = self._vqa_session_key(request, item)
+        session_id = self._vqa_sessions.get(key)
+        if session_id:
+            try:
+                prediction = runner.infer(
+                    question=question,
+                    session_id=session_id,
+                )
+                self._vqa_sessions.put(key, session_id)
+                return prediction
+            except Exception as exc:
+                if not self._stale_session_error(exc):
+                    raise
+                self._vqa_sessions.discard(key)
+
+        prediction = runner.infer(
+            video_path=video_path,
+            question=question,
+            use_wandb=False,
+            remote_task_options=options,
+        )
+        session_id = str(getattr(runner, "last_remote_session_id", None) or "")
+        if session_id:
+            self._vqa_sessions.put(key, session_id)
+        return prediction
+
+    def _task_options(self, request, item) -> dict[str, Any]:
+        source = item.inputs[0]
+        options = {
+            "sample_id": item.sample_id,
+            "sample_metadata": copy.deepcopy(item.sample.get("metadata") or {}),
+            "fps": float(source.metadata.get("fps", 25.0) or 25.0),
+        }
+        if request.task in {"classification", "localization"}:
+            head = str(request.parameters.get("head") or "action")
+            head_schema = request.schema.get(head) or request.schema.get("action")
+            if isinstance(head_schema, dict):
+                options["label_schema"] = {"action": copy.deepcopy(head_schema)}
+            elif request.parameters.get("labels"):
+                options["label_schema"] = {
+                    "action": {
+                        "type": "single_label",
+                        "labels": list(request.parameters["labels"]),
+                    }
+                }
+        return options
+
+    def _vqa_session_key(self, request, item) -> tuple:
+        source_path = os.path.realpath(item.inputs[0].path)
+        stat = os.stat(source_path)
+        return (
+            self.base_url,
+            request.model_id,
+            item.sample_id,
+            source_path,
+            stat.st_size,
+            stat.st_mtime_ns,
+        )
+
+    @staticmethod
+    def _stale_session_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "http 404" in message or "http 410" in message
+
+    @staticmethod
+    def _inference_error(exc: Exception) -> InferenceError:
+        if isinstance(
+            exc,
+            (ConnectionError, TimeoutError, httpx.TransportError, httpx.TimeoutException),
+        ):
+            return InferenceError(str(exc), code="network_error", retryable=True)
+        message = str(exc)
+        lower = message.lower()
+        if "timed out" in lower or "timeout" in lower or "could not reach" in lower:
+            return InferenceError(message, code="network_error", retryable=True)
+        if "http 404" in lower:
+            return InferenceError(message, code="model_not_found")
+        if "http 4" in lower:
+            return InferenceError(message, code="invalid_request")
+        return InferenceError(message, code="inference_error")
+
+    @staticmethod
+    def _normalize_item(request, request_item, prediction):
+        raw_items = prediction.get("data") if isinstance(prediction, dict) else None
+        if not isinstance(raw_items, list) or len(raw_items) != 1:
+            raise InferenceError(
+                "Direct remote inference must return one OSL data item.",
+                code="invalid_result",
+            )
+        item = copy.deepcopy(raw_items[0])
+        if not isinstance(item, dict):
+            raise InferenceError("Remote prediction item must be an object.", code="invalid_result")
+        item["item_id"] = request_item.item_id
+        item["sample_id"] = request_item.sample_id
+        if request.task == "classification":
+            target_head = str(request.parameters.get("head") or "action")
+            labels = item.get("labels") if isinstance(item.get("labels"), dict) else {}
+            if target_head not in labels and "action" in labels:
+                labels[target_head] = labels.pop("action")
+            item["labels"] = labels
+        elif request.task == "localization":
+            target_head = str(request.parameters.get("head") or "action")
+            events = item.get("events") if isinstance(item.get("events"), list) else []
+            for event in events:
+                if isinstance(event, dict) and event.get("head") == "action":
+                    event["head"] = target_head
+            item["events"] = events
+        elif request.task == "question_answer" and "answer" not in item:
+            if item.get("answer_text") is not None:
+                item["answer"] = str(item.get("answer_text") or "")
+            elif isinstance(item.get("answers"), list) and item["answers"]:
+                first = copy.deepcopy(item["answers"][0])
+                if isinstance(first, dict) and first.get("answer_text") is not None:
+                    first["text"] = str(first.pop("answer_text") or "")
+                item["answer"] = first
+        return item

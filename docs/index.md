@@ -19,8 +19,8 @@ The Video Annotation Tool is a PyQt6 desktop application for loading, editing, a
 - Preserve absolute Localization and Dense Description times while modalities
   are added, removed, filtered, or resynchronized.
 - Download from and upload to Hugging Face from the **Data** menu.
-- Run local OpenSportsLib models or asynchronous remote inference jobs with
-  resumable large-file transfer and smart-result review.
+- Run local OpenSportsLib models or use its official inference server for
+  Classification, Localization, and Q/A with smart-result review.
 
 ## Quick Links
 

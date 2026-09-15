@@ -1,11 +1,12 @@
 import json
 import os
 import threading
+from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QAbstractItemView, QPushButton
+from PyQt6.QtWidgets import QAbstractItemView, QMessageBox, QPushButton
 
 from controllers.classification import ClassificationEditorController
 from controllers.dense_description import DenseEditorController
@@ -13,7 +14,13 @@ from controllers.description import DescEditorController
 from controllers.inference_controller import InferenceController
 from controllers.localization import LocalizationEditorController
 from controllers.question_answer import QAEditorController
-from inference_settings import LOCAL_MODELS_KEY
+from inference_settings import (
+    DEFAULT_SERVER_URL,
+    LOCAL_MODELS_KEY,
+    REMOTE_ADMIN_TOKEN_KEY,
+    REMOTE_ENABLED_KEY,
+    SERVER_URL_KEY,
+)
 from inference_types import (
     InferenceInput,
     InferenceItem,
@@ -26,7 +33,12 @@ from inference_types import (
 )
 from ui.dense_description import DenseAnnotationPanel
 from ui.description import DescriptionAnnotationPanel
-from ui.dialogs import ApplicationSettingsDialog, HfLocalModelDialog, InferenceRunDialog
+from ui.dialogs import (
+    ApplicationSettingsDialog,
+    HfLocalModelDialog,
+    InferenceRunDialog,
+    RemoteModelRegistrationDialog,
+)
 from ui.classification import ClassificationAnnotationPanel
 from ui.localization import LocalizationAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
@@ -97,7 +109,7 @@ def test_inference_settings_payload_round_trip(qtbot, tmp_path):
     qtbot.addWidget(dialog)
     dialog.inference_remote_enabled_checkbox.setChecked(True)
     dialog.inference_server_url_edit.setText("http://127.0.0.1:9000/")
-    dialog._append_mapping(str(tmp_path), "datasets")
+    dialog.inference_admin_token_edit.setText("saved-admin-token")
     dialog._append_local_model({
         "task": "question_answer",
         "id": "vqa",
@@ -108,7 +120,8 @@ def test_inference_settings_payload_round_trip(qtbot, tmp_path):
     payload = dialog.inference_payload()
     assert payload["remote_enabled"] is True
     assert payload["server_url"] == "http://127.0.0.1:9000"
-    assert payload["shared_mappings"][0]["root_id"] == "datasets"
+    assert "shared_mappings" not in payload
+    assert payload["admin_token"] == "saved-admin-token"
     assert any(model["task"] == "question_answer" for model in payload["local_models"])
 
 
@@ -121,6 +134,9 @@ def test_remote_setup_controls_are_settings_only_and_follow_enablement(qtbot):
     assert not dialog.inference_server_url_edit.isEnabled()
     assert not dialog.inference_test_button.isEnabled()
     assert not dialog.inference_refresh_models_button.isEnabled()
+    assert dialog.inference_server_url_edit.text() == "http://127.0.0.1:8000"
+    assert not hasattr(dialog, "shared_mapping_table")
+    assert dialog.inference_admin_token_edit.text() == ""
     assert (
         dialog.remote_model_table.editTriggers()
         == QAbstractItemView.EditTrigger.NoEditTriggers
@@ -130,6 +146,153 @@ def test_remote_setup_controls_are_settings_only_and_follow_enablement(qtbot):
     assert dialog.inference_server_url_edit.isEnabled()
     assert dialog.inference_test_button.isEnabled()
     assert dialog.inference_refresh_models_button.isEnabled()
+    assert not dialog.register_remote_model_button.isEnabled()
+    dialog.inference_admin_token_edit.setText("session-secret")
+    assert dialog.register_remote_model_button.isEnabled()
+    assert dialog.inference_payload()["admin_token"] == "session-secret"
+    dialog.reject()
+    assert dialog.inference_admin_token_edit.text() == ""
+
+
+@pytest.mark.gui
+def test_remote_admin_token_loads_from_application_settings(qtbot, tmp_path):
+    settings = QSettings(
+        str(tmp_path / "inference.ini"), QSettings.Format.IniFormat
+    )
+    settings.setValue(REMOTE_ADMIN_TOKEN_KEY, "persisted-secret")
+
+    dialog = ApplicationSettingsDialog("2,4", "1,5", settings=settings)
+    qtbot.addWidget(dialog)
+
+    assert dialog.inference_admin_token_edit.text() == "persisted-secret"
+    assert dialog.inference_payload()["admin_token"] == "persisted-secret"
+
+
+@pytest.mark.gui
+def test_applying_inference_settings_persists_remote_admin_token(tmp_path):
+    from main_window import VideoAnnotationWindow
+
+    settings = QSettings(
+        str(tmp_path / "inference.ini"), QSettings.Format.IniFormat
+    )
+    settings.setValue(REMOTE_ENABLED_KEY, True)
+    settings.setValue(SERVER_URL_KEY, DEFAULT_SERVER_URL)
+    owner = SimpleNamespace(
+        dataset_explorer_controller=SimpleNamespace(settings=settings),
+        inference_controller=SimpleNamespace(clear_remote_sessions=lambda: None),
+    )
+
+    VideoAnnotationWindow._save_inference_settings(
+        owner,
+        {
+            "remote_enabled": True,
+            "server_url": DEFAULT_SERVER_URL,
+            "admin_token": "persisted-secret",
+            "local_models": [],
+        },
+    )
+
+    assert settings.value(REMOTE_ADMIN_TOKEN_KEY) == "persisted-secret"
+
+
+@pytest.mark.gui
+def test_remote_registration_dialog_supports_hf_and_server_local(qtbot):
+    dialog = RemoteModelRegistrationDialog()
+    qtbot.addWidget(dialog)
+    dialog.task_combo.setCurrentIndex(2)
+    dialog.repository_edit.setText("org/vqa-model")
+    assert dialog.payload() == {
+        "action": "register_huggingface",
+        "task": "question_answer",
+        "repository_id": "org/vqa-model",
+    }
+
+    dialog.source_combo.setCurrentIndex(1)
+    dialog.task_combo.setCurrentIndex(1)
+    dialog.model_id_edit.setText("local:spotter")
+    dialog.weights_path_edit.setText("/srv/models/spotter/model.pth")
+    dialog.config_path_edit.setText("/srv/models/spotter/config.yaml")
+    assert dialog.payload() == {
+        "action": "register_local",
+        "task": "localization",
+        "model_id": "local:spotter",
+        "weights_path": "/srv/models/spotter/model.pth",
+        "config_path": "/srv/models/spotter/config.yaml",
+    }
+
+
+@pytest.mark.gui
+def test_remote_registry_table_shows_state_default_and_emits_admin_actions(
+    qtbot, monkeypatch
+):
+    dialog = ApplicationSettingsDialog("2,4", "1,5")
+    qtbot.addWidget(dialog)
+    dialog.inference_remote_enabled_checkbox.setChecked(True)
+    dialog.inference_admin_token_edit.setText("session-secret")
+    ready = ModelDescriptor(
+        "ready-model",
+        "Ready",
+        "classification",
+        status="ready",
+        is_default=False,
+    )
+    registering = ModelDescriptor(
+        "loading-model",
+        "Loading",
+        "localization",
+        available=False,
+        status="registering",
+    )
+    dialog.set_remote_model_catalog([ready, registering])
+
+    assert dialog.remote_model_table.columnCount() == 4
+    assert dialog.remote_model_table.item(0, 2).text() == "ready"
+    assert dialog.remote_model_table.item(1, 2).text() == "registering"
+    assert dialog.inference_setup_widget._remote_refresh_timer.isActive()
+    dialog.stop_remote_model_polling()
+    assert not dialog.inference_setup_widget._remote_refresh_timer.isActive()
+    dialog.set_remote_model_catalog([ready, registering])
+    dialog.remote_model_table.selectRow(0)
+    assert dialog.set_remote_default_button.isEnabled()
+
+    with qtbot.waitSignal(
+        dialog.inferenceRemoteModelOperationRequested, timeout=500
+    ) as default_request:
+        dialog.set_remote_default_button.click()
+    assert default_request.args == [
+        "set_default",
+        {
+            "task": "classification",
+            "model_id": "ready-model",
+            "server_url": "http://127.0.0.1:8000",
+            "admin_token": "session-secret",
+        },
+    ]
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    with qtbot.waitSignal(
+        dialog.inferenceRemoteModelOperationRequested, timeout=500
+    ) as unregister_request:
+        dialog.unregister_remote_model_button.click()
+    assert unregister_request.args[0] == "unregister"
+    assert unregister_request.args[1]["model_id"] == "ready-model"
+
+    default_ready = ModelDescriptor(
+        "ready-model",
+        "Ready",
+        "classification",
+        status="ready",
+        is_default=True,
+    )
+    dialog.set_remote_model_catalog([default_ready])
+    assert not dialog.inference_setup_widget._remote_refresh_timer.isActive()
+    assert dialog.remote_model_table.currentRow() == 0
+    assert dialog.remote_model_table.item(0, 3).text() == "Yes"
+    assert not dialog.set_remote_default_button.isEnabled()
 
 
 @pytest.mark.gui
@@ -355,6 +518,45 @@ def test_run_dialog_contains_execution_controls_only(qtbot, tmp_path):
     assert "head" not in payload
     assert not hasattr(dialog, "configuration_widget")
     assert not hasattr(dialog, "backend_combo")
+
+
+@pytest.mark.gui
+def test_run_dialog_obeys_remote_model_multi_video_limit(qtbot):
+    inputs = [
+        InferenceInput("/tmp/front.mp4"),
+        InferenceInput("/tmp/reverse.mp4"),
+    ]
+    dialog = InferenceRunDialog("classification", inputs)
+    qtbot.addWidget(dialog)
+    dialog.set_models([
+        InferenceModelChoice(
+            "remote",
+            ModelDescriptor(
+                "multi", "Multi-view classifier", "classification", max_inputs=None
+            ),
+        )
+    ])
+
+    dialog._accept_if_valid()
+
+    assert dialog.result() == dialog.DialogCode.Accepted
+    assert dialog.payload()["inputs"] == inputs
+
+    limited = InferenceRunDialog("classification", inputs)
+    qtbot.addWidget(limited)
+    limited.set_models([
+        InferenceModelChoice(
+            "remote",
+            ModelDescriptor(
+                "single", "Single-view classifier", "classification", max_inputs=1
+            ),
+        )
+    ])
+
+    limited._accept_if_valid()
+
+    assert limited.result() == limited.DialogCode.Rejected
+    assert limited.availability_label.text() == "This model accepts at most 1 input(s)."
 
 
 @pytest.mark.gui

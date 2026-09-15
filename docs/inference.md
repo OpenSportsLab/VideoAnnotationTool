@@ -1,15 +1,18 @@
 # Local and Remote Inference
 
 The application can run models in the local Python process through
-OpenSportsLib or submit asynchronous jobs to one remote inference server.
-Classification, Localization, Description, Dense Description, and Q/A share
-the same model-selection, input-selection, progress, cancellation, and error
-workflow.
+OpenSportsLib or use the official OpenSportsLib inference server. All annotation
+modes share the same model-selection, queue, review, and error workflow. Remote
+inference currently supports Classification and Localization with one or more
+videos per sample, and Q/A with exactly one video per sample. Remote Description,
+Dense Description, and H5 inference are not available.
+VAT pins OpenSportsLib `0.3.1.dev12`, whose remote-only wrappers and public
+server model registry are required by this integration.
 
 ## Configure inference
 
 Open **Edit → Settings → Inference**. This is the only inference setup
-surface; the run dialog never edits models, servers, or mappings.
+surface; the run dialog never edits models or servers.
 
 - **Local Models** is an editable registry containing task, model ID, display
   name, config YAML, and optional weights. Fresh installations start with an
@@ -46,21 +49,36 @@ surface; the run dialog never edits models, servers, or mappings.
   artifacts from sources you trust.
 - **Remote Server** has an explicit **Enable remote inference** switch. When it
   is off, discovery and execution never construct an HTTP client. When it is
-  on, enter the base URL and use **Test Connection**. The client calls
-  `/api/v1/capabilities` and reports the API version and shared-root IDs.
-- **Refresh Models** reads the server-owned model catalog into a read-only
-  table. Remote models are configured by the server, not edited in the client.
-- Add a shared mapping when a local directory and a server storage root contain
-  the same files. A file below that directory is sent as
-  `shared://<root-id>/<relative-path>` and is not uploaded.
+  on, enter the base URL (default `http://127.0.0.1:8000`) and use **Test
+  Connection**. The client calls `/health` and reports API, Redis, worker, and
+  configured-model health.
+- **Refresh Models** reads the public server registry. The table shows every
+  `registering`, `ready`, `failed`, or `unregistering` model and marks task
+  defaults; only healthy `ready` models appear in **Run Inference…**. Server
+  task `vqa` appears as Q/A.
+- **Admin token** is saved in VAT's local application settings when you choose
+  **Apply** or **OK**. It is restored the next time Settings or VAT is opened,
+  but never enters project JSON or inference requests. VAT's settings storage
+  may not encrypt it, so use this only on a trusted workstation; clear the
+  field and apply the change to remove it. With a token, **Register Model…** adds
+  either a Hugging Face repository or server-local weights/config paths,
+  **Set as Default** changes the selected task default, and **Unregister**
+  removes a model after confirmation. These actions take effect immediately on
+  the external server; cancelling Settings does not undo them. Registration
+  and removal are asynchronous, and VAT refreshes transient status every two
+  seconds while Settings remains open.
+- Server-local paths must be visible to the server and are entered as text; VAT
+  deliberately does not open a client-side file picker for them. Shared-root
+  and resumable-upload settings from older VAT versions remain ignored.
 
 Connection tests and catalog refreshes use the current unsaved form values.
 Only **Apply** or **OK** persists the setup; **Cancel** leaves saved settings
 unchanged.
 
-Remote v1 has no authentication. Localhost HTTP is allowed. An HTTP server on
-another host is marked as unauthenticated and unencrypted; use it only on a
-trusted private network.
+Inference and public registry reads require no authentication. Registry changes
+require the server's `OSL_MODEL_ADMIN_TOKEN`. Localhost HTTP is allowed. An HTTP
+server on another host is unencrypted, so use it only on a trusted private
+network.
 
 ## Run inference
 
@@ -70,7 +88,8 @@ compatible model and inputs, then fill in the task options shown by the dialog.
 The model list combines saved Local models and, when enabled, discovered Remote
 models. Entries are prefixed **Local —** or **Remote —**; selecting one chooses
 the provider automatically. Local executes OpenSportsLib directly and never
-contacts the configured server. Remote uses the `/api/v1` API.
+contacts the configured server. Remote constructs the matching
+`opensportslib.apis` wrapper and uses its official remote client.
 
 Local Classification and Localization resolve their device in a temporary
 per-job configuration; the cached or manually selected model config is never
@@ -106,7 +125,7 @@ or Hugging Face-cached config. The runtime YAML replaces publisher-specific
 test-data, output, and dataloader-worker defaults. The directory containing the
 test JSON is always the data root for relative input paths, and test workers are
 fixed at zero. The config's device and GPU fields are preserved so
-OpenSportsLib dev4 remains the sole device-resolution authority. The tool also
+OpenSportsLib remains the sole device-resolution authority. The tool also
 leaves local-checkpoint authentication to OpenSportsLib and always disables
 W&B for this minimal inference workflow. Every run requires either `--config`
 or `--hf-model`, plus `--output`; batch runs also require `--test-set`.
@@ -171,10 +190,12 @@ reported briefly and corrected in application Settings. It contains runtime
 options only: Classification scope, compatible inputs, language or question
 where applicable, and time ranges only for models that support ranges.
 Classification and Localization use the head already selected in their
-annotation panels. The last model that completes successfully is remembered
-separately for each task. Localization range uploads are clipped locally when
-shared storage is unavailable, and returned positions are translated back to
-the original sample timeline.
+annotation panels. The selected head is sent to the server as OSL's `action`
+schema and mapped back to the VAT head in results. The request also supplies
+the sample ID, FPS, and sample metadata. The last model that completes
+successfully is remembered separately for each task. Localization ranges are
+clipped locally before upload, and returned positions are translated back to
+the original sample timeline using both the clip and input-timeline offsets.
 
 Classification exposes current-sample and all-samples scope in this dialog; it
 does not have a separate batch-inference control. Its input list shows only the
@@ -197,10 +218,12 @@ or hidden preference is restored when a project workspace is shown again. The
 application status bar remains reserved for normal
 status messages. The dock shows both lanes, active and waiting jobs, progress,
 per-job **Cancel**, and **Cancel All**. Cancelling a waiting job removes it immediately;
-cancelling an active job remains `Cancelling` until its worker exits. The panel
-retains the latest 20 completed, failed, or cancelled jobs for the current
-application session and provides **Clear History**. **Details** shows a bounded,
-timestamped timeline of state, progress-stage, cancellation, and error messages.
+cancelling an active Remote job also removes it immediately and starts the next
+Remote request. Active Local cancellation remains in `Cancelling` until its
+worker exits. The panel retains the latest 20 completed, failed, or cancelled
+Local jobs and successful or failed Remote jobs for the current application
+session and provides **Clear History**. **Details** shows a bounded, timestamped
+timeline of state, progress-stage, cancellation, and error messages.
 Dataset navigation, playback, editing, saving, and tab switching remain
 available throughout.
 
@@ -215,30 +238,39 @@ redirected. Opening, creating, or closing a project cancels both active jobs,
 discards both waiting queues, and suppresses late results from the previous
 project.
 
-Remote jobs can usually be cancelled during upload or polling. Local
-OpenSportsLib calls may be indivisible, so cancellation can take effect only
-after the current library call returns; its late output is still suppressed.
-Queued Remote work is not submitted to the server before it becomes active.
+OpenSportsLib wrapper calls are indivisible. Cancelling active Local work leaves
+the job in `Cancelling` until the current call returns. Cancelling active Remote
+work instead forgets the request immediately: it disappears from the dock and
+history, its eventual signals and output are ignored, and the next queued Remote
+request starts at once. This is client-side abandonment; the already submitted
+server job may continue because the official server has no cancellation endpoint.
+A waiting request is cancelled immediately and is never submitted.
 
 Every annotation panel uses the same pending-result footer for Accept/Reject and
 bulk review only. Inference execution is centralized in the dock; there are no
 task-specific Smart, single-inference, or batch-inference buttons.
 
-## Large files
+## Direct uploads and VQA video reuse
 
-The client resolves each input in this order:
+For one-video Classification and Localization requests, media is sent directly
+to the official server as multipart form data. For a multi-video sample, VAT
+creates a disposable OSL manifest and lets the official client stage and upload
+the manifest with all of its media. Q/A remains one-video because a VQA server
+session owns one uploaded video. The current OpenSportsLib client buffers direct
+files or the staged archive in memory while building the upload request; VAT
+does not provide shared-path or resumable-transfer fallbacks. Plan memory use
+accordingly for large or multi-view samples.
 
-1. A configured shared-storage mapping.
-2. A previously completed upload for the same server, path, size, and modified
-   time.
-3. A resumable multipart upload.
+For the first Q/A question, VAT uploads the video and records the server's
+session ID in a private, in-memory cache. Another question for the same server,
+model, sample, real video path, file size, and modification time reuses that
+session without uploading the video again. Entries expire after 25 minutes.
+HTTP 404 or 410 from a reused session causes one automatic fresh upload and
+retry. Opening, creating, or closing a project, changing remote-server settings,
+or shutting down clears the cache. Session IDs are never stored in project JSON.
 
-Multipart state is application state, not project JSON. The server chooses the
-part size. The client uploads up to three parts concurrently, streams each part
-in bounded chunks, sends a SHA-256 checksum, retries transient failures up to
-five times, and records completed ETags/checksums. Restarting asks the server
-which parts already exist. Cancelling aborts the active job and an incomplete
-active upload.
+Session reuse avoids video transfer only. With the current server, earlier
+questions and answers are not conversational context for the model.
 
 ## Review predictions
 
@@ -264,45 +296,85 @@ to the preceding row at the end of the table. A transient rejection remains
 non-mutating; accepting, or rejecting a confidence-scored event loaded from JSON,
 uses the normal undoable history path.
 
-## Server API v1
+## Official OpenSportsLib server
 
-The client expects these JSON endpoints below `/api/v1`:
+VAT uses the FastAPI and RQ server in the OpenSportsLib repository's `server/`
+folder. From that repository root, install the server in a Python 3.12+
+environment and start its API, Redis, and worker:
 
-| Endpoint | Purpose |
+```bash
+uv venv --python 3.12 .venv
+source .venv/bin/activate
+uv pip install -e ./server
+cd server
+bash scripts/setup_env.sh
+./scripts/start_all.sh
+```
+
+Review `server/.env` before starting it. Set `OSL_MODEL_ADMIN_TOKEN` to enable
+VAT's model-management actions; leaving it empty disables administration. The
+API and worker must share their Redis queue and runtime directory. VAT uses
+these official endpoints without an `/api/v1` prefix:
+
+| Endpoint | VAT use |
 |---|---|
-| `GET /capabilities` | API version, tasks, polling interval, multipart limits, shared roots |
-| `GET /models?task=…` | Task-compatible model descriptors |
-| `POST /uploads` | Create or deduplicate a multipart upload |
-| `GET /uploads/{id}` | Resume state and refreshed part URLs |
-| `POST /uploads/{id}/complete` | Complete parts and return an asset ID |
-| `DELETE /uploads/{id}` | Abort an incomplete upload |
-| `POST /jobs` | Create an idempotent asynchronous inference job |
-| `GET /jobs/{id}` | Poll status and retrieve an inline result |
-| `GET /jobs/{id}/result` | Retrieve a non-inline successful result |
-| `DELETE /jobs/{id}` | Cancel a job |
+| `GET /health` | API, Redis, worker, and configured-model health |
+| `GET /models` | Public model IDs, tasks, and lifecycle states |
+| `GET /config-capabilities?task_type=…` | Identify each task's current default model |
+| `POST /models` | Authenticated Hugging Face or server-local registration |
+| `PUT /models/defaults/{task_type}` | Authenticated task-default update |
+| `DELETE /models/{model_id}` | Authenticated asynchronous removal |
+| `POST /predict` | Multipart video submission or session-based VQA follow-up |
+| `GET /jobs/{job_id}` | Poll asynchronous job status |
+| `GET /jobs/{job_id}/result` | Retrieve successful OSL predictions |
 
-Model descriptors use `id`, `display_name`, `task`, `version`, `available`,
-`unavailable_reason`, `accepted_input_types`, `min_inputs`, `max_inputs`, and
-`supports_time_range`.
+Single-video Classification and Localization call the official wrapper's
+`infer(video_path=..., remote_task_options=...)`. Multi-video samples call
+`infer(test_set=..., remote_mode="full_test_set")` with a temporary one-sample
+OSL manifest, using the official manifest-and-media upload path. Classification
+batches are submitted one sample at a time in queue order. Initial VQA calls
+`infer(video_path=..., question=...)` and caches the wrapper's
+`last_remote_session_id`; follow-up questions call `infer()` with that session
+ID and no video. VAT uses server defaults for advertised inference overrides.
 
-Jobs receive `idempotency_key`, `model_id`, `task`, `schema`, `parameters`, and
-`items`. Each item has `item_id`, `sample_id`, and inputs whose asset is either
-`{"kind":"shared","uri":"shared://…"}` or
-`{"kind":"upload","id":"…"}`. Job states are `queued`, `running`,
-`succeeded`, `failed`, and `cancelled`. Errors use `code`, `message`, `details`,
-and `retryable`; polling may return `Retry-After`.
+VAT normalizes the returned OSL `data` item into its existing private
+`InferenceResult` contract. Request-owned item and sample IDs remain canonical,
+`action` is mapped to the selected VAT head, and VQA `answer_text` is mapped to
+`answer`. No server job or session identifiers enter the OSL project document.
 
-Successful result items use the task-native field: `labels`, `events`,
-`captions`, `dense_captions`, or `answer`. Remote results must return the
-request's `item_id` (or a unique request `sample_id` for compatibility). The
-server returns exactly one result item per request item. The client rejects
-missing, excess, unknown, and duplicate result targets and replaces result-owned
-sample IDs with the canonical request mapping.
+### Developer architecture and contracts
 
-The Flask application should be a control plane behind a production WSGI
-server/reverse proxy. Model execution belongs in durable workers. Large media
-should go to S3-compatible multipart storage or an equivalent chunk store, not
-through one long-running Flask multipart request.
+`InferenceController` remains the queue and worker owner and now also owns the
+thread-safe, process-local VQA session cache. It supplies that cache to each
+request-scoped `RemoteInferenceProvider`. Project-generation changes and saved
+server-setting changes are routed by `MainWindow`, which clears the cache
+without exposing it to editor controllers. Shutdown clears it as well.
+
+`RemoteInferenceProvider` is the only official-server adapter. It discovers
+models, constructs `ClassificationModel`, `LocalizationModel`, or `VQAModel`
+with only `remote=server_url` and `remote_model_id=model_id`. Remote model IDs
+are independent of local weights and never trigger local config or Hugging Face
+resolution. `ModelDescriptor.status` and `is_default` expose registry state to
+Settings; `InferenceRequest`, `InferenceResult`, editor and queue signals,
+pending-review behavior, history mutations, and persisted OSL JSON remain
+unchanged. Effective acceptance still creates exactly one history entry;
+rejection and unreviewed inference create none.
+
+Authenticated registry operations run in a separate controller-owned worker,
+one at a time. `MainWindow` is the only cross-module route between Settings and
+that worker. The admin token is loaded from and saved to application-local
+QSettings, then copied into worker memory only for a registry operation. It
+never enters logs, inference requests, or project data. Closing Settings stops
+its presentation polling but does not roll back an operation already accepted
+by the server.
+
+Network failures and timeouts are retryable `InferenceError`s. HTTP 4xx and
+model execution failures are non-retryable, except cached-session HTTP 404/410,
+which performs one fresh VQA upload. On Remote cancellation the controller
+detaches the blocking worker, removes all request state without adding a history
+entry, ignores late signals, and dispatches the next Remote request immediately.
+Detached workers are still retained until they exit so their threads can be
+cleaned up safely; shutdown waits for them within its normal timeout.
 
 ## Local model availability
 
@@ -310,5 +382,5 @@ The installed OpenSportsLib currently exposes `ClassificationModel`,
 `LocalizationModel`, and `VQAModel`. Local Description and Dense Description
 entries remain visible but disabled until OpenSportsLib supplies native
 `DescriptionModel` and `DenseDescriptionModel` APIs. The client does not
-approximate these tasks with VQA prompts. Remote models for those tasks remain
-fully available.
+approximate these tasks with VQA prompts. The official remote integration also
+intentionally leaves Description and Dense Description unavailable.
