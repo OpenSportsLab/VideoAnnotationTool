@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from typing import Any
 
@@ -18,6 +19,7 @@ LOCAL_MODELS_SCHEMA_VERSION = 2
 
 DEFAULT_SERVER_URL = "http://127.0.0.1:8000"
 LAST_MODEL_KEY_PREFIX = "inference/last_model"
+LOCALIZATION_MIN_CONFIDENCE_PERCENT_KEY = "inference/localization_min_confidence_percent"
 
 KNOWN_HF_LOCAL_MODEL_IDS = (
     "OpenSportsLab/OSL-cls-action-mvitv2",
@@ -79,6 +81,34 @@ def save_last_model_choice(settings, task: str, backend: str, model_id: str) -> 
     settings.setValue(
         last_model_key(task),
         json.dumps({"backend": backend, "model_id": model_id}),
+    )
+    settings.sync()
+
+
+def normalize_localization_min_confidence_percent(value) -> float:
+    try:
+        percent = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(percent):
+        return 0.0
+    return round(max(0.0, min(100.0, percent)), 1)
+
+
+def load_localization_min_confidence_percent(settings) -> float:
+    if settings is None:
+        return 0.0
+    return normalize_localization_min_confidence_percent(
+        settings.value(LOCALIZATION_MIN_CONFIDENCE_PERCENT_KEY, 0.0)
+    )
+
+
+def save_localization_min_confidence_percent(settings, value) -> None:
+    if settings is None:
+        return
+    settings.setValue(
+        LOCALIZATION_MIN_CONFIDENCE_PERCENT_KEY,
+        normalize_localization_min_confidence_percent(value),
     )
     settings.sync()
 

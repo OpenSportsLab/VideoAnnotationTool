@@ -1,4 +1,5 @@
 import copy
+import math
 import os
 
 from PyQt6.QtCore import QObject, QSettings, pyqtSignal
@@ -719,6 +720,13 @@ class LocalizationEditorController(QObject):
     def apply_shared_inference_result(self, result, context=None):
         """Resolve the run's classes once and request one tracked commit."""
         context = context or {}
+        try:
+            min_confidence = float(context.get("min_confidence", 0.0))
+        except (TypeError, ValueError):
+            min_confidence = 0.0
+        if not math.isfinite(min_confidence):
+            min_confidence = 0.0
+        min_confidence = max(0.0, min(1.0, min_confidence))
         target_head = str(context.get("head") or "")
         definition = self._schema_definitions.get(target_head, {})
         if not isinstance(definition, dict) or not definition:
@@ -729,18 +737,33 @@ class LocalizationEditorController(QObject):
         head_labels = list(definition.get("labels", []))
         predicted_classes = []
         seen_classes = set()
+        retained_items = []
+        filtered_count = 0
         for item in result.items:
             sample_id = str(item.get("sample_id") or "")
             if not sample_id:
                 continue
+            retained_events = []
             for raw in list(item.get("events") or []):
                 if not isinstance(raw, dict):
                     continue
+                confidence = self._numeric_prediction_confidence(raw)
+                if confidence is not None and confidence < min_confidence:
+                    filtered_count += 1
+                    continue
+                retained_events.append(raw)
                 predicted = str(raw.get("label") or "").strip()
                 if predicted and predicted not in seen_classes:
                     seen_classes.add(predicted)
                     predicted_classes.append(predicted)
+            retained_items.append((sample_id, retained_events))
         if not predicted_classes:
+            message = (
+                f"No localization predictions met the {min_confidence * 100:.1f}% minimum confidence."
+                if filtered_count
+                else "No localization predictions were returned."
+            )
+            self.statusMessageRequested.emit("Inference", message, 3500)
             return False
 
         mapping = {predicted: predicted for predicted in predicted_classes}
@@ -754,6 +777,9 @@ class LocalizationEditorController(QObject):
                 self.localization_panel,
             )
             if dialog.exec() != dialog.DialogCode.Accepted:
+                self.statusMessageRequested.emit(
+                    "Inference", "Localization predictions were not applied.", 3000
+                )
                 return False
             new_head, mapping = dialog.decision()
             if new_head is not None:
@@ -761,13 +787,8 @@ class LocalizationEditorController(QObject):
                 new_head_labels = list(dict.fromkeys(mapping.values()))
 
         events_by_sample = {}
-        for item in result.items:
-            sample_id = str(item.get("sample_id") or "")
-            if not sample_id:
-                continue
-            for raw in list(item.get("events") or []):
-                if not isinstance(raw, dict):
-                    continue
+        for sample_id, retained_events in retained_items:
+            for raw in retained_events:
                 predicted = str(raw.get("label") or "").strip()
                 mapped = mapping.get(predicted)
                 if not mapped:
@@ -780,6 +801,9 @@ class LocalizationEditorController(QObject):
                 event["inference_model_id"] = result.model_id
                 events_by_sample.setdefault(sample_id, []).append(event)
         if not events_by_sample:
+            self.statusMessageRequested.emit(
+                "Inference", "Localization predictions were not applied.", 3000
+            )
             return False
         self.locInferenceCommitRequested.emit(
             target_head, new_head_labels, events_by_sample
@@ -811,20 +835,27 @@ class LocalizationEditorController(QObject):
         self.pendingPredictionsChanged.emit(set(self._pending_prediction_sample_ids))
 
     @staticmethod
-    def _prediction_confidence(event: dict) -> float:
+    def _numeric_prediction_confidence(event: dict) -> float | None:
         if not isinstance(event, dict):
-            return 1.0
-        if "confidence_score" in event:
+            return None
+        for key in ("confidence_score", "confidence", "score"):
+            value = event.get(key)
+            if value is None or isinstance(value, bool):
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
             try:
-                return max(0.0, min(1.0, float(event.get("confidence_score") or 0.0)))
-            except Exception:
-                return 1.0
-        if "confidence" in event:
-            try:
-                return max(0.0, min(1.0, float(event.get("confidence") or 0.0)))
-            except Exception:
-                return 1.0
-        return 1.0
+                confidence = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(confidence):
+                return max(0.0, min(1.0, confidence))
+        return None
+
+    @staticmethod
+    def _prediction_confidence(event: dict) -> float:
+        confidence = LocalizationEditorController._numeric_prediction_confidence(event)
+        return confidence if confidence is not None else 1.0
 
     # --- Helper Refresh Methods ---
     def _refresh_schema_ui(self):

@@ -20,6 +20,8 @@ from inference_settings import (
     REMOTE_ADMIN_TOKEN_KEY,
     REMOTE_ENABLED_KEY,
     SERVER_URL_KEY,
+    load_localization_min_confidence_percent,
+    save_localization_min_confidence_percent,
 )
 from inference_types import (
     InferenceInput,
@@ -604,6 +606,310 @@ def test_run_dialog_range_controls_follow_model_capability(qtbot):
     ])
     assert dialog.runtime_form.isRowVisible(dialog.start_spin)
     assert dialog.runtime_form.isRowVisible(dialog.end_spin)
+
+
+@pytest.mark.gui
+def test_localization_run_dialog_uses_remembered_percent_threshold(qtbot, tmp_path):
+    settings_path = str(tmp_path / "inference.ini")
+    settings = QSettings(settings_path, QSettings.Format.IniFormat)
+    first_run = InferenceRunDialog(
+        "localization",
+        [InferenceInput("/tmp/video.mp4")],
+        {"min_confidence_percent": load_localization_min_confidence_percent(settings)},
+    )
+    qtbot.addWidget(first_run)
+    assert first_run.min_confidence_spin.value() == 0.0
+    assert first_run.runtime_form.isRowVisible(first_run.min_confidence_spin)
+    assert first_run.payload()["min_confidence"] == 0.0
+
+    save_localization_min_confidence_percent(settings, 72.5)
+    reopened = QSettings(settings_path, QSettings.Format.IniFormat)
+
+    dialog = InferenceRunDialog(
+        "localization",
+        [InferenceInput("/tmp/video.mp4")],
+        {"min_confidence_percent": load_localization_min_confidence_percent(reopened)},
+    )
+    qtbot.addWidget(dialog)
+    dialog.set_models([
+        InferenceModelChoice("local", ModelDescriptor("model", "Model", "localization"))
+    ])
+    assert dialog.min_confidence_spin.value() == 72.5
+    dialog.min_confidence_spin.setValue(80.5)
+    assert dialog.payload()["min_confidence"] == 0.805
+
+    other = InferenceRunDialog("classification", [InferenceInput("/tmp/video.mp4")])
+    qtbot.addWidget(other)
+    assert other.min_confidence_spin is None
+    assert "min_confidence" not in other.payload()
+
+
+@pytest.mark.gui
+def test_localization_result_filters_before_mapping_and_keeps_unscored(qtbot, monkeypatch):
+    panel = LocalizationAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = LocalizationEditorController(panel)
+    controller.setup_connections()
+    controller.on_schema_context_changed({
+        "action": {"type": "single_label", "labels": ["pass"]}
+    })
+    commits = []
+    controller.locInferenceCommitRequested.connect(lambda *args: commits.append(args))
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.LocalizationClassMappingDialog",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("filtered class opened mapping")),
+    )
+    result = InferenceResult(
+        "run", "localization", "model",
+        ({"sample_id": "sample", "events": [
+            {"label": "unknown", "confidence_score": 0.749, "position_ms": 1},
+            {"label": "pass", "confidence_score": 0.75, "position_ms": 2},
+            {"label": "pass", "score": 0.85, "position_ms": 3},
+            {"label": "pass", "position_ms": 4},
+            {"label": "pass", "confidence": "invalid", "position_ms": 5},
+            {"label": "pass", "confidence_score": "nan", "position_ms": 6},
+            {"label": "pass", "confidence_score": "invalid", "confidence": 0.5, "position_ms": 7},
+        ]},),
+    )
+
+    assert controller.apply_shared_inference_result(
+        result, {"head": "action", "min_confidence": 0.75}
+    ) is True
+    assert len(commits) == 1
+    assert commits[0][0] == "action"
+    kept = commits[0][2]["sample"]
+    assert [event["position_ms"] for event in kept] == [2, 3, 4, 5, 6]
+    assert [event["confidence_score"] for event in kept] == [0.75, 0.85, 1.0, 1.0, 1.0]
+    assert len(result.items[0]["events"]) == 7
+
+
+@pytest.mark.gui
+def test_localization_threshold_maps_only_retained_classes(qtbot, monkeypatch):
+    panel = LocalizationAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = LocalizationEditorController(panel)
+    controller.setup_connections()
+    controller.on_schema_context_changed({
+        "action": {"type": "single_label", "labels": ["pass"]}
+    })
+    mapped_classes = []
+    commits = []
+    controller.locInferenceCommitRequested.connect(lambda *args: commits.append(args))
+
+    class FakeMappingDialog:
+        class DialogCode:
+            Accepted = 1
+
+        def __init__(self, predicted_classes, *_args):
+            mapped_classes.extend(predicted_classes)
+
+        def exec(self):
+            return self.DialogCode.Accepted
+
+        def decision(self):
+            return None, {"Header": "pass"}
+
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller.LocalizationClassMappingDialog",
+        FakeMappingDialog,
+    )
+    result = InferenceResult(
+        "run", "localization", "model",
+        ({"sample_id": "sample", "events": [
+            {"label": "low", "confidence": 0.2, "position_ms": 1},
+            {"label": "Header", "confidence": 0.9, "position_ms": 2},
+        ]},),
+    )
+
+    assert controller.apply_shared_inference_result(
+        result, {"head": "action", "min_confidence": 0.8}
+    ) is True
+    assert mapped_classes == ["Header"]
+    assert [event["label"] for event in commits[0][2]["sample"]] == ["pass"]
+
+
+@pytest.mark.gui
+def test_localization_threshold_with_no_survivors_emits_no_mutation(qtbot):
+    panel = LocalizationAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = LocalizationEditorController(panel)
+    controller.setup_connections()
+    controller.on_schema_context_changed({
+        "action": {"type": "single_label", "labels": ["pass"]}
+    })
+    commits = []
+    statuses = []
+    controller.locInferenceCommitRequested.connect(lambda *args: commits.append(args))
+    controller.statusMessageRequested.connect(lambda *args: statuses.append(args))
+    result = InferenceResult(
+        "run", "localization", "model",
+        ({"sample_id": "sample", "events": [
+            {"label": "pass", "confidence_score": 0.4, "position_ms": 1}
+        ]},),
+    )
+
+    assert controller.apply_shared_inference_result(
+        result, {"head": "action", "min_confidence": 0.8}
+    ) is False
+    assert commits == []
+    assert "No localization predictions met the 80.0% minimum" in statuses[-1][1]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("backend", ["local", "remote"])
+def test_shared_localization_completion_filters_both_providers(
+    qtbot, tmp_path, backend
+):
+    from main_window import VideoAnnotationWindow
+
+    panel = LocalizationAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = LocalizationEditorController(panel)
+    controller.setup_connections()
+    controller.on_schema_context_changed({
+        "action": {"type": "single_label", "labels": ["pass"]}
+    })
+    commits = []
+    statuses = []
+    controller.locInferenceCommitRequested.connect(lambda *args: commits.append(args))
+    controller.statusMessageRequested.connect(lambda *args: statuses.append(args))
+    result = InferenceResult(
+        "run", "localization", "model",
+        ({"item_id": "item", "sample_id": "sample", "events": [
+            {"label": "pass", "confidence_score": 0.4, "position_ms": 1}
+        ]},),
+    )
+    other_handler = SimpleNamespace(apply_shared_inference_result=lambda *_args: None)
+    owner = SimpleNamespace(
+        _pending_inference_requests={"run": {
+            "task": "localization",
+            "request_items": {"item": "sample"},
+            "project_generation": 1,
+            "context": {"head": "action", "min_confidence": 0.8},
+            "backend": backend,
+            "model_id": "model",
+            "invalidated": False,
+        }},
+        dataset_explorer_controller=SimpleNamespace(
+            project_generation=1,
+            get_sample=lambda _sample_id: {"id": "sample"},
+            settings=QSettings(
+                str(tmp_path / "inference.ini"), QSettings.Format.IniFormat
+            ),
+        ),
+        localization_editor_controller=controller,
+        classification_editor_controller=other_handler,
+        desc_editor_controller=other_handler,
+        dense_editor_controller=other_handler,
+        qa_editor_controller=other_handler,
+        right_tabs=SimpleNamespace(currentIndex=lambda: 0),
+        classification_panel=SimpleNamespace(get_current_head=lambda: ""),
+        localization_panel=panel,
+        show_temp_msg=lambda *args: statuses.append(args),
+    )
+
+    VideoAnnotationWindow._on_shared_inference_completed(owner, "run", result)
+
+    assert commits == []
+    assert "No localization predictions met the 80.0% minimum" in statuses[-1][1]
+    assert "run" not in owner._pending_inference_requests
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("backend", ["local", "remote"])
+def test_localization_run_captures_threshold_per_queue_entry(
+    qtbot, monkeypatch, tmp_path, backend
+):
+    from main_window import VideoAnnotationWindow
+
+    settings = QSettings(
+        str(tmp_path / "inference.ini"), QSettings.Format.IniFormat
+    )
+    save_localization_min_confidence_percent(settings, 62.5)
+    sample = {
+        "id": "sample",
+        "inputs": [{"path": str(tmp_path / "video.mp4"), "type": "video"}],
+    }
+    captured = {"dialog_contexts": [], "requests": []}
+
+    class Signal:
+        def connect(self, _slot):
+            pass
+
+        def disconnect(self, _slot):
+            pass
+
+    class Label:
+        def setText(self, _text):
+            pass
+
+    thresholds = iter((0.805, 0.6))
+
+    class FakeDialog:
+        class DialogCode:
+            Accepted = 1
+
+        def __init__(self, _task, inputs, context, **_kwargs):
+            self.inputs = inputs
+            captured["dialog_contexts"].append(dict(context))
+            self.refreshModelsRequested = Signal()
+            self.availability_label = Label()
+
+        def set_models(self, *_args):
+            pass
+
+        def exec(self):
+            return self.DialogCode.Accepted
+
+        def payload(self):
+            return {
+                "backend": backend,
+                "model_id": "model",
+                "inputs": self.inputs,
+                "min_confidence": next(thresholds),
+            }
+
+    monkeypatch.setattr("main_window.InferenceRunDialog", FakeDialog)
+
+    def enqueue(request):
+        captured["requests"].append(request)
+        return SimpleNamespace(state="queued", backend=backend, queue_position=1)
+
+    explorer = SimpleNamespace(
+        current_selected_sample_id="sample",
+        get_sample=lambda _sample_id: sample,
+        current_json_path="",
+        settings=settings,
+        timeline_offset_ms_for_inputs=lambda *_args: 0,
+        project_root="",
+        label_definitions={"action": {"type": "single_label", "labels": ["pass"]}},
+        project_generation=1,
+    )
+    inference = SimpleNamespace(
+        modelCatalogDiscovered=Signal(),
+        modelCatalogFailed=Signal(),
+        request_model_catalog=lambda _task: True,
+        configuration_snapshot=lambda: {},
+        enqueue_inference=enqueue,
+    )
+    owner = SimpleNamespace(
+        dataset_explorer_controller=explorer,
+        inference_controller=inference,
+        _pending_inference_requests={},
+        _show_inference_jobs=lambda: None,
+        show_temp_msg=lambda *_args: None,
+    )
+
+    for _ in range(2):
+        VideoAnnotationWindow._open_inference_run_dialog(
+            owner, "localization", {"head": "action", "labels": ["pass"]}
+        )
+
+    assert [context["min_confidence_percent"] for context in captured["dialog_contexts"]] == [62.5, 80.5]
+    assert [request.parameters["min_confidence"] for request in captured["requests"]] == [0.805, 0.6]
+    assert load_localization_min_confidence_percent(settings) == 60.0
+    for request in captured["requests"]:
+        assert owner._pending_inference_requests[request.request_id]["context"]["min_confidence"] == request.parameters["min_confidence"]
 
 
 @pytest.mark.gui

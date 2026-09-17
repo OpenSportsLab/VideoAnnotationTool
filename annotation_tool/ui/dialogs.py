@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QGroupBox, QFormLayout, QLineEdit, QHBoxLayout,
     QFrame, QListWidget, QComboBox, QPushButton, QLabel, QProgressBar,
     QMessageBox, QWidget, QListWidgetItem, QStyle, QButtonGroup, QScrollArea,
-    QFileDialog, QCheckBox, QSizePolicy, QSpinBox, QTabWidget, QTableWidget,
+    QFileDialog, QCheckBox, QSizePolicy, QSpinBox, QDoubleSpinBox, QTabWidget, QTableWidget,
     QTableWidgetItem, QHeaderView, QPlainTextEdit, QKeySequenceEdit
 )
 from PyQt6.QtCore import QDir, Qt, QSize, QSettings, QTimer, pyqtSignal
@@ -1033,6 +1033,21 @@ class InferenceRunDialog(QDialog):
             form.setRowVisible(self.start_spin, False)
             form.setRowVisible(self.end_spin, False)
 
+        self.min_confidence_spin = None
+        if self.task == "localization":
+            self.min_confidence_spin = QDoubleSpinBox(self)
+            self.min_confidence_spin.setRange(0.0, 100.0)
+            self.min_confidence_spin.setDecimals(1)
+            self.min_confidence_spin.setSingleStep(1.0)
+            self.min_confidence_spin.setSuffix("%")
+            self.min_confidence_spin.setValue(
+                float(self.context.get("min_confidence_percent", 0.0))
+            )
+            self.min_confidence_spin.setToolTip(
+                "Predictions below this confidence are excluded before review."
+            )
+            form.addRow("Minimum confidence:", self.min_confidence_spin)
+
         self.language_edit = QLineEdit(str(self.context.get("language") or "en"), self)
         if self.task in {"description", "dense_description"}:
             form.addRow("Language:", self.language_edit)
@@ -1178,7 +1193,7 @@ class InferenceRunDialog(QDialog):
         supports_range = bool(
             choice is not None and choice.descriptor.supports_time_range
         )
-        return {
+        payload = {
             "backend": choice.backend if choice is not None else "",
             "model_id": choice.descriptor.id if choice is not None else "",
             "inputs": self.selected_inputs(),
@@ -1188,6 +1203,9 @@ class InferenceRunDialog(QDialog):
             "question": self.question_edit.toPlainText().strip(),
             "scope": str(self.scope_combo.currentData()) if self.scope_combo is not None else "current",
         }
+        if self.min_confidence_spin is not None:
+            payload["min_confidence"] = round(self.min_confidence_spin.value() / 100.0, 3)
+        return payload
 
 class UnsavedChangesDialog(QDialog):
     """Dialog with fixed button order for close-project decisions."""

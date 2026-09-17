@@ -18,8 +18,10 @@ from inference_settings import (
     LOCAL_MODELS_SCHEMA_VERSION_KEY,
     REMOTE_ENABLED_KEY,
     load_last_model_choice,
+    load_localization_min_confidence_percent,
     load_local_models,
     save_last_model_choice,
+    save_localization_min_confidence_percent,
 )
 from inference_types import (
     InferenceError,
@@ -705,6 +707,18 @@ def test_last_successful_model_choice_is_persisted_per_task():
         "detector",
     )
     assert load_last_model_choice(settings, "description") is None
+
+
+def test_localization_min_confidence_preference_is_bounded_and_persisted():
+    settings = MemorySettings()
+    assert load_localization_min_confidence_percent(settings) == 0.0
+
+    save_localization_min_confidence_percent(settings, 75.25)
+    assert load_localization_min_confidence_percent(settings) == 75.2
+    save_localization_min_confidence_percent(settings, 150)
+    assert load_localization_min_confidence_percent(settings) == 100.0
+    settings.values["inference/localization_min_confidence_percent"] = "nan"
+    assert load_localization_min_confidence_percent(settings) == 0.0
 
 
 def test_inference_controller_owns_and_clears_remote_vqa_sessions():

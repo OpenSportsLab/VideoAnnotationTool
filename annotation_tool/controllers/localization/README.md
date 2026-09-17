@@ -124,6 +124,13 @@ offset back onto the original sample timeline.
 - Table confidence-cell confirmation prompt supports `Yes` (confirm), `No` (reject), `Cancel` (no-op).
 - Rejecting an inferred row removes it from the review table.
 - Missing classes open one mapping dialog for all distinct classes in the run.
+- Shared local and remote localization results are filtered in
+  `apply_shared_inference_result()` before class mapping and the single tracked
+  commit. Request context carries `min_confidence` as a 0–1 fraction; numeric
+  `confidence_score`, `confidence`, or `score` values below it are removed,
+  while equal or unscored events stay. A fully filtered run emits a status
+  message and no mutation intent. The Run dialog remembers its percent value
+  in application `QSettings`; no threshold enters project JSON.
 - Statistics include all schema labels (including zero counts), pending
   confidence-scored events, and observed labels missing from the schema. Invalid
   event objects without a usable head or label are excluded.

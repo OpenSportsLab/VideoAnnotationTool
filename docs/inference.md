@@ -92,6 +92,14 @@ network.
 Use **Run Inference…** in the **Inference Jobs** dock. The action targets the
 currently active annotation mode. Choose a
 compatible model and inputs, then fill in the task options shown by the dialog.
+For Localization, **Minimum confidence** accepts 0.0–100.0% in 0.1% steps.
+The default is 0%; the last submitted value is remembered across application
+restarts. Local and Remote runs use the same setting. Predictions with a
+numeric score below the minimum are removed before class mapping and review;
+scores equal to the minimum are kept. Predictions without a usable score are
+also kept and use the existing 100% display fallback during review. If none
+remain, no annotation or undo entry is created. The
+threshold is a run preference stored in application settings, not project JSON.
 The model list combines saved Local models and, when enabled, discovered Remote
 models. Entries are prefixed **Local —** or **Remote —**; selecting one chooses
 the provider automatically. Local executes OpenSportsLib directly and never
@@ -307,7 +315,7 @@ rows, enter saved/exported JSON, and make the project dirty. The entire result
 is one undoable change, including a head created from that result. The Smart
 Labelled filter recognizes samples with confidence-scored events.
 
-If a localization result contains a class missing from the selected head, one
+If a retained localization result contains a class missing from the selected head, one
 dialog shows every distinct class returned in that run, across all samples.
 Known classes are already mapped to themselves. Unknown classes start at
 **Skip Prediction**; choose a class in the current head to keep their events.

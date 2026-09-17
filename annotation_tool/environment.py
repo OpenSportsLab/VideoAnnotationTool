@@ -5,8 +5,10 @@ import sys
 def opensportslib_installed():
     try:
         import opensportslib
+        print("OpenSportsLib is installed.")
         return True
     except ImportError:
+        print("OpenSportsLib is not installed.")
         return False
 
 
@@ -15,6 +17,7 @@ def gpu_available():
         import torch
         return torch.cuda.is_available()
     except ImportError:
+        print("PyTorch is not installed.")
         return False
 
 

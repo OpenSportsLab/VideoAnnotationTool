@@ -74,8 +74,10 @@ from inference_settings import (
     REMOTE_ENABLED_KEY,
     SERVER_URL_KEY,
     load_last_model_choice,
+    load_localization_min_confidence_percent,
     remote_inference_enabled,
     save_last_model_choice,
+    save_localization_min_confidence_percent,
 )
 from inference_types import (
     InferenceItem,
@@ -1570,10 +1572,17 @@ class VideoAnnotationWindow(QMainWindow):
             QMessageBox.warning(self, "Inference", "The selected sample has no usable inputs.")
             return
 
+        dialog_context = dict(context)
+        if task == "localization":
+            dialog_context["min_confidence_percent"] = (
+                load_localization_min_confidence_percent(
+                    getattr(self.dataset_explorer_controller, "settings", None)
+                )
+            )
         dialog = InferenceRunDialog(
             task,
             dialog_inputs,
-            context,
+            dialog_context,
             preferred_model=load_last_model_choice(
                 getattr(self.dataset_explorer_controller, "settings", None), task
             ),
@@ -1623,6 +1632,7 @@ class VideoAnnotationWindow(QMainWindow):
             parameters["head"] = str(context.get("head") or "")
         if task == "localization":
             parameters["labels"] = list(context.get("labels") or [])
+            parameters["min_confidence"] = float(payload.get("min_confidence", 0.0))
         selected_sources = {(str(getattr(source, "sample_id", "") or ""), os.path.realpath(source.path)) for source in payload["inputs"]}
         classification_input_indices = []
         if task == "classification":
@@ -1704,6 +1714,11 @@ class VideoAnnotationWindow(QMainWindow):
             self._pending_inference_requests.pop(request.request_id, None)
             QMessageBox.information(self, "Inference", "The inference request could not be queued.")
             return
+        if task == "localization":
+            save_localization_min_confidence_percent(
+                getattr(self.dataset_explorer_controller, "settings", None),
+                parameters["min_confidence"] * 100.0,
+            )
         self._show_inference_jobs()
         if entry.state == "queued":
             self.show_temp_msg(
@@ -1801,7 +1816,6 @@ class VideoAnnotationWindow(QMainWindow):
                     active_localization_head
                 )
         if pending["task"] == "localization" and applied is False:
-            self.show_temp_msg("Inference", "Localization predictions were not applied.", 3000)
             return
         sample_ids = tuple(
             str(item.get("sample_id") or "") for item in surviving_items
