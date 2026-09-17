@@ -506,7 +506,10 @@ def test_localization_review_shortcut_rejects_only_row_and_clears_selection(
 
     controller = window.localization_editor_controller
     sample_id = controller.current_sample_id
-    controller._current_sample_snapshot["events"] = []
+    window.history_manager.execute_localization_events_set(sample_id, [])
+    controller.on_selected_sample_changed(
+        window.dataset_explorer_controller.get_sample(sample_id)
+    )
     controller.apply_shared_inference_result(
         InferenceResult(
             "only-row",

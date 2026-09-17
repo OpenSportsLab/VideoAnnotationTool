@@ -2,7 +2,7 @@
 
 ## Role
 Implements Localization (action spotting) behavior, including schema management,
-event CRUD, and transient prediction review.
+event CRUD, inference class mapping, and prediction review.
 
 The shared local/remote path is owned by the central inference controller.
 Remote range inputs may be clipped before upload and returned positions are
@@ -40,6 +40,7 @@ offset back onto the original sample timeline.
 - `locEventModRequested(str, dict, dict)`
 - `locEventDelRequested(str, dict, int)`
 - `locEventsSetRequested(str, object)`
+- `locInferenceCommitRequested(str, object, object)`
 - `mediaSeekRequested(int)`
 - `markersUpdateRequested(object)`
 - `mediaTogglePlaybackRequested()`
@@ -66,14 +67,30 @@ offset back onto the original sample timeline.
     counts and pass them to the panel for display.
 - Prediction flows:
   - `_request_shared_inference`, `apply_shared_inference_result`,
-    `_on_confirm_single_annotation`, `_on_reject_single_annotation`
+    `on_inference_committed`, `_on_confirm_single_annotation`,
+    `_on_reject_single_annotation`
 
 ## Business Rules
 - Schema operations enforce duplicate/name validity checks.
 - Event modify/delete requires event existence and valid selection.
 - Label add flow can optionally inject an event at current playback time.
 - Pause/resume around modal label dialogs is signal-driven.
-- Inference results remain transient and are combined with canonical events only for display.
+- The controller gathers distinct nonempty classes from a completed run. If any
+  class is missing from the selected head, `LocalizationClassMappingDialog`
+  opens once for that run. Exact matches are prefilled; unknowns start at Skip.
+  Cancel and all-skipped results emit no mutation intent.
+- `locInferenceCommitRequested(str, object, object)` carries the target head,
+  optional new-head labels, and predicted events grouped by sample. `MainWindow`
+  routes it to `HistoryManager.execute_localization_inference_commit()`, then
+  refreshes the current snapshot and pending-sample index.
+- `HistoryManager` merges against canonical events, deduplicates by
+  head/label/time, and commits all affected samples and an optional new
+  `single_label` head in one dataset snapshot undo entry. No-op results add no
+  entry; forward commits clear redo.
+- Dataset snapshot undo/redo rebuilds the pending-sample index from canonical
+  events after `DatasetExplorerController` restores the document.
+- Applied predictions live in canonical `events[]` with
+  `confidence_score` and `inference_model_id` until reviewed.
 - New, moved, and inferred events write `timestamp_utc` plus `position_ms` when
   a genuine sample origin is available; relative-only samples keep `position_ms`.
 - The shared run dialog supplies head, labels, range, model, and provider details.
@@ -83,8 +100,7 @@ offset back onto the original sample timeline.
   model ignores another selected modality.
 - Runtime fallback supports both legacy (`dali`, `DATA.test.type`) and canonical
   (`DATA.common.runtime.loader_backend`) OpenSportsLib configuration shapes.
-- Accepting adds a metadata-free event; rejecting a transient prediction is
-  non-mutating. Rejecting a confidence-scored event loaded from JSON uses the
+- Accepting removes prediction metadata from the event; rejecting uses the
   tracked delete path. Manual edits invalidate pending rows.
 - Single-row review selects the following row after refresh, or the preceding row
   when the reviewed row was last; ordinary selection signaling seeks playback.
@@ -98,7 +114,7 @@ offset back onto the original sample timeline.
   media seek while event timestamps remain canonical.
 - Table confidence-cell confirmation prompt supports `Yes` (confirm), `No` (reject), `Cancel` (no-op).
 - Rejecting an inferred row removes it from the review table.
-- Unknown predicted labels are mapped via popup per inference run.
+- Missing classes open one mapping dialog for all distinct classes in the run.
 - Statistics include all schema labels (including zero counts), pending
   confidence-scored events, and observed labels missing from the schema. Invalid
   event objects without a usable head or label are excluded.
@@ -123,6 +139,7 @@ offset back onto the original sample timeline.
 
 ## Tests
 - `tests/gui/test_workflow_localization.py`
+- `tests/gui/test_localization_inference_mapping.py`
 - `tests/gui/test_history_stack_contract.py`
 - `tests/gui/test_signal_decoupling_contract.py`
 

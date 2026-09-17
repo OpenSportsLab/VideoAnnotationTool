@@ -304,14 +304,19 @@ a valid legacy relative row.
       "head": "action",
       "label": "shot",
       "position_ms": 4320,
-      "confidence_score": 0.84
+      "confidence_score": 0.84,
+      "inference_model_id": "sports-localization-v2"
     }
   ]
 }
 ```
 
 `head` should match a root label head. Smart localization predictions use the
-same optional `confidence_score` convention as classification.
+same optional `confidence_score` convention as classification. Localization
+inference also writes `inference_model_id` on predicted events. If the user
+creates a task head from an inference result, it is stored in root `labels` as
+a `single_label` head whose `labels` array contains the returned classes; its
+events use that head name.
 
 ### Description
 

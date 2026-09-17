@@ -598,6 +598,86 @@ class HistoryManager(QObject):
             return
         self._emit_post_mutation(touched_paths=[video_path])
 
+    def execute_localization_inference_commit(
+        self, target_head: str, new_head_labels, events_by_sample
+    ) -> tuple[str, ...]:
+        """Commit one inference run, including an optional new head, atomically."""
+        target_head = str(target_head or "").strip()
+        definitions = self.model.label_definitions
+        creating_head = new_head_labels is not None
+        if not target_head or not isinstance(events_by_sample, dict):
+            return ()
+        if creating_head:
+            if any(name.casefold() == target_head.casefold() for name in definitions):
+                return ()
+            labels = [str(label).strip() for label in new_head_labels]
+            if not labels or any(not label for label in labels):
+                return ()
+            if len({label.casefold() for label in labels}) != len(labels):
+                return ()
+        else:
+            definition = definitions.get(target_head)
+            if not isinstance(definition, dict):
+                return ()
+            labels = list(definition.get("labels", []))
+
+        updates_by_path = {}
+        touched_sample_ids = []
+        for sample_id, predictions in events_by_sample.items():
+            sample_id = str(sample_id or "")
+            if not sample_id or not isinstance(self.model.get_sample(sample_id), dict):
+                continue
+            video_path = self._path_for_sample(sample_id)
+            if not video_path:
+                continue
+            events = updates_by_path.get(video_path)
+            if events is None:
+                events = [
+                    copy.deepcopy(event)
+                    for event in self.model.localization_events.get(video_path, [])
+                ]
+            existing_keys = {
+                (event.get("head"), event.get("label"), self._event_position_ms(event))
+                for event in events
+                if isinstance(event, dict)
+                and isinstance(event.get("head"), str)
+                and isinstance(event.get("label"), str)
+            }
+            added = False
+            for raw in list(predictions or []):
+                if not isinstance(raw, dict):
+                    continue
+                if raw.get("head") != target_head or raw.get("label") not in labels:
+                    continue
+                event = self._prepare_temporal_event(sample_id, raw)
+                key = (target_head, event["label"], self._event_position_ms(event))
+                if key in existing_keys:
+                    continue
+                existing_keys.add(key)
+                events.append(event)
+                added = True
+            if added:
+                updates_by_path[video_path] = events
+                touched_sample_ids.append(sample_id)
+
+        if not touched_sample_ids:
+            return ()
+        before_json = self.model.snapshot_dataset_json()
+        if creating_head:
+            definitions[target_head] = {"type": "single_label", "labels": labels}
+        for path, events in updates_by_path.items():
+            self._sort_events_by_time(events)
+            self.model.localization_events[path] = events
+        if not self.model.push_dataset_json_replace_undo_if_changed(before_json):
+            return ()
+        self._emit_post_mutation(
+            touched_paths=list(updates_by_path),
+            refresh_schema=creating_head,
+            status_title="Inference",
+            status_msg=f"Added predictions to '{target_head}'.",
+        )
+        return tuple(touched_sample_ids)
+
     def execute_sample_field_update(self, sample_id: str, field_name: str, new_value):
         if not sample_id or not field_name:
             return

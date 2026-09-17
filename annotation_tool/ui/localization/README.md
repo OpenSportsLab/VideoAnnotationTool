@@ -19,6 +19,7 @@ live in the main-window Inference Jobs dock.
 - `_SpottingTabsAdapter`
 - `_TableAdapter`
 - `_AnnotationManagementAdapter`
+- `LocalizationClassMappingDialog`
 
 ### Panel Signals
 - `tabSwitched(int)`
@@ -63,6 +64,9 @@ live in the main-window Inference Jobs dock.
   - Supplies sample-scoped UTC display/edit context without coupling the panel
     to `MediaController`.
 - `InferenceReviewBar` is the last widget and contains review actions only.
+- `LocalizationClassMappingDialog` shows one row per returned class, preselects
+  exact head labels, and keeps unknown classes on Skip until changed. Its
+  inline new-head field validates nonempty, case-insensitively unique names.
 
 ## Business Rules
 - Table edit emits old/new payloads; controller decides mutation validity.
@@ -87,6 +91,7 @@ live in the main-window Inference Jobs dock.
 
 ## Tests
 - `tests/gui/test_workflow_localization.py`
+- `tests/gui/test_localization_inference_mapping.py`
 - `tests/gui/test_signal_decoupling_contract.py`
 
 ## Developer Knowledge
