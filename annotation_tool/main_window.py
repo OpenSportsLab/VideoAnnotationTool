@@ -262,6 +262,7 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.inference_jobs_dock.hide()
         self._pending_inference_requests = {}
+        self._localization_inference_range: tuple[str, int, int] | None = None
         self._pending_prediction_samples_by_task = {}
         self._hf_busy_dialog = None
         self._last_hf_download_payload: dict | None = None
@@ -517,6 +518,9 @@ class VideoAnnotationWindow(QMainWindow):
         # when it needs global context.
         self.dataset_explorer_controller.sampleSelectionChanged.connect(
             self.classification_editor_controller.on_selected_sample_changed
+        )
+        self.dataset_explorer_controller.sampleSelectionChanged.connect(
+            self._on_inference_sample_selection_changed
         )
         self.dataset_explorer_controller.sampleSelectionChanged.connect(
             self.localization_editor_controller.on_selected_sample_changed
@@ -1535,6 +1539,14 @@ class VideoAnnotationWindow(QMainWindow):
             return
         controllers[index].request_inference()
 
+    def _on_inference_sample_selection_changed(self, sample) -> None:
+        remembered = self._localization_inference_range
+        if remembered is None:
+            return
+        selected_id = str(sample.get("id") or "") if isinstance(sample, dict) else ""
+        if selected_id != remembered[0]:
+            self._localization_inference_range = None
+
     def _open_inference_run_dialog(self, task: str, context) -> None:
         context = dict(context or {})
         current_sample_id = str(self.dataset_explorer_controller.current_selected_sample_id or "")
@@ -1574,6 +1586,13 @@ class VideoAnnotationWindow(QMainWindow):
 
         dialog_context = dict(context)
         if task == "localization":
+            remembered = self._localization_inference_range
+            if remembered is not None:
+                if remembered[0] == current_sample_id:
+                    dialog_context["start_ms"] = remembered[1]
+                    dialog_context["end_ms"] = remembered[2]
+                else:
+                    self._localization_inference_range = None
             dialog_context["min_confidence_percent"] = (
                 load_localization_min_confidence_percent(
                     getattr(self.dataset_explorer_controller, "settings", None)
@@ -1719,6 +1738,12 @@ class VideoAnnotationWindow(QMainWindow):
                 getattr(self.dataset_explorer_controller, "settings", None),
                 parameters["min_confidence"] * 100.0,
             )
+            if payload.get("supports_time_range", True):
+                self._localization_inference_range = (
+                    current_sample_id,
+                    int(parameters.get("start_ms", 0)),
+                    int(parameters.get("end_ms", 0)),
+                )
         self._show_inference_jobs()
         if entry.state == "queued":
             self.show_temp_msg(
@@ -1878,6 +1903,7 @@ class VideoAnnotationWindow(QMainWindow):
         self.show_temp_msg("Inference", "Inference cancelled.", 1500)
 
     def _on_project_generation_changed(self, _generation: int) -> None:
+        self._localization_inference_range = None
         self.inference_controller.clear_remote_sessions()
         if not self._pending_inference_requests:
             return

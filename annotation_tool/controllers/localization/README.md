@@ -94,6 +94,13 @@ offset back onto the original sample timeline.
 - New, moved, and inferred events write `timestamp_utc` plus `position_ms` when
   a genuine sample origin is available; relative-only samples keep `position_ms`.
 - The shared run dialog supplies head, labels, range, model, and provider details.
+  `MainWindow` keeps the last queued Localization `start_ms`/`end_ms` for the
+  selected sample in memory. It restores them when reopening the run dialog,
+  clears them on a different sample selection or project reset, and leaves them
+  intact for runs whose model does not support a time range. The dialog payload's
+  `supports_time_range` flag controls whether a queued run updates this memory;
+  the flag and remembered range are not persisted in application settings or
+  project JSON. Each request still carries its own effective range parameters.
 - UTC-synchronized inference results are projected from the selected inputs'
   origin onto the whole-sample timeline before they enter the event list.
   Per-input offsets let the local adapter use the H5 origin when a tracking

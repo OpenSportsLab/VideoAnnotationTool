@@ -1203,6 +1203,8 @@ class InferenceRunDialog(QDialog):
             "question": self.question_edit.toPlainText().strip(),
             "scope": str(self.scope_combo.currentData()) if self.scope_combo is not None else "current",
         }
+        if self.task in {"localization", "dense_description"}:
+            payload["supports_time_range"] = supports_range
         if self.min_confidence_spin is not None:
             payload["min_confidence"] = round(self.min_confidence_spin.value() / 100.0, 3)
         return payload

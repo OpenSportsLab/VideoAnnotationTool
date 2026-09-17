@@ -100,6 +100,13 @@ scores equal to the minimum are kept. Predictions without a usable score are
 also kept and use the existing 100% display fallback during review. If none
 remain, no annotation or undo entry is created. The
 threshold is a run preference stored in application settings, not project JSON.
+For Localization models with time-range support, the **Start (ms)** and
+**End (ms, 0 = end)** fields reopen with the values from the last queued run
+that used a range on the selected sample. Selecting another sample clears this
+range, even if you later return to the original sample. A run with a model that
+does not support time ranges leaves the remembered values intact. The range is
+kept only while the application is open; it is not stored in settings or
+project JSON.
 The model list combines saved Local models and, when enabled, discovered Remote
 models. Entries are prefixed **Local —** or **Remote —**; selecting one chooses
 the provider automatically. Local executes OpenSportsLib directly and never

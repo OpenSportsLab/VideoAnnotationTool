@@ -595,6 +595,7 @@ def test_run_dialog_range_controls_follow_model_capability(qtbot):
     ])
     assert not dialog.runtime_form.isRowVisible(dialog.start_spin)
     assert not dialog.runtime_form.isRowVisible(dialog.end_spin)
+    assert dialog.payload()["supports_time_range"] is False
 
     dialog.set_models([
         InferenceModelChoice(
@@ -606,6 +607,7 @@ def test_run_dialog_range_controls_follow_model_capability(qtbot):
     ])
     assert dialog.runtime_form.isRowVisible(dialog.start_spin)
     assert dialog.runtime_form.isRowVisible(dialog.end_spin)
+    assert dialog.payload()["supports_time_range"] is True
 
 
 @pytest.mark.gui
@@ -817,7 +819,7 @@ def test_shared_localization_completion_filters_both_providers(
 
 @pytest.mark.gui
 @pytest.mark.parametrize("backend", ["local", "remote"])
-def test_localization_run_captures_threshold_per_queue_entry(
+def test_localization_run_remembers_range_until_selection_changes(
     qtbot, monkeypatch, tmp_path, backend
 ):
     from main_window import VideoAnnotationWindow
@@ -843,7 +845,12 @@ def test_localization_run_captures_threshold_per_queue_entry(
         def setText(self, _text):
             pass
 
-    thresholds = iter((0.805, 0.6))
+    run_options = iter((
+        (0.805, 1000, 5000, True),
+        (0.6, 0, 0, False),
+        (0.5, 2000, 6000, True),
+        (0.4, 0, 0, True),
+    ))
 
     class FakeDialog:
         class DialogCode:
@@ -862,11 +869,15 @@ def test_localization_run_captures_threshold_per_queue_entry(
             return self.DialogCode.Accepted
 
         def payload(self):
+            threshold, start_ms, end_ms, supports_range = next(run_options)
             return {
                 "backend": backend,
                 "model_id": "model",
                 "inputs": self.inputs,
-                "min_confidence": next(thresholds),
+                "min_confidence": threshold,
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "supports_time_range": supports_range,
             }
 
     monkeypatch.setattr("main_window.InferenceRunDialog", FakeDialog)
@@ -891,25 +902,51 @@ def test_localization_run_captures_threshold_per_queue_entry(
         request_model_catalog=lambda _task: True,
         configuration_snapshot=lambda: {},
         enqueue_inference=enqueue,
+        clear_remote_sessions=lambda: None,
     )
     owner = SimpleNamespace(
         dataset_explorer_controller=explorer,
         inference_controller=inference,
         _pending_inference_requests={},
+        _localization_inference_range=None,
         _show_inference_jobs=lambda: None,
         show_temp_msg=lambda *_args: None,
     )
 
-    for _ in range(2):
+    def run():
         VideoAnnotationWindow._open_inference_run_dialog(
             owner, "localization", {"head": "action", "labels": ["pass"]}
         )
 
-    assert [context["min_confidence_percent"] for context in captured["dialog_contexts"]] == [62.5, 80.5]
-    assert [request.parameters["min_confidence"] for request in captured["requests"]] == [0.805, 0.6]
-    assert load_localization_min_confidence_percent(settings) == 60.0
+    run()
+    VideoAnnotationWindow._on_inference_sample_selection_changed(owner, {"id": "sample"})
+    run()
+    run()
+    VideoAnnotationWindow._on_inference_sample_selection_changed(owner, {"id": "other"})
+    assert owner._localization_inference_range is None
+    VideoAnnotationWindow._on_inference_sample_selection_changed(owner, {"id": "sample"})
+    run()
+
+    assert [
+        (context.get("start_ms", 0), context.get("end_ms", 0))
+        for context in captured["dialog_contexts"]
+    ] == [(0, 0), (1000, 5000), (1000, 5000), (0, 0)]
+    assert [
+        (request.parameters["start_ms"], request.parameters["end_ms"])
+        for request in captured["requests"]
+    ] == [(1000, 5000), (0, 0), (2000, 6000), (0, 0)]
+    assert [context["min_confidence_percent"] for context in captured["dialog_contexts"]] == [
+        62.5, 80.5, 60.0, 50.0
+    ]
+    assert [request.parameters["min_confidence"] for request in captured["requests"]] == [
+        0.805, 0.6, 0.5, 0.4
+    ]
+    assert load_localization_min_confidence_percent(settings) == 40.0
     for request in captured["requests"]:
         assert owner._pending_inference_requests[request.request_id]["context"]["min_confidence"] == request.parameters["min_confidence"]
+    owner._pending_inference_requests.clear()
+    VideoAnnotationWindow._on_project_generation_changed(owner, 2)
+    assert owner._localization_inference_range is None
 
 
 @pytest.mark.gui
