@@ -1020,12 +1020,14 @@ def test_localization_result_stays_with_original_sample_after_navigation(qtbot):
         "sample-a": {"id": "sample-a", "inputs": [{"path": "a.mp4", "type": "video"}], "events": []},
         "sample-b": {"id": "sample-b", "inputs": [{"path": "b.mp4", "type": "video"}], "events": []},
     }
-    # Predictions are persisted via locEventsSetRequested now (not staged in
-    # a session-only dict); stand in for what main_window.py's history
-    # manager wiring would do with it.
-    controller.locEventsSetRequested.connect(
-        lambda sample_id, events: samples[sample_id].__setitem__("events", list(events))
-    )
+    # Stand in for MainWindow's commit wiring; the controller does not hold
+    # canonical events for samples that are not selected.
+    def commit_result(_head, _new_labels, events_by_sample):
+        for sample_id, events in events_by_sample.items():
+            samples[sample_id]["events"].extend(events)
+        controller.on_inference_committed(events_by_sample, samples["sample-b"])
+
+    controller.locInferenceCommitRequested.connect(commit_result)
     controller.on_selected_sample_changed(samples["sample-b"])
     result = InferenceResult(
         "request", "localization", "model",
@@ -1034,10 +1036,7 @@ def test_localization_result_stays_with_original_sample_after_navigation(qtbot):
 
     controller.apply_shared_inference_result(
         result,
-        {
-            "head": "ball_action",
-            "existing_events_by_sample": {"sample-a": samples["sample-a"]["events"]},
-        },
+        {"head": "ball_action"},
     )
 
     assert panel.table.model.rowCount() == 0

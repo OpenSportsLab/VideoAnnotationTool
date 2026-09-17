@@ -280,21 +280,34 @@ questions and answers are not conversational context for the model.
   appends a new caption and rejection is non-mutating.
 - Q/A shows a pending answer under the selected or newly entered question.
 
-Predictions remain in session memory until accepted. They do not dirty the
-project, enter exported JSON, or create undo entries. **Accept** commits a
-plain annotation as one undoable mutation; **Reject** only removes the pending
-candidate. Multi-result widgets also provide **Accept All** and **Reject All**.
-Pending rows show confidence and model identity, and the Smart Labelled filter
-recognizes them while the application is open. Editing the same annotation
-manually invalidates its pending candidates.
+For Classification, Dense Description, Description, and Q/A, predictions remain
+in session memory until accepted. They do not dirty the project or enter
+exported JSON before acceptance. **Accept** commits a plain annotation as an
+undoable mutation; **Reject** removes the pending candidate. Multi-result
+widgets also provide **Accept All** and **Reject All**.
+
+Localization predictions are written into each sample's `events[]` when the
+result is applied. They include confidence and model identity, appear as pending
+rows, enter saved/exported JSON, and make the project dirty. The entire result
+is one undoable change, including a head created from that result. The Smart
+Labelled filter recognizes samples with confidence-scored events.
+
+If a localization result contains a class missing from the selected head, one
+dialog shows every distinct class returned in that run, across all samples.
+Known classes are already mapped to themselves. Unknown classes start at
+**Skip Prediction**; choose a class in the current head to keep their events.
+The dialog can instead create a new task head containing the returned classes
+and place all of the run's events there. Its name must be nonempty and unique
+regardless of case. **Cancel** applies nothing. If every returned class already
+exists in the head, the result applies without this dialog. Mapping choices
+apply to this run only.
 
 For Localization, select a confidence-scored row and use the shortcuts configured
 under **Edit → Settings → Shortcuts** (`Ctrl+Enter` to accept and
 `Ctrl+Backspace` to reject by default). The bindings work only while Localization
 is active. After review, selection advances to the next table row, falling back
-to the preceding row at the end of the table. A transient rejection remains
-non-mutating; accepting, or rejecting a confidence-scored event loaded from JSON,
-uses the normal undoable history path.
+to the preceding row at the end of the table. Accepting removes the confidence
+marker; rejecting removes that event. Both use the normal undoable history path.
 
 ## Official OpenSportsLib server
 

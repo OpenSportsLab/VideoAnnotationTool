@@ -784,6 +784,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.localization_editor_controller.locEventsSetRequested.connect(
             self.history_manager.execute_localization_events_set
         )
+        self.localization_editor_controller.locInferenceCommitRequested.connect(
+            self._commit_localization_inference
+        )
 
         self.desc_editor_controller.clearMarkersRequested.connect(lambda: self.center_panel.set_markers([]))
         self.desc_editor_controller.captionsUpdateRequested.connect(
@@ -852,6 +855,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.history_manager.denseDisplayRequested.connect(self.dense_editor_controller.display_events_for_item)
         self.history_manager.itemStatusRefreshRequested.connect(self.update_action_item_status)
         self.history_manager.datasetRestoreRequested.connect(self.dataset_explorer_controller.restore_dataset_json_from_history)
+        self.history_manager.datasetRestoreRequested.connect(
+            self._resync_localization_predictions_after_history
+        )
 
         # --- Mode change fanout ---
         self.right_tabs.currentChanged.connect(
@@ -1770,16 +1776,8 @@ class VideoAnnotationWindow(QMainWindow):
             self.localization_panel.annot_mgmt.tabs.get_current_head()
         )
         handler_context = dict(pending.get("context", {}))
-        if pending["task"] == "localization":
-            # Predictions merge straight into each sample's own events, so
-            # the controller needs each touched sample's current events to
-            # dedupe against -- it only has the currently open sample cached.
-            handler_context["existing_events_by_sample"] = {
-                sample_id: list((self.dataset_explorer_controller.get_sample(sample_id) or {}).get("events", []))
-                for sample_id in {str(item.get("sample_id") or "") for item in surviving_items}
-            }
         try:
-            handlers[pending["task"]](result, handler_context)
+            applied = handlers[pending["task"]](result, handler_context)
         except Exception as exc:
             QMessageBox.critical(self, "Inference Result Error", str(exc))
             return
@@ -1802,6 +1800,9 @@ class VideoAnnotationWindow(QMainWindow):
                 self.localization_panel.annot_mgmt.tabs.set_current_head(
                     active_localization_head
                 )
+        if pending["task"] == "localization" and applied is False:
+            self.show_temp_msg("Inference", "Localization predictions were not applied.", 3000)
+            return
         sample_ids = tuple(
             str(item.get("sample_id") or "") for item in surviving_items
         )
@@ -1812,6 +1813,24 @@ class VideoAnnotationWindow(QMainWindow):
         if discarded_count:
             message += f" {discarded_count} removed sample result(s) were discarded."
         self.show_temp_msg("Inference", message, 3500)
+
+    def _commit_localization_inference(self, target_head, new_head_labels, events_by_sample):
+        touched_sample_ids = self.history_manager.execute_localization_inference_commit(
+            target_head, new_head_labels, events_by_sample
+        )
+        if not touched_sample_ids:
+            return
+        current_sample = self.dataset_explorer_controller.get_sample(
+            self.localization_editor_controller.current_sample_id
+        )
+        self.localization_editor_controller.on_inference_committed(
+            touched_sample_ids, current_sample
+        )
+
+    def _resync_localization_predictions_after_history(self, *_args):
+        self.localization_editor_controller.on_dataset_restored_from_history(
+            self.dataset_explorer_controller.get_samples()
+        )
 
     def _on_pending_predictions_changed(self, task: str, sample_ids) -> None:
         task = str(task)

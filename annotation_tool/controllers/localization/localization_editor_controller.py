@@ -21,6 +21,7 @@ from .label_color_settings import (
     rename_saved_label_color,
     set_saved_label_color,
 )
+from ui.localization.label_mapping_dialog import LocalizationClassMappingDialog
 
 
 class LocalizationEditorController(QObject):
@@ -47,6 +48,8 @@ class LocalizationEditorController(QObject):
     locEventDelRequested = pyqtSignal(str, dict, int)
     # payload: sample_id, full events list
     locEventsSetRequested = pyqtSignal(str, object)
+    # payload: target head, new-head labels or None, predicted events by sample
+    locInferenceCommitRequested = pyqtSignal(str, object, object)
 
     # Media intents emitted to MainWindow wiring.
     mediaSeekRequested = pyqtSignal(int)
@@ -714,35 +717,59 @@ class LocalizationEditorController(QObject):
         )
 
     def apply_shared_inference_result(self, result, context=None):
-        """Merge predicted events straight into each sample's real event list.
-
-        Predictions used to live only in a session-only review list, never
-        touching the dataset until individually accepted. That meant a
-        crash or app restart silently lost them, and deleting one
-        unconfirmed event had to fall back to bulk-clearing that whole list.
-        Now every predicted event is written into the sample's own events
-        (tagged with confidence_score/inference_model_id) the moment
-        inference completes, so it's a real, individually addressable event
-        like any other from the start; "not yet confirmed" just means it
-        still carries a confidence_score.
-        """
+        """Resolve the run's classes once and request one tracked commit."""
         context = context or {}
         target_head = str(context.get("head") or "")
-        if not target_head:
-            return
-        existing_events_by_sample = context.get("existing_events_by_sample")
-        if not isinstance(existing_events_by_sample, dict):
-            existing_events_by_sample = {}
-
+        definition = self._schema_definitions.get(target_head, {})
+        if not isinstance(definition, dict) or not definition:
+            self.statusMessageRequested.emit(
+                "Inference", "The selected localization head no longer exists.", 3500
+            )
+            return False
+        head_labels = list(definition.get("labels", []))
+        predicted_classes = []
+        seen_classes = set()
         for item in result.items:
             sample_id = str(item.get("sample_id") or "")
             if not sample_id:
                 continue
-            predicted = []
             for raw in list(item.get("events") or []):
                 if not isinstance(raw, dict):
                     continue
-                mapped = self._resolve_unknown_prediction_label(target_head, raw.get("label"))
+                predicted = str(raw.get("label") or "").strip()
+                if predicted and predicted not in seen_classes:
+                    seen_classes.add(predicted)
+                    predicted_classes.append(predicted)
+        if not predicted_classes:
+            return False
+
+        mapping = {predicted: predicted for predicted in predicted_classes}
+        new_head_labels = None
+        if any(predicted not in head_labels for predicted in predicted_classes):
+            dialog = LocalizationClassMappingDialog(
+                predicted_classes,
+                target_head,
+                head_labels,
+                self._schema_definitions,
+                self.localization_panel,
+            )
+            if dialog.exec() != dialog.DialogCode.Accepted:
+                return False
+            new_head, mapping = dialog.decision()
+            if new_head is not None:
+                target_head = new_head
+                new_head_labels = list(dict.fromkeys(mapping.values()))
+
+        events_by_sample = {}
+        for item in result.items:
+            sample_id = str(item.get("sample_id") or "")
+            if not sample_id:
+                continue
+            for raw in list(item.get("events") or []):
+                if not isinstance(raw, dict):
+                    continue
+                predicted = str(raw.get("label") or "").strip()
+                mapped = mapping.get(predicted)
                 if not mapped:
                     continue
                 event = copy.deepcopy(raw)
@@ -751,56 +778,37 @@ class LocalizationEditorController(QObject):
                 event["position_ms"] = self._event_position_ms(event)
                 event["confidence_score"] = self._prediction_confidence(event)
                 event["inference_model_id"] = result.model_id
-                predicted.append(event)
-            if not predicted:
-                continue
-
-            if sample_id == self.current_sample_id:
-                events = self._snapshot_events()
-            else:
-                events = [
-                    copy.deepcopy(evt)
-                    for evt in list(existing_events_by_sample.get(sample_id) or [])
-                    if isinstance(evt, dict)
-                ]
-
-            existing_keys = {
-                (event.get("head"), event.get("label"), self._event_position_ms(event))
-                for event in events
-            }
-            for event in predicted:
-                key = (event.get("head"), event.get("label"), self._event_position_ms(event))
-                if key not in existing_keys:
-                    existing_keys.add(key)
-                    events.append(event)
-
-            self.locEventsSetRequested.emit(sample_id, copy.deepcopy(events))
-            if sample_id == self.current_sample_id:
-                self._set_snapshot_events(events)
-            self._pending_prediction_sample_ids.add(sample_id)
-
-        self._display_events_for_item(self.current_video_path)
-
-    def _resolve_unknown_prediction_label(self, head: str, predicted_label: str):
-        definition = self._schema_definitions.get(head, {}) if isinstance(self._schema_definitions, dict) else {}
-        labels = list(definition.get("labels", [])) if isinstance(definition, dict) else []
-
-        clean_pred = str(predicted_label or "").strip()
-        if not labels or clean_pred in labels:
-            return clean_pred
-
-        options = [*labels, "<Skip Prediction>"]
-        mapped, ok = QInputDialog.getItem(
-            self.localization_panel,
-            "Map Predicted Label",
-            f"Map '{clean_pred}' to:",
-            options,
-            0,
-            False,
+                events_by_sample.setdefault(sample_id, []).append(event)
+        if not events_by_sample:
+            return False
+        self.locInferenceCommitRequested.emit(
+            target_head, new_head_labels, events_by_sample
         )
-        if not ok or mapped == "<Skip Prediction>":
-            return None
-        return str(mapped)
+        return True
+
+    def on_inference_committed(self, sample_ids, current_sample):
+        """Refresh the current snapshot and the explorer's prediction index."""
+        touched = {str(sample_id) for sample_id in sample_ids}
+        if not touched:
+            return
+        self._pending_prediction_sample_ids.update(touched)
+        if self.current_sample_id in touched:
+            self.on_selected_sample_changed(current_sample)
+        self.pendingPredictionsChanged.emit(set(self._pending_prediction_sample_ids))
+
+    def on_dataset_restored_from_history(self, samples):
+        """Rebuild pending status after a dataset-wide undo or redo."""
+        self._pending_prediction_sample_ids = {
+            str(sample.get("id"))
+            for sample in samples
+            if isinstance(sample, dict)
+            and sample.get("id")
+            and any(
+                isinstance(event, dict) and "confidence_score" in event
+                for event in (sample.get("events") or [])
+            )
+        }
+        self.pendingPredictionsChanged.emit(set(self._pending_prediction_sample_ids))
 
     @staticmethod
     def _prediction_confidence(event: dict) -> float:
@@ -820,8 +828,11 @@ class LocalizationEditorController(QObject):
 
     # --- Helper Refresh Methods ---
     def _refresh_schema_ui(self):
+        selected_head = self.localization_panel.annot_mgmt.tabs.get_current_head()
         self.localization_panel.table.set_schema(self._schema_definitions)
         self.localization_panel.annot_mgmt.update_schema(self._schema_definitions)
+        if selected_head in self._schema_definitions:
+            self.localization_panel.annot_mgmt.tabs.set_current_head(selected_head)
 
     def _refresh_current_clip_events(self):
         if not self.current_video_path:
