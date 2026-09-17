@@ -102,6 +102,60 @@ def test_parse_opensportslib_task_rejects_malformed_or_unsupported(tmp_path):
         parse_opensportslib_task(str(unsupported))
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected_detail"),
+    [
+        ({"TASK": "classification", "model": {}}, "top-level MODEL section is missing"),
+        ({"TASK": "classification", "MODEL": None}, "MODEL must be a mapping; found NoneType"),
+        (
+            {"TASK": "classification", "MODEL": {"components": {"encoder": {}}}},
+            "MODEL.components is present, but MODEL.topology is missing",
+        ),
+    ],
+)
+def test_parse_opensportslib_task_explains_unsupported_schema(
+    tmp_path, payload, expected_detail
+):
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError) as failure:
+        parse_opensportslib_task(str(path))
+
+    message = str(failure.value)
+    assert "Unsupported config schema" in message
+    assert "Top-level keys:" in message
+    assert expected_detail in message
+    assert "canonical MODEL mapping with both components and topology" in message
+
+
+def test_parse_opensportslib_task_explains_json_schema_failure(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text('{"TASK": "classification", "MODEL": []}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="MODEL must be a mapping; found list"):
+        parse_opensportslib_task(str(path))
+
+
+def test_resolve_reports_repository_and_config_for_schema_failure(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("TASK: classification\nmodel: {}\n", encoding="utf-8")
+
+    class FakeApi:
+        def model_info(self, **_kwargs):
+            return _model_info("config.yaml", "model.pt")
+
+    monkeypatch.setattr(hf_model_import, "HfApi", FakeApi)
+    monkeypatch.setattr(hf_model_import, "hf_hub_download", lambda **_kwargs: str(config_path))
+
+    with pytest.raises(ValueError) as failure:
+        resolve_hf_local_model({"repo_id": "owner/model", "revision": "v1"})
+
+    message = str(failure.value)
+    assert "owner/model@v1, configuration config.yaml" in message
+    assert "top-level MODEL section is missing" in message
+
+
 def test_resolve_downloads_config_and_checkpoint_with_revision_and_token(
     monkeypatch, tmp_path
 ):

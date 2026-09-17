@@ -36,6 +36,13 @@ surface; the run dialog never edits models or servers.
   `config.yml`, or `config.json`, selects an unambiguous supported checkpoint,
   and downloads both into the standard Hugging Face cache in a background
   worker. Inline progress and **Cancel Download** keep Settings responsive.
+  For an unsupported schema, the import error names the repository, revision,
+  selected config file, its top-level keys, and the schema section that failed.
+  This error means the selected file does not have a supported OpenSportsLib
+  model config shape: it needs a top-level `MODEL` mapping. A canonical
+  `MODEL` with `components` also needs `topology` (use `[]` when there are no
+  edges). Config keys are case-sensitive. Fix the repository config or select
+  a compatible model repository, then retry the import.
   Cancellation is best-effort during a single Hugging Face file operation, but
   a cancelled result is never inserted. The downloaded row is only a Settings
   draft until **Apply** or **OK**; **Cancel** discards it. **Add Manually**
@@ -111,6 +118,14 @@ inputs. For a UTC-synchronized sample, the application projects them back onto
 the whole-sample timeline before saving or displaying them. For example, if a
 selected H5 input starts five minutes after the sample's video origin, a model
 prediction at H5 position `00:01.250` becomes sample position `05:01.250`.
+The temporary localization manifest contains the selected input and no
+fabricated ground-truth event. VAT reads the model's class list from
+`DATA.common.classes` in canonical configs or `DATA.classes` in legacy configs;
+the annotation head can have different labels. A predicted class missing from
+that head is offered for mapping during review. Predictions at the start of a
+video (`position_ms: 0`) are retained. The temporary test split also sets the
+canonical or legacy dataloader to one process with shuffling disabled, so CPU
+fallback can read it even when the published config omits worker settings.
 Offsets are tracked per input: if both video and joints are selected but a
 local tracking model actually consumes only the joints/ball H5 inputs, the H5
 offset is still applied and the unused video's earlier origin does not suppress

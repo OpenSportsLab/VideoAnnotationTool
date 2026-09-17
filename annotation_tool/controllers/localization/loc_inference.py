@@ -58,7 +58,6 @@ def _ms_to_ffmpeg_time(ms: int) -> str:
 
 
 def _build_temp_dataset(video_path: str, input_fps: float, head_name: str, labels: list[str]) -> dict:
-    default_label = labels[0] if labels else "Unknown"
     return {
         "version": "2.0",
         "task": "action_spotting",
@@ -67,7 +66,7 @@ def _build_temp_dataset(video_path: str, input_fps: float, head_name: str, label
             {
                 "id": "inf_vid",
                 "inputs": [{"path": video_path, "type": "video", "fps": float(input_fps or 25.0)}],
-                "events": [{"head": head_name, "label": default_label, "position_ms": 0}],
+                "events": [],
             }
         ],
     }
@@ -84,7 +83,6 @@ def _build_tracking_dataset(tracking_inputs: list[dict], head_name: str, labels:
     for one sample (e.g. to combine several tracking sources), so dropping
     all but the first ticked input would silently lose data.
     """
-    default_label = labels[0] if labels else "Unknown"
     return {
         "version": "2.0",
         "task": "action_spotting",
@@ -93,7 +91,7 @@ def _build_tracking_dataset(tracking_inputs: list[dict], head_name: str, labels:
             {
                 "id": "inf_tracking",
                 "inputs": [dict(tracking_input) for tracking_input in tracking_inputs],
-                "events": [{"head": head_name, "label": default_label, "position_ms": 0}],
+                "events": [],
             }
         ],
     }
@@ -132,6 +130,14 @@ def _replace_dali_dataset_type(split_cfg: dict) -> None:
     dataset_type = str(split_cfg.get("type") or "")
     if dataset_type in replacements:
         split_cfg["type"] = replacements[dataset_type]
+
+
+def _configure_inference_dataloader(split_cfg: dict) -> None:
+    dataloader_cfg = split_cfg.setdefault("dataloader", {})
+    dataloader_cfg.setdefault("batch_size", 1)
+    dataloader_cfg["shuffle"] = False
+    dataloader_cfg["pin_memory"] = False
+    dataloader_cfg["num_workers"] = 0
 
 
 def _configure_runtime_backend(config_dict: dict) -> None:
@@ -280,32 +286,48 @@ class LocInferenceWorker(QThread):
 
         data_cfg = config_dict.setdefault("DATA", {})
         common_cfg = data_cfg.get("common")
-        if isinstance(common_cfg, dict) and self.dataset_root:
+        if isinstance(common_cfg, dict):
             # Canonical configs can carry the publisher's checkout at both
             # the common and split levels. H5 loaders resolve companion paths
             # such as ball_path from the split source_path, so both roots must
             # be request-scoped.
-            common_cfg["data_root"] = self.dataset_root
+            if self.dataset_root:
+                common_cfg["data_root"] = self.dataset_root
             splits_cfg = common_cfg.get("splits")
             canonical_test_cfg = (
                 splits_cfg.get("test") if isinstance(splits_cfg, dict) else None
             )
             if isinstance(canonical_test_cfg, dict):
                 canonical_test_cfg["annotation_path"] = tmp_input_json
-                canonical_test_cfg["source_path"] = self.dataset_root
-        model_labels = [str(label) for label in list(data_cfg.get("classes", [])) if str(label).strip()]
+                if self.dataset_root:
+                    canonical_test_cfg["source_path"] = self.dataset_root
+                _configure_inference_dataloader(canonical_test_cfg)
+        # Canonical configs keep checkpoint classes under DATA.common; legacy
+        # configs keep them directly under DATA. The selected annotation head
+        # can have a different schema from the model's output classes.
+        from opensportslib.core.config.accessors import classes_to_ordered_list
+
+        configured_classes = (
+            common_cfg.get("classes") if isinstance(common_cfg, dict) else None
+        ) or data_cfg.get("classes")
+        model_labels = [
+            str(label)
+            for label in classes_to_ordered_list(configured_classes)
+            if str(label).strip()
+        ]
         if not model_labels:
             model_labels = list(self.labels)
-            data_cfg["classes"] = list(model_labels)
+            if isinstance(common_cfg, dict):
+                common_cfg["classes"] = list(model_labels)
+            else:
+                data_cfg["classes"] = list(model_labels)
         data_cfg["input_fps"] = int(round(self.input_fps)) if self.input_fps > 0 else 25
 
         test_cfg = data_cfg.setdefault("test", {})
         test_cfg["video_path"] = tmp_dir
         test_cfg["path"] = tmp_input_json
         test_cfg["results"] = "predictions"
-        dataloader_cfg = test_cfg.setdefault("dataloader", {})
-        dataloader_cfg["pin_memory"] = False
-        dataloader_cfg["num_workers"] = 0
+        _configure_inference_dataloader(test_cfg)
 
         model_cfg = config_dict.setdefault("MODEL", {})
         # Only force this on legacy-schema configs that already carry the
@@ -449,11 +471,8 @@ class LocInferenceWorker(QThread):
                     raw_evts = self._extract_prediction_events(output_data)
                     print(f"[LocInferenceWorker] extracted {len(raw_evts)} raw event(s)", flush=True)
                     predicted_events = []
-                    default_label = runtime_labels[0] if runtime_labels else "Unknown"
                     for evt in raw_evts:
                         p_ms = self._event_position_ms(evt)
-                        if p_ms == 0 and evt.get("label") == default_label:
-                            continue
                         absolute_ms = p_ms + clip_offset_ms
                         # Video mode already clips to [start_ms, end_ms], so
                         # absolute_ms is never below start_ms there. H5 mode

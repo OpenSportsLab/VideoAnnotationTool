@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
+import yaml
 from huggingface_hub import HfApi, hf_hub_download
 from inference_settings import TRUSTED_LEGACY_HF_MODEL_IDS
 from inference_types import INFERENCE_TASKS
@@ -104,6 +106,37 @@ def select_checkpoint_filename(filenames: list[str]) -> str:
     )
 
 
+def _unsupported_schema_detail(config_path: str) -> str:
+    """Explain the shape that OpenSportsLib's schema detector rejected."""
+    try:
+        with open(config_path, encoding="utf-8") as handle:
+            payload = (
+                json.load(handle)
+                if Path(config_path).suffix.lower() == ".json"
+                else yaml.safe_load(handle)
+            )
+    except (OSError, ValueError, yaml.YAMLError):
+        return "The downloaded file could not be inspected for more detail."
+
+    if not isinstance(payload, dict):
+        return f"The file contains {type(payload).__name__}, but the config must be a mapping."
+
+    keys = sorted(str(key) for key in payload)
+    shown_keys = ", ".join(keys[:12]) or "none"
+    if len(keys) > 12:
+        shown_keys += f", and {len(keys) - 12} more"
+    found = f"Top-level keys: {shown_keys}."
+    if "MODEL" not in payload:
+        return f"{found} The required top-level MODEL section is missing (keys are case-sensitive)."
+
+    model = payload["MODEL"]
+    if not isinstance(model, dict):
+        return f"{found} MODEL must be a mapping; found {type(model).__name__}."
+    if "components" in model and "topology" not in model:
+        return f"{found} MODEL.components is present, but MODEL.topology is missing."
+    return f"{found} MODEL does not match a supported legacy or canonical shape."
+
+
 def parse_opensportslib_task(config_path: str) -> tuple[str, bool]:
     """Load a downloaded config via OpenSportsLib's own loader and report its task.
 
@@ -116,6 +149,15 @@ def parse_opensportslib_task(config_path: str) -> tuple[str, bool]:
     try:
         config = load_config_omega(config_path)
     except Exception as exc:
+        if "Unsupported config schema" in str(exc):
+            detail = _unsupported_schema_detail(config_path)
+            raise ValueError(
+                f"Could not parse OpenSportsLib configuration: {exc}\n"
+                f"{detail}\n"
+                "Expected a top-level MODEL mapping for a legacy config, or a "
+                "canonical MODEL mapping with both components and topology. "
+                "Check the repository config or choose a compatible OpenSportsLib model."
+            ) from exc
         raise ValueError(f"Could not parse OpenSportsLib configuration: {exc}") from exc
     task = str(getattr(config, "TASK", "") or "").strip().lower()
     if task == "vqa":
@@ -165,7 +207,12 @@ def resolve_hf_local_model(
         force_download=force_download,
     )
     _check_cancelled(is_cancelled)
-    task, is_rule_based = parse_opensportslib_task(config_path)
+    try:
+        task, is_rule_based = parse_opensportslib_task(config_path)
+    except ValueError as exc:
+        raise ValueError(
+            f"Model repository {repo_id}@{revision}, configuration {config_filename}: {exc}"
+        ) from exc
 
     # Rule-based models (e.g. OpenSportsLab/skeleton-header-max-recall) run
     # from their config alone and have no checkpoint to fetch.

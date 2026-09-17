@@ -235,7 +235,10 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   inspection, configuration/task validation, checkpoint selection, cache
   downloads, and cancellation checks. The request-scoped `force_download`
   option is forwarded to both `hf_hub_download` calls and is not persisted as
-  model metadata. Only the two exact official
+  model metadata. Schema failures from OpenSportsLib remain authoritative;
+  `parse_opensportslib_task()` adds a read-only shape diagnosis for its generic
+  unsupported-schema error, and the resolver adds repository/revision/config
+  context. No failed import creates a registry row. Only the two exact official
   localization repositories in `TRUSTED_LEGACY_HF_MODEL_IDS` may carry
   `trusted_legacy=True` through `ModelDescriptor` to `LocInferenceWorker`.
   Registry serialization revalidates that allowlist and revokes trust after a

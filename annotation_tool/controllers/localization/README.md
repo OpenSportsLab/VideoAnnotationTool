@@ -100,6 +100,15 @@ offset back onto the original sample timeline.
   model ignores another selected modality.
 - Runtime fallback supports both legacy (`dali`, `DATA.test.type`) and canonical
   (`DATA.common.runtime.loader_backend`) OpenSportsLib configuration shapes.
+- `LocInferenceWorker` keeps model class order from canonical
+  `DATA.common.classes` or legacy `DATA.classes`, falling back to the selected
+  VAT head only when the model config provides no classes. Its request-scoped
+  manifest uses an empty `events` list, so inference never treats a head label
+  as ground truth for a different model. It retains predicted events at
+  `position_ms: 0`. Both canonical and legacy temporary test dataloaders receive
+  safe inference defaults (`batch_size`, `shuffle`, `num_workers`, `pin_memory`)
+  for CPU fallback; the existing result mapping handles classes absent from the
+  selected VAT head. Cached model configs and project JSON stay untouched.
 - Accepting removes prediction metadata from the event; rejecting uses the
   tracked delete path. Manual edits invalidate pending rows.
 - Single-row review selects the following row after refresh, or the preceding row

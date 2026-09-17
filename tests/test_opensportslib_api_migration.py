@@ -256,7 +256,83 @@ def test_localization_worker_uses_class_model_weights_and_position_fallback(monk
             "label": "pass",
             "position_ms": 1200,
             "confidence_score": 0.75,
-        }
+        },
+        {
+            "head": "ball_action",
+            "label": "pass",
+            "position_ms": 0,
+            "confidence_score": 0.99,
+        },
+    ]
+
+
+def test_localization_worker_keeps_canonical_model_classes_separate_from_head(
+    monkeypatch, tmp_path
+):
+    import opensportslib
+
+    calls = {}
+
+    class FakeLocalizationModel:
+        def __init__(self, config):
+            with open(config, encoding="utf-8") as handle:
+                calls["runtime"] = yaml.safe_load(handle)
+
+        def infer(self, **kwargs):
+            with open(kwargs["test_set"], encoding="utf-8") as handle:
+                calls["manifest"] = json.load(handle)
+            return {"data": [{"events": [{"label": "Header", "position_ms": 0}]}]}
+
+    monkeypatch.setattr(
+        opensportslib,
+        "model",
+        types.SimpleNamespace(LocalizationModel=FakeLocalizationModel),
+        raising=False,
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "DATA": {"common": {"classes": ["Header"], "splits": {"test": {}}}},
+                "MODEL": {},
+                "SYSTEM": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    worker = localization_inference_module.LocInferenceWorker(
+        video_path=str(tmp_path / "clip.mp4"),
+        start_ms=0,
+        end_ms=0,
+        config_path=str(config_path),
+        model_id="OpenSportsLab/header-spotter",
+        head_name="action_inference",
+        labels=["PASS", "DRIVE"],
+        input_fps=25.0,
+    )
+    finished_payloads = []
+    worker.finished_signal.connect(finished_payloads.append)
+    worker.run()
+
+    assert calls["runtime"]["DATA"]["common"]["classes"] == ["Header"]
+    assert "classes" not in calls["runtime"]["DATA"]
+    assert calls["runtime"]["DATA"]["common"]["splits"]["test"]["dataloader"] == {
+        "batch_size": 1,
+        "shuffle": False,
+        "pin_memory": False,
+        "num_workers": 0,
+    }
+    assert calls["manifest"]["labels"]["action_inference"]["labels"] == ["Header"]
+    assert calls["manifest"]["data"][0]["events"] == []
+    assert finished_payloads == [
+        [
+            {
+                "head": "action_inference",
+                "label": "Header",
+                "position_ms": 0,
+                "confidence_score": 1.0,
+            }
+        ]
     ]
 
 
