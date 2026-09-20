@@ -7,6 +7,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 from colors import localization_label_color_hex, normalize_hex_color
+from localization_confidence import numeric_localization_confidence
 from utils import (
     annotation_at_position,
     annotation_utc_datetime,
@@ -57,6 +58,7 @@ class LocalizationEditorController(QObject):
     markersUpdateRequested = pyqtSignal(object)
     mediaTogglePlaybackRequested = pyqtSignal()
     inferenceRunRequested = pyqtSignal(str, object)
+    evaluationRequested = pyqtSignal()
     pendingPredictionsChanged = pyqtSignal(object)
 
     SETTINGS_ORG = "OpenSportsLab"
@@ -117,6 +119,7 @@ class LocalizationEditorController(QObject):
     def setup_connections(self):
         self.localization_panel.eventNavigateRequested.connect(self._navigate_annotation)
         self.localization_panel.statisticsRequested.connect(self._show_statistics)
+        self.localization_panel.evaluationRequested.connect(self.evaluationRequested.emit)
         self.localization_panel.acceptAllPredictionsRequested.connect(self.accept_all_predictions)
         self.localization_panel.rejectAllPredictionsRequested.connect(self.reject_all_predictions)
 
@@ -747,7 +750,7 @@ class LocalizationEditorController(QObject):
             for raw in list(item.get("events") or []):
                 if not isinstance(raw, dict):
                     continue
-                confidence = self._numeric_prediction_confidence(raw)
+                confidence = numeric_localization_confidence(raw)
                 if confidence is not None and confidence < min_confidence:
                     filtered_count += 1
                     continue
@@ -797,7 +800,8 @@ class LocalizationEditorController(QObject):
                 event["head"] = target_head
                 event["label"] = mapped
                 event["position_ms"] = self._event_position_ms(event)
-                event["confidence_score"] = self._prediction_confidence(event)
+                confidence = numeric_localization_confidence(event)
+                event["confidence_score"] = 1.0 if confidence is None else confidence
                 event["inference_model_id"] = result.model_id
                 events_by_sample.setdefault(sample_id, []).append(event)
         if not events_by_sample:
@@ -833,29 +837,6 @@ class LocalizationEditorController(QObject):
             )
         }
         self.pendingPredictionsChanged.emit(set(self._pending_prediction_sample_ids))
-
-    @staticmethod
-    def _numeric_prediction_confidence(event: dict) -> float | None:
-        if not isinstance(event, dict):
-            return None
-        for key in ("confidence_score", "confidence", "score"):
-            value = event.get(key)
-            if value is None or isinstance(value, bool):
-                continue
-            if isinstance(value, str) and not value.strip():
-                continue
-            try:
-                confidence = float(value)
-            except (TypeError, ValueError):
-                continue
-            if math.isfinite(confidence):
-                return max(0.0, min(1.0, confidence))
-        return None
-
-    @staticmethod
-    def _prediction_confidence(event: dict) -> float:
-        confidence = LocalizationEditorController._numeric_prediction_confidence(event)
-        return confidence if confidence is not None else 1.0
 
     # --- Helper Refresh Methods ---
     def _refresh_schema_ui(self):

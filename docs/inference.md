@@ -232,6 +232,33 @@ does not have a separate batch-inference control. Its input list shows only the
 currently selected sample. For all-samples scope, that input selection is used
 as the positional modality template for every sample in the batch.
 
+## Evaluate localization heads
+
+In the Localization panel, choose **Evaluate…** to compare two different task
+heads already saved in the open project. Choose **Whole project** or **Selected
+sample**, then select the ground-truth and prediction heads. Every prediction
+class observed in that scope must map to a ground-truth class; identical names
+are selected automatically, and several prediction classes may map to the same
+ground-truth class. Evaluation does not change annotations or undo history.
+
+The dialog starts with AP tolerances of 1, 2, 3, 4, and 5 seconds. Add or remove
+values in 0.1-second steps from 0.0 to 60.0 seconds. The report shows tight mAP
+(1–5 seconds), loose mAP (5–60 seconds), and AP at every chosen tolerance, both
+overall and per class. A class with no ground-truth events in the evaluated
+scope is shown as **N/A** and omitted from the mAP average. If the scope has no
+ground-truth events at all, the app explains why it cannot calculate a score.
+
+Whole-project evaluation uses samples marked `verified` and samples without an
+annotation status; it skips `unlabeled` and `excluded` samples. Declared
+intervals are scored as separate segments. All events in the chosen
+ground-truth head count as truth, including unconfirmed inferred events.
+Predictions without a usable confidence score are included at 100% confidence.
+Events in either selected head need a label and a valid timeline position;
+events outside declared intervals cause an error instead of being silently
+omitted. If the project changes while scoring runs, its report is discarded.
+The report is read-only and is not stored in project JSON or application
+settings.
+
 ## Background execution
 
 Inference uses two session-only FIFO queues: one for Local models and one for

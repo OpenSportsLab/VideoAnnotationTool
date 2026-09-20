@@ -114,6 +114,16 @@
           </spacer>
          </item>
          <item>
+          <widget class="QPushButton" name="btn_evaluate">
+           <property name="cursor">
+            <cursorShape>PointingHandCursor</cursorShape>
+           </property>
+           <property name="text">
+            <string>Evaluate…</string>
+           </property>
+          </widget>
+         </item>
+         <item>
           <widget class="QPushButton" name="btn_statistics">
            <property name="cursor">
             <cursorShape>PointingHandCursor</cursorShape>

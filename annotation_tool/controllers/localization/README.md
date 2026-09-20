@@ -143,6 +143,24 @@ offset back onto the original sample timeline.
   event objects without a usable head or label are excluded.
 - Statistics are recomputed from the selected sample snapshot on every request
   and do not emit mutation or media intents.
+- The panel's Evaluate intent reaches `MainWindow` through the Localization
+  controller's `evaluationRequested` signal. `MainWindow` snapshots project
+  JSON, projects valid UTC events against each sample's timeline origin, and
+  starts `LocalizationEvaluationWorker`. A changed project generation or JSON
+  content discards its result. The worker reads saved heads only and never
+  emits a history mutation intent.
+- `localization_evaluation.py` splits verified samples into logical intervals,
+  excludes unlabeled and excluded samples, and rejects selected-head events
+  with missing labels or positions outside declared intervals. Intervals use
+  half-open `[start_time_ms, end_time_ms)` boundaries. It maps observed
+  prediction labels to ground-truth labels and calls
+  OpenSportsLib's sparse spotting AP helpers using canonical `position_ms` and
+  millisecond tolerances. It scores all ground-truth-head events, treats missing
+  or invalid prediction confidence as 1.0, and omits classes without truth
+  events from macro averages. Tight and loose mAP use OpenSportsLib's
+  trapezoidal tolerance averaging over 1–5 and 5–60 seconds. The dialog adds
+  independent AP columns for every selected 0.1-second tolerance. Mapping and
+  report state are transient; no settings or project JSON fields are added.
 
 ## Conventions
 - Emit mutation intents; do not apply persisted mutation policy locally.

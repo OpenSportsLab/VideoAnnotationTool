@@ -741,6 +741,7 @@ class LocalizationAnnotationPanel(QWidget):
     tabSwitched = pyqtSignal(int)
     eventNavigateRequested = pyqtSignal(int)
     statisticsRequested = pyqtSignal()
+    evaluationRequested = pyqtSignal()
     acceptAllPredictionsRequested = pyqtSignal()
     rejectAllPredictionsRequested = pyqtSignal()
 
@@ -781,6 +782,7 @@ class LocalizationAnnotationPanel(QWidget):
 
         self.tabs.currentChanged.connect(self.tabSwitched.emit)
         self.btn_statistics.clicked.connect(self.statisticsRequested.emit)
+        self.btn_evaluate.clicked.connect(self.evaluationRequested.emit)
         self.btn_prev_event.clicked.connect(lambda: self.eventNavigateRequested.emit(-1))
         self.btn_next_event.clicked.connect(lambda: self.eventNavigateRequested.emit(1))
 

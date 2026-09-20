@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QStackedWidget,
     QTabWidget,
 )
@@ -46,6 +47,10 @@ from ui.dataset_explorer_panel import DatasetExplorerPanel
 from ui.media_player import MediaCenterPanel, ViewerLayoutMode
 from ui.classification import ClassificationAnnotationPanel
 from ui.localization import LocalizationAnnotationPanel
+from ui.localization.evaluation_dialog import (
+    LocalizationEvaluationDialog, LocalizationEvaluationResultsDialog,
+)
+from localization_evaluation import LocalizationEvaluationWorker
 from ui.description import DescriptionAnnotationPanel
 from ui.dense_description import DenseAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
@@ -98,7 +103,9 @@ from localization_settings import (
     normalize_localization_preroll_ms,
 )
 
-from utils import create_checkmark_icon, resource_path
+from utils import (
+    annotation_position_ms, create_checkmark_icon, parse_utc_datetime, resource_path,
+)
 
 
 class VideoAnnotationWindow(QMainWindow):
@@ -263,6 +270,8 @@ class VideoAnnotationWindow(QMainWindow):
         self.inference_jobs_dock.hide()
         self._pending_inference_requests = {}
         self._localization_inference_range: tuple[str, int, int] | None = None
+        self._localization_evaluation_workers = set()
+        self._active_localization_evaluation = None
         self._pending_prediction_samples_by_task = {}
         self._hf_busy_dialog = None
         self._last_hf_download_payload: dict | None = None
@@ -792,6 +801,9 @@ class VideoAnnotationWindow(QMainWindow):
         )
         self.localization_editor_controller.locInferenceCommitRequested.connect(
             self._commit_localization_inference
+        )
+        self.localization_editor_controller.evaluationRequested.connect(
+            self._open_localization_evaluation
         )
 
         self.desc_editor_controller.clearMarkersRequested.connect(lambda: self.center_panel.set_markers([]))
@@ -1896,6 +1908,103 @@ class VideoAnnotationWindow(QMainWindow):
         self.inference_jobs_dock.show()
         self.inference_jobs_dock.raise_()
 
+    def _open_localization_evaluation(self) -> None:
+        active = self._active_localization_evaluation
+        if active is not None and active["worker"].isRunning():
+            self.show_temp_msg("Localization Evaluation", "An evaluation is already running.", 2500)
+            return
+        explorer = self.dataset_explorer_controller
+        explorer.get_samples()
+        project_snapshot = copy.deepcopy(explorer.dataset_json)
+        generation = explorer.project_generation
+        samples = copy.deepcopy(project_snapshot["data"])
+        for sample in samples:
+            if not isinstance(sample, dict):
+                continue
+            timed_events = [
+                event for event in (sample.get("events") or [])
+                if isinstance(event, dict)
+                and parse_utc_datetime(event.get("timestamp_utc")) is not None
+            ]
+            if not timed_events:
+                continue
+            origin = explorer._timeline_origin_for_sample(sample)
+            if parse_utc_datetime(origin) is not None:
+                for event in timed_events:
+                    event["position_ms"] = annotation_position_ms(event, origin)
+        dialog = LocalizationEvaluationDialog(
+            samples,
+            copy.deepcopy(project_snapshot.get("labels", {})),
+            str(explorer.current_selected_sample_id or ""),
+            self.localization_panel.annot_mgmt.tabs.get_current_head(),
+            self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        if generation != explorer.project_generation or project_snapshot != explorer.dataset_json:
+            self.show_temp_msg("Localization Evaluation", "The project changed; reopen evaluation.", 3500)
+            return
+        worker = LocalizationEvaluationWorker(samples, dialog.options())
+        progress = QProgressDialog("Evaluating localization heads…", "Cancel", 0, 0, self)
+        progress.setWindowTitle("Localization Evaluation")
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.canceled.connect(lambda: self._cancel_localization_evaluation(worker))
+        self._active_localization_evaluation = {
+            "worker": worker,
+            "progress": progress,
+            "generation": generation,
+            "project_snapshot": project_snapshot,
+            "discard": False,
+        }
+        self._localization_evaluation_workers.add(worker)
+        self.localization_panel.btn_evaluate.setEnabled(False)
+        worker.completed.connect(
+            lambda report: self._finish_localization_evaluation(worker, report=report)
+        )
+        worker.failed.connect(
+            lambda message: self._finish_localization_evaluation(worker, error=message)
+        )
+        worker.finished.connect(lambda: self._on_localization_evaluation_worker_finished(worker))
+        progress.show()
+        worker.start()
+
+    def _cancel_localization_evaluation(self, worker) -> None:
+        active = self._active_localization_evaluation
+        if active is not None and active["worker"] is worker:
+            active["discard"] = True
+            worker.requestInterruption()
+            active["progress"].close()
+
+    def _finish_localization_evaluation(self, worker, *, report=None, error=None) -> None:
+        active = self._active_localization_evaluation
+        if active is None or active["worker"] is not worker:
+            return
+        self._active_localization_evaluation = None
+        active["progress"].close()
+        self.localization_panel.btn_evaluate.setEnabled(True)
+        if (
+            active["discard"]
+            or active["generation"] != self.dataset_explorer_controller.project_generation
+            or (
+                active.get("project_snapshot") is not None
+                and active["project_snapshot"] != self.dataset_explorer_controller.dataset_json
+            )
+        ):
+            return
+        if error is not None:
+            QMessageBox.warning(self, "Localization Evaluation", error)
+            return
+        LocalizationEvaluationResultsDialog(report, self).exec()
+
+    def _on_localization_evaluation_worker_finished(self, worker) -> None:
+        self._localization_evaluation_workers.discard(worker)
+        active = self._active_localization_evaluation
+        if active is not None and active["worker"] is worker:
+            self._finish_localization_evaluation(
+                worker, error="The evaluation ended without a result."
+            )
+
     def _on_shared_inference_cancelled(self, request_id: str) -> None:
         pending = self._pending_inference_requests.pop(request_id, None)
         if not pending or pending.get("invalidated"):
@@ -1904,6 +2013,11 @@ class VideoAnnotationWindow(QMainWindow):
 
     def _on_project_generation_changed(self, _generation: int) -> None:
         self._localization_inference_range = None
+        active_evaluation = getattr(self, "_active_localization_evaluation", None)
+        if active_evaluation is not None:
+            active_evaluation["discard"] = True
+            active_evaluation["worker"].requestInterruption()
+            active_evaluation["progress"].close()
         self.inference_controller.clear_remote_sessions()
         if not self._pending_inference_requests:
             return
@@ -2151,6 +2265,19 @@ class VideoAnnotationWindow(QMainWindow):
                 self.show_temp_msg(
                     "Inference Running",
                     "Localization inference is still running. Please wait and close again.",
+                    2500,
+                )
+                event.ignore()
+                return
+            for worker in self._localization_evaluation_workers:
+                worker.requestInterruption()
+            if any(
+                worker.isRunning() and not worker.wait(2500)
+                for worker in tuple(self._localization_evaluation_workers)
+            ):
+                self.show_temp_msg(
+                    "Localization Evaluation",
+                    "Evaluation is still running. Please wait and close again.",
                     2500,
                 )
                 event.ignore()
