@@ -129,9 +129,11 @@ The **Inference Jobs** dock sits below the Annotation Editor. Its single
 mode, with task-compatible models from Local and any enabled remote providers,
 inputs, and applicable task
 parameters. Server and model setup lives in **Edit → Settings → Inference**.
-The dock's single table shows active progress, per-provider FIFO positions,
-cancellation, persistent outcomes, and timestamped per-job details while
-leaving the status bar unobstructed.
+The dock's two-column table combines provider and algorithm information, then
+combines state, progress, and per-provider FIFO position. Selecting a row shows
+its timestamped details and submitted/finished times below the table. The
+toolbar cancels the selected job or all active jobs and leaves the status bar
+unobstructed.
 It hides when the project closes and the welcome screen is restored; its View
 action is disabled there, and its prior visibility returns with the workspace.
 One job per provider may run at the same time, so Local and several remote

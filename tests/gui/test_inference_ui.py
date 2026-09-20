@@ -1025,6 +1025,7 @@ def test_inference_jobs_widget_renders_queues_history_logs_and_actions(qtbot):
     active = InferenceQueueEntry(
         request_id="request",
         backend="local",
+        provider_name="Local",
         task="localization",
         model_id="model",
         sample_ids=("sample",),
@@ -1033,6 +1034,7 @@ def test_inference_jobs_widget_renders_queues_history_logs_and_actions(qtbot):
         current=2,
         total=5,
         queue_position=0,
+        submitted_at=1.0,
         log_events=(
             InferenceLogEvent(1.0, "queued", "Queued"),
             InferenceLogEvent(2.0, "running", "Running inference", current=2, total=5),
@@ -1050,14 +1052,19 @@ def test_inference_jobs_widget_renders_queues_history_logs_and_actions(qtbot):
     widget.set_entries((active, queued))
 
     assert "Local: Running 2/5, 1 queued" in widget.summary_label.text()
-    assert widget.local_table.rowCount() == 2
-    assert widget.jobs_table.columnCount() == 8
+    assert widget.jobs_table.rowCount() == 2
+    assert widget.jobs_table.columnCount() == 2
+    assert widget.jobs_table.item(0, 0).text() == "Local · model\nLocalization · 1 sample"
+    assert widget.jobs_table.item(0, 1).text() == "Running 2/5 · Running inference"
+    assert widget.jobs_table.item(1, 1).text() == "Queued #1"
+    widget.jobs_table.selectRow(0)
+    assert "Running inference" in widget.details_view.toPlainText()
+    assert f"Submitted: {widget._format_time(1.0)}" in widget.timestamps_label.text()
+    assert "Finished: —" in widget.timestamps_label.text()
     with qtbot.waitSignal(widget.cancelRequested, timeout=500):
-        widget.jobs_table.cellWidget(0, 7).click()
+        widget.cancel_selected_button.click()
     with qtbot.waitSignal(widget.cancelAllRequested, timeout=500):
         widget.cancel_all_button.click()
-    widget.jobs_table.cellWidget(0, 6).click()
-    assert "Running inference" in widget.details_view.toPlainText()
 
     failed = InferenceQueueEntry(
         request_id="failed",
@@ -1069,6 +1076,8 @@ def test_inference_jobs_widget_renders_queues_history_logs_and_actions(qtbot):
         message="Server failed",
         error_code="server_error",
         error_details={"job_id": "job-1"},
+        submitted_at=2.0,
+        finished_at=3.0,
         log_events=(
             InferenceLogEvent(
                 3.0, "failed", "Server failed", level="error", details={"job_id": "job-1"}
@@ -1076,14 +1085,17 @@ def test_inference_jobs_widget_renders_queues_history_logs_and_actions(qtbot):
         ),
     )
     widget.set_entries((failed,))
-    assert widget.history_table.rowCount() == 1
-    widget.jobs_table.cellWidget(0, 6).click()
+    assert widget.jobs_table.rowCount() == 1
+    widget.jobs_table.selectRow(0)
     assert "job-1" in widget.details_view.toPlainText()
+    assert f"Finished: {widget._format_time(3.0)}" in widget.timestamps_label.text()
+    assert not widget.cancel_selected_button.isEnabled()
     with qtbot.waitSignal(widget.clearHistoryRequested, timeout=500):
         widget.clear_history_button.click()
 
     widget.set_entries(())
     assert widget.summary_label.text() == "Local: Idle | GPU A: Idle | GPU B: Idle"
+    assert widget.timestamps_label.isHidden()
 
 
 @pytest.mark.gui

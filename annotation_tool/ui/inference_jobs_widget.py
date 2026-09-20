@@ -36,10 +36,14 @@ class InferenceJobsWidget(QWidget):
         self.run_button.setDefaultAction(run_action)
         toolbar.addWidget(self.run_button)
         toolbar.addStretch(1)
+        self.cancel_selected_button = QPushButton("Cancel Selected", self)
+        self.cancel_selected_button.setEnabled(False)
         self.cancel_all_button = QPushButton("Cancel All", self)
         self.clear_history_button = QPushButton("Clear Finished", self)
+        self.cancel_selected_button.clicked.connect(self._cancel_selected)
         self.cancel_all_button.clicked.connect(self.cancelAllRequested.emit)
         self.clear_history_button.clicked.connect(self.clearHistoryRequested.emit)
+        toolbar.addWidget(self.cancel_selected_button)
         toolbar.addWidget(self.cancel_all_button)
         toolbar.addWidget(self.clear_history_button)
         layout.addLayout(toolbar)
@@ -54,22 +58,29 @@ class InferenceJobsWidget(QWidget):
         self.storage_error_label.hide()
         layout.addWidget(self.storage_error_label)
         splitter = QSplitter(Qt.Orientation.Vertical, self)
-        self.jobs_table = QTableWidget(0, 8, splitter)
+        table_panel = QWidget(splitter)
+        table_layout = QVBoxLayout(table_panel)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        self.jobs_table = QTableWidget(0, 2, table_panel)
         self.jobs_table.setObjectName("inferenceJobsTable")
         self.jobs_table.setHorizontalHeaderLabels([
-            "Provider", "Job", "State / Progress", "Queue Position",
-            "Submitted", "Finished", "Details", "Cancel",
+            "Provider / Algorithm", "State / Progress",
         ])
         self._configure_table(self.jobs_table)
-        # Transitional aliases still reference this single canonical table.
-        self.local_table = self.remote_table = self.history_table = self.jobs_table
+        self.jobs_table.itemSelectionChanged.connect(self._on_selection_changed)
+        table_layout.addWidget(self.jobs_table, 1)
+        self.timestamps_label = QLabel("", table_panel)
+        self.timestamps_label.setObjectName("inferenceJobTimestamps")
+        self.timestamps_label.setWordWrap(True)
+        self.timestamps_label.hide()
+        table_layout.addWidget(self.timestamps_label)
         details_group = QGroupBox("Job Details", splitter)
         details_layout = QVBoxLayout(details_group)
         self.details_view = QTextBrowser(details_group)
         self.details_view.setObjectName("inferenceJobDetails")
-        self.details_view.setPlaceholderText("Select Details for an inference job.")
+        self.details_view.setPlaceholderText("Select an inference job to view its details.")
         details_layout.addWidget(self.details_view)
-        splitter.addWidget(self.jobs_table)
+        splitter.addWidget(table_panel)
         splitter.addWidget(details_group)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 1)
@@ -101,19 +112,24 @@ class InferenceJobsWidget(QWidget):
     def set_entries(self, entries) -> None:
         entries = tuple(entries or ())
         self._entries_by_id = {entry.request_id: entry for entry in entries}
+        selected_request_id = self._selected_request_id
+        self.jobs_table.blockSignals(True)
         self.jobs_table.setRowCount(0)
         for entry in sorted(entries, key=self._sort_key):
             self._append_row(entry)
+        self.jobs_table.blockSignals(False)
+        self.jobs_table.resizeRowsToContents()
         active = [entry for entry in entries if entry.state in _ACTIVE_STATES | {"queued"}]
         terminal = [entry for entry in entries if entry.state in _TERMINAL_STATES]
         self.cancel_all_button.setEnabled(bool(active))
         self.clear_history_button.setEnabled(bool(terminal))
         self.summary_label.setText(self._summary(entries))
-        if self._selected_request_id in self._entries_by_id:
-            self._show_details(self._selected_request_id)
-        elif self._selected_request_id:
-            self._selected_request_id = ""
-            self.details_view.clear()
+        selected_row = self._row_for_request(selected_request_id)
+        if selected_row >= 0:
+            self.jobs_table.selectRow(selected_row)
+            self._show_details(selected_request_id)
+        else:
+            self._clear_selection_details()
 
     @staticmethod
     def _sort_key(entry):
@@ -127,31 +143,33 @@ class InferenceJobsWidget(QWidget):
         table = self.jobs_table
         row = table.rowCount()
         table.insertRow(row)
-        state = entry.state.title()
-        if entry.total > 0 and entry.state in _ACTIVE_STATES:
-            state += f" {entry.current}/{entry.total}"
-        queue = str(entry.queue_position) if entry.state == "queued" else "—"
-        values = (
-            entry.provider_name or entry.backend.title(), self._job_name(entry),
-            state, queue, self._format_time(entry.submitted_at),
-            self._format_time(entry.finished_at),
-        )
+        values = (self._job_name(entry), self._state_progress(entry))
         for column, value in enumerate(values):
-            table.setItem(row, column, QTableWidgetItem(str(value)))
-        details = QPushButton("Details", table)
-        details.clicked.connect(lambda _checked=False, rid=entry.request_id: self._show_details(rid))
-        table.setCellWidget(row, 6, details)
-        if entry.state in _ACTIVE_STATES | {"queued"}:
-            cancel = QPushButton("Cancelling…" if entry.state == "cancelling" else "Cancel", table)
-            cancel.setEnabled(entry.state != "cancelling")
-            cancel.clicked.connect(lambda _checked=False, rid=entry.request_id: self.cancelRequested.emit(rid))
-            table.setCellWidget(row, 7, cancel)
+            item = QTableWidgetItem(str(value))
+            item.setData(Qt.ItemDataRole.UserRole, entry.request_id)
+            table.setItem(row, column, item)
 
     @staticmethod
     def _job_name(entry):
         task = entry.task.replace("_", " ").title()
         count = len(entry.sample_ids)
-        return f"{task} · {entry.model_id} ({count} sample{'s' if count != 1 else ''})"
+        provider = entry.provider_name or entry.backend.title()
+        return (
+            f"{provider} · {entry.model_id}\n"
+            f"{task} · {count} sample{'s' if count != 1 else ''}"
+        )
+
+    @staticmethod
+    def _state_progress(entry):
+        if entry.state == "queued":
+            return f"Queued #{entry.queue_position}" if entry.queue_position else "Queued"
+        state = entry.state.title()
+        if entry.total > 0 and entry.state in _ACTIVE_STATES:
+            state += f" {entry.current}/{entry.total}"
+        message = str(entry.message or "").strip()
+        if message and message.casefold() != entry.state.casefold():
+            state += f" · {message}"
+        return state
 
     @staticmethod
     def _format_time(timestamp):
@@ -189,12 +207,19 @@ class InferenceJobsWidget(QWidget):
         if entry is None:
             return
         self._selected_request_id = entry.request_id
+        self.timestamps_label.setText(
+            f"Submitted: {self._format_time(entry.submitted_at)}    "
+            f"Finished: {self._format_time(entry.finished_at)}"
+        )
+        self.timestamps_label.show()
+        self.cancel_selected_button.setEnabled(
+            entry.state in _ACTIVE_STATES | {"queued"} and entry.state != "cancelling"
+        )
         started = entry.started_at or entry.submitted_at
         duration = max(0.0, entry.finished_at - started) if entry.finished_at and started else 0.0
         header = [
-            f"{entry.provider_name or entry.backend.title()} · {self._job_name(entry)}",
+            self._job_name(entry).replace("\n", " · "),
             f"State: {entry.state.title()}", f"Request: {entry.request_id}",
-            f"Submitted: {self._format_time(entry.submitted_at)}",
         ]
         if duration:
             header.append(f"Duration: {duration:.1f}s")
@@ -207,6 +232,34 @@ class InferenceJobsWidget(QWidget):
             if event.details not in (None, "", {}):
                 lines.append("&nbsp;&nbsp;" + self._escape(json.dumps(event.details, sort_keys=True, default=str)))
         self.details_view.setHtml("<br>".join(lines))
+
+    def _on_selection_changed(self):
+        row = self.jobs_table.currentRow()
+        item = self.jobs_table.item(row, 0) if row >= 0 else None
+        request_id = item.data(Qt.ItemDataRole.UserRole) if item is not None else ""
+        if request_id:
+            self._show_details(str(request_id))
+        else:
+            self._clear_selection_details()
+
+    def _cancel_selected(self):
+        entry = self._entries_by_id.get(self._selected_request_id)
+        if entry is not None and entry.state in _ACTIVE_STATES | {"queued"}:
+            self.cancelRequested.emit(entry.request_id)
+
+    def _row_for_request(self, request_id):
+        for row in range(self.jobs_table.rowCount()):
+            item = self.jobs_table.item(row, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == request_id:
+                return row
+        return -1
+
+    def _clear_selection_details(self):
+        self._selected_request_id = ""
+        self.cancel_selected_button.setEnabled(False)
+        self.timestamps_label.clear()
+        self.timestamps_label.hide()
+        self.details_view.clear()
 
     @staticmethod
     def _escape(value):

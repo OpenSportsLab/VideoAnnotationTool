@@ -210,9 +210,14 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   `queueChanged`, and `clear_queue_history()` form the queue interface.
   Immutable `InferenceQueueEntry` snapshots drive the Inference Jobs dock. Each
   entry includes a bounded immutable event timeline and repeated stage progress
-  is coalesced. Terminal entries persist without a count limit in
-  application-wide SQLite until `clear_queue_history()` removes them. Storage
-  errors fall back to session-only history and emit `historyErrorChanged`.
+  is coalesced. Terminal entries are stored without a count limit in
+  application-wide SQLite until `clear_queue_history()` removes them or a
+  successful `shutdown()` clears all job records. A timed-out shutdown retains
+  them because the application remains open. Storage
+  errors fall back to session-only history and emit `historyErrorChanged`. The
+  jobs widget renders these snapshots in provider/algorithm and state/progress
+  columns. Row selection owns the displayed event log, submitted/finished
+  metadata, and the target of its external **Cancel Selected** action.
 - Provider work runs in one `QThread` per active lane; `MainWindow` leaves
   navigation, editing, and further inference submission enabled. A generic
   post-provider cancellation check suppresses late results. A cancelling lane

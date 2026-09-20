@@ -314,13 +314,19 @@ to the welcome screen, where its View action is disabled. Its previous visible
 or hidden preference is restored when a project workspace is shown again. The
 application status bar remains reserved for normal
 status messages. One table shows queued, running, cancelling, succeeded,
-failed, and cancelled jobs with provider, queue position, progress, timestamps,
-per-job **Cancel**, and **Cancel All**. **Clear Finished** removes terminal
-records. Terminal metadata and each job's bounded event log persist in an
-application-wide SQLite database until cleared. Inference payloads, media,
+failed, and cancelled jobs. Its first column combines the provider, algorithm,
+task, and sample count. Its second column combines state and progress, including
+the provider-relative queue position. Selecting a row shows its event details
+and displays the submitted and finished times below the table. **Cancel
+Selected** cancels the selected active or queued job, while **Cancel All** acts
+on every provider lane. **Clear Finished** removes terminal
+records. Terminal metadata and each job's bounded event log are stored in an
+application-wide SQLite database for the current application session and are
+deleted during an orderly shutdown. **Clear Finished** deletes them earlier.
+Inference payloads, media,
 credentials, and nonterminal work are not stored, so a crash never resumes a
 job. If history storage is unreadable, the panel reports the error and uses
-session-only history. **Details** shows a bounded, timestamped
+session-only history. The selected row's details show a bounded, timestamped
 timeline of state, progress-stage, cancellation, and error messages.
 Dataset navigation, playback, editing, saving, and tab switching remain
 available throughout.
@@ -460,7 +466,8 @@ remembered task choices, and logs carry the stable provider ID plus display
 name and kind. Each request receives one deep-copied provider snapshot with its
 endpoint and catalog; administration tokens are removed. `MainWindow` remains
 the only cross-module route. Project changes cancel current lanes and discard
-late results. Shutdown waits for workers and closes history storage.
+late results. Shutdown waits for workers, clears the job list and its SQLite
+records, and closes history storage.
 
 `InferenceProvider` defines the shared catalog, health, model operation,
 execution, and cleanup contract. `LocalInferenceProvider` calls OpenSportsLib
@@ -494,7 +501,8 @@ which performs one fresh VQA upload. Cancellation marks the active record and
 signals its worker. The lane stays occupied until that worker exits; terminal
 metadata is then appended to SQLite and the next request is dispatched.
 SQLite failures leave execution available and surface through
-`historyErrorChanged`; queued and running records are never written.
+`historyErrorChanged`; queued and running records are never written. A
+successful shutdown clears all runtime records and stored terminal entries.
 
 ## Local model availability
 

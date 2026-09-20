@@ -826,6 +826,12 @@ class InferenceController(QObject):
             if not worker.wait(remaining):
                 return False
         self.clear_remote_sessions()
+        self._queues.clear()
+        self._workers.clear()
+        self._active_records.clear()
+        self._records.clear()
+        self._seen_request_ids.clear()
+        self.clear_queue_history()
         self._history_store.close()
         return True
 

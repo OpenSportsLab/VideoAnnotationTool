@@ -163,10 +163,10 @@ def test_each_remote_provider_has_an_independent_fifo_lane(qtbot, monkeypatch):
 
 
 @pytest.mark.gui
-def test_terminal_history_restores_from_sqlite_and_clear_is_persistent(
+def test_successful_shutdown_clears_terminal_history_from_sqlite(
     qtbot, monkeypatch, tmp_path
 ):
-    path = tmp_path / "restored.sqlite3"
+    path = tmp_path / "shutdown-clears.sqlite3"
     monkeypatch.setattr(
         inference_controller_module,
         "InferenceHistoryStore",
@@ -185,19 +185,15 @@ def test_terminal_history_restores_from_sqlite_and_clear_is_persistent(
     request = _provider_request("server-a", "persisted")
     first.enqueue_inference(request)
     qtbot.waitUntil(lambda: not first.has_running_inference())
-    assert first.shutdown()
-
-    restored = InferenceController()
-    entries = restored.queue_snapshot()
-    assert [(entry.request_id, entry.provider_id) for entry in entries] == [
+    assert [(entry.request_id, entry.provider_id) for entry in first.queue_snapshot()] == [
         (request.request_id, "server-a")
     ]
-    restored.clear_queue_history()
-    assert restored.queue_snapshot() == ()
-    assert restored.shutdown()
-    empty = InferenceController()
-    assert empty.queue_snapshot() == ()
-    assert empty.shutdown()
+    assert first.shutdown()
+    assert first.queue_snapshot() == ()
+
+    reopened = InferenceController()
+    assert reopened.queue_snapshot() == ()
+    assert reopened.shutdown()
 
 
 @pytest.mark.gui
@@ -459,9 +455,11 @@ def test_shutdown_cancels_waiting_jobs_and_never_dispatches_them(qtbot, monkeypa
     qtbot.waitUntil(entered["active"].is_set)
 
     assert controller.shutdown(wait_ms=10) is False
+    assert controller.queue_snapshot()
     assert not entered["waiting"].is_set()
     release.set()
     assert controller.shutdown(wait_ms=2000)
+    assert controller.queue_snapshot() == ()
     assert not entered["waiting"].is_set()
 
 
