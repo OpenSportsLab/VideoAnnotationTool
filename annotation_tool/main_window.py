@@ -100,8 +100,10 @@ from shortcut_settings import (
 )
 from localization_settings import (
     LOCALIZATION_PREROLL_MS_KEY,
+    load_localization_evaluation_scope,
     load_localization_preroll_ms,
     normalize_localization_preroll_ms,
+    save_localization_evaluation_scope,
 )
 
 from utils import create_checkmark_icon, resource_path
@@ -1927,15 +1929,22 @@ class VideoAnnotationWindow(QMainWindow):
             str(explorer.current_selected_sample_id or ""),
             self.localization_panel.annot_mgmt.tabs.get_current_head(),
             self,
+            initial_scope=load_localization_evaluation_scope(
+                getattr(explorer, "settings", None)
+            ),
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
+        options = dialog.options()
+        save_localization_evaluation_scope(
+            getattr(explorer, "settings", None), options["scope"]
+        )
         if generation != explorer.project_generation or project_snapshot != explorer.dataset_json:
             self.show_temp_msg("Localization Evaluation", "The project changed; reopen evaluation.", 3500)
             return
         samples = copy.deepcopy(project_snapshot["data"])
         project_root = explorer.project_root or explorer.current_working_directory or os.getcwd()
-        worker = LocalizationEvaluationWorker(samples, dialog.options(), project_root)
+        worker = LocalizationEvaluationWorker(samples, options, project_root)
         progress = QProgressDialog("Preparing localization evaluation…", "Cancel", 0, 100, self)
         progress.setWindowTitle("Localization Evaluation")
         progress.setMinimumDuration(0)

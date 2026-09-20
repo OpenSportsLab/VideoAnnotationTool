@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QDialog, QMessageBox
 from inference_types import InferenceResult
 
 
@@ -21,6 +21,14 @@ MODE_TO_TAB_INDEX = {
     "dense_description": 3,
     "question_answer": 4,
 }
+
+
+def _accept_localization_destination_dialog(monkeypatch):
+    monkeypatch.setattr(
+        "controllers.localization.localization_editor_controller."
+        "LocalizationClassMappingDialog.exec",
+        lambda _dialog: QDialog.DialogCode.Accepted,
+    )
 
 
 def _open_project(window, monkeypatch, project_json_path: Path):
@@ -261,6 +269,7 @@ def test_history_contract_localization_event_and_schema_mutations(window, monkey
 
 @pytest.mark.gui
 def test_history_contract_localization_smart_mutations(window, monkeypatch, qtbot, synthetic_project_json):
+    _accept_localization_destination_dialog(monkeypatch)
     project_json_path = synthetic_project_json("localization")
     _open_project(window, monkeypatch, project_json_path)
     _select_top_row(window, qtbot, 0)
@@ -320,6 +329,7 @@ def test_history_contract_localization_smart_mutations(window, monkeypatch, qtbo
 def test_localization_review_shortcuts_accept_reject_and_select_adjacent(
     window, monkeypatch, qtbot, synthetic_project_json
 ):
+    _accept_localization_destination_dialog(monkeypatch)
     project_json_path = synthetic_project_json("localization")
     _open_project(window, monkeypatch, project_json_path)
     _select_top_row(window, qtbot, 0)
@@ -499,6 +509,7 @@ def test_localization_review_shortcut_requires_active_mode_and_inferred_selectio
 def test_localization_review_shortcut_rejects_only_row_and_clears_selection(
     window, monkeypatch, qtbot, synthetic_project_json
 ):
+    _accept_localization_destination_dialog(monkeypatch)
     project_json_path = synthetic_project_json("localization")
     _open_project(window, monkeypatch, project_json_path)
     _select_top_row(window, qtbot, 0)

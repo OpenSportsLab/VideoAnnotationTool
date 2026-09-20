@@ -20,7 +20,10 @@ def tolerance_label(milliseconds: int) -> str:
 class LocalizationEvaluationDialog(QDialog):
     """Choose two heads, sample scope, label mapping, and AP tolerances."""
 
-    def __init__(self, samples, schema, selected_sample_id, current_head, parent=None):
+    def __init__(
+        self, samples, schema, selected_sample_id, current_head, parent=None,
+        initial_scope="project",
+    ):
         super().__init__(parent)
         self.samples = samples
         self.schema = schema if isinstance(schema, dict) else {}
@@ -36,6 +39,8 @@ class LocalizationEvaluationDialog(QDialog):
         self.scope_combo.addItem("Whole project", "project")
         self.scope_combo.addItem("Selected sample", "selected")
         self.scope_combo.model().item(1).setEnabled(bool(self.selected_sample_id))
+        if initial_scope == "selected" and self.selected_sample_id:
+            self.scope_combo.setCurrentIndex(self.scope_combo.findData("selected"))
         form.addRow("Evaluate:", self.scope_combo)
 
         heads = list(dict.fromkeys([
@@ -63,9 +68,11 @@ class LocalizationEvaluationDialog(QDialog):
         form.addRow("Ground truth head:", self.truth_combo)
         form.addRow("Prediction head:", self.prediction_combo)
 
-        layout.addWidget(QLabel("Prediction class mapping", self))
+        layout.addWidget(QLabel("Ground-truth classes to evaluate", self))
         self.mapping_table = QTableWidget(0, 2, self)
-        self.mapping_table.setHorizontalHeaderLabels(["Prediction label", "Ground truth label"])
+        self.mapping_table.setHorizontalHeaderLabels(
+            ["Ground truth label", "Prediction label"]
+        )
         self.mapping_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.mapping_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self.mapping_table, 1)
@@ -97,6 +104,7 @@ class LocalizationEvaluationDialog(QDialog):
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Evaluate")
         layout.addWidget(self.buttons)
         self._mapping_error = False
+        self._scope_description = ""
         for milliseconds in DEFAULT_TOLERANCES_MS:
             self._insert_tolerance(milliseconds)
 
@@ -158,7 +166,7 @@ class LocalizationEvaluationDialog(QDialog):
             labels_by_head, segment_count, skipped = self._scope_summaries[scope]
         except ValueError as exc:
             self._mapping_error = True
-            self.details_label.setText(str(exc))
+            self._scope_description = str(exc)
             self.mapping_table.setRowCount(0)
             self._validate()
             return
@@ -166,34 +174,52 @@ class LocalizationEvaluationDialog(QDialog):
         truth_labels = set(self._head_labels(truth_head))
         truth_labels |= labels_by_head.get(truth_head, set())
         prediction_labels = sorted(labels_by_head.get(prediction_head, set()))
-        self.mapping_table.setRowCount(len(prediction_labels))
-        for row, label in enumerate(prediction_labels):
+        truth_labels = sorted(truth_labels)
+        self.mapping_table.setRowCount(len(truth_labels))
+        for row, label in enumerate(truth_labels):
             self.mapping_table.setItem(row, 0, QTableWidgetItem(label))
             combo = QComboBox(self.mapping_table)
-            combo.addItem("Choose label…", None)
-            for truth_label in sorted(truth_labels):
-                combo.addItem(truth_label, truth_label)
+            combo.addItem("Skip ground-truth class", None)
+            for prediction_label in prediction_labels:
+                combo.addItem(prediction_label, prediction_label)
             selected = old_mapping.get(label)
-            if selected not in truth_labels and label in truth_labels:
+            if selected not in prediction_labels and label in prediction_labels:
                 selected = label
-            if selected in truth_labels:
+            if selected in prediction_labels:
                 combo.setCurrentIndex(combo.findData(selected))
             combo.currentIndexChanged.connect(self._validate)
             self.mapping_table.setCellWidget(row, 1, combo)
-        self.details_label.setText(
+        self._scope_description = (
             f"{segment_count} eligible segment(s); {skipped} sample(s) skipped by annotation status."
             if segment_count else "No verified samples or intervals are available for evaluation."
         )
         self._validate()
 
     def _validate(self, *_args):
+        selected_predictions = [
+            prediction for prediction in self.mapping().values() if prediction
+        ]
+        duplicate_predictions = len(selected_predictions) != len(set(selected_predictions))
+        if duplicate_predictions:
+            mapping_description = (
+                "Each prediction label can be assigned to only one ground-truth class."
+            )
+        else:
+            mapping_description = (
+                f"{len(selected_predictions)} of {self.mapping_table.rowCount()} "
+                "ground-truth class(es) selected."
+            )
+        self.details_label.setText(
+            f"{self._scope_description} {mapping_description}".strip()
+        )
         valid = (
             self.truth_combo.currentData()
             and self.prediction_combo.currentData()
             and self.truth_combo.currentData() != self.prediction_combo.currentData()
             and not self._mapping_error
             and bool(self.tolerances_ms())
-            and all(self.mapping().values())
+            and bool(selected_predictions)
+            and not duplicate_predictions
         )
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(valid))
 
@@ -232,26 +258,18 @@ class LocalizationEvaluationResultsDialog(QDialog):
         ))
         layout.addWidget(QLabel(
             "The overall row is the macro average across classes. Precision and recall "
-            "use all prediction events at each tolerance. N/A classes have no "
+            "are shown as AP% (Precision%/Recall%) and use all prediction events "
+            "at each tolerance. N/A classes have no "
             "ground-truth events and are excluded from every macro average.",
             self,
         ))
         tolerances = report["tolerances_ms"]
-        metric_columns = [
-            (metric, tolerance)
-            for tolerance in tolerances
-            for metric in ("ap", "precision", "recall")
-        ]
-        metric_labels = {"ap": "AP", "precision": "Precision", "recall": "Recall"}
         table = QTableWidget(
-            len(report["classes"]) + 1, len(metric_columns) + 3, self
+            len(report["classes"]) + 1, len(tolerances) + 3, self
         )
         table.setHorizontalHeaderLabels([
             "Class", "Tight mAP", "Loose mAP",
-            *[
-                f"{metric_labels[metric]}@{tolerance_label(tolerance)} s"
-                for metric, tolerance in metric_columns
-            ],
+            *[f"AP@{tolerance_label(tolerance)} s" for tolerance in tolerances],
         ])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -259,16 +277,21 @@ class LocalizationEvaluationResultsDialog(QDialog):
         rows = [("Overall", report["overall"]), *report["classes"].items()]
         for row, (label, values) in enumerate(rows):
             table.setItem(row, 0, QTableWidgetItem(label))
-            scores = (
-                [values["tight"], values["loose"]]
-                + [values[metric][tolerance] for metric, tolerance in metric_columns]
-                if values is not None else [None] * (len(metric_columns) + 2)
-            )
-            for column, score in enumerate(scores, 1):
-                table.setItem(
-                    row, column,
-                    QTableWidgetItem("N/A" if score is None else f"{score * 100:.2f}%"),
-                )
+            if values is None:
+                cells = ["N/A"] * (len(tolerances) + 2)
+            else:
+                cells = [
+                    f"{values['tight'] * 100:.2f}%",
+                    f"{values['loose'] * 100:.2f}%",
+                    *[
+                        f"{values['ap'][tolerance] * 100:.2f}% "
+                        f"({values['precision'][tolerance] * 100:.2f}%/"
+                        f"{values['recall'][tolerance] * 100:.2f}%)"
+                        for tolerance in tolerances
+                    ],
+                ]
+            for column, text in enumerate(cells, 1):
+                table.setItem(row, column, QTableWidgetItem(text))
         layout.addWidget(table)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         buttons.rejected.connect(self.reject)

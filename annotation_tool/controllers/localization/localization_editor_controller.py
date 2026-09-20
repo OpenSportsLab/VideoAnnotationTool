@@ -769,25 +769,24 @@ class LocalizationEditorController(QObject):
             self.statusMessageRequested.emit("Inference", message, 3500)
             return False
 
-        mapping = {predicted: predicted for predicted in predicted_classes}
-        new_head_labels = None
-        if any(predicted not in head_labels for predicted in predicted_classes):
-            dialog = LocalizationClassMappingDialog(
-                predicted_classes,
-                target_head,
-                head_labels,
-                self._schema_definitions,
-                self.localization_panel,
+        dialog = LocalizationClassMappingDialog(
+            predicted_classes,
+            target_head,
+            head_labels,
+            self._schema_definitions,
+            self.localization_panel,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            self.statusMessageRequested.emit(
+                "Inference", "Localization predictions were not applied.", 3000
             )
-            if dialog.exec() != dialog.DialogCode.Accepted:
-                self.statusMessageRequested.emit(
-                    "Inference", "Localization predictions were not applied.", 3000
-                )
-                return False
-            new_head, mapping = dialog.decision()
-            if new_head is not None:
-                target_head = new_head
-                new_head_labels = list(dict.fromkeys(mapping.values()))
+            return False
+        target_head, new_head_labels, mapping = dialog.decision()
+        if new_head_labels is None and target_head not in self._schema_definitions:
+            self.statusMessageRequested.emit(
+                "Inference", "The selected localization head no longer exists.", 3500
+            )
+            return False
 
         events_by_sample = {}
         for sample_id, retained_events in retained_items:

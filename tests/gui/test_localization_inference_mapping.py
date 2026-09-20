@@ -71,13 +71,28 @@ def test_class_mapping_dialog_defaults_and_new_head_validation(qtbot):
         ["pass", "whistle"],
         "ball_action",
         ["pass", "shot"],
-        ["ball_action", "other_head"],
+        {
+            "ball_action": {"labels": ["pass", "shot"]},
+            "other_head": {"labels": ["whistle", "header"]},
+        },
     )
     qtbot.addWidget(dialog)
 
     assert dialog._combos["pass"].currentData() == "pass"
     assert dialog._combos["whistle"].currentData() is None
-    assert dialog.decision() == (None, {"pass": "pass", "whistle": None})
+    assert dialog.target_head_combo.currentData() == "ball_action"
+    assert dialog.decision() == (
+        "ball_action", None, {"pass": "pass", "whistle": None}
+    )
+
+    dialog.target_head_combo.setCurrentIndex(
+        dialog.target_head_combo.findData("other_head")
+    )
+    assert dialog._combos["pass"].currentData() is None
+    assert dialog._combos["whistle"].currentData() == "whistle"
+    assert dialog.decision() == (
+        "other_head", None, {"pass": None, "whistle": "whistle"}
+    )
 
     dialog.new_head_radio.setChecked(True)
     assert not dialog.mapping_table.isEnabled()
@@ -90,8 +105,51 @@ def test_class_mapping_dialog_defaults_and_new_head_validation(qtbot):
     dialog.new_head_name.setText("new_actions")
     assert apply_button.isEnabled()
     assert dialog.decision() == (
-        "new_actions", {"pass": "pass", "whistle": "whistle"}
+        "new_actions", ["pass", "whistle"],
+        {"pass": "pass", "whistle": "whistle"},
     )
+
+
+@pytest.mark.gui
+def test_inference_can_target_a_different_existing_head(qtbot, monkeypatch):
+    from controllers.localization import LocalizationEditorController
+    from ui.localization import LocalizationAnnotationPanel
+
+    panel = LocalizationAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = LocalizationEditorController(panel)
+    controller.setup_connections()
+    controller.on_schema_context_changed({
+        "ball_action": {"type": "single_label", "labels": ["pass"]},
+        "official_action": {"type": "single_label", "labels": ["whistle"]},
+    })
+    commits = []
+    controller.locInferenceCommitRequested.connect(lambda *args: commits.append(args))
+
+    def choose_other_head(dialog):
+        dialog.target_head_combo.setCurrentIndex(
+            dialog.target_head_combo.findData("official_action")
+        )
+        dialog._combos["PASS"].setCurrentText("whistle")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(LocalizationClassMappingDialog, "exec", choose_other_head)
+    result = InferenceResult(
+        "other-head", "localization", "model-one",
+        ({"sample_id": "clip", "events": [
+            {"label": "PASS", "position_ms": 2500, "confidence_score": 0.8}
+        ]},),
+    )
+
+    assert controller.apply_shared_inference_result(
+        result, {"head": "ball_action"}
+    ) is True
+    assert len(commits) == 1
+    target_head, new_labels, events_by_sample = commits[0]
+    assert target_head == "official_action"
+    assert new_labels is None
+    assert events_by_sample["clip"][0]["head"] == "official_action"
+    assert events_by_sample["clip"][0]["label"] == "whistle"
 
 
 @pytest.mark.gui
@@ -212,18 +270,19 @@ def test_create_head_moves_all_run_predictions_and_undoes_schema_with_events(
 
 
 @pytest.mark.gui
-def test_known_classes_apply_without_mapping_dialog(
+def test_known_classes_still_require_destination_confirmation(
     window, monkeypatch, synthetic_project_json
 ):
     _open_localization_project(window, monkeypatch, synthetic_project_json("localization"))
+    dialogs = []
 
-    def unexpected_dialog(*_args, **_kwargs):
-        raise AssertionError("Known classes should not open a mapping dialog")
+    def accept_dialog(dialog):
+        dialogs.append(dialog)
+        assert dialog.target_head_combo.currentData() == "ball_action"
+        assert dialog._combos["shot"].currentData() == "shot"
+        return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(
-        "controllers.localization.localization_editor_controller.LocalizationClassMappingDialog",
-        unexpected_dialog,
-    )
+    monkeypatch.setattr(LocalizationClassMappingDialog, "exec", accept_dialog)
     result = InferenceResult(
         "known-result", "localization", "model-one",
         ({"sample_id": "clip_1", "events": [{"label": "shot", "position_ms": 2500}]},),
@@ -234,6 +293,7 @@ def test_known_classes_apply_without_mapping_dialog(
         result, {"head": "ball_action"}
     )
 
+    assert len(dialogs) == 1
     assert len(window.dataset_explorer_controller.undo_stack) == before + 1
     sample = window.dataset_explorer_controller.get_sample("clip_1")
     assert any(
@@ -252,6 +312,11 @@ def test_duplicate_prediction_is_noop_without_undo_entry(
     result = InferenceResult(
         "duplicate", "localization", "model-one",
         ({"sample_id": "clip_1", "events": [{"label": "pass", "position_ms": 1000}]},),
+    )
+    monkeypatch.setattr(
+        LocalizationClassMappingDialog,
+        "exec",
+        lambda _dialog: QDialog.DialogCode.Accepted,
     )
 
     window.localization_editor_controller.apply_shared_inference_result(

@@ -236,25 +236,29 @@ as the positional modality template for every sample in the batch.
 
 In the Localization panel, choose **Evaluate…** to compare two different task
 heads already saved in the open project. Choose **Whole project** or **Selected
-sample**, then select the ground-truth and prediction heads. Every prediction
-class observed in that scope must map to a ground-truth class; identical names
-are selected automatically, and several prediction classes may map to the same
-ground-truth class. Evaluation does not change annotations or undo history.
+sample**, then select the ground-truth and prediction heads. The last submitted
+scope is restored the next time the dialog opens and across application
+restarts. The mapping table shows every ground-truth class. For each class,
+choose one observed prediction label or skip the ground-truth class. Identical
+names are selected automatically, and one prediction label cannot be assigned
+to multiple ground-truth classes. Evaluation does not change annotations or
+undo history.
 
 The dialog starts with AP tolerances of 1, 2, 3, 4, and 5 seconds. Add or remove
 values in 0.1-second steps from 0.0 to 60.0 seconds. The report shows tight mAP
-(1–5 seconds), loose mAP (5–60 seconds), and AP, precision, and recall at every
-chosen tolerance, both overall and per class. Precision and recall use all
-prediction events in the selected head. The overall precision and recall are
-macro averages over classes with ground-truth events. A class with no
-ground-truth events in the evaluated scope is shown as **N/A** and omitted from
-every macro average. If the scope has no ground-truth events at all, the app
-explains why it cannot calculate a score.
+(1–5 seconds), loose mAP (5–60 seconds), and AP at every chosen tolerance, both
+overall and per class. Each AP cell includes precision and recall as
+`AP% (Precision%/Recall%)`. Precision and recall use every prediction event for
+the mapped label. The overall values are macro averages over evaluated classes
+with ground-truth events. An evaluated class with no ground-truth events in the
+chosen scope is shown as **N/A** and omitted from every macro average. If the
+selected mappings contain no ground-truth events, the app explains why it
+cannot calculate a score.
 
 Whole-project evaluation uses samples marked `verified` and samples without an
 annotation status; it skips `unlabeled` and `excluded` samples. Declared
-intervals are scored as separate segments. All events in the chosen
-ground-truth head count as truth, including unconfirmed inferred events.
+intervals are scored as separate segments. All events in each selected
+ground-truth class count as truth, including unconfirmed inferred events.
 Predictions without a usable confidence score are included at 100% confidence.
 Events in either selected head need a label and a valid timeline position;
 events outside declared intervals cause an error instead of being silently
@@ -263,8 +267,9 @@ omitted. The dialog opens without scanning tracking H5 files; after you choose
 cancelable progress dialog. The progress bar shows timeline preparation and
 class/tolerance scoring, including the current AP tolerance and elapsed time.
 If the project changes while scoring runs, its report is discarded.
-The report is read-only and is not stored in project JSON or application
-settings.
+The report and class mappings are read-only and are not stored. Only the last
+submitted scope is saved in application settings; no evaluation field enters
+project JSON.
 
 ## Background execution
 
@@ -356,15 +361,14 @@ rows, enter saved/exported JSON, and make the project dirty. The entire result
 is one undoable change, including a head created from that result. The Smart
 Labelled filter recognizes samples with confidence-scored events.
 
-If a retained localization result contains a class missing from the selected head, one
-dialog shows every distinct class returned in that run, across all samples.
-Known classes are already mapped to themselves. Unknown classes start at
-**Skip Prediction**; choose a class in the current head to keep their events.
-The dialog can instead create a new task head containing the returned classes
-and place all of the run's events there. Its name must be nonempty and unique
-regardless of case. **Cancel** applies nothing. If every returned class already
-exists in the head, the result applies without this dialog. Mapping choices
-apply to this run only.
+Every retained localization result opens one destination and class-mapping
+dialog for the run, across all samples. Choose the task head selected when the
+run started, select another existing task head, or create a new task head.
+The class choices update when you select an existing head. Exact class names
+are mapped automatically and other classes start at **Skip Prediction**. A new
+head receives every returned class and must have a nonempty, case-insensitively
+unique name. **Cancel** applies nothing. Destination and mapping choices apply
+to this run only.
 
 For Localization, select a confidence-scored row and use the shortcuts configured
 under **Edit → Settings → Shortcuts** (`Ctrl+Enter` to accept and

@@ -75,10 +75,12 @@ offset back onto the original sample timeline.
 - Event modify/delete requires event existence and valid selection.
 - Label add flow can optionally inject an event at current playback time.
 - Pause/resume around modal label dialogs is signal-driven.
-- The controller gathers distinct nonempty classes from a completed run. If any
-  class is missing from the selected head, `LocalizationClassMappingDialog`
-  opens once for that run. Exact matches are prefilled; unknowns start at Skip.
-  Cancel and all-skipped results emit no mutation intent.
+- The controller gathers distinct nonempty classes from a completed run and
+  always opens `LocalizationClassMappingDialog` once for that run. The run's
+  original head is selected by default, while the user can choose any existing
+  head or create a new one. Changing the existing destination rebuilds its
+  class choices, prefills exact matches, and leaves unknowns on Skip. Cancel
+  and all-skipped results emit no mutation intent.
 - `locInferenceCommitRequested(str, object, object)` carries the target head,
   optional new-head labels, and predicted events grouped by sample. `MainWindow`
   routes it to `HistoryManager.execute_localization_inference_commit()`, then
@@ -165,19 +167,25 @@ offset back onto the original sample timeline.
   with missing labels or positions outside declared intervals. Intervals use
   half-open `[start_time_ms, end_time_ms)` boundaries. Sorted interval starts
   assign each event with a binary search, so interval preparation scales with
-  events rather than every event/interval pair. It maps observed
-  prediction labels to ground-truth labels and calls
+  events rather than every event/interval pair. It converts the dialog's
+  ground-truth-to-prediction choices into the prediction-to-ground-truth map
+  used for scoring and calls
   OpenSportsLib's sparse spotting AP helpers using canonical `position_ms` and
-  millisecond tolerances. It scores all ground-truth-head events, treats missing
-  or invalid prediction confidence as 1.0, and omits classes without truth
-  events from macro averages. For every selected tolerance, the report includes
-  AP plus precision and recall after all prediction events have been matched.
+  millisecond tolerances. It scores all events in selected ground-truth classes,
+  treats missing or invalid prediction confidence as 1.0, and omits classes
+  without truth events from macro averages. The evaluation dialog lists ground-truth classes;
+  each can select one observed prediction label or be skipped. Prediction
+  labels cannot be reused because the inverse mapping would be ambiguous.
+  Skipped ground-truth classes and unused prediction labels do not enter the
+  metric input. For every selected tolerance, the report includes AP plus
+  precision and recall after all prediction events have been matched.
   The overall precision and recall are class macro averages. Tight and loose
   mAP use OpenSportsLib's
-  trapezoidal tolerance averaging over 1–5 and 5–60 seconds. The dialog adds
-  AP, precision, and recall columns for every selected 0.1-second tolerance.
-  Mapping and report state are transient; no settings or project JSON fields
-  are added.
+  trapezoidal tolerance averaging over 1–5 and 5–60 seconds. Each selected
+  tolerance has one AP column formatted as `AP% (Precision%/Recall%)`.
+  `MainWindow` loads and saves the last submitted Whole project/Selected sample
+  choice through `localization_settings.py`. Mappings and report state remain
+  transient, and no project JSON fields are added.
 - OpenSportsLib's `LocalizationModel.evaluate()` is a model/config evaluation
   workflow that may run inference. Comparing two existing VAT heads uses
   `parse_ground_truth()`, `get_predictions()`, and

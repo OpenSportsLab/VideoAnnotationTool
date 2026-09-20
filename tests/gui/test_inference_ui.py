@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QAbstractItemView, QMessageBox, QPushButton
+from PyQt6.QtWidgets import QAbstractItemView, QDialog, QMessageBox, QPushButton
 
 from controllers.classification import ClassificationEditorController
 from controllers.dense_description import DenseEditorController
@@ -656,10 +656,17 @@ def test_localization_result_filters_before_mapping_and_keeps_unscored(qtbot, mo
         "action": {"type": "single_label", "labels": ["pass"]}
     })
     commits = []
+    dialogs = []
     controller.locInferenceCommitRequested.connect(lambda *args: commits.append(args))
+
+    def accept_mapping(dialog):
+        dialogs.append(dialog)
+        assert list(dialog._combos) == ["pass"]
+        return QDialog.DialogCode.Accepted
+
     monkeypatch.setattr(
-        "controllers.localization.localization_editor_controller.LocalizationClassMappingDialog",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("filtered class opened mapping")),
+        "controllers.localization.localization_editor_controller.LocalizationClassMappingDialog.exec",
+        accept_mapping,
     )
     result = InferenceResult(
         "run", "localization", "model",
@@ -677,6 +684,7 @@ def test_localization_result_filters_before_mapping_and_keeps_unscored(qtbot, mo
     assert controller.apply_shared_inference_result(
         result, {"head": "action", "min_confidence": 0.75}
     ) is True
+    assert len(dialogs) == 1
     assert len(commits) == 1
     assert commits[0][0] == "action"
     kept = commits[0][2]["sample"]
@@ -709,7 +717,7 @@ def test_localization_threshold_maps_only_retained_classes(qtbot, monkeypatch):
             return self.DialogCode.Accepted
 
         def decision(self):
-            return None, {"Header": "pass"}
+            return "action", None, {"Header": "pass"}
 
     monkeypatch.setattr(
         "controllers.localization.localization_editor_controller.LocalizationClassMappingDialog",

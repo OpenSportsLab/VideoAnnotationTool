@@ -64,9 +64,11 @@ live in the main-window Inference Jobs dock.
   - Supplies sample-scoped UTC display/edit context without coupling the panel
     to `MediaController`.
 - `InferenceReviewBar` is the last widget and contains review actions only.
-- `LocalizationClassMappingDialog` shows one row per returned class, preselects
-  exact head labels, and keeps unknown classes on Skip until changed. Its
-  inline new-head field validates nonempty, case-insensitively unique names.
+- `LocalizationClassMappingDialog` opens for every retained inference result
+  and shows one row per returned class. Its existing-head selector defaults to
+  the run's original head and refreshes the mapping choices when changed.
+  Exact labels are preselected and unknown classes remain on Skip. Its inline
+  new-head field validates nonempty, case-insensitively unique names.
 
 ## Business Rules
 - Table edit emits old/new payloads; controller decides mutation validity.

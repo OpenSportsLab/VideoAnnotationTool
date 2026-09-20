@@ -61,11 +61,12 @@ seeking. Inference writes confidence-bearing events into the sample immediately
 after the result is applied. Confirming a row keeps the event and removes only
 the confidence marker; rejecting it deletes the event.
 
-When a returned localization class is missing from the selected head, one dialog
-shows the distinct classes returned across that run. Exact matches are filled
-in. Map other classes to a label in the current head, leave them on **Skip
-Prediction**, or create a new task head for all returned classes. Creating a
-head requires a unique name. **Cancel** leaves the project unchanged. All
+Every completed localization inference run opens one dialog showing the
+distinct returned classes. Add the predictions to the head selected when the
+run started, choose another existing task head, or create a new task head.
+Exact matches for the chosen existing head are filled in; map other classes or
+leave them on **Skip Prediction**. Creating a head places every returned class
+in it and requires a unique name. **Cancel** leaves the project unchanged. All
 applied events, plus a new head when selected, can be undone in one step.
 
 ## Description

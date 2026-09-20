@@ -4,11 +4,16 @@ import copy
 from types import SimpleNamespace
 
 import pytest
+from PyQt6.QtCore import QSettings
 
 from controllers.localization import LocalizationEditorController
 from localization_evaluation import (
     LocalizationEvaluationWorker, _fast_average_precision, evaluate_localization_heads,
     project_utc_events_for_evaluation,
+)
+from localization_settings import (
+    load_localization_evaluation_scope,
+    save_localization_evaluation_scope,
 )
 from ui.localization import LocalizationAnnotationPanel
 from ui.localization.evaluation_dialog import (
@@ -22,12 +27,25 @@ def _evaluate(samples, **overrides):
         "selected_sample_id": "one",
         "truth_head": "truth",
         "prediction_head": "prediction",
-        "mapping": {"PASS": "pass"},
+        "mapping": {"pass": "PASS", "shot": None},
         "tolerances_ms": (1000, 2000, 3000),
         "truth_labels": ("pass", "shot"),
     }
     options.update(overrides)
     return evaluate_localization_heads(samples, **options)
+
+
+def test_localization_evaluation_scope_setting_roundtrip(tmp_path):
+    settings_path = str(tmp_path / "localization.ini")
+    settings = QSettings(
+        settings_path, QSettings.Format.IniFormat
+    )
+    assert load_localization_evaluation_scope(settings) == "project"
+    save_localization_evaluation_scope(settings, "selected")
+    reopened = QSettings(settings_path, QSettings.Format.IniFormat)
+    assert load_localization_evaluation_scope(reopened) == "selected"
+    save_localization_evaluation_scope(reopened, "invalid")
+    assert load_localization_evaluation_scope(reopened) == "project"
 
 
 def test_localization_evaluation_reports_tight_loose_and_multiple_ap_values():
@@ -49,7 +67,7 @@ def test_localization_evaluation_reports_tight_loose_and_multiple_ap_values():
     assert report["overall"]["tight"] == pytest.approx(0.875)
     assert report["overall"]["loose"] == 1.0
     assert report["classes"]["pass"] == report["overall"]
-    assert report["classes"]["shot"] is None
+    assert "shot" not in report["classes"]
     assert (report["sample_count"], report["truth_count"], report["prediction_count"]) == (1, 1, 1)
     assert samples == original
 
@@ -81,27 +99,29 @@ def test_localization_evaluation_scope_status_intervals_and_unscored_predictions
         _evaluate(samples, scope="selected", selected_sample_id="two")
 
 
-def test_localization_evaluation_maps_all_classes_and_handles_empty_results():
+def test_localization_evaluation_selects_and_skips_ground_truth_classes():
     samples = [{"id": "one", "events": [
         {"head": "truth", "label": "pass", "position_ms": 1000},
         {"head": "truth", "label": "pass", "position_ms": 2000},
+        {"head": "truth", "label": "shot", "position_ms": 3000},
         {"head": "prediction", "label": "PASS", "position_ms": 1000},
         {"head": "prediction", "label": "THROUGH_PASS", "position_ms": 2000,
          "confidence_score": "invalid"},
+        {"head": "prediction", "label": "SHOT", "position_ms": 3000},
     ]}]
-    report = _evaluate(samples, mapping={"PASS": "pass", "THROUGH_PASS": "pass"})
-    assert report["overall"]["ap"][1000] == 1.0
-    with pytest.raises(ValueError, match="Map every"):
-        _evaluate(samples)
+    report = _evaluate(samples)
+    assert report["overall"]["ap"][1000] == 0.5
+    assert set(report["classes"]) == {"pass"}
+    assert report["truth_count"] == 2
+    assert report["prediction_count"] == 1
+    with pytest.raises(ValueError, match="every ground-truth class"):
+        _evaluate(samples, mapping={"pass": "PASS"})
 
     no_predictions = [{"id": "one", "events": [
         {"head": "truth", "label": "pass", "position_ms": 1000}
     ]}]
-    report = _evaluate(no_predictions, mapping={})
-    assert report["overall"]["tight"] == 0.0
-    assert report["overall"]["precision"] == {1000: 0.0, 2000: 0.0, 3000: 0.0}
-    assert report["overall"]["recall"] == {1000: 0.0, 2000: 0.0, 3000: 0.0}
-    assert report["prediction_count"] == 0
+    with pytest.raises(ValueError, match="at least one ground-truth class"):
+        _evaluate(no_predictions, mapping={"pass": None, "shot": None})
     with pytest.raises(ValueError, match="No ground-truth events"):
         _evaluate([{"id": "one", "events": [
             {"head": "prediction", "label": "PASS", "position_ms": 1000}
@@ -115,8 +135,13 @@ def test_localization_evaluation_reports_macro_precision_and_recall():
         {"head": "truth", "label": "shot", "position_ms": 3000},
         {"head": "prediction", "label": "PASS", "position_ms": 1000},
         {"head": "prediction", "label": "PASS", "position_ms": 9000},
+        {"head": "prediction", "label": "SHOT", "position_ms": 9000},
     ]}]
-    report = _evaluate(samples, tolerances_ms=(0,))
+    report = _evaluate(
+        samples,
+        tolerances_ms=(0,),
+        mapping={"pass": "PASS", "shot": "SHOT"},
+    )
 
     assert report["classes"]["pass"]["precision"][0] == 0.5
     assert report["classes"]["pass"]["recall"][0] == 0.5
@@ -179,14 +204,14 @@ def test_localization_evaluation_rejects_unscorable_selected_head_events():
         "head": "prediction", "label": "", "position_ms": 1000,
     })
     with pytest.raises(ValueError, match="no label"):
-        _evaluate([blank_label], mapping={})
+        _evaluate([blank_label])
 
     outside_interval = copy.deepcopy(base)
     outside_interval["metadata"] = {"intervals": [
         {"start_time_ms": 0, "end_time_ms": 1000},
     ]}
     with pytest.raises(ValueError, match="outside its declared intervals"):
-        _evaluate([outside_interval], mapping={})
+        _evaluate([outside_interval])
 
 
 def test_localization_evaluation_stops_when_cancelled():
@@ -194,7 +219,7 @@ def test_localization_evaluation_stops_when_cancelled():
         {"head": "truth", "label": "pass", "position_ms": 1000},
     ]}]
     with pytest.raises(InterruptedError, match="cancelled"):
-        _evaluate(samples, mapping={}, should_cancel=lambda: True)
+        _evaluate(samples, should_cancel=lambda: True)
 
 
 def test_indexed_average_precision_matches_opensportslib():
@@ -296,7 +321,7 @@ def test_localization_evaluation_worker_emits_report(qtbot):
     options = {
         "scope": "project", "selected_sample_id": "one",
         "truth_head": "truth", "prediction_head": "prediction",
-        "mapping": {"PASS": "pass"}, "tolerances_ms": (1000, 2000),
+        "mapping": {"pass": "PASS"}, "tolerances_ms": (1000, 2000),
         "truth_labels": ("pass",),
     }
     worker = LocalizationEvaluationWorker(copy.deepcopy(samples), options)
@@ -354,7 +379,7 @@ def test_localization_evaluation_h5_projection_runs_in_worker(qtbot, tmp_path):
     worker = LocalizationEvaluationWorker(samples, {
         "scope": "project", "selected_sample_id": "one",
         "truth_head": "truth", "prediction_head": "prediction",
-        "mapping": {"PASS": "pass"}, "tolerances_ms": (0, 100),
+        "mapping": {"pass": "PASS"}, "tolerances_ms": (0, 100),
         "truth_labels": ("pass",),
     }, str(tmp_path))
     progress = []
@@ -387,11 +412,13 @@ def test_localization_evaluation_keeps_qt_responsive_during_h5_read(
         "type": "player_joints_h5", "path": "tracking.h5",
     }], "events": [
         {"head": "truth", "label": "pass", "timestamp_utc": "2025-01-01T00:00:01"},
+        {"head": "prediction", "label": "PASS", "timestamp_utc": "2025-01-01T00:00:01"},
     ]}]
     worker = LocalizationEvaluationWorker(samples, {
         "scope": "project", "selected_sample_id": "one",
         "truth_head": "truth", "prediction_head": "prediction",
-        "mapping": {}, "tolerances_ms": (1000,), "truth_labels": ("pass",),
+        "mapping": {"pass": "PASS"}, "tolerances_ms": (1000,),
+        "truth_labels": ("pass",),
     }, str(tmp_path))
     qt_responsive = []
     with qtbot.waitSignal(worker.completed, timeout=10000):
@@ -425,7 +452,7 @@ def test_open_localization_evaluation_does_not_scan_timeline_before_dialog(monke
         class DialogCode:
             Accepted = 1
 
-        def __init__(self, *_args):
+        def __init__(self, *_args, **_kwargs):
             pass
 
         def exec(self):
@@ -460,18 +487,18 @@ def test_localization_evaluation_dialog_maps_classes_and_edits_tolerances(qtbot)
     assert dialog.truth_combo.currentData() == "truth"
     assert dialog.prediction_combo.currentData() == "prediction"
     assert dialog.tolerances_ms() == (1000, 2000, 3000, 4000, 5000)
-    assert dialog.mapping() == {"PASS": None}
+    assert dialog.mapping() == {"pass": None}
     run_button = dialog.buttons.button(dialog.buttons.StandardButton.Ok)
     assert not run_button.isEnabled()
 
     mapping_combo = dialog.mapping_table.cellWidget(0, 1)
-    mapping_combo.setCurrentIndex(mapping_combo.findData("pass"))
+    mapping_combo.setCurrentIndex(mapping_combo.findData("PASS"))
     assert run_button.isEnabled()
     dialog.tolerance_spin.setValue(2.2)
     dialog.add_tolerance_button.click()
     dialog.add_tolerance_button.click()
     assert dialog.tolerances_ms() == (1000, 2000, 2200, 3000, 4000, 5000)
-    assert dialog.options()["mapping"] == {"PASS": "pass"}
+    assert dialog.options()["mapping"] == {"pass": "PASS"}
 
     dialog.truth_combo.setCurrentIndex(dialog.truth_combo.findData("prediction"))
     assert not run_button.isEnabled()
@@ -481,6 +508,29 @@ def test_localization_evaluation_dialog_maps_classes_and_edits_tolerances(qtbot)
     dialog.remove_tolerance_button.click()
     assert dialog.tolerances_ms() == ()
     assert not run_button.isEnabled()
+
+
+@pytest.mark.gui
+def test_localization_evaluation_dialog_restores_available_scope(qtbot):
+    samples = [{"id": "one", "events": [
+        {"head": "truth", "label": "pass", "position_ms": 1000},
+        {"head": "prediction", "label": "pass", "position_ms": 1000},
+    ]}]
+    schema = {
+        "truth": {"labels": ["pass"]},
+        "prediction": {"labels": ["pass"]},
+    }
+    selected = LocalizationEvaluationDialog(
+        samples, schema, "one", "prediction", initial_scope="selected"
+    )
+    qtbot.addWidget(selected)
+    assert selected.scope_combo.currentData() == "selected"
+
+    unavailable = LocalizationEvaluationDialog(
+        samples, schema, "", "prediction", initial_scope="selected"
+    )
+    qtbot.addWidget(unavailable)
+    assert unavailable.scope_combo.currentData() == "project"
 
 
 @pytest.mark.gui
@@ -501,10 +551,19 @@ def test_localization_evaluation_dialog_preselects_identical_labels_and_refreshe
         "one", "prediction",
     )
     qtbot.addWidget(dialog)
-    assert dialog.mapping() == {"SHOT": None, "pass": "pass"}
+    assert dialog.mapping() == {"pass": "pass", "shot": None}
+    assert dialog.buttons.button(dialog.buttons.StandardButton.Ok).isEnabled()
+
+    shot_combo = dialog.mapping_table.cellWidget(1, 1)
+    shot_combo.setCurrentIndex(shot_combo.findData("pass"))
     assert not dialog.buttons.button(dialog.buttons.StandardButton.Ok).isEnabled()
+    assert "only one" in dialog.details_label.text()
+    shot_combo.setCurrentIndex(shot_combo.findData("SHOT"))
+    assert dialog.mapping() == {"pass": "pass", "shot": "SHOT"}
+    assert dialog.buttons.button(dialog.buttons.StandardButton.Ok).isEnabled()
+
     dialog.scope_combo.setCurrentIndex(dialog.scope_combo.findData("selected"))
-    assert dialog.mapping() == {"pass": "pass"}
+    assert dialog.mapping() == {"pass": "pass", "shot": None}
     assert dialog.buttons.button(dialog.buttons.StandardButton.Ok).isEnabled()
 
 
@@ -512,25 +571,24 @@ def test_localization_evaluation_dialog_preselects_identical_labels_and_refreshe
 def test_localization_evaluation_result_columns_and_panel_intent(qtbot):
     sample = {"id": "one", "events": [
         {"head": "truth", "label": "pass", "position_ms": 1000},
+        {"head": "truth", "label": "pass", "position_ms": 4000},
         {"head": "prediction", "label": "PASS", "position_ms": 1000},
+        {"head": "prediction", "label": "SHOT", "position_ms": 5000},
     ]}
-    report = _evaluate([sample], tolerances_ms=(1000, 2200, 3000))
+    report = _evaluate(
+        [sample], tolerances_ms=(1000, 2200, 3000),
+        mapping={"pass": "PASS", "shot": "SHOT"},
+    )
     dialog = LocalizationEvaluationResultsDialog(report)
     qtbot.addWidget(dialog)
     from PyQt6.QtWidgets import QTableWidget
     table = dialog.findChild(QTableWidget)
     assert [table.horizontalHeaderItem(column).text() for column in range(table.columnCount())] == [
         "Class", "Tight mAP", "Loose mAP",
-        "AP@1 s", "Precision@1 s", "Recall@1 s",
-        "AP@2.2 s", "Precision@2.2 s", "Recall@2.2 s",
-        "AP@3 s", "Precision@3 s", "Recall@3 s",
+        "AP@1 s", "AP@2.2 s", "AP@3 s",
     ]
-    assert table.item(0, 3).text() == "100.00%"
-    assert table.item(0, 4).text() == "100.00%"
-    assert table.item(0, 5).text() == "100.00%"
+    assert table.item(0, 3).text() == "50.00% (100.00%/50.00%)"
     assert table.item(2, 3).text() == "N/A"
-    assert table.item(2, 4).text() == "N/A"
-    assert table.item(2, 5).text() == "N/A"
 
     panel = LocalizationAnnotationPanel()
     qtbot.addWidget(panel)

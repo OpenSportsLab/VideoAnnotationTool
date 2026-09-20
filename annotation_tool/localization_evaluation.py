@@ -369,7 +369,7 @@ def _curve_average(values: list[float]) -> float:
 
 def evaluate_localization_heads(
     samples: list[dict], *, scope: str, selected_sample_id: str,
-    truth_head: str, prediction_head: str, mapping: dict[str, str],
+    truth_head: str, prediction_head: str, mapping: dict[str, str | None],
     tolerances_ms: tuple[int, ...], truth_labels: tuple[str, ...],
     should_cancel=None, on_progress=None,
 ) -> dict:
@@ -387,14 +387,29 @@ def evaluate_localization_heads(
     )
     if not segments:
         raise ValueError("No verified samples or intervals are available for evaluation.")
-    observed_predictions = observed_labels(segments, prediction_head)
-    if set(mapping) != observed_predictions or any(not target for target in mapping.values()):
-        raise ValueError("Map every observed prediction label to a ground-truth label.")
     available_truth_labels = {
         str(label).strip() for label in truth_labels if str(label).strip()
     } | observed_labels(segments, truth_head)
-    if any(target not in available_truth_labels for target in mapping.values()):
-        raise ValueError("A prediction label is mapped outside the ground-truth head.")
+    if set(mapping) != available_truth_labels:
+        raise ValueError("Choose a prediction label or Skip for every ground-truth class.")
+    selected_mapping = {
+        truth_label: str(prediction_label).strip()
+        for truth_label, prediction_label in mapping.items()
+        if prediction_label is not None and str(prediction_label).strip()
+    }
+    if not selected_mapping:
+        raise ValueError("Select at least one ground-truth class for evaluation.")
+    if len(set(selected_mapping.values())) != len(selected_mapping):
+        raise ValueError(
+            "Each prediction label can be assigned to only one ground-truth class."
+        )
+    observed_predictions = observed_labels(segments, prediction_head)
+    if any(label not in observed_predictions for label in selected_mapping.values()):
+        raise ValueError("A selected prediction label is not present in the chosen scope.")
+    prediction_to_truth = {
+        prediction_label: truth_label
+        for truth_label, prediction_label in selected_mapping.items()
+    }
 
     truth, pred = [], []
     truth_count = prediction_count = 0
@@ -404,14 +419,15 @@ def evaluate_localization_heads(
         truth_events, pred_events = [], []
         for event in segment.events:
             label = str(event.get("label") or "").strip()
-            position = _position_ms(event, segment.key)
-            if event.get("head") == truth_head:
+            if event.get("head") == truth_head and label in selected_mapping:
+                position = _position_ms(event, segment.key)
                 truth_events.append({"label": label, "frame": position})
                 truth_count += 1
-            elif event.get("head") == prediction_head:
+            elif event.get("head") == prediction_head and label in prediction_to_truth:
+                position = _position_ms(event, segment.key)
                 confidence = numeric_localization_confidence(event)
                 pred_events.append({
-                    "label": mapping[label], "frame": position,
+                    "label": prediction_to_truth[label], "frame": position,
                     "confidence": 1.0 if confidence is None else confidence,
                 })
                 prediction_count += 1
@@ -433,7 +449,7 @@ def evaluate_localization_heads(
     total_scores = len(truth_by_label) * len(all_tolerances)
     scored = 0
     per_class = {}
-    for label in sorted(available_truth_labels):
+    for label in sorted(selected_mapping):
         if should_cancel is not None and should_cancel():
             raise InterruptedError("Evaluation cancelled.")
         if label not in truth_by_label:
