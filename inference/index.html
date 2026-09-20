@@ -1,0 +1,1745 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A PyQt6 GUI tool for analyzing and annotating OSL datasets (OpenSportsLab)">
+      
+      
+        <meta name="author" content="OpenSportsLab">
+      
+      
+      
+        <link rel="prev" href="../annotating/">
+      
+      
+        <link rel="next" href="../editing/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Local and Remote Inference - Video Annotation Tool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#inference-providers-and-jobs" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Video Annotation Tool" class="md-header__button md-logo" aria-label="Video Annotation Tool" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Video Annotation Tool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Local and Remote Inference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/OpenSportsLab/VideoAnnotationTool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    OpenSportsLab/VideoAnnotationTool
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../installation/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Installation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../getting_started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../gui_overview/" class="md-tabs__link">
+          
+  
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../batch_tools/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Data Transfer and Batch Tools
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../OSL/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  OSL JSON Format
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../faq/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  FAQ
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../troubleshooting/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Troubleshooting
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../about/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  About
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../contributing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../releasing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Releasing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Video Annotation Tool" class="md-nav__button md-logo" aria-label="Video Annotation Tool" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Video Annotation Tool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/OpenSportsLab/VideoAnnotationTool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    OpenSportsLab/VideoAnnotationTool
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting_started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gui_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GUI Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../synchronized_playback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Synchronized Playback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../annotating/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Annotating
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local and Remote Inference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local and Remote Inference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#configure-inference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configure inference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-inference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run inference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evaluate-localization-heads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluate localization heads
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#background-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Background execution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#direct-uploads-and-vqa-video-reuse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Direct uploads and VQA video reuse
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#review-predictions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Review predictions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#official-opensportslib-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Official OpenSportsLib server
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Official OpenSportsLib server">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#developer-architecture-and-contracts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Developer architecture and contracts
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#local-model-availability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local model availability
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../editing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Editing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../saving_loading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Saving and Loading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shortcuts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Keyboard Shortcuts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../batch_tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Transfer and Batch Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../OSL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OSL JSON Format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../about/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    About
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releasing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Releasing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/OpenSportsLab/VideoAnnotationTool/edit/master/docs/inference.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="inference-providers-and-jobs">Inference Providers and Jobs<a class="headerlink" href="#inference-providers-and-jobs" title="Permanent link">&para;</a></h1>
+<p>The application can run models in the local Python process through
+OpenSportsLib or use the official OpenSportsLib inference server. All annotation
+modes share the same model-selection, queue, review, and error workflow. Any
+number of named remote servers can be configured alongside the permanent
+<strong>Local</strong> provider. Remote inference currently supports Classification and Localization with one or more
+videos per sample, and Q/A with exactly one video per sample. Remote Description,
+Dense Description, and H5 inference are not available.
+VAT pins OpenSportsLib <code>0.3.1.dev12</code>, whose remote-only wrappers and public
+server model registry are required by this integration.</p>
+<p>OpenSportsLib setup does not run during application startup. Open <strong>Help →
+Info</strong> to see the installed OpenSportsLib and PyTorch versions, whether GPU
+support is installed, and whether CUDA is currently available. Choose <strong>Set Up
+OpenSportsLib</strong> to run <code>opensportslib setup</code> in the background, then restart VAT
+after it completes.</p>
+<h2 id="configure-inference">Configure inference<a class="headerlink" href="#configure-inference" title="Permanent link">&para;</a></h2>
+<p>Open <strong>Edit → Settings → Inference</strong>. This is the only inference setup
+surface; the run dialog never edits models or servers.</p>
+<p>The provider selector always lists <strong>Local</strong> first. Use <strong>Add Server…</strong> to add
+remote providers with unique display names and normalized URLs. Each remote has
+its own enabled state and administration token. Selecting a provider shows its
+configuration, health, and models in one shared table. <strong>Test</strong>, <strong>Refresh</strong>,
+<strong>Add from Hugging Face…</strong>, <strong>Add Manually</strong>, and <strong>Remove</strong>
+apply to the selected provider. Model operations take effect immediately;
+closing Settings does not undo them. Remote configuration edits are saved only
+with <strong>Apply</strong> or <strong>OK</strong>. Removing a remote provider requires confirmation.</p>
+<ul>
+<li><strong>Local Models</strong> is an editable registry containing task, model ID, display
+  name, config YAML, and optional weights. Fresh installations start with an
+  empty registry. Every model is explicitly added and every row can be removed;
+  saving an empty registry keeps it empty when Settings is reopened. There is
+  no global reset action that can clear the registry. Retired <code>jeetv</code> entries
+  persisted by earlier application versions are filtered during loading. The former
+  automatically seeded OpenSportsLab rows are also migrated out when they still
+  use repository IDs as lazy weights; explicitly imported cache-backed rows are
+  retained.</li>
+<li><strong>Add from Hugging Face…</strong> accepts a repository ID, revision, and optional
+  token override. Its editable repository field proposes
+  <a href="https://huggingface.co/OpenSportsLab/OSL-cls-action-mvitv2"><code>OpenSportsLab/OSL-cls-action-mvitv2</code></a>,
+  <a href="https://huggingface.co/OpenSportsLab/OSL-loc-snbas-2025-e2e"><code>OpenSportsLab/OSL-loc-snbas-2025-e2e</code></a>, and
+  <a href="https://huggingface.co/OpenSportsLab/OSL-loc-snbas-2023-e2e"><code>OpenSportsLab/OSL-loc-snbas-2023-e2e</code></a>, but accepts other repositories.
+  Blank tokens use the normal Hugging Face login or <code>HF_TOKEN</code>.
+  Enable <strong>Force re-download cached files</strong> to pass <code>force_download=True</code> for
+  both files, replacing/re-fetching cached configuration and checkpoint data
+  that may have been modified locally.
+  The application inspects the repository for an OpenSportsLib <code>config.yaml</code>,
+  <code>config.yml</code>, or <code>config.json</code>, selects an unambiguous supported checkpoint,
+  and downloads both into the standard Hugging Face cache in a background
+  worker. Inline progress and <strong>Cancel Download</strong> keep Settings responsive.
+  For an unsupported schema, the import error names the repository, revision,
+  selected config file, its top-level keys, and the schema section that failed.
+  This error means the selected file does not have a supported OpenSportsLib
+  model config shape: it needs a top-level <code>MODEL</code> mapping. A canonical
+  <code>MODEL</code> with <code>components</code> also needs <code>topology</code> (use <code>[]</code> when there are no
+  edges). Config keys are case-sensitive. Fix the repository config or select
+  a compatible model repository, then retry the import.
+  Cancellation is best-effort during a single Hugging Face file operation, but
+  a cancelled result is never inserted. A completed import is added to the
+  Local registry immediately. <strong>Add Manually</strong> provides file pickers for a
+  required configuration and optional weights. Config-only models leave the
+  weights field empty. VAT constructs the matching OpenSportsLib task model
+  in a background worker before marking the row <code>ready</code>; a constructor or
+  configuration failure keeps the row visible as <code>failed</code> and excludes it from
+  Run Inference.</li>
+<li>The official <code>OpenSportsLab/OSL-loc-snbas-2025-e2e</code> and
+  <code>OpenSportsLab/OSL-loc-snbas-2023-e2e</code> localization checkpoints use a legacy
+  pickle format. Only these exact allowlisted repository identities may opt
+  into OpenSportsLib's unsafe legacy deserialization. Changing a model ID,
+  repository, revision, or weights path revokes that opt-in; arbitrary Hugging
+  Face and manual checkpoints always remain safe-by-default. Only import legacy
+  artifacts from sources you trust.</li>
+<li>Each remote server has an explicit <strong>Enabled</strong> switch. When it
+  is off, discovery and execution never construct an HTTP client. When it is
+  on, enter the base URL (default <code>http://127.0.0.1:8000</code>) and use <strong>Test
+  Connection</strong>. The client calls <code>/health</code> and reports API, Redis, worker, and
+  configured-model health.</li>
+<li><strong>Refresh</strong> reads the selected server registry. Cached catalogs appear
+  immediately, and VAT automatically refreshes every enabled server when
+  Settings or Run Inference opens. The table shows every
+  <code>registering</code>, <code>ready</code>, <code>failed</code>, or <code>unregistering</code> model; only healthy
+  <code>ready</code> models appear in <strong>Run Inference…</strong>. Server
+  task <code>vqa</code> appears as Q/A.</li>
+<li><strong>Admin token</strong> is saved in VAT's local application settings when you choose
+  <strong>Apply</strong> or <strong>OK</strong>. It is restored the next time Settings or VAT is opened,
+  but never enters project JSON or inference requests. VAT's settings storage
+  may not encrypt it, so use this only on a trusted workstation; clear the
+  field and apply the change to remove it. With a token, <strong>Register Model…</strong> adds
+  either a Hugging Face repository or server-local weights/config paths,
+  and <strong>Unregister</strong> removes a model. These actions take effect immediately on
+  the external server; cancelling Settings does not undo them. Registration
+  and removal are asynchronous, and VAT refreshes transient status every two
+  seconds while Settings remains open. If a refresh fails, VAT retains the
+  last successful catalog and marks it stale. Cached ready models remain
+  selectable; execution reports the current connection failure if it persists.</li>
+<li>Server-local paths must be visible to the server and are entered as text; VAT
+  deliberately does not open a client-side file picker for them. Shared-root
+  and resumable-upload settings from older VAT versions remain ignored.</li>
+</ul>
+<p>Connection tests and catalog refreshes use the current unsaved form values.
+Only <strong>Apply</strong> or <strong>OK</strong> persists the setup; <strong>Cancel</strong> leaves saved settings
+unchanged.</p>
+<p>Existing Local and single-server settings are migrated automatically. The
+provider registry stores stable provider IDs, cached catalogs, last successful
+refresh times, and connection status. Administration tokens
+are stored separately in application settings and never enter the catalog.</p>
+<p>Inference and public registry reads require no authentication. Registry changes
+require the server's <code>OSL_MODEL_ADMIN_TOKEN</code>. Localhost HTTP is allowed. An HTTP
+server on another host is unencrypted, so use it only on a trusted private
+network.</p>
+<h2 id="run-inference">Run inference<a class="headerlink" href="#run-inference" title="Permanent link">&para;</a></h2>
+<p>Use <strong>Run Inference…</strong> in the <strong>Inference Jobs</strong> dock. The action targets the
+currently active annotation mode. Choose a
+compatible model and inputs, then fill in the task options shown by the dialog.
+For Localization, <strong>Minimum confidence</strong> accepts 0.0–100.0% in 0.1% steps.
+The default is 0%; the last submitted value is remembered across application
+restarts. Local and Remote runs use the same setting. Predictions with a
+numeric score below the minimum are removed before class mapping and review;
+scores equal to the minimum are kept. Predictions without a usable score are
+also kept and use the existing 100% display fallback during review. If none
+remain, no annotation or undo entry is created. The
+threshold is a run preference stored in application settings, not project JSON.
+For Localization models with time-range support, the <strong>Start (ms)</strong> and
+<strong>End (ms, 0 = end)</strong> fields reopen with the values from the last queued run
+that used a range on the selected sample. Selecting another sample clears this
+range, even if you later return to the original sample. A run with a model that
+does not support time ranges leaves the remembered values intact. The range is
+kept only while the application is open; it is not stored in settings or
+project JSON.
+The model list combines saved Local models and cached or discovered models from
+every enabled remote provider. Entries are prefixed with the provider name;
+selecting one chooses
+the provider automatically. Local executes OpenSportsLib directly and never
+contacts the configured server. Remote constructs the matching
+<code>opensportslib.apis</code> wrapper and uses its official remote client.</p>
+<p>Local Classification and Localization resolve their device in a temporary
+per-job configuration; the cached or manually selected model config is never
+edited. An <code>auto</code> or CUDA configuration falls back to CPU when CUDA is
+unavailable. For Localization, if CPU is selected or NVIDIA DALI is
+unavailable, DALI dataset types are also replaced with their OpenCV
+equivalents. This permits CPU inference with repositories whose training
+configuration defaults to CUDA or DALI.</p>
+<p>The disposable local Localization config replaces <code>DATA.common.data_root</code> and
+<code>DATA.common.splits.test.source_path</code> with the folder containing the open
+dataset JSON. It also points the canonical test split's <code>annotation_path</code> to
+the generated inference manifest. A model publisher's hardcoded,
+machine-specific paths therefore cannot affect the run. The cached or manually
+selected source config and the dataset JSON remain unchanged.</p>
+<p>Localization predictions are returned relative to the selected inference
+inputs. For a UTC-synchronized sample, the application projects them back onto
+the whole-sample timeline before saving or displaying them. For example, if a
+selected H5 input starts five minutes after the sample's video origin, a model
+prediction at H5 position <code>00:01.250</code> becomes sample position <code>05:01.250</code>.
+The temporary localization manifest contains the selected input and no
+fabricated ground-truth event. VAT reads the model's class list from
+<code>DATA.common.classes</code> in canonical configs or <code>DATA.classes</code> in legacy configs;
+the annotation head can have different labels. A predicted class missing from
+that head is offered for mapping during review. Predictions at the start of a
+video (<code>position_ms: 0</code>) are retained. The temporary test split also sets the
+canonical or legacy dataloader to one process with shuffling disabled, so CPU
+fallback can read it even when the published config omits worker settings.
+Offsets are tracked per input: if both video and joints are selected but a
+local tracking model actually consumes only the joints/ball H5 inputs, the H5
+offset is still applied and the unused video's earlier origin does not suppress
+it.
+The offset uses an explicit input <code>UTC_time_start</code> when present; otherwise,
+player H5 inputs use their earliest valid <code>timestamp_utc</code> value, even when the
+stored timestamp rows are not chronological.</p>
+<p>For command-line model checks, <code>tools/test-inference.py</code> applies the same basic
+principle: it writes a disposable runtime YAML instead of editing the supplied
+or Hugging Face-cached config. The runtime YAML replaces publisher-specific
+test-data, output, and dataloader-worker defaults. The directory containing the
+test JSON is always the data root for relative input paths, and test workers are
+fixed at zero. The config's device and GPU fields are preserved so
+OpenSportsLib remains the sole device-resolution authority. The tool also
+leaves local-checkpoint authentication to OpenSportsLib and always disables
+W&amp;B for this minimal inference workflow. Every run requires either <code>--config</code>
+or <code>--hf-model</code>, plus <code>--output</code>; batch runs also require <code>--test-set</code>.</p>
+<p>Instead of passing cached paths explicitly, <code>--hf-model owner/repository</code>
+inspects the Hugging Face model repository and downloads its supported
+OpenSportsLib config and checkpoint into the standard Hugging Face cache before
+running inference. <code>--hf-revision</code> selects a branch, tag, or commit;
+<code>--force-download</code> refreshes both cached artifacts. Private or gated models can
+use <code>--hf-token</code>, although <code>HF_TOKEN</code> or a saved Hugging Face login avoids
+putting a token in shell history. <code>--hf-model</code> cannot be combined with
+<code>--config</code> or <code>--weights</code>, and the downloaded config task must match <code>--task</code>.</p>
+<p>For VQA, <code>--question</code> is required and is applied to every sample in
+<code>--test-set</code>. The script writes a temporary annotation file containing that
+question for each sample, then makes one <code>VQAModel.infer(test_set=...)</code> call so
+the model is loaded only once. OpenSportsLib uses the first video input in each
+sample; relative paths are resolved from the directory containing the original
+JSON. Existing answers in the source JSON are not modified on disk.</p>
+<p>For example:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python<span class="w"> </span>tools/test-inference.py<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--task<span class="w"> </span>classification<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--hf-model<span class="w"> </span>OpenSportsLab/OSL-cls-action-mvitv2<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--force-download<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--test-set<span class="w"> </span>/path/to/annotations_test.json<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span>--output<span class="w"> </span>/path/to/annotations_test-pred.json
+</span></code></pre></div>
+<p>For example, run the Qwen 2.5 VQA adapter with:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>python<span class="w"> </span>tools/test-inference.py<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--task<span class="w"> </span>vqa<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--hf-model<span class="w"> </span>OpenSportsLab/OSL-VQA-XFOUL-qwen2.5-7B-VL-lora<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--test-set<span class="w"> </span>/path/to/annotations_test.json<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--question<span class="w"> </span><span class="s2">"Is this a foul, and why?"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>--output<span class="w"> </span>/path/to/annotations_test-vqa-pred.json
+</span></code></pre></div>
+<p>The same command supports
+<code>OpenSportsLab/OSL-VQA-XFOUL-qwen3-8B-VL-lora</code> and
+<code>OpenSportsLab/OSL-VQA-XFOUL-XVARS-lora</code>. The X-VARS adapter additionally
+requires its separately published base Video-ChatGPT bundle and visual encoder
+checkpoint; update a local config or place those artifacts beside its cached
+config as described below.</p>
+<p>Local VQA likewise uses a temporary writable output directory and resolves
+<code>auto</code>/CUDA to CPU when necessary. OpenSportsLib 0.3 <code>answer_text</code> results are
+normalized into the annotation tool's answer field. X-VARS LoRA repositories
+contain adapters rather than every base artifact: local inference also requires
+the <code>base_model_videoChatGPT</code> directory and <code>14_model.pth.tar</code>. If the published
+config contains stale absolute paths, place these artifacts beside its local
+<code>config.yaml</code> or point a local config copy at them. Missing dependencies are
+reported as <code>local_model_dependency_missing</code>; publisher paths such as
+<code>/home/vorajv</code> are never used as writable output locations.</p>
+<p>The dialog lists only runnable models for the current task. Setup problems are
+reported briefly and corrected in application Settings. It contains runtime
+options only: Classification scope, compatible inputs, language or question
+where applicable, and time ranges only for models that support ranges.
+Classification and Localization use the head already selected in their
+annotation panels. The selected head is sent to the server as OSL's <code>action</code>
+schema and mapped back to the VAT head in results. The request also supplies
+the sample ID, FPS, and sample metadata. The last model that completes
+successfully is remembered separately for each task. Localization ranges are
+clipped locally before upload, and returned positions are translated back to
+the original sample timeline using both the clip and input-timeline offsets.</p>
+<p>Classification exposes current-sample and all-samples scope in this dialog; it
+does not have a separate batch-inference control. Its input list shows only the
+currently selected sample. For all-samples scope, that input selection is used
+as the positional modality template for every sample in the batch.</p>
+<h2 id="evaluate-localization-heads">Evaluate localization heads<a class="headerlink" href="#evaluate-localization-heads" title="Permanent link">&para;</a></h2>
+<p>In the Localization panel, choose <strong>Evaluate…</strong> to compare two different task
+heads already saved in the open project. Choose <strong>Whole project</strong> or <strong>Selected
+sample</strong>, then select the ground-truth and prediction heads. The last submitted
+scope and both head selections are restored the next time the dialog opens and
+across application restarts, provided those heads still exist. The mapping
+table shows every ground-truth class. For each class,
+choose one observed prediction label or skip the ground-truth class. Identical
+names are selected automatically, and one prediction label cannot be assigned
+to multiple ground-truth classes. Evaluation does not change annotations or
+undo history.</p>
+<p>The dialog starts with AP tolerances of 1, 2, 3, 4, and 5 seconds. Add or remove
+values in 0.1-second steps from 0.0 to 60.0 seconds. The report shows tight mAP
+(1–5 seconds), loose mAP (5–60 seconds), and AP at every chosen tolerance, both
+overall and per class. Each AP cell includes precision and recall as
+<code>AP% (Precision%/Recall%)</code>. Precision and recall use every prediction event for
+the mapped label. The overall values are macro averages over evaluated classes
+with ground-truth events. An evaluated class with no ground-truth events in the
+chosen scope is shown as <strong>N/A</strong> and omitted from every macro average. If the
+selected mappings contain no ground-truth events, the app explains why it
+cannot calculate a score.</p>
+<p>Whole-project evaluation uses samples marked <code>verified</code> and samples without an
+annotation status; it skips <code>unlabeled</code> and <code>excluded</code> samples. Declared
+intervals are scored as separate segments. All events in each selected
+ground-truth class count as truth, including unconfirmed inferred events.
+Predictions without a usable confidence score are included at 100% confidence.
+Events in either selected head need a label and a valid timeline position;
+events outside declared intervals cause an error instead of being silently
+omitted. The dialog opens without scanning tracking H5 files; after you choose
+<strong>Evaluate</strong>, UTC timeline projection and scoring run in the background with a
+cancelable progress dialog. The progress bar shows timeline preparation and
+class/tolerance scoring, including the current AP tolerance and elapsed time.
+If the project changes while scoring runs, its report is discarded.
+The report and class mappings are read-only and are not stored. The last
+submitted scope, ground-truth head, and prediction head are saved in application
+settings; no evaluation field enters project JSON.</p>
+<h2 id="background-execution">Background execution<a class="headerlink" href="#background-execution" title="Permanent link">&para;</a></h2>
+<p>Inference uses one FIFO lane per provider. One Local job and one job for every
+remote server may run concurrently, while jobs for the same provider never
+overlap. Additional <strong>Run Inference…</strong> actions append work to the selected
+provider's lane. A queued request keeps an immutable endpoint and model
+configuration snapshot without administration credentials. Disabling or
+removing a provider blocks new submissions but does not alter its queued jobs.</p>
+<p>The dock is placed below the Annotation Editor and is available from
+<strong>View → Inference Jobs</strong>. It opens automatically when work is queued and is
+raised when a job fails. It hides with the other project docks when returning
+to the welcome screen, where its View action is disabled. Its previous visible
+or hidden preference is restored when a project workspace is shown again. The
+application status bar remains reserved for normal
+status messages. One table shows queued, running, cancelling, succeeded,
+failed, and cancelled jobs. Its first column combines the provider, algorithm,
+task, and sample count. Its second column combines state and progress, including
+the provider-relative queue position. Selecting a row shows its event details
+and displays the submitted and finished times below the table. <strong>Cancel
+Selected</strong> cancels the selected active or queued job, while <strong>Cancel All</strong> acts
+on every provider lane. <strong>Clear Finished</strong> removes terminal
+records. Terminal metadata and each job's bounded event log are stored in an
+application-wide SQLite database for the current application session and are
+deleted during an orderly shutdown. <strong>Clear Finished</strong> deletes them earlier.
+Inference payloads, media,
+credentials, and nonterminal work are not stored, so a crash never resumes a
+job. If history storage is unreadable, the panel reports the error and uses
+session-only history. The selected row's details show a bounded, timestamped
+timeline of state, progress-stage, cancellation, and error messages.
+Dataset navigation, playback, editing, saving, and tab switching remain
+available throughout.</p>
+<p>Each request captures its original project generation, sample IDs, task head or
+question, and request-item IDs. Results are correlated back to those immutable
+request items and never to the sample currently visible when the model finishes.
+Navigating from sample A to sample B therefore leaves A's predictions pending;
+they appear when A is selected again and its Smart Labelled status updates in
+the explorer. Completion never changes the currently selected annotation mode,
+Classification head, or Localization head. Removed or renamed sample targets are discarded rather than
+redirected. Opening, creating, or closing a project cancels active jobs,
+discards waiting queues, and suppresses late results from the previous
+project.</p>
+<p>OpenSportsLib wrapper calls are indivisible. Cancelling active work leaves the
+job in <code>Cancelling</code> until its worker returns. The next job in that provider's
+lane starts only after cleanup, preventing two requests from overlapping on
+the same server. An already submitted server job may continue because the
+official server has no cancellation endpoint.
+A waiting request is cancelled immediately and is never submitted.</p>
+<p>Every annotation panel uses the same pending-result footer for Accept/Reject and
+bulk review only. Inference execution is centralized in the dock; there are no
+task-specific Smart, single-inference, or batch-inference buttons.</p>
+<h2 id="direct-uploads-and-vqa-video-reuse">Direct uploads and VQA video reuse<a class="headerlink" href="#direct-uploads-and-vqa-video-reuse" title="Permanent link">&para;</a></h2>
+<p>For one-video Classification and Localization requests, media is sent directly
+to the official server as multipart form data. For a multi-video sample, VAT
+creates a disposable OSL manifest and lets the official client stage and upload
+the manifest with all of its media. Q/A remains one-video because a VQA server
+session owns one uploaded video. The current OpenSportsLib client buffers direct
+files or the staged archive in memory while building the upload request; VAT
+does not provide shared-path or resumable-transfer fallbacks. Plan memory use
+accordingly for large or multi-view samples.</p>
+<p>For the first Q/A question, VAT uploads the video and records the server's
+session ID in a private, in-memory cache. Another question for the same server,
+model, sample, real video path, file size, and modification time reuses that
+session without uploading the video again. Entries expire after 25 minutes.
+HTTP 404 or 410 from a reused session causes one automatic fresh upload and
+retry. Opening, creating, or closing a project, changing remote-server settings,
+or shutting down clears the cache. Session IDs are never stored in project JSON.</p>
+<p>Session reuse avoids video transfer only. With the current server, earlier
+questions and answers are not conversational context for the model.</p>
+<h2 id="review-predictions">Review predictions<a class="headerlink" href="#review-predictions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Classification shows the proposed label beside its head.</li>
+<li>Localization and Dense Description show visually distinct pending rows.</li>
+<li>Description previews the candidate without changing the caption list; acceptance
+  appends a new caption and rejection is non-mutating.</li>
+<li>Q/A shows a pending answer under the selected or newly entered question.</li>
+</ul>
+<p>For Classification, Dense Description, Description, and Q/A, predictions remain
+in session memory until accepted. They do not dirty the project or enter
+exported JSON before acceptance. <strong>Accept</strong> commits a plain annotation as an
+undoable mutation; <strong>Reject</strong> removes the pending candidate. Multi-result
+widgets also provide <strong>Accept All</strong> and <strong>Reject All</strong>.</p>
+<p>Localization predictions are written into each sample's <code>events[]</code> when the
+result is applied. They include confidence and model identity, appear as pending
+rows, enter saved/exported JSON, and make the project dirty. The entire result
+is one undoable change, including a head created from that result. The Smart
+Labelled filter recognizes samples with confidence-scored events.</p>
+<p>Every retained localization result opens one destination and class-mapping
+dialog for the run, across all samples. Choose the task head selected when the
+run started, select another existing task head, or create a new task head.
+The class choices update when you select an existing head. Exact class names
+are mapped automatically and other classes start at <strong>Skip Prediction</strong>. A new
+head receives every returned class and must have a nonempty, case-insensitively
+unique name. <strong>Cancel</strong> applies nothing. Destination and mapping choices apply
+to this run only.</p>
+<p>For Localization, select a confidence-scored row and use the shortcuts configured
+under <strong>Edit → Settings → Shortcuts</strong> (<code>Ctrl+Enter</code> to accept and
+<code>Ctrl+Backspace</code> to reject by default). The bindings work only while Localization
+is active. After review, selection advances to the next table row, falling back
+to the preceding row at the end of the table. Accepting removes the confidence
+marker; rejecting removes that event. Both use the normal undoable history path.</p>
+<h2 id="official-opensportslib-server">Official OpenSportsLib server<a class="headerlink" href="#official-opensportslib-server" title="Permanent link">&para;</a></h2>
+<p>VAT uses the FastAPI and RQ server in the OpenSportsLib repository's <code>server/</code>
+folder. From that repository root, install the server in a Python 3.12+
+environment and start its API, Redis, and worker:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.12<span class="w"> </span>.venv
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./server
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nb">cd</span><span class="w"> </span>server
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>bash<span class="w"> </span>scripts/setup_env.sh
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>./scripts/start_all.sh
+</span></code></pre></div>
+<p>Review <code>server/.env</code> before starting it. Set <code>OSL_MODEL_ADMIN_TOKEN</code> to enable
+VAT's model-management actions; leaving it empty disables administration. The
+API and worker must share their Redis queue and runtime directory. VAT uses
+these official endpoints without an <code>/api/v1</code> prefix:</p>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>VAT use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /health</code></td>
+<td>API, Redis, worker, and configured-model health</td>
+</tr>
+<tr>
+<td><code>GET /models</code></td>
+<td>Public model IDs, tasks, and lifecycle states</td>
+</tr>
+<tr>
+<td><code>POST /models</code></td>
+<td>Authenticated Hugging Face or server-local registration</td>
+</tr>
+<tr>
+<td><code>DELETE /models/{model_id}</code></td>
+<td>Authenticated asynchronous removal</td>
+</tr>
+<tr>
+<td><code>POST /predict</code></td>
+<td>Multipart video submission or session-based VQA follow-up</td>
+</tr>
+<tr>
+<td><code>GET /jobs/{job_id}</code></td>
+<td>Poll asynchronous job status</td>
+</tr>
+<tr>
+<td><code>GET /jobs/{job_id}/result</code></td>
+<td>Retrieve successful OSL predictions</td>
+</tr>
+</tbody>
+</table>
+<p>Single-video Classification and Localization call the official wrapper's
+<code>infer(video_path=..., remote_task_options=...)</code>. Multi-video samples call
+<code>infer(test_set=..., remote_mode="full_test_set")</code> with a temporary one-sample
+OSL manifest, using the official manifest-and-media upload path. Classification
+batches are submitted one sample at a time in queue order. Initial VQA calls
+<code>infer(video_path=..., question=...)</code> and caches the wrapper's
+<code>last_remote_session_id</code>; follow-up questions call <code>infer()</code> with that session
+ID and no video. VAT uses server defaults for advertised inference overrides.</p>
+<p>VAT normalizes the returned OSL <code>data</code> item into its existing private
+<code>InferenceResult</code> contract. Request-owned item and sample IDs remain canonical,
+<code>action</code> is mapped to the selected VAT head, and VQA <code>answer_text</code> is mapped to
+<code>answer</code>. No server job or session identifiers enter the OSL project document.</p>
+<h3 id="developer-architecture-and-contracts">Developer architecture and contracts<a class="headerlink" href="#developer-architecture-and-contracts" title="Permanent link">&para;</a></h3>
+<p><code>InferenceController</code> owns dynamic FIFO lanes keyed by <code>provider_id</code>, worker
+lifecycle, the SQLite <code>InferenceHistoryStore</code>, and the thread-safe process-local
+VQA session cache. <code>InferenceModelChoice</code>, <code>InferenceRequest</code>, queue entries,
+remembered task choices, and logs carry the stable provider ID plus display
+name and kind. Each request receives one deep-copied provider snapshot with its
+endpoint and catalog; administration tokens are removed. <code>MainWindow</code> remains
+the only cross-module route. Project changes cancel current lanes and discard
+late results. Shutdown waits for workers, clears the job list and its SQLite
+records, and closes history storage.</p>
+<p><code>InferenceProvider</code> defines the shared catalog, health, model operation,
+execution, and cleanup contract. <code>LocalInferenceProvider</code> calls OpenSportsLib
+in process; <code>RemoteInferenceProvider</code> is the official-server adapter. It discovers
+models, constructs <code>ClassificationModel</code>, <code>LocalizationModel</code>, or <code>VQAModel</code>
+with only <code>remote=server_url</code> and <code>remote_model_id=model_id</code>. Remote model IDs
+are independent of local weights and never trigger local config or Hugging Face
+resolution. <code>ModelDescriptor.status</code> exposes registry state to Settings;
+<code>InferenceResult</code>, editor signals,
+pending-review behavior, history mutations, and persisted OSL JSON remain
+unchanged. Effective acceptance still creates exactly one history entry;
+rejection and unreviewed inference create none.</p>
+<p>The provider registry is application state in <code>QSettings</code>. Local is permanent;
+remote providers use UUIDs and require unique case-insensitive names and
+normalized URLs. Catalogs, refresh times, and status are stored per provider.
+Tokens use a separate settings value. Legacy Local and one-server
+keys migrate once and are removed only after the new registry is saved.</p>
+<p>Authenticated registry operations run in a separate controller-owned worker,
+one at a time. <code>MainWindow</code> is the only cross-module route between Settings and
+that worker. The admin token is loaded from and saved to application-local
+QSettings, then copied into worker memory only for a registry operation. It
+never enters logs, inference requests, or project data. Closing Settings stops
+its presentation polling but does not roll back an operation already accepted
+by the server.</p>
+<p>Network failures and timeouts are retryable <code>InferenceError</code>s. HTTP 4xx and
+model execution failures are non-retryable, except cached-session HTTP 404/410,
+which performs one fresh VQA upload. Cancellation marks the active record and
+signals its worker. The lane stays occupied until that worker exits; terminal
+metadata is then appended to SQLite and the next request is dispatched.
+SQLite failures leave execution available and surface through
+<code>historyErrorChanged</code>; queued and running records are never written. A
+successful shutdown clears all runtime records and stored terminal entries.</p>
+<h2 id="local-model-availability">Local model availability<a class="headerlink" href="#local-model-availability" title="Permanent link">&para;</a></h2>
+<p>The installed OpenSportsLib currently exposes <code>ClassificationModel</code>,
+<code>LocalizationModel</code>, and <code>VQAModel</code>. Local Description and Dense Description
+entries remain visible but disabled until OpenSportsLib supplies native
+<code>DescriptionModel</code> and <code>DenseDescriptionModel</code> APIs. The client does not
+approximate these tasks with VQA prompts. The official remote integration also
+intentionally leaves Description and Dense Description unavailable.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "toc.integrate", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
