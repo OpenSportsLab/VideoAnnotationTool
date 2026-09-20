@@ -47,6 +47,13 @@ checkpoint in the background and stages the cached paths until Settings is
 applied; **Add Manually** retains direct path entry. See
 [Local and Remote Inference](inference.md).
 
+The **Help → Info** dialog shows the application, OpenSportsLib, and PyTorch
+versions. It also reports whether a CUDA-enabled PyTorch build is installed and
+whether a CUDA GPU is available to the current process. Use **Set Up
+OpenSportsLib** there to install the compatible compute environment. Setup no
+longer runs automatically when the application starts; restart the application
+after a successful setup.
+
 On **Dataset Explorer**, **Samples per page** controls the bounded tree window
 (500 by default, configurable from 100 to 2,000) and applies immediately.
 These preferences are stored in application settings and are never added to a

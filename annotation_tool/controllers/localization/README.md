@@ -184,8 +184,9 @@ offset back onto the original sample timeline.
   trapezoidal tolerance averaging over 1–5 and 5–60 seconds. Each selected
   tolerance has one AP column formatted as `AP% (Precision%/Recall%)`.
   `MainWindow` loads and saves the last submitted Whole project/Selected sample
-  choice through `localization_settings.py`. Mappings and report state remain
-  transient, and no project JSON fields are added.
+  choice and both selected heads through `localization_settings.py`. Missing or
+  renamed heads fall back to the current available choices. Mappings and report
+  state remain transient, and no project JSON fields are added.
 - OpenSportsLib's `LocalizationModel.evaluate()` is a model/config evaluation
   workflow that may run inference. Comparing two existing VAT heads uses
   `parse_ground_truth()`, `get_predictions()`, and

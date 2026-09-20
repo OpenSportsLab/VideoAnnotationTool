@@ -9,6 +9,12 @@ Dense Description, and H5 inference are not available.
 VAT pins OpenSportsLib `0.3.1.dev12`, whose remote-only wrappers and public
 server model registry are required by this integration.
 
+OpenSportsLib setup does not run during application startup. Open **Help →
+Info** to see the installed OpenSportsLib and PyTorch versions, whether GPU
+support is installed, and whether CUDA is currently available. Choose **Set Up
+OpenSportsLib** to run `opensportslib setup` in the background, then restart VAT
+after it completes.
+
 ## Configure inference
 
 Open **Edit → Settings → Inference**. This is the only inference setup
@@ -237,8 +243,9 @@ as the positional modality template for every sample in the batch.
 In the Localization panel, choose **Evaluate…** to compare two different task
 heads already saved in the open project. Choose **Whole project** or **Selected
 sample**, then select the ground-truth and prediction heads. The last submitted
-scope is restored the next time the dialog opens and across application
-restarts. The mapping table shows every ground-truth class. For each class,
+scope and both head selections are restored the next time the dialog opens and
+across application restarts, provided those heads still exist. The mapping
+table shows every ground-truth class. For each class,
 choose one observed prediction label or skip the ground-truth class. Identical
 names are selected automatically, and one prediction label cannot be assigned
 to multiple ground-truth classes. Evaluation does not change annotations or
@@ -267,9 +274,9 @@ omitted. The dialog opens without scanning tracking H5 files; after you choose
 cancelable progress dialog. The progress bar shows timeline preparation and
 class/tolerance scoring, including the current AP tolerance and elapsed time.
 If the project changes while scoring runs, its report is discarded.
-The report and class mappings are read-only and are not stored. Only the last
-submitted scope is saved in application settings; no evaluation field enters
-project JSON.
+The report and class mappings are read-only and are not stored. The last
+submitted scope, ground-truth head, and prediction head are saved in application
+settings; no evaluation field enters project JSON.
 
 ## Background execution
 

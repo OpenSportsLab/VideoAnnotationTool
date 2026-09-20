@@ -1,11 +1,10 @@
 import copy
 import html
-import importlib.metadata
 import json
 import os
 import time
 
-from PyQt6.QtCore import QEvent, Qt, QModelIndex, QTimer
+from PyQt6.QtCore import QEvent, Qt, QModelIndex, QThread, QTimer
 from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
@@ -57,6 +56,7 @@ from ui.dense_description import DenseAnnotationPanel
 from ui.question_answer import QuestionAnswerAnnotationPanel
 from ui.streaming_vqa import StreamingVQAAnnotationPanel
 from ui.dialogs import (
+    ApplicationInfoDialog,
     ApplicationSettingsDialog,
     BusyStatusDialog,
     HfDownloadDialog,
@@ -64,6 +64,7 @@ from ui.dialogs import (
     HfUploadDialog,
     InferenceRunDialog,
 )
+from environment import opensportslib_environment_status, setup_opensportslib
 from ui.inference_jobs_widget import InferenceJobsWidget
 from ui.hf_transfer_panel import HfTransferPanel
 
@@ -100,13 +101,29 @@ from shortcut_settings import (
 )
 from localization_settings import (
     LOCALIZATION_PREROLL_MS_KEY,
+    load_localization_evaluation_heads,
     load_localization_evaluation_scope,
     load_localization_preroll_ms,
     normalize_localization_preroll_ms,
+    save_localization_evaluation_heads,
     save_localization_evaluation_scope,
 )
 
 from utils import create_checkmark_icon, resource_path
+
+
+class _OpenSportsLibSetupWorker(QThread):
+    """Run the package-changing OpenSportsLib setup command outside the UI thread."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.error = ""
+
+    def run(self) -> None:
+        try:
+            setup_opensportslib()
+        except Exception as exc:
+            self.error = str(exc)
 
 
 class VideoAnnotationWindow(QMainWindow):
@@ -273,6 +290,8 @@ class VideoAnnotationWindow(QMainWindow):
         self._localization_inference_range: tuple[str, int, int] | None = None
         self._localization_evaluation_workers = set()
         self._active_localization_evaluation = None
+        self._opensportslib_setup_worker = None
+        self._opensportslib_setup_dialog = None
         self._localization_evaluation_progress_timer = QTimer(self)
         self._localization_evaluation_progress_timer.setInterval(1000)
         self._localization_evaluation_progress_timer.timeout.connect(
@@ -1923,21 +1942,26 @@ class VideoAnnotationWindow(QMainWindow):
         explorer.get_samples()
         project_snapshot = copy.deepcopy(explorer.dataset_json)
         generation = explorer.project_generation
+        settings = getattr(explorer, "settings", None)
+        initial_truth_head, initial_prediction_head = (
+            load_localization_evaluation_heads(settings)
+        )
         dialog = LocalizationEvaluationDialog(
             project_snapshot["data"],
             project_snapshot.get("labels", {}),
             str(explorer.current_selected_sample_id or ""),
             self.localization_panel.annot_mgmt.tabs.get_current_head(),
             self,
-            initial_scope=load_localization_evaluation_scope(
-                getattr(explorer, "settings", None)
-            ),
+            initial_scope=load_localization_evaluation_scope(settings),
+            initial_truth_head=initial_truth_head,
+            initial_prediction_head=initial_prediction_head,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         options = dialog.options()
-        save_localization_evaluation_scope(
-            getattr(explorer, "settings", None), options["scope"]
+        save_localization_evaluation_scope(settings, options["scope"])
+        save_localization_evaluation_heads(
+            settings, options["truth_head"], options["prediction_head"]
         )
         if generation != explorer.project_generation or project_snapshot != explorer.dataset_json:
             self.show_temp_msg("Localization Evaluation", "The project changed; reopen evaluation.", 3500)
@@ -2206,11 +2230,59 @@ class VideoAnnotationWindow(QMainWindow):
         self.shortcut_seek_fwd_secondary.setEnabled(has_secondary)
 
     def _show_info_popup(self) -> None:
-        try:
-            osl_version = importlib.metadata.version("opensportslib")
-        except importlib.metadata.PackageNotFoundError:
-            osl_version = "not installed"
-        QMessageBox.information(self, "Info", f"{APP_DISPLAY_NAME}\nVersion: {APP_VERSION}\nOpenSportsLib: {osl_version}")
+        worker = self._opensportslib_setup_worker
+        dialog = ApplicationInfoDialog(
+            APP_DISPLAY_NAME,
+            APP_VERSION,
+            opensportslib_environment_status(),
+            self,
+            setup_running=worker is not None and worker.isRunning(),
+        )
+        dialog.exec()
+        if dialog.setup_requested:
+            self._start_opensportslib_setup()
+
+    def _start_opensportslib_setup(self) -> None:
+        active = self._opensportslib_setup_worker
+        if active is not None and active.isRunning():
+            return
+        worker = _OpenSportsLibSetupWorker(self)
+        progress = BusyStatusDialog(
+            "OpenSportsLib Setup",
+            "Installing the OpenSportsLib compute environment. This can take "
+            "several minutes…",
+            self,
+        )
+        self._opensportslib_setup_worker = worker
+        self._opensportslib_setup_dialog = progress
+        worker.finished.connect(
+            lambda completed_worker=worker: self._finish_opensportslib_setup(
+                completed_worker
+            )
+        )
+        progress.show()
+        worker.start()
+
+    def _finish_opensportslib_setup(self, worker) -> None:
+        progress = self._opensportslib_setup_dialog
+        if progress is not None:
+            progress.close()
+        self._opensportslib_setup_dialog = None
+        self._opensportslib_setup_worker = None
+        if worker.error:
+            QMessageBox.critical(
+                self,
+                "OpenSportsLib Setup Failed",
+                f"OpenSportsLib setup failed:\n\n{worker.error}",
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "OpenSportsLib Setup Complete",
+                "OpenSportsLib setup completed. Restart the application to use "
+                "the installed compute environment.",
+            )
+        worker.deleteLater()
 
     # # ---------------------------------------------------------------------
     # # Mode-aware dispatchers (Deprecated?)
@@ -2268,6 +2340,15 @@ class VideoAnnotationWindow(QMainWindow):
         return self.dataset_explorer_controller.check_and_close_current_project()
 
     def closeEvent(self, event) -> None:
+        setup_worker = self._opensportslib_setup_worker
+        if setup_worker is not None and setup_worker.isRunning():
+            self.show_temp_msg(
+                "OpenSportsLib Setup",
+                "Setup is still running. Wait for it to finish before closing.",
+                2500,
+            )
+            event.ignore()
+            return
         stop_download_on_close = False
         if self.hf_transfer_controller.is_download_running():
             if not self._confirm_stop_download_and_quit():

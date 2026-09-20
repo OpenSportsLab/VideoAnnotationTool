@@ -28,7 +28,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `import_annotations()`, `open_project_from_path()`, `load_project()`: open/normalize/load dataset.
 - `save_project()`, `export_project()`: write dataset JSON to disk.
   Both keep their synchronous success/failure return contract for the close
-  flow, but run normalization, H5 origin scans, and JSON writing in a
+  flow, but run normalization and JSON writing in a
   `_DatasetSaveWorker` thread while a modal progress dialog processes GUI
   events. `_DatasetWriteSnapshot` contains only copied data and filesystem
   paths; the worker never accesses the controller or widgets. The worker writes
@@ -310,14 +310,16 @@ intents through `MainWindow.connect_signals()`. Its modal commits are complete
 and atomic, with no inference or evidence. See [its contracts](streaming_vqa/README.md).
 - Dataset JSON mutation must preserve undo/redo correctness.
 - No-op mutation requests should not change stacks.
-- Save/export normalizes temporal annotations using a genuine resolved origin;
-  it must not invent one for relative-only samples.
+- Save/export normalizes temporal annotations using an explicit or already
+  cached genuine origin; it must not scan a cold H5 input or invent an origin
+  for relative-only samples.
 - `_normalize_dataset_json()` already deep-copies canonical JSON; the write
   path mutates that copy directly. Samples without temporal annotations skip
   timeline-origin resolution. `cache_h5_timeline_origins()` accepts the
   evaluation worker's file-signature/origin pairs and reuses each only while
-  its source file's size and modification time still match. This avoids
-  rereading H5 timestamp arrays on the next save without persisting a cache.
+  its source file's size and modification time still match. Save/export passes
+  `scan_h5=False`, so a missing or stale cache entry leaves relative temporal
+  data unchanged instead of reading the H5 timestamp array.
 - Tab changes must not repopulate tree or restart media unnecessarily.
 - Selecting an input child of the already active sample emits
   `mediaFocusRequested(path)`, not `mediaRouteRequested(...)`. `MainWindow`

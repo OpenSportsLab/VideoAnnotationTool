@@ -455,7 +455,7 @@ class _DatasetWriteMixin:
             return ""
         return os.path.normcase(os.path.normpath(str(path)))
 
-    def _timeline_origin_for_input(self, input_item: dict):
+    def _timeline_origin_for_input(self, input_item: dict, *, scan_h5: bool = True):
         if not isinstance(input_item, dict):
             return None
         if "UTC_time_start" in input_item:
@@ -467,15 +467,24 @@ class _DatasetWriteMixin:
         if input_type not in {"player_joints_h5", "player_centroids_h5"}:
             return None
         source_path = self._resolve_media_path(input_item.get("path"))
-        if not source_path or not os.path.isfile(source_path):
+        if not source_path:
+            return None
+        cache_key = self._fs_path_key(source_path)
+        cached = self._h5_timeline_origin_cache.get(cache_key)
+        # Serialization must never discover an origin by opening a cold H5
+        # input. It may reuse an origin learned by playback/evaluation after
+        # confirming that the source file is still unchanged.
+        if cached is None and not scan_h5:
+            return None
+        if not os.path.isfile(source_path):
             return None
         try:
             stat = os.stat(source_path)
-            cache_key = self._fs_path_key(source_path)
             file_signature = (stat.st_mtime_ns, stat.st_size)
-            cached = self._h5_timeline_origin_cache.get(cache_key)
             if cached is not None and cached[:2] == file_signature:
                 return cached[2]
+            if not scan_h5:
+                return None
             report_progress = getattr(self, "_save_progress", None)
             if report_progress is not None:
                 name = os.path.basename(source_path)
@@ -493,10 +502,10 @@ class _DatasetWriteMixin:
         except Exception:
             return None
 
-    def _timeline_origin_for_sample(self, sample: dict):
+    def _timeline_origin_for_sample(self, sample: dict, *, scan_h5: bool = True):
         origins = []
         for input_item in list(sample.get("inputs") or []):
-            origin = self._timeline_origin_for_input(input_item)
+            origin = self._timeline_origin_for_input(input_item, scan_h5=scan_h5)
             if origin is not None:
                 origins.append(origin)
         return min(origins) if origins else None
@@ -516,7 +525,7 @@ class _DatasetWriteMixin:
                 for field in ("events", "dense_captions", "streaming_vqa")
             )
             timeline_origin = (
-                self._timeline_origin_for_sample(sample)
+                self._timeline_origin_for_sample(sample, scan_h5=False)
                 if has_temporal_annotations else None
             )
             if "streaming_vqa" in sample:
@@ -616,7 +625,7 @@ class _DatasetSaveWorker(QThread):
         temporary_path = None
         try:
             self.snapshot._save_progress = self.progress.emit
-            self.progress.emit("Preparing dataset JSON and reading media timelines…")
+            self.progress.emit("Preparing dataset JSON…")
             written = self.snapshot._dataset_json_for_write(self.save_path)
             self.progress.emit("Writing dataset JSON…")
             target = os.path.abspath(self.save_path)

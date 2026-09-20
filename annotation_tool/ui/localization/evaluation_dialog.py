@@ -22,7 +22,8 @@ class LocalizationEvaluationDialog(QDialog):
 
     def __init__(
         self, samples, schema, selected_sample_id, current_head, parent=None,
-        initial_scope="project",
+        initial_scope="project", initial_truth_head="",
+        initial_prediction_head="",
     ):
         super().__init__(parent)
         self.samples = samples
@@ -57,14 +58,22 @@ class LocalizationEvaluationDialog(QDialog):
         for head in heads:
             self.truth_combo.addItem(head, head)
             self.prediction_combo.addItem(head, head)
-        if current_head in heads:
-            self.prediction_combo.setCurrentIndex(heads.index(current_head))
-            for index, head in enumerate(heads):
-                if head != current_head:
-                    self.truth_combo.setCurrentIndex(index)
-                    break
-        elif len(heads) > 1:
-            self.prediction_combo.setCurrentIndex(1)
+        prediction_head = (
+            initial_prediction_head
+            if initial_prediction_head in heads
+            else current_head if current_head in heads
+            else heads[1] if len(heads) > 1
+            else heads[0] if heads else ""
+        )
+        truth_head = (
+            initial_truth_head
+            if initial_truth_head in heads and initial_truth_head != prediction_head
+            else next((head for head in heads if head != prediction_head), "")
+        )
+        if prediction_head:
+            self.prediction_combo.setCurrentIndex(heads.index(prediction_head))
+        if truth_head:
+            self.truth_combo.setCurrentIndex(heads.index(truth_head))
         form.addRow("Ground truth head:", self.truth_combo)
         form.addRow("Prediction head:", self.prediction_combo)
 

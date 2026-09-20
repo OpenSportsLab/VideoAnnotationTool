@@ -48,6 +48,66 @@ from localization_settings import (
 from hf_xet_settings import setting_bool
 
 
+class ApplicationInfoDialog(QDialog):
+    """Display application/runtime versions and expose explicit OSL setup."""
+
+    def __init__(
+        self, app_name: str, app_version: str, environment_status: dict,
+        parent=None, *, setup_running: bool = False,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Application Versions")
+        self.setModal(True)
+        self.setMinimumWidth(430)
+        self.setup_requested = False
+
+        root = QVBoxLayout(self)
+        form = QFormLayout()
+        form.addRow("Application:", QLabel(app_name, self))
+        form.addRow("Version:", QLabel(app_version, self))
+        form.addRow(
+            "OpenSportsLib:",
+            QLabel(str(environment_status["opensportslib_version"]), self),
+        )
+        form.addRow(
+            "PyTorch:", QLabel(str(environment_status["torch_version"]), self)
+        )
+        if environment_status["gpu_support_installed"]:
+            gpu_support = f"Installed (CUDA {environment_status['cuda_version']})"
+        else:
+            gpu_support = "Not installed (CPU-only PyTorch)"
+        form.addRow("GPU support:", QLabel(gpu_support, self))
+        if environment_status["cuda_available"]:
+            gpu_runtime = f"Available ({environment_status['gpu_name']})"
+        else:
+            gpu_runtime = "Not available in this process"
+        form.addRow("CUDA GPU:", QLabel(gpu_runtime, self))
+        root.addLayout(form)
+
+        note = QLabel(
+            "OpenSportsLib setup selects and installs the compatible PyTorch "
+            "build. Restart the application after setup finishes.",
+            self,
+        )
+        note.setWordWrap(True)
+        root.addWidget(note)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        self.setup_button = buttons.addButton(
+            "Set Up OpenSportsLib", QDialogButtonBox.ButtonRole.ActionRole
+        )
+        self.setup_button.setEnabled(not setup_running)
+        if setup_running:
+            self.setup_button.setText("Setup in progress…")
+        self.setup_button.clicked.connect(self._request_setup)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _request_setup(self) -> None:
+        self.setup_requested = True
+        self.accept()
+
+
 class HfLocalModelDialog(QDialog):
     """Collect the repository coordinates for a local model import."""
 

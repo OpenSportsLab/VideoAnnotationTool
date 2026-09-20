@@ -407,9 +407,10 @@ def test_write_promotes_and_reprojects_absolute_temporal_annotations(
     )
 
 
-def test_write_uses_backend_h5_timestamp_as_a_genuine_origin(
+def test_write_does_not_scan_a_cold_h5_origin(
     explorer_panel_and_controller,
     tmp_path,
+    monkeypatch,
 ):
     _panel, controller = explorer_panel_and_controller
     h5_path = tmp_path / "tracking.h5"
@@ -436,10 +437,16 @@ def test_write_uses_backend_h5_timestamp_as_a_genuine_origin(
         ],
     }
 
-    written = controller._dataset_json_for_write(str(tmp_path / "saved.json"))
-    assert written["data"][0]["events"][0]["timestamp_utc"] == (
-        "2026-01-01 12:00:01.250000"
+    h5_reads = []
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.earliest_h5_timestamp_utc",
+        lambda path, **_kwargs: h5_reads.append(path),
     )
+    written = controller._dataset_json_for_write(str(tmp_path / "saved.json"))
+    assert h5_reads == []
+    assert written["data"][0]["events"][0] == {
+        "head": "action", "label": "pass", "position_ms": 750,
+    }
 
 
 def test_write_skips_h5_origin_when_sample_has_no_temporal_annotations(
@@ -502,13 +509,10 @@ def test_worker_h5_origin_cache_is_reused_by_save(
     )
 
 
-def test_save_scans_h5_and_writes_without_blocking_gui(
+def test_save_does_not_open_cold_h5_inputs(
     explorer_panel_and_controller, tmp_path, monkeypatch,
 ):
-    import datetime
     import json
-    import threading
-    import time
 
     _panel, controller = explorer_panel_and_controller
     h5_path = tmp_path / "tracking.h5"
@@ -520,31 +524,17 @@ def test_save_scans_h5_and_writes_without_blocking_gui(
             "events": [{"head": "action", "label": "pass", "position_ms": 750}],
         }],
     }
-    caller_thread = threading.current_thread()
-    scan_threads = []
-    heartbeats = []
-
-    def slow_h5_scan(_path, *, on_progress=None):
-        scan_threads.append(threading.current_thread())
-        time.sleep(0.15)
-        if on_progress is not None:
-            on_progress(1, 1)
-        return datetime.datetime(2026, 1, 1, 12, 0, 0, 500000)
-
+    h5_reads = []
     monkeypatch.setattr(
         "controllers.dataset_explorer_controller.earliest_h5_timestamp_utc",
-        slow_h5_scan,
+        lambda path, **_kwargs: h5_reads.append(path),
     )
-    QTimer.singleShot(25, lambda: heartbeats.append(True))
     save_path = tmp_path / "saved.json"
     assert controller._write_dataset_json(str(save_path)) is True
-    assert heartbeats == [True]
-    assert scan_threads and scan_threads[0] is not caller_thread
-    assert json.loads(save_path.read_text())["data"][0]["events"][0]["timestamp_utc"] == (
-        "2026-01-01 12:00:01.250000"
-    )
-    assert controller._write_dataset_json(str(save_path)) is True
-    assert len(scan_threads) == 1
+    assert h5_reads == []
+    assert json.loads(save_path.read_text())["data"][0]["events"][0] == {
+        "head": "action", "label": "pass", "position_ms": 750,
+    }
 
 
 def test_save_does_not_replace_file_when_dataset_changes_during_write(

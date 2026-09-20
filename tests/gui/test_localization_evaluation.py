@@ -12,7 +12,9 @@ from localization_evaluation import (
     project_utc_events_for_evaluation,
 )
 from localization_settings import (
+    load_localization_evaluation_heads,
     load_localization_evaluation_scope,
+    save_localization_evaluation_heads,
     save_localization_evaluation_scope,
 )
 from ui.localization import LocalizationAnnotationPanel
@@ -46,6 +48,19 @@ def test_localization_evaluation_scope_setting_roundtrip(tmp_path):
     assert load_localization_evaluation_scope(reopened) == "selected"
     save_localization_evaluation_scope(reopened, "invalid")
     assert load_localization_evaluation_scope(reopened) == "project"
+
+
+def test_localization_evaluation_head_settings_roundtrip(tmp_path):
+    settings_path = str(tmp_path / "localization.ini")
+    settings = QSettings(settings_path, QSettings.Format.IniFormat)
+    assert load_localization_evaluation_heads(settings) == ("", "")
+    save_localization_evaluation_heads(settings, "ground truth", "prediction")
+    reopened = QSettings(settings_path, QSettings.Format.IniFormat)
+    assert load_localization_evaluation_heads(reopened) == (
+        "ground truth", "prediction"
+    )
+    save_localization_evaluation_heads(reopened, "prediction", "prediction")
+    assert load_localization_evaluation_heads(reopened) == ("", "")
 
 
 def test_localization_evaluation_reports_tight_loose_and_multiple_ap_values():
@@ -472,6 +487,72 @@ def test_open_localization_evaluation_does_not_scan_timeline_before_dialog(monke
 
 
 @pytest.mark.gui
+def test_open_localization_evaluation_restores_and_saves_head_pair(
+    tmp_path, monkeypatch,
+):
+    from main_window import VideoAnnotationWindow
+
+    settings = QSettings(
+        str(tmp_path / "localization.ini"), QSettings.Format.IniFormat
+    )
+    save_localization_evaluation_heads(settings, "old truth", "old prediction")
+
+    class Explorer:
+        dataset_json = {"data": [], "labels": {}}
+        project_generation = 1
+        current_selected_sample_id = ""
+        project_root = str(tmp_path)
+        current_working_directory = str(tmp_path)
+
+        def __init__(self):
+            self.settings = settings
+
+        def get_samples(self):
+            return self.dataset_json["data"]
+
+    explorer = Explorer()
+    dialog_arguments = {}
+
+    class Dialog:
+        class DialogCode:
+            Accepted = 1
+
+        def __init__(self, *_args, **kwargs):
+            dialog_arguments.update(kwargs)
+
+        def exec(self):
+            # Stop before worker creation after the submitted settings are saved.
+            explorer.project_generation += 1
+            return self.DialogCode.Accepted
+
+        def options(self):
+            return {
+                "scope": "project",
+                "truth_head": "new truth",
+                "prediction_head": "new prediction",
+            }
+
+    monkeypatch.setattr("main_window.LocalizationEvaluationDialog", Dialog)
+    owner = SimpleNamespace(
+        _active_localization_evaluation=None,
+        dataset_explorer_controller=explorer,
+        localization_panel=SimpleNamespace(
+            annot_mgmt=SimpleNamespace(
+                tabs=SimpleNamespace(get_current_head=lambda: "current")
+            )
+        ),
+        show_temp_msg=lambda *_args: None,
+    )
+    VideoAnnotationWindow._open_localization_evaluation(owner)
+
+    assert dialog_arguments["initial_truth_head"] == "old truth"
+    assert dialog_arguments["initial_prediction_head"] == "old prediction"
+    assert load_localization_evaluation_heads(settings) == (
+        "new truth", "new prediction"
+    )
+
+
+@pytest.mark.gui
 def test_localization_evaluation_dialog_maps_classes_and_edits_tolerances(qtbot):
     samples = [{"id": "one", "events": [
         {"head": "truth", "label": "pass", "position_ms": 1000},
@@ -531,6 +612,36 @@ def test_localization_evaluation_dialog_restores_available_scope(qtbot):
     )
     qtbot.addWidget(unavailable)
     assert unavailable.scope_combo.currentData() == "project"
+
+
+@pytest.mark.gui
+def test_localization_evaluation_dialog_restores_available_heads(qtbot):
+    samples = [{"id": "one", "events": [
+        {"head": "truth one", "label": "pass", "position_ms": 1000},
+        {"head": "truth two", "label": "pass", "position_ms": 1000},
+        {"head": "prediction one", "label": "pass", "position_ms": 1000},
+        {"head": "prediction two", "label": "pass", "position_ms": 1000},
+    ]}]
+    schema = {head: {"labels": ["pass"]} for head in (
+        "truth one", "truth two", "prediction one", "prediction two"
+    )}
+    restored = LocalizationEvaluationDialog(
+        samples, schema, "one", "prediction one",
+        initial_truth_head="truth two",
+        initial_prediction_head="prediction two",
+    )
+    qtbot.addWidget(restored)
+    assert restored.truth_combo.currentData() == "truth two"
+    assert restored.prediction_combo.currentData() == "prediction two"
+
+    unavailable = LocalizationEvaluationDialog(
+        samples, schema, "one", "prediction one",
+        initial_truth_head="deleted truth",
+        initial_prediction_head="deleted prediction",
+    )
+    qtbot.addWidget(unavailable)
+    assert unavailable.prediction_combo.currentData() == "prediction one"
+    assert unavailable.truth_combo.currentData() == "truth one"
 
 
 @pytest.mark.gui

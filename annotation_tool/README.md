@@ -20,9 +20,13 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
 
 ## Submodule Responsibilities
 - `main.py`
-  - Entry point: initializes `QApplication` and opens `VideoAnnotationWindow`.
+  - Entry point: initializes `QApplication` and opens `VideoAnnotationWindow`;
+    it performs no package installation or OpenSportsLib setup at startup.
 - `main_window.py`
   - Composition root and signal wiring.
+  - Owns the explicit Help → Info OpenSportsLib setup worker. The worker runs
+    the package-changing command off the UI thread, blocks application close
+    while it is active, and requires restart after completion.
   - Owns docks/tabs layout, menu actions, shortcuts, and shell-level feedback.
   - Uses a non-native `QMenuBar` so application menus remain inside the window
     on macOS as well as other platforms.

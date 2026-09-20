@@ -29,11 +29,12 @@ visible. An active sample keeps playing if it moves off-page.
 - **Save Dataset** (`Ctrl+S`) writes to the current path.
 - **Save Dataset As** (`Ctrl+Shift+S`) writes to a new path.
 
-A progress dialog appears while saving. The app remains responsive when it
-reads H5 timestamps or writes a large JSON file. Closing the dataset waits for
-an in-progress save to finish. If saving fails, the existing file remains
-intact; if the dataset changes during the save, save again to include those
-changes.
+A progress dialog appears while saving. Saving does not open H5 inputs to read
+their timestamp datasets. If an H5 timeline origin was already learned while
+the file was in use, the app can reuse it after checking that the file is
+unchanged. Closing the dataset waits for an in-progress save to finish. If
+saving fails, the existing file remains intact; if the dataset changes during
+the save, save again to include those changes.
 
 On write, paths in `data[].inputs[].path` are rewritten relative to the chosen
 save location when possible.

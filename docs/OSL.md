@@ -633,7 +633,7 @@ On save/export, the app:
   settings.
 - Preserves unknown root and sample fields where possible.
 
-Save/export resolves an H5 timeline origin only for samples with temporal
-annotations that need normalization. A previously evaluated H5 origin can be
-reused while the source file is unchanged; editing the H5 file makes the app
-read its timestamps again.
+Save/export never opens an H5 input to discover its timeline origin. An origin
+already learned by playback, inference, or evaluation can be reused while the
+source file is unchanged. If no valid cached origin exists, relative temporal
+annotations remain relative during the write.

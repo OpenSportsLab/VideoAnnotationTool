@@ -4,6 +4,10 @@ DEFAULT_LOCALIZATION_PREROLL_MS = 0
 MAX_LOCALIZATION_PREROLL_MS = 60_000
 LOCALIZATION_PREROLL_MS_KEY = "localization/navigation_preroll_ms"
 LOCALIZATION_EVALUATION_SCOPE_KEY = "localization/evaluation_scope"
+LOCALIZATION_EVALUATION_TRUTH_HEAD_KEY = "localization/evaluation_truth_head"
+LOCALIZATION_EVALUATION_PREDICTION_HEAD_KEY = (
+    "localization/evaluation_prediction_head"
+)
 
 
 def normalize_localization_preroll_ms(value: object) -> int:
@@ -40,4 +44,36 @@ def save_localization_evaluation_scope(settings, scope: str) -> None:
         LOCALIZATION_EVALUATION_SCOPE_KEY,
         scope if scope in {"project", "selected"} else "project",
     )
+    settings.sync()
+
+
+def load_localization_evaluation_heads(settings) -> tuple[str, str]:
+    if settings is None:
+        return "", ""
+    truth_head = str(
+        settings.value(LOCALIZATION_EVALUATION_TRUTH_HEAD_KEY, "")
+    ).strip()
+    prediction_head = str(
+        settings.value(LOCALIZATION_EVALUATION_PREDICTION_HEAD_KEY, "")
+    ).strip()
+    if not truth_head or not prediction_head or truth_head == prediction_head:
+        return "", ""
+    return truth_head, prediction_head
+
+
+def save_localization_evaluation_heads(
+    settings, truth_head: str, prediction_head: str
+) -> None:
+    if settings is None:
+        return
+    truth_head = str(truth_head or "").strip()
+    prediction_head = str(prediction_head or "").strip()
+    if not truth_head or not prediction_head or truth_head == prediction_head:
+        settings.remove(LOCALIZATION_EVALUATION_TRUTH_HEAD_KEY)
+        settings.remove(LOCALIZATION_EVALUATION_PREDICTION_HEAD_KEY)
+    else:
+        settings.setValue(LOCALIZATION_EVALUATION_TRUTH_HEAD_KEY, truth_head)
+        settings.setValue(
+            LOCALIZATION_EVALUATION_PREDICTION_HEAD_KEY, prediction_head
+        )
     settings.sync()

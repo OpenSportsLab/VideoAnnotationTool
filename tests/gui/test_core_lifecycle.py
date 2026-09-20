@@ -1120,12 +1120,43 @@ def test_view_preferences_restore_from_qsettings(window, qtbot):
 @pytest.mark.gui
 def test_help_menu_actions_open_shortcuts_and_info_popups(window, monkeypatch):
     popup_calls = []
+    info_dialogs = []
 
     def _fake_information(parent, title, text, *args, **kwargs):
         popup_calls.append((title, text))
         return QMessageBox.StandardButton.Ok
 
     monkeypatch.setattr("main_window.QMessageBox.information", _fake_information)
+
+    class _FakeInfoDialog:
+        setup_requested = False
+
+        def __init__(
+            self, app_name, app_version, environment_status, _parent,
+            *, setup_running=False,
+        ):
+            info_dialogs.append({
+                "app_name": app_name,
+                "app_version": app_version,
+                "environment_status": environment_status,
+                "setup_running": setup_running,
+            })
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr("main_window.ApplicationInfoDialog", _FakeInfoDialog)
+    monkeypatch.setattr(
+        "main_window.opensportslib_environment_status",
+        lambda: {
+            "opensportslib_version": "0.3.1",
+            "torch_version": "2.10.0+cu128",
+            "gpu_support_installed": True,
+            "cuda_version": "12.8",
+            "cuda_available": True,
+            "gpu_name": "Test GPU",
+        },
+    )
 
     assert hasattr(window, "action_shortcuts")
     assert hasattr(window, "action_info")
@@ -1135,18 +1166,17 @@ def test_help_menu_actions_open_shortcuts_and_info_popups(window, monkeypatch):
     window.action_shortcuts.trigger()
     window.action_info.trigger()
 
-    assert len(popup_calls) == 2
+    assert len(popup_calls) == 1
+    assert len(info_dialogs) == 1
 
     shortcuts_title, shortcuts_text = popup_calls[0]
-    info_title, info_text = popup_calls[1]
 
     assert shortcuts_title == "Shortcuts"
     assert "Ctrl+S" in shortcuts_text
     assert "Space" in shortcuts_text
-
-    assert info_title == "Info"
-    assert APP_DISPLAY_NAME in info_text
-    assert f"Version: {APP_VERSION}" in info_text
+    assert info_dialogs[0]["app_name"] == APP_DISPLAY_NAME
+    assert info_dialogs[0]["app_version"] == APP_VERSION
+    assert info_dialogs[0]["environment_status"]["gpu_support_installed"] is True
 
 
 @pytest.mark.gui
