@@ -44,6 +44,8 @@ def test_localization_evaluation_reports_tight_loose_and_multiple_ap_values():
 
     assert report["tolerances_ms"] == (1000, 2000, 3000)
     assert report["overall"]["ap"] == {1000: 0.0, 2000: 1.0, 3000: 1.0}
+    assert report["overall"]["precision"] == {1000: 0.0, 2000: 1.0, 3000: 1.0}
+    assert report["overall"]["recall"] == {1000: 0.0, 2000: 1.0, 3000: 1.0}
     assert report["overall"]["tight"] == pytest.approx(0.875)
     assert report["overall"]["loose"] == 1.0
     assert report["classes"]["pass"] == report["overall"]
@@ -97,11 +99,31 @@ def test_localization_evaluation_maps_all_classes_and_handles_empty_results():
     ]}]
     report = _evaluate(no_predictions, mapping={})
     assert report["overall"]["tight"] == 0.0
+    assert report["overall"]["precision"] == {1000: 0.0, 2000: 0.0, 3000: 0.0}
+    assert report["overall"]["recall"] == {1000: 0.0, 2000: 0.0, 3000: 0.0}
     assert report["prediction_count"] == 0
     with pytest.raises(ValueError, match="No ground-truth events"):
         _evaluate([{"id": "one", "events": [
             {"head": "prediction", "label": "PASS", "position_ms": 1000}
         ]}])
+
+
+def test_localization_evaluation_reports_macro_precision_and_recall():
+    samples = [{"id": "one", "events": [
+        {"head": "truth", "label": "pass", "position_ms": 1000},
+        {"head": "truth", "label": "pass", "position_ms": 2000},
+        {"head": "truth", "label": "shot", "position_ms": 3000},
+        {"head": "prediction", "label": "PASS", "position_ms": 1000},
+        {"head": "prediction", "label": "PASS", "position_ms": 9000},
+    ]}]
+    report = _evaluate(samples, tolerances_ms=(0,))
+
+    assert report["classes"]["pass"]["precision"][0] == 0.5
+    assert report["classes"]["pass"]["recall"][0] == 0.5
+    assert report["classes"]["shot"]["precision"][0] == 0.0
+    assert report["classes"]["shot"]["recall"][0] == 0.0
+    assert report["overall"]["precision"][0] == 0.25
+    assert report["overall"]["recall"][0] == 0.25
 
 
 @pytest.mark.parametrize("confidence", [None, "invalid", float("nan")])
@@ -117,6 +139,8 @@ def test_localization_evaluation_unscored_prediction_ranks_at_full_confidence(co
     ]}]
     report = _evaluate(samples, tolerances_ms=(0,))
     assert report["overall"]["ap"][0] == 1.0
+    assert report["overall"]["precision"][0] == 0.5
+    assert report["overall"]["recall"][0] == 1.0
 
 
 def test_localization_evaluation_scope_and_tolerance_boundaries():
@@ -138,6 +162,8 @@ def test_localization_evaluation_scope_and_tolerance_boundaries():
     project = _evaluate(samples, tolerances_ms=(0, 60000))
     assert selected["overall"]["ap"] == {0: 1.0, 60000: 1.0}
     assert project["overall"]["ap"] == {0: 0.5, 60000: 0.5}
+    assert project["overall"]["precision"] == {0: 1.0, 60000: 1.0}
+    assert project["overall"]["recall"] == {0: 0.5, 60000: 0.5}
     assert project["sample_count"] == 2
     assert project["skipped_samples"] == 1
     with pytest.raises(ValueError, match="0.0 and 60.0"):
@@ -494,10 +520,17 @@ def test_localization_evaluation_result_columns_and_panel_intent(qtbot):
     from PyQt6.QtWidgets import QTableWidget
     table = dialog.findChild(QTableWidget)
     assert [table.horizontalHeaderItem(column).text() for column in range(table.columnCount())] == [
-        "Class", "Tight mAP", "Loose mAP", "AP@1 s", "AP@2.2 s", "AP@3 s",
+        "Class", "Tight mAP", "Loose mAP",
+        "AP@1 s", "Precision@1 s", "Recall@1 s",
+        "AP@2.2 s", "Precision@2.2 s", "Recall@2.2 s",
+        "AP@3 s", "Precision@3 s", "Recall@3 s",
     ]
     assert table.item(0, 3).text() == "100.00%"
+    assert table.item(0, 4).text() == "100.00%"
+    assert table.item(0, 5).text() == "100.00%"
     assert table.item(2, 3).text() == "N/A"
+    assert table.item(2, 4).text() == "N/A"
+    assert table.item(2, 5).text() == "N/A"
 
     panel = LocalizationAnnotationPanel()
     qtbot.addWidget(panel)

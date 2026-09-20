@@ -243,10 +243,13 @@ ground-truth class. Evaluation does not change annotations or undo history.
 
 The dialog starts with AP tolerances of 1, 2, 3, 4, and 5 seconds. Add or remove
 values in 0.1-second steps from 0.0 to 60.0 seconds. The report shows tight mAP
-(1–5 seconds), loose mAP (5–60 seconds), and AP at every chosen tolerance, both
-overall and per class. A class with no ground-truth events in the evaluated
-scope is shown as **N/A** and omitted from the mAP average. If the scope has no
-ground-truth events at all, the app explains why it cannot calculate a score.
+(1–5 seconds), loose mAP (5–60 seconds), and AP, precision, and recall at every
+chosen tolerance, both overall and per class. Precision and recall use all
+prediction events in the selected head. The overall precision and recall are
+macro averages over classes with ground-truth events. A class with no
+ground-truth events in the evaluated scope is shown as **N/A** and omitted from
+every macro average. If the scope has no ground-truth events at all, the app
+explains why it cannot calculate a score.
 
 Whole-project evaluation uses samples marked `verified` and samples without an
 annotation status; it skips `unlabeled` and `excluded` samples. Declared

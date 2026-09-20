@@ -1,4 +1,4 @@
-"""Read-only localization head evaluation using OpenSportsLib spotting AP."""
+"""Read-only localization head evaluation using OpenSportsLib spotting metrics."""
 
 from __future__ import annotations
 
@@ -21,8 +21,10 @@ DEFAULT_TOLERANCES_MS = TIGHT_TOLERANCES_MS
 FAST_AP_COMPARISON_THRESHOLD = 2_000_000
 
 
-def _fast_average_precision(predictions, truth, tolerance, should_cancel=None, on_progress=None):
-    """Match OpenSportsLib's greedy spotting AP with indexed truth positions."""
+def _fast_spotting_metrics(
+    predictions, truth, tolerance, should_cancel=None, on_progress=None,
+):
+    """Return AP, precision, and recall using OpenSportsLib's greedy matching."""
     total = sum(len(frames) for frames in truth.values())
     available = {}
     for video, truth_frames in truth.items():
@@ -88,7 +90,18 @@ def _fast_average_precision(predictions, truth, tolerance, should_cancel=None, o
     for value in reversed(precision):
         best = max(best, value)
         area += best
-    return area / total
+    average_precision = area / total
+    precision_value = matched / count if count else 0.0
+    recall_value = matched / total
+    return average_precision, precision_value, recall_value
+
+
+def _fast_average_precision(predictions, truth, tolerance, should_cancel=None, on_progress=None):
+    """Match OpenSportsLib's greedy spotting AP with indexed truth positions."""
+    return _fast_spotting_metrics(
+        predictions, truth, tolerance,
+        should_cancel=should_cancel, on_progress=on_progress,
+    )[0]
 
 
 def _osl_comparison_count(predictions, truth):
@@ -431,7 +444,11 @@ def evaluate_localization_heads(
             _osl_comparison_count(predictions, truth_by_label[label])
             > FAST_AP_COMPARISON_THRESHOLD
         )
-        per_class[label] = {}
+        per_class[label] = {
+            "ap": {},
+            "precision": {},
+            "recall": {},
+        }
         for tolerance in all_tolerances:
             if should_cancel is not None and should_cancel():
                 raise InterruptedError("Evaluation cancelled.")
@@ -449,7 +466,7 @@ def evaluate_localization_heads(
                             detail,
                         )
 
-                ap = _fast_average_precision(
+                ap, precision, recall = _fast_spotting_metrics(
                     predictions, truth_by_label[label], tolerance,
                     should_cancel=should_cancel, on_progress=score_progress,
                 )
@@ -457,26 +474,37 @@ def evaluate_localization_heads(
                 ap = compute_average_precision(
                     predictions, truth_by_label[label], tolerance=tolerance
                 )
-            per_class[label][tolerance] = float(ap)
+                _unused_ap, precision, recall = _fast_spotting_metrics(
+                    predictions, truth_by_label[label], tolerance,
+                    should_cancel=should_cancel,
+                )
+            per_class[label]["ap"][tolerance] = float(ap)
+            per_class[label]["precision"][tolerance] = float(precision)
+            per_class[label]["recall"][tolerance] = float(recall)
             scored += 1
             if on_progress is not None:
                 on_progress(25 + int(74 * scored / total_scores), detail)
     defined = [values for values in per_class.values() if values is not None]
-    mean_by_tolerance = {
-        tolerance: sum(values[tolerance] for values in defined) / len(defined)
-        for tolerance in all_tolerances
+    mean_by_metric = {
+        metric: {
+            tolerance: sum(values[metric][tolerance] for values in defined) / len(defined)
+            for tolerance in all_tolerances
+        }
+        for metric in ("ap", "precision", "recall")
     }
 
     def display_metrics(values):
         return {
-            "tight": _curve_average([values[t] for t in TIGHT_TOLERANCES_MS]),
-            "loose": _curve_average([values[t] for t in LOOSE_TOLERANCES_MS]),
-            "ap": {t: values[t] for t in custom},
+            "tight": _curve_average([values["ap"][t] for t in TIGHT_TOLERANCES_MS]),
+            "loose": _curve_average([values["ap"][t] for t in LOOSE_TOLERANCES_MS]),
+            "ap": {t: values["ap"][t] for t in custom},
+            "precision": {t: values["precision"][t] for t in custom},
+            "recall": {t: values["recall"][t] for t in custom},
         }
     if on_progress is not None:
         on_progress(100, "Evaluation complete")
     return {
-        "overall": display_metrics(mean_by_tolerance),
+        "overall": display_metrics(mean_by_metric),
         "classes": {
             label: display_metrics(values) if values is not None else None
             for label, values in per_class.items()

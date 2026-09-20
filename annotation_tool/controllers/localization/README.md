@@ -170,10 +170,14 @@ offset back onto the original sample timeline.
   OpenSportsLib's sparse spotting AP helpers using canonical `position_ms` and
   millisecond tolerances. It scores all ground-truth-head events, treats missing
   or invalid prediction confidence as 1.0, and omits classes without truth
-  events from macro averages. Tight and loose mAP use OpenSportsLib's
+  events from macro averages. For every selected tolerance, the report includes
+  AP plus precision and recall after all prediction events have been matched.
+  The overall precision and recall are class macro averages. Tight and loose
+  mAP use OpenSportsLib's
   trapezoidal tolerance averaging over 1–5 and 5–60 seconds. The dialog adds
-  independent AP columns for every selected 0.1-second tolerance. Mapping and
-  report state are transient; no settings or project JSON fields are added.
+  AP, precision, and recall columns for every selected 0.1-second tolerance.
+  Mapping and report state are transient; no settings or project JSON fields
+  are added.
 - OpenSportsLib's `LocalizationModel.evaluate()` is a model/config evaluation
   workflow that may run inference. Comparing two existing VAT heads uses
   `parse_ground_truth()`, `get_predictions()`, and

@@ -216,12 +216,12 @@ class LocalizationEvaluationDialog(QDialog):
 
 
 class LocalizationEvaluationResultsDialog(QDialog):
-    """Show the read-only AP report returned by the evaluator."""
+    """Show the read-only spotting metric report returned by the evaluator."""
 
     def __init__(self, report: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Localization Evaluation")
-        self.resize(780, 480)
+        self.resize(1100, 520)
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
             f"{report['sample_count']} sample(s), {report['segment_count']} segment(s); "
@@ -231,15 +231,27 @@ class LocalizationEvaluationResultsDialog(QDialog):
             self,
         ))
         layout.addWidget(QLabel(
-            "The overall row shows mAP across classes; each class row shows AP. "
-            "N/A classes have no ground-truth events and are excluded from mAP.",
+            "The overall row is the macro average across classes. Precision and recall "
+            "use all prediction events at each tolerance. N/A classes have no "
+            "ground-truth events and are excluded from every macro average.",
             self,
         ))
         tolerances = report["tolerances_ms"]
-        table = QTableWidget(len(report["classes"]) + 1, len(tolerances) + 3, self)
+        metric_columns = [
+            (metric, tolerance)
+            for tolerance in tolerances
+            for metric in ("ap", "precision", "recall")
+        ]
+        metric_labels = {"ap": "AP", "precision": "Precision", "recall": "Recall"}
+        table = QTableWidget(
+            len(report["classes"]) + 1, len(metric_columns) + 3, self
+        )
         table.setHorizontalHeaderLabels([
             "Class", "Tight mAP", "Loose mAP",
-            *[f"AP@{tolerance_label(value)} s" for value in tolerances],
+            *[
+                f"{metric_labels[metric]}@{tolerance_label(tolerance)} s"
+                for metric, tolerance in metric_columns
+            ],
         ])
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -249,8 +261,8 @@ class LocalizationEvaluationResultsDialog(QDialog):
             table.setItem(row, 0, QTableWidgetItem(label))
             scores = (
                 [values["tight"], values["loose"]]
-                + [values["ap"][tolerance] for tolerance in tolerances]
-                if values is not None else [None] * (len(tolerances) + 2)
+                + [values[metric][tolerance] for metric, tolerance in metric_columns]
+                if values is not None else [None] * (len(metric_columns) + 2)
             )
             for column, score in enumerate(scores, 1):
                 table.setItem(
