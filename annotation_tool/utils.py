@@ -43,6 +43,33 @@ def parse_utc_datetime(value):
     return parsed
 
 
+def earliest_h5_timestamp_utc(source_path, should_cancel=None, on_progress=None):
+    """Read the earliest H5 timeline timestamp, checking cancellation by chunk."""
+    import h5py
+
+    earliest = None
+    with h5py.File(source_path, "r") as h5_file:
+        timestamp_dataset = h5_file.get("timestamp_utc")
+        if timestamp_dataset is None or not timestamp_dataset.shape[0]:
+            return None
+        row_count = int(timestamp_dataset.shape[0])
+        chunk_rows = 262_144
+        for chunk_start in range(0, row_count, chunk_rows):
+            if should_cancel is not None and should_cancel():
+                raise InterruptedError("Evaluation cancelled.")
+            values = timestamp_dataset[
+                chunk_start : min(row_count, chunk_start + chunk_rows)
+            ]
+            if on_progress is not None:
+                on_progress(min(chunk_start + chunk_rows, row_count), row_count)
+            if not len(values):
+                continue
+            candidate = parse_utc_datetime(min(values))
+            if candidate is not None and (earliest is None or candidate < earliest):
+                earliest = candidate
+    return earliest
+
+
 def format_utc_datetime(value):
     """Return the canonical JSON representation of a UTC instant."""
     parsed = parse_utc_datetime(value)

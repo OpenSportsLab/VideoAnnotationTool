@@ -2,9 +2,10 @@ import copy
 import datetime
 import json
 import os
+import tempfile
 from collections.abc import MutableMapping
 
-from PyQt6.QtCore import QDir, QModelIndex, QObject, QSettings, QSignalBlocker, QTimer, pyqtSignal
+from PyQt6.QtCore import QDir, QEventLoop, QModelIndex, QObject, QSettings, QSignalBlocker, QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QFileSystemModel
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -12,6 +13,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QListView,
     QMessageBox,
+    QProgressDialog,
     QTreeView,
 )
 
@@ -19,6 +21,7 @@ from controllers.command_types import CmdType
 from ui.dialogs import UnsavedChangesDialog
 from streaming_vqa import has_valid_entries, normalize_for_write as normalize_streaming_vqa_for_write
 from utils import (
+    earliest_h5_timestamp_utc,
     format_utc_datetime,
     natural_sort_key,
     normalize_temporal_annotations_for_write,
@@ -222,7 +225,421 @@ class _SampleListProxy(MutableMapping):
         return sum(1 for _ in self)
 
 
-class DatasetExplorerController(QObject):
+class _DatasetWriteMixin:
+    """Pure dataset serialization shared by the GUI owner and save worker."""
+
+    def _default_dataset_json(self):
+        today = datetime.date.today().isoformat()
+        return {
+            "version": "2.0",
+            "date": today,
+            "dataset_name": "Untitled Dataset",
+            "description": "",
+            "modalities": ["video"],
+            "metadata": {},
+            "labels": {},
+            "data": [],
+        }
+
+    @staticmethod
+    def _canonical_input_type(input_type, path: str = "") -> str:
+        clean = str(input_type or "").strip().lower()
+        if clean == "frame_npy":
+            return "frames_npy"
+        if clean:
+            return clean
+        _, extension = os.path.splitext(str(path or ""))
+        if extension.lower() == ".npy":
+            return "frames_npy"
+        if extension.lower() == ".parquet":
+            return "tracking_parquet"
+        if extension.lower() in {".h5", ".hdf5"}:
+            return "player_joints_h5"
+        return "video"
+
+    def _normalized_modalities(self, raw_modalities, samples=None) -> list[str]:
+        normalized = []
+        seen = set()
+
+        def _add(modality):
+            clean = str(modality or "").strip()
+            if not clean:
+                return
+            canonical = self._canonical_input_type(clean)
+            if canonical not in seen:
+                seen.add(canonical)
+                normalized.append(canonical)
+
+        if isinstance(raw_modalities, list):
+            for item in raw_modalities:
+                _add(item)
+
+        for sample in list(samples or []):
+            if not isinstance(sample, dict):
+                continue
+            for input_item in list(sample.get("inputs", [])):
+                if not isinstance(input_item, dict):
+                    continue
+                path = str(input_item.get("path") or "")
+                canonical = self._canonical_input_type(input_item.get("type"), path)
+                _add(canonical)
+
+        if not normalized:
+            normalized.append("video")
+        return normalized
+
+    @staticmethod
+    def _normalize_sample_answers_payload(answers) -> list:
+        normalized = []
+        index_by_question = {}
+        for raw_answer in list(answers or []):
+            if not isinstance(raw_answer, dict):
+                continue
+
+            # Legacy question_id/answer entries require explicit migration and
+            # are intentionally not accepted by the grouped VQA schema.
+            if "question_id" in raw_answer:
+                continue
+
+            question_text = str(raw_answer.get("question") or "").strip()
+            if not question_text:
+                continue
+
+            raw_answers = raw_answer.get("answers")
+            if not isinstance(raw_answers, list):
+                continue
+
+            answer_texts = []
+            for raw_text in raw_answers:
+                if isinstance(raw_text, dict):
+                    answer_text = str(raw_text.get("text") or "").strip()
+                    if not answer_text:
+                        continue
+                    normalized_answer = {"text": answer_text}
+                    if "confidence_score" in raw_text:
+                        try:
+                            normalized_answer["confidence_score"] = max(
+                                0.0, min(1.0, float(raw_text.get("confidence_score") or 0.0))
+                            )
+                        except Exception:
+                            normalized_answer["confidence_score"] = 0.0
+                    if raw_text.get("inference_model_id"):
+                        normalized_answer["inference_model_id"] = str(raw_text["inference_model_id"])
+                    answer_texts.append(normalized_answer)
+                else:
+                    answer_text = str(raw_text or "").strip()
+                    if answer_text:
+                        answer_texts.append(answer_text)
+            if not answer_texts:
+                continue
+
+            existing_index = index_by_question.get(question_text)
+            if existing_index is None:
+                index_by_question[question_text] = len(normalized)
+                normalized.append({"question": question_text, "answers": answer_texts})
+            else:
+                normalized[existing_index]["answers"].extend(answer_texts)
+        return normalized
+
+    def _normalize_dataset_json(self, data):
+        if not isinstance(data, dict):
+            return None, "Root JSON must be an object."
+
+        normalized = copy.deepcopy(data)
+        defaults = self._default_dataset_json()
+        for key, value in defaults.items():
+            if key not in normalized:
+                normalized[key] = copy.deepcopy(value)
+
+        if not isinstance(normalized.get("labels"), dict):
+            normalized["labels"] = {}
+        normalized.pop("questions", None)
+        if not isinstance(normalized.get("metadata"), dict):
+            normalized["metadata"] = {}
+        if not isinstance(normalized.get("data"), list):
+            return None, "Top-level 'data' must be a list."
+
+        seen_ids = set()
+        cleaned_data = []
+        for index, raw_sample in enumerate(normalized["data"]):
+            if not isinstance(raw_sample, dict):
+                continue
+            sample = raw_sample
+            sample_id = sample.get("id") or sample.get("name") or f"sample_{index + 1}"
+            sample_id = self._make_unique_sample_id(str(sample_id), seen_ids)
+            seen_ids.add(sample_id)
+            sample["id"] = sample_id
+
+            inputs = sample.get("inputs")
+            if not isinstance(inputs, list):
+                inputs = []
+                sample["inputs"] = inputs
+            for input_item in inputs:
+                if not isinstance(input_item, dict):
+                    continue
+                input_item["type"] = self._canonical_input_type(
+                    input_item.get("type"),
+                    input_item.get("path"),
+                )
+            sample["metadata"] = sample.get("metadata", {}) if isinstance(sample.get("metadata"), dict) else {}
+
+            # Drop legacy smart keys. Smart state is represented via confidence_score
+            # on canonical labels/events only.
+            sample.pop("smart_label", None)
+            sample.pop("smart_event", None)
+            sample.pop("smart_labels", None)
+            sample.pop("smart_events", None)
+
+            labels = sample.get("labels")
+            if not isinstance(labels, dict):
+                labels = {}
+                sample["labels"] = labels
+
+            if "events" in sample and isinstance(sample["events"], list):
+                for event in sample["events"]:
+                    if isinstance(event, dict):
+                        event["position_ms"] = _safe_int(event.get("position_ms", 0))
+                        normalized_timestamp = format_utc_datetime(event.get("timestamp_utc"))
+                        if normalized_timestamp is not None:
+                            event["timestamp_utc"] = normalized_timestamp
+            if "dense_captions" in sample and isinstance(sample["dense_captions"], list):
+                for event in sample["dense_captions"]:
+                    if isinstance(event, dict):
+                        event["position_ms"] = _safe_int(event.get("position_ms", 0))
+                        normalized_timestamp = format_utc_datetime(event.get("timestamp_utc"))
+                        if normalized_timestamp is not None:
+                            event["timestamp_utc"] = normalized_timestamp
+
+            normalized_answers = self._normalize_sample_answers_payload(sample.get("answers"))
+            if normalized_answers:
+                sample["answers"] = normalized_answers
+            else:
+                sample.pop("answers", None)
+
+            cleaned_data.append(sample)
+
+        normalized["data"] = cleaned_data
+        normalized["modalities"] = self._normalized_modalities(
+            normalized.get("modalities"),
+            cleaned_data,
+        )
+        return normalized, ""
+
+    def _make_unique_sample_id(self, base: str, reserved=None):
+        if reserved is None:
+            used = {
+                str(sample.get("id"))
+                for sample in self.get_samples()
+                if isinstance(sample, dict) and sample.get("id")
+            }
+        else:
+            used = reserved
+        if base not in used:
+            return base
+        idx = 2
+        while f"{base}__{idx}" in used:
+            idx += 1
+        return f"{base}__{idx}"
+
+    def _resolve_media_path(self, path):
+        if not path:
+            return None
+        path = str(path)
+        if os.path.isabs(path):
+            return os.path.normpath(path)
+        base_dir = self.project_root or self.current_working_directory or os.getcwd()
+        return os.path.normpath(os.path.join(base_dir, path))
+
+    def _fs_path_key(self, path: str) -> str:
+        if not path:
+            return ""
+        return os.path.normcase(os.path.normpath(str(path)))
+
+    def _timeline_origin_for_input(self, input_item: dict):
+        if not isinstance(input_item, dict):
+            return None
+        if "UTC_time_start" in input_item:
+            # An explicit malformed value intentionally disables backend UTC.
+            return parse_utc_datetime(input_item.get("UTC_time_start"))
+        input_type = self._canonical_input_type(
+            input_item.get("type"), input_item.get("path")
+        )
+        if input_type not in {"player_joints_h5", "player_centroids_h5"}:
+            return None
+        source_path = self._resolve_media_path(input_item.get("path"))
+        if not source_path or not os.path.isfile(source_path):
+            return None
+        try:
+            stat = os.stat(source_path)
+            cache_key = self._fs_path_key(source_path)
+            file_signature = (stat.st_mtime_ns, stat.st_size)
+            cached = self._h5_timeline_origin_cache.get(cache_key)
+            if cached is not None and cached[:2] == file_signature:
+                return cached[2]
+            report_progress = getattr(self, "_save_progress", None)
+            if report_progress is not None:
+                name = os.path.basename(source_path)
+                report_progress(f"Reading H5 timeline: {name}…")
+                earliest = earliest_h5_timestamp_utc(
+                    source_path,
+                    on_progress=lambda current, total: report_progress(
+                        f"Reading H5 timeline: {name} ({current:,}/{total:,} rows)"
+                    ),
+                )
+            else:
+                earliest = earliest_h5_timestamp_utc(source_path)
+            self._h5_timeline_origin_cache[cache_key] = (*file_signature, earliest)
+            return earliest
+        except Exception:
+            return None
+
+    def _timeline_origin_for_sample(self, sample: dict):
+        origins = []
+        for input_item in list(sample.get("inputs") or []):
+            origin = self._timeline_origin_for_input(input_item)
+            if origin is not None:
+                origins.append(origin)
+        return min(origins) if origins else None
+
+    def _dataset_json_for_write(self, save_path: str):
+        normalized, error = self._normalize_dataset_json(self.dataset_json)
+        if error:
+            raise ValueError(error)
+
+        base_dir = os.path.dirname(os.path.abspath(save_path))
+        # _normalize_dataset_json already returns a deep copy of dataset_json.
+        written = normalized
+        written.pop("questions", None)
+        for sample in written.get("data", []):
+            has_temporal_annotations = any(
+                bool(sample.get(field))
+                for field in ("events", "dense_captions", "streaming_vqa")
+            )
+            timeline_origin = (
+                self._timeline_origin_for_sample(sample)
+                if has_temporal_annotations else None
+            )
+            if "streaming_vqa" in sample:
+                if sample["streaming_vqa"] == []:
+                    sample.pop("streaming_vqa")
+                else:
+                    sample["streaming_vqa"] = normalize_streaming_vqa_for_write(
+                        sample["streaming_vqa"], timeline_origin
+                    )
+            for field_name in ("events", "dense_captions"):
+                if isinstance(sample.get(field_name), list):
+                    sample[field_name] = normalize_temporal_annotations_for_write(
+                        sample[field_name], timeline_origin
+                    )
+            new_inputs = []
+
+            for index, input_item in enumerate(sample.get("inputs", [])):
+                if not isinstance(input_item, dict):
+                    continue
+                raw_path = input_item.get("path")
+                abs_path = self._resolve_media_path(raw_path)
+                new_input = copy.deepcopy(input_item)
+                new_input["type"] = self._canonical_input_type(
+                    new_input.get("type"),
+                    raw_path,
+                )
+                if abs_path:
+                    try:
+                        new_input["path"] = os.path.relpath(abs_path, base_dir).replace("\\", "/")
+                    except Exception:
+                        new_input["path"] = abs_path
+                if new_input.get("ball_path"):
+                    abs_ball_path = self._resolve_media_path(new_input.get("ball_path"))
+                    if abs_ball_path:
+                        try:
+                            new_input["ball_path"] = os.path.relpath(abs_ball_path, base_dir).replace("\\", "/")
+                        except Exception:
+                            new_input["ball_path"] = abs_ball_path
+                new_inputs.append(new_input)
+            sample["inputs"] = new_inputs
+
+            if not sample.get("labels"):
+                sample.pop("labels", None)
+            if not sample.get("events"):
+                sample.pop("events", None)
+            if not sample.get("captions"):
+                sample.pop("captions", None)
+            if not sample.get("dense_captions"):
+                sample.pop("dense_captions", None)
+            normalized_answers = self._normalize_sample_answers_payload(sample.get("answers"))
+            if normalized_answers:
+                sample["answers"] = normalized_answers
+            else:
+                sample.pop("answers", None)
+            if not sample.get("metadata"):
+                sample.pop("metadata", None)
+            # Never persist retired smart-* keys.
+            sample.pop("smart_labels", None)
+            sample.pop("smart_events", None)
+
+        written.setdefault("labels", {})
+        for definition in written.get("labels", {}).values():
+            if isinstance(definition, dict):
+                definition.pop("label_colors", None)
+        written.setdefault("metadata", {})
+        written["modalities"] = self._normalized_modalities(
+            written.get("modalities"),
+            written.get("data", []),
+        )
+        if not written.get("description"):
+            written["description"] = ""
+        return written
+
+
+class _DatasetWriteSnapshot(_DatasetWriteMixin):
+    """Data-only serialization context; no GUI object is accessed by the worker."""
+
+    def __init__(self, dataset_json, project_root, working_directory, origin_cache):
+        self.dataset_json = dataset_json
+        self.project_root = project_root
+        self.current_working_directory = working_directory
+        self._h5_timeline_origin_cache = origin_cache
+
+
+class _DatasetSaveWorker(QThread):
+    progress = pyqtSignal(str)
+
+    def __init__(self, snapshot: _DatasetWriteSnapshot, save_path: str):
+        super().__init__()
+        self.snapshot = snapshot
+        self.save_path = save_path
+        self.written = None
+        self.temporary_path = None
+        self.error = None
+
+    def run(self):
+        temporary_path = None
+        try:
+            self.snapshot._save_progress = self.progress.emit
+            self.progress.emit("Preparing dataset JSON and reading media timelines…")
+            written = self.snapshot._dataset_json_for_write(self.save_path)
+            self.progress.emit("Writing dataset JSON…")
+            target = os.path.abspath(self.save_path)
+            descriptor, temporary_path = tempfile.mkstemp(
+                prefix=f".{os.path.basename(target)}.", suffix=".tmp",
+                dir=os.path.dirname(target),
+            )
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(written, handle, indent=2, ensure_ascii=False)
+            self.temporary_path = temporary_path
+            temporary_path = None
+            self.written = written
+        except Exception as exc:
+            self.error = str(exc)
+        finally:
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except OSError:
+                    pass
+
+
+class DatasetExplorerController(QObject, _DatasetWriteMixin):
     """
     Canonical dataset owner.
     - Holds one `dataset_json` document as the persisted source of truth.
@@ -1220,34 +1637,7 @@ class DatasetExplorerController(QObject):
     # ------------------------------------------------------------------
     # Runtime/sample indexing
     # ------------------------------------------------------------------
-    def _default_dataset_json(self):
-        today = datetime.date.today().isoformat()
-        return {
-            "version": "2.0",
-            "date": today,
-            "dataset_name": "Untitled Dataset",
-            "description": "",
-            "modalities": ["video"],
-            "metadata": {},
-            "labels": {},
-            "data": [],
-        }
 
-    @staticmethod
-    def _canonical_input_type(input_type, path: str = "") -> str:
-        clean = str(input_type or "").strip().lower()
-        if clean == "frame_npy":
-            return "frames_npy"
-        if clean:
-            return clean
-        _, extension = os.path.splitext(str(path or ""))
-        if extension.lower() == ".npy":
-            return "frames_npy"
-        if extension.lower() == ".parquet":
-            return "tracking_parquet"
-        if extension.lower() in {".h5", ".hdf5"}:
-            return "player_joints_h5"
-        return "video"
 
     def _input_type_for_new_source(self, source_path: str) -> str:
         input_type = self._canonical_input_type(None, source_path)
@@ -1290,36 +1680,6 @@ class DatasetExplorerController(QObject):
             return default
         return fps
 
-    def _normalized_modalities(self, raw_modalities, samples=None) -> list[str]:
-        normalized = []
-        seen = set()
-
-        def _add(modality):
-            clean = str(modality or "").strip()
-            if not clean:
-                return
-            canonical = self._canonical_input_type(clean)
-            if canonical not in seen:
-                seen.add(canonical)
-                normalized.append(canonical)
-
-        if isinstance(raw_modalities, list):
-            for item in raw_modalities:
-                _add(item)
-
-        for sample in list(samples or []):
-            if not isinstance(sample, dict):
-                continue
-            for input_item in list(sample.get("inputs", [])):
-                if not isinstance(input_item, dict):
-                    continue
-                path = str(input_item.get("path") or "")
-                canonical = self._canonical_input_type(input_item.get("type"), path)
-                _add(canonical)
-
-        if not normalized:
-            normalized.append("video")
-        return normalized
 
     def ensure_modalities_for_inputs(self, inputs) -> None:
         if not isinstance(inputs, list):
@@ -1329,142 +1689,7 @@ class DatasetExplorerController(QObject):
             [{"inputs": copy.deepcopy(inputs)}],
         )
 
-    @staticmethod
-    def _normalize_sample_answers_payload(answers) -> list:
-        normalized = []
-        index_by_question = {}
-        for raw_answer in list(answers or []):
-            if not isinstance(raw_answer, dict):
-                continue
 
-            # Legacy question_id/answer entries require explicit migration and
-            # are intentionally not accepted by the grouped VQA schema.
-            if "question_id" in raw_answer:
-                continue
-
-            question_text = str(raw_answer.get("question") or "").strip()
-            if not question_text:
-                continue
-
-            raw_answers = raw_answer.get("answers")
-            if not isinstance(raw_answers, list):
-                continue
-
-            answer_texts = []
-            for raw_text in raw_answers:
-                if isinstance(raw_text, dict):
-                    answer_text = str(raw_text.get("text") or "").strip()
-                    if not answer_text:
-                        continue
-                    normalized_answer = {"text": answer_text}
-                    if "confidence_score" in raw_text:
-                        try:
-                            normalized_answer["confidence_score"] = max(
-                                0.0, min(1.0, float(raw_text.get("confidence_score") or 0.0))
-                            )
-                        except Exception:
-                            normalized_answer["confidence_score"] = 0.0
-                    if raw_text.get("inference_model_id"):
-                        normalized_answer["inference_model_id"] = str(raw_text["inference_model_id"])
-                    answer_texts.append(normalized_answer)
-                else:
-                    answer_text = str(raw_text or "").strip()
-                    if answer_text:
-                        answer_texts.append(answer_text)
-            if not answer_texts:
-                continue
-
-            existing_index = index_by_question.get(question_text)
-            if existing_index is None:
-                index_by_question[question_text] = len(normalized)
-                normalized.append({"question": question_text, "answers": answer_texts})
-            else:
-                normalized[existing_index]["answers"].extend(answer_texts)
-        return normalized
-
-    def _normalize_dataset_json(self, data):
-        if not isinstance(data, dict):
-            return None, "Root JSON must be an object."
-
-        normalized = copy.deepcopy(data)
-        defaults = self._default_dataset_json()
-        for key, value in defaults.items():
-            if key not in normalized:
-                normalized[key] = copy.deepcopy(value)
-
-        if not isinstance(normalized.get("labels"), dict):
-            normalized["labels"] = {}
-        normalized.pop("questions", None)
-        if not isinstance(normalized.get("metadata"), dict):
-            normalized["metadata"] = {}
-        if not isinstance(normalized.get("data"), list):
-            return None, "Top-level 'data' must be a list."
-
-        seen_ids = set()
-        cleaned_data = []
-        for index, raw_sample in enumerate(normalized["data"]):
-            if not isinstance(raw_sample, dict):
-                continue
-            sample = raw_sample
-            sample_id = sample.get("id") or sample.get("name") or f"sample_{index + 1}"
-            sample_id = self._make_unique_sample_id(str(sample_id), seen_ids)
-            seen_ids.add(sample_id)
-            sample["id"] = sample_id
-
-            inputs = sample.get("inputs")
-            if not isinstance(inputs, list):
-                inputs = []
-                sample["inputs"] = inputs
-            for input_item in inputs:
-                if not isinstance(input_item, dict):
-                    continue
-                input_item["type"] = self._canonical_input_type(
-                    input_item.get("type"),
-                    input_item.get("path"),
-                )
-            sample["metadata"] = sample.get("metadata", {}) if isinstance(sample.get("metadata"), dict) else {}
-
-            # Drop legacy smart keys. Smart state is represented via confidence_score
-            # on canonical labels/events only.
-            sample.pop("smart_label", None)
-            sample.pop("smart_event", None)
-            sample.pop("smart_labels", None)
-            sample.pop("smart_events", None)
-
-            labels = sample.get("labels")
-            if not isinstance(labels, dict):
-                labels = {}
-                sample["labels"] = labels
-
-            if "events" in sample and isinstance(sample["events"], list):
-                for event in sample["events"]:
-                    if isinstance(event, dict):
-                        event["position_ms"] = _safe_int(event.get("position_ms", 0))
-                        normalized_timestamp = format_utc_datetime(event.get("timestamp_utc"))
-                        if normalized_timestamp is not None:
-                            event["timestamp_utc"] = normalized_timestamp
-            if "dense_captions" in sample and isinstance(sample["dense_captions"], list):
-                for event in sample["dense_captions"]:
-                    if isinstance(event, dict):
-                        event["position_ms"] = _safe_int(event.get("position_ms", 0))
-                        normalized_timestamp = format_utc_datetime(event.get("timestamp_utc"))
-                        if normalized_timestamp is not None:
-                            event["timestamp_utc"] = normalized_timestamp
-
-            normalized_answers = self._normalize_sample_answers_payload(sample.get("answers"))
-            if normalized_answers:
-                sample["answers"] = normalized_answers
-            else:
-                sample.pop("answers", None)
-
-            cleaned_data.append(sample)
-
-        normalized["data"] = cleaned_data
-        normalized["modalities"] = self._normalized_modalities(
-            normalized.get("modalities"),
-            cleaned_data,
-        )
-        return normalized, ""
 
     def _ensure_sample_ids(self):
         used = set()
@@ -1474,21 +1699,6 @@ class DatasetExplorerController(QObject):
             used.add(sample_id)
             sample["id"] = sample_id
 
-    def _make_unique_sample_id(self, base: str, reserved=None):
-        if reserved is None:
-            used = {
-                str(sample.get("id"))
-                for sample in self.get_samples()
-                if isinstance(sample, dict) and sample.get("id")
-            }
-        else:
-            used = reserved
-        if base not in used:
-            return base
-        idx = 2
-        while f"{base}__{idx}" in used:
-            idx += 1
-        return f"{base}__{idx}"
 
     def _display_name_for_sample(self, sample: dict) -> str:
         return str(sample.get("id") or "sample")
@@ -1568,19 +1778,7 @@ class DatasetExplorerController(QObject):
                 raw_paths.append(str(raw_path))
         return raw_paths
 
-    def _resolve_media_path(self, path):
-        if not path:
-            return None
-        path = str(path)
-        if os.path.isabs(path):
-            return os.path.normpath(path)
-        base_dir = self.project_root or self.current_working_directory or os.getcwd()
-        return os.path.normpath(os.path.join(base_dir, path))
 
-    def _fs_path_key(self, path: str) -> str:
-        if not path:
-            return ""
-        return os.path.normcase(os.path.normpath(str(path)))
 
     def _resolved_source_paths_for_sample(self, sample: dict):
         return [
@@ -2822,60 +3020,19 @@ class DatasetExplorerController(QObject):
     # ------------------------------------------------------------------
     # Save helpers
     # ------------------------------------------------------------------
-    def _timeline_origin_for_input(self, input_item: dict):
-        if not isinstance(input_item, dict):
-            return None
-        if "UTC_time_start" in input_item:
-            # An explicit malformed value intentionally disables backend UTC.
-            return parse_utc_datetime(input_item.get("UTC_time_start"))
-        input_type = self._canonical_input_type(
-            input_item.get("type"), input_item.get("path")
-        )
-        if input_type not in {"player_joints_h5", "player_centroids_h5"}:
-            return None
-        source_path = self._resolve_media_path(input_item.get("path"))
-        if not source_path or not os.path.isfile(source_path):
-            return None
-        try:
-            import h5py
 
-            stat = os.stat(source_path)
-            cache_key = self._fs_path_key(source_path)
-            file_signature = (stat.st_mtime_ns, stat.st_size)
-            cached = self._h5_timeline_origin_cache.get(cache_key)
-            if cached is not None and cached[:2] == file_signature:
-                return cached[2]
 
-            earliest = None
-            with h5py.File(source_path, "r") as h5_file:
-                timestamp_dataset = h5_file.get("timestamp_utc")
-                if timestamp_dataset is None or not timestamp_dataset.shape[0]:
-                    return None
-                row_count = int(timestamp_dataset.shape[0])
-                chunk_rows = 262_144
-                for chunk_start in range(0, row_count, chunk_rows):
-                    values = timestamp_dataset[
-                        chunk_start : min(row_count, chunk_start + chunk_rows)
-                    ]
-                    if not len(values):
-                        continue
-                    candidate = parse_utc_datetime(min(values))
-                    if candidate is not None and (
-                        earliest is None or candidate < earliest
-                    ):
-                        earliest = candidate
-            self._h5_timeline_origin_cache[cache_key] = (*file_signature, earliest)
-            return earliest
-        except Exception:
-            return None
-
-    def _timeline_origin_for_sample(self, sample: dict):
-        origins = []
-        for input_item in list(sample.get("inputs") or []):
-            origin = self._timeline_origin_for_input(input_item)
-            if origin is not None:
-                origins.append(origin)
-        return min(origins) if origins else None
+    def cache_h5_timeline_origins(self, records: dict) -> None:
+        """Reuse worker-read H5 origins only while their files are unchanged."""
+        for source_path, (signature, origin) in records.items():
+            try:
+                stat = os.stat(source_path)
+            except OSError:
+                continue
+            if (stat.st_mtime_ns, stat.st_size) == signature:
+                self._h5_timeline_origin_cache[self._fs_path_key(source_path)] = (
+                    *signature, origin
+                )
 
     def timeline_offset_ms_for_inputs(self, sample: dict, resolved_paths) -> int:
         """Project selected input-relative inference time onto the sample timeline."""
@@ -2903,93 +3060,51 @@ class DatasetExplorerController(QObject):
             int(round((selected_origin - sample_origin).total_seconds() * 1000.0)),
         )
 
-    def _dataset_json_for_write(self, save_path: str):
-        normalized, error = self._normalize_dataset_json(self.dataset_json)
-        if error:
-            raise ValueError(error)
-
-        base_dir = os.path.dirname(os.path.abspath(save_path))
-        written = copy.deepcopy(normalized)
-        written.pop("questions", None)
-        for sample in written.get("data", []):
-            timeline_origin = self._timeline_origin_for_sample(sample)
-            if "streaming_vqa" in sample:
-                if sample["streaming_vqa"] == []:
-                    sample.pop("streaming_vqa")
-                else:
-                    sample["streaming_vqa"] = normalize_streaming_vqa_for_write(
-                        sample["streaming_vqa"], timeline_origin
-                    )
-            for field_name in ("events", "dense_captions"):
-                if isinstance(sample.get(field_name), list):
-                    sample[field_name] = normalize_temporal_annotations_for_write(
-                        sample[field_name], timeline_origin
-                    )
-            new_inputs = []
-
-            for index, input_item in enumerate(sample.get("inputs", [])):
-                if not isinstance(input_item, dict):
-                    continue
-                raw_path = input_item.get("path")
-                abs_path = self._resolve_media_path(raw_path)
-                new_input = copy.deepcopy(input_item)
-                new_input["type"] = self._canonical_input_type(
-                    new_input.get("type"),
-                    raw_path,
-                )
-                if abs_path:
-                    try:
-                        new_input["path"] = os.path.relpath(abs_path, base_dir).replace("\\", "/")
-                    except Exception:
-                        new_input["path"] = abs_path
-                if new_input.get("ball_path"):
-                    abs_ball_path = self._resolve_media_path(new_input.get("ball_path"))
-                    if abs_ball_path:
-                        try:
-                            new_input["ball_path"] = os.path.relpath(abs_ball_path, base_dir).replace("\\", "/")
-                        except Exception:
-                            new_input["ball_path"] = abs_ball_path
-                new_inputs.append(new_input)
-            sample["inputs"] = new_inputs
-
-            if not sample.get("labels"):
-                sample.pop("labels", None)
-            if not sample.get("events"):
-                sample.pop("events", None)
-            if not sample.get("captions"):
-                sample.pop("captions", None)
-            if not sample.get("dense_captions"):
-                sample.pop("dense_captions", None)
-            normalized_answers = self._normalize_sample_answers_payload(sample.get("answers"))
-            if normalized_answers:
-                sample["answers"] = normalized_answers
-            else:
-                sample.pop("answers", None)
-            if not sample.get("metadata"):
-                sample.pop("metadata", None)
-            # Never persist retired smart-* keys.
-            sample.pop("smart_labels", None)
-            sample.pop("smart_events", None)
-
-        written.setdefault("labels", {})
-        for definition in written.get("labels", {}).values():
-            if isinstance(definition, dict):
-                definition.pop("label_colors", None)
-        written.setdefault("metadata", {})
-        written["modalities"] = self._normalized_modalities(
-            written.get("modalities"),
-            written.get("data", []),
-        )
-        if not written.get("description"):
-            written["description"] = ""
-        return written
 
     def _write_dataset_json(self, save_path: str):
         try:
-            written = self._dataset_json_for_write(save_path)
-            with open(save_path, "w", encoding="utf-8") as handle:
-                json.dump(written, handle, indent=2, ensure_ascii=False)
+            generation = self.project_generation
+            dataset_snapshot = copy.deepcopy(self.dataset_json)
+            snapshot = _DatasetWriteSnapshot(
+                dataset_snapshot,
+                self.project_root,
+                self.current_working_directory,
+                dict(self._h5_timeline_origin_cache),
+            )
+            worker = _DatasetSaveWorker(snapshot, save_path)
+            progress = QProgressDialog(self.panel)
+            progress.setWindowTitle("Saving Dataset")
+            progress.setLabelText("Preparing dataset JSON…")
+            progress.setRange(0, 0)
+            progress.setCancelButton(None)
+            progress.setAutoClose(False)
+            progress.setMinimumDuration(0)
+            progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+            worker.progress.connect(progress.setLabelText)
+            loop = QEventLoop()
+            worker.finished.connect(loop.quit)
+            progress.show()
+            worker.start()
+            loop.exec()
+            progress.close()
+            if worker.error:
+                raise RuntimeError(worker.error)
+            if generation != self.project_generation or self.dataset_json != dataset_snapshot:
+                raise RuntimeError("The dataset changed during saving. Please save again.")
+            if os.path.exists(save_path):
+                os.chmod(
+                    worker.temporary_path,
+                    os.stat(save_path).st_mode & 0o7777,
+                )
+            os.replace(worker.temporary_path, os.path.abspath(save_path))
+            written = worker.written
+            self._h5_timeline_origin_cache.update(snapshot._h5_timeline_origin_cache)
         except Exception as exc:
+            if "worker" in locals() and worker.temporary_path:
+                try:
+                    os.unlink(worker.temporary_path)
+                except OSError:
+                    pass
             QMessageBox.critical(self.panel, "Save Error", f"Save failed: {exc}")
             return False
 

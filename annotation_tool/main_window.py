@@ -3,6 +3,7 @@ import html
 import importlib.metadata
 import json
 import os
+import time
 
 from PyQt6.QtCore import QEvent, Qt, QModelIndex, QTimer
 from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QShortcut
@@ -103,9 +104,7 @@ from localization_settings import (
     normalize_localization_preroll_ms,
 )
 
-from utils import (
-    annotation_position_ms, create_checkmark_icon, parse_utc_datetime, resource_path,
-)
+from utils import create_checkmark_icon, resource_path
 
 
 class VideoAnnotationWindow(QMainWindow):
@@ -272,6 +271,11 @@ class VideoAnnotationWindow(QMainWindow):
         self._localization_inference_range: tuple[str, int, int] | None = None
         self._localization_evaluation_workers = set()
         self._active_localization_evaluation = None
+        self._localization_evaluation_progress_timer = QTimer(self)
+        self._localization_evaluation_progress_timer.setInterval(1000)
+        self._localization_evaluation_progress_timer.timeout.connect(
+            self._refresh_localization_evaluation_progress
+        )
         self._pending_prediction_samples_by_task = {}
         self._hf_busy_dialog = None
         self._last_hf_download_payload: dict | None = None
@@ -1917,24 +1921,9 @@ class VideoAnnotationWindow(QMainWindow):
         explorer.get_samples()
         project_snapshot = copy.deepcopy(explorer.dataset_json)
         generation = explorer.project_generation
-        samples = copy.deepcopy(project_snapshot["data"])
-        for sample in samples:
-            if not isinstance(sample, dict):
-                continue
-            timed_events = [
-                event for event in (sample.get("events") or [])
-                if isinstance(event, dict)
-                and parse_utc_datetime(event.get("timestamp_utc")) is not None
-            ]
-            if not timed_events:
-                continue
-            origin = explorer._timeline_origin_for_sample(sample)
-            if parse_utc_datetime(origin) is not None:
-                for event in timed_events:
-                    event["position_ms"] = annotation_position_ms(event, origin)
         dialog = LocalizationEvaluationDialog(
-            samples,
-            copy.deepcopy(project_snapshot.get("labels", {})),
+            project_snapshot["data"],
+            project_snapshot.get("labels", {}),
             str(explorer.current_selected_sample_id or ""),
             self.localization_panel.annot_mgmt.tabs.get_current_head(),
             self,
@@ -1944,11 +1933,15 @@ class VideoAnnotationWindow(QMainWindow):
         if generation != explorer.project_generation or project_snapshot != explorer.dataset_json:
             self.show_temp_msg("Localization Evaluation", "The project changed; reopen evaluation.", 3500)
             return
-        worker = LocalizationEvaluationWorker(samples, dialog.options())
-        progress = QProgressDialog("Evaluating localization heads…", "Cancel", 0, 0, self)
+        samples = copy.deepcopy(project_snapshot["data"])
+        project_root = explorer.project_root or explorer.current_working_directory or os.getcwd()
+        worker = LocalizationEvaluationWorker(samples, dialog.options(), project_root)
+        progress = QProgressDialog("Preparing localization evaluation…", "Cancel", 0, 100, self)
         progress.setWindowTitle("Localization Evaluation")
         progress.setMinimumDuration(0)
         progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setValue(0)
         progress.canceled.connect(lambda: self._cancel_localization_evaluation(worker))
         self._active_localization_evaluation = {
             "worker": worker,
@@ -1956,18 +1949,43 @@ class VideoAnnotationWindow(QMainWindow):
             "generation": generation,
             "project_snapshot": project_snapshot,
             "discard": False,
+            "progress_text": "Preparing localization evaluation…",
+            "started_at": time.monotonic(),
         }
         self._localization_evaluation_workers.add(worker)
         self.localization_panel.btn_evaluate.setEnabled(False)
         worker.completed.connect(
             lambda report: self._finish_localization_evaluation(worker, report=report)
         )
+        worker.progress.connect(
+            lambda value, description: self._on_localization_evaluation_progress(
+                worker, value, description
+            )
+        )
         worker.failed.connect(
             lambda message: self._finish_localization_evaluation(worker, error=message)
         )
         worker.finished.connect(lambda: self._on_localization_evaluation_worker_finished(worker))
         progress.show()
+        self._localization_evaluation_progress_timer.start()
         worker.start()
+
+    def _on_localization_evaluation_progress(self, worker, value, description) -> None:
+        active = self._active_localization_evaluation
+        if active is None or active["worker"] is not worker or active["discard"]:
+            return
+        active["progress_text"] = description
+        active["progress"].setValue(max(0, min(100, int(value))))
+        self._refresh_localization_evaluation_progress()
+
+    def _refresh_localization_evaluation_progress(self) -> None:
+        active = self._active_localization_evaluation
+        if active is None or active["discard"]:
+            return
+        seconds = int(time.monotonic() - active["started_at"])
+        active["progress"].setLabelText(
+            f"{active['progress_text']}\nElapsed: {seconds // 60:02d}:{seconds % 60:02d}"
+        )
 
     def _cancel_localization_evaluation(self, worker) -> None:
         active = self._active_localization_evaluation
@@ -1981,16 +1999,23 @@ class VideoAnnotationWindow(QMainWindow):
         if active is None or active["worker"] is not worker:
             return
         self._active_localization_evaluation = None
+        progress_timer = getattr(self, "_localization_evaluation_progress_timer", None)
+        if progress_timer is not None:
+            progress_timer.stop()
         active["progress"].close()
         self.localization_panel.btn_evaluate.setEnabled(True)
         if (
-            active["discard"]
-            or active["generation"] != self.dataset_explorer_controller.project_generation
+            active["generation"] != self.dataset_explorer_controller.project_generation
             or (
                 active.get("project_snapshot") is not None
                 and active["project_snapshot"] != self.dataset_explorer_controller.dataset_json
             )
         ):
+            return
+        origin_records = getattr(worker, "h5_origin_records", None)
+        if origin_records:
+            self.dataset_explorer_controller.cache_h5_timeline_origins(origin_records)
+        if active["discard"]:
             return
         if error is not None:
             QMessageBox.warning(self, "Localization Evaluation", error)

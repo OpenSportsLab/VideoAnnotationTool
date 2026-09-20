@@ -2,6 +2,7 @@
 Focused Dataset Explorer controller and panel tests using minimal fixtures.
 """
 
+import copy
 import pytest
 import h5py
 import numpy as np
@@ -439,6 +440,164 @@ def test_write_uses_backend_h5_timestamp_as_a_genuine_origin(
     assert written["data"][0]["events"][0]["timestamp_utc"] == (
         "2026-01-01 12:00:01.250000"
     )
+
+
+def test_write_skips_h5_origin_when_sample_has_no_temporal_annotations(
+    explorer_panel_and_controller, tmp_path, monkeypatch,
+):
+    _panel, controller = explorer_panel_and_controller
+    controller.dataset_json = {
+        "version": "2.0", "labels": {}, "data": [{
+            "id": "sample-h5",
+            "inputs": [{"type": "player_joints_h5", "path": "large.h5"}],
+            "events": [], "dense_captions": [], "streaming_vqa": [],
+        }],
+    }
+    original = copy.deepcopy(controller.dataset_json)
+    monkeypatch.setattr(
+        controller, "_timeline_origin_for_sample",
+        lambda _sample: (_ for _ in ()).throw(AssertionError("Unneeded H5 scan")),
+    )
+    written = controller._dataset_json_for_write(str(tmp_path / "saved.json"))
+    assert written["data"][0]["id"] == "sample-h5"
+    assert controller.dataset_json == original
+
+
+def test_worker_h5_origin_cache_is_reused_by_save(
+    explorer_panel_and_controller, tmp_path, monkeypatch,
+):
+    from localization_evaluation import project_utc_events_for_evaluation
+
+    _panel, controller = explorer_panel_and_controller
+    h5_path = tmp_path / "tracking.h5"
+    with h5py.File(h5_path, "w") as h5_file:
+        h5_file.create_dataset(
+            "timestamp_utc", data=np.asarray([b"2026-01-01 12:00:00.500000"])
+        )
+    records = {}
+    project_utc_events_for_evaluation(
+        [{"id": "sample-h5", "inputs": [{
+            "type": "player_joints_h5", "path": str(h5_path),
+        }], "events": [{
+            "head": "truth", "label": "pass",
+            "timestamp_utc": "2026-01-01 12:00:01.250000",
+        }]}],
+        str(tmp_path), heads=("truth", "prediction"), h5_origin_records=records,
+    )
+    controller.cache_h5_timeline_origins(records)
+    controller.dataset_json = {
+        "version": "2.0", "labels": {}, "data": [{
+            "id": "sample-h5",
+            "inputs": [{"type": "player_joints_h5", "path": str(h5_path)}],
+            "events": [{"head": "truth", "label": "pass", "position_ms": 750}],
+        }],
+    }
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.earliest_h5_timestamp_utc",
+        lambda _path: (_ for _ in ()).throw(AssertionError("H5 reread on save")),
+    )
+    written = controller._dataset_json_for_write(str(tmp_path / "saved.json"))
+    assert written["data"][0]["events"][0]["timestamp_utc"] == (
+        "2026-01-01 12:00:01.250000"
+    )
+
+
+def test_save_scans_h5_and_writes_without_blocking_gui(
+    explorer_panel_and_controller, tmp_path, monkeypatch,
+):
+    import datetime
+    import json
+    import threading
+    import time
+
+    _panel, controller = explorer_panel_and_controller
+    h5_path = tmp_path / "tracking.h5"
+    h5_path.touch()
+    controller.dataset_json = {
+        "version": "2.0", "labels": {}, "data": [{
+            "id": "sample-h5",
+            "inputs": [{"type": "player_joints_h5", "path": str(h5_path)}],
+            "events": [{"head": "action", "label": "pass", "position_ms": 750}],
+        }],
+    }
+    caller_thread = threading.current_thread()
+    scan_threads = []
+    heartbeats = []
+
+    def slow_h5_scan(_path, *, on_progress=None):
+        scan_threads.append(threading.current_thread())
+        time.sleep(0.15)
+        if on_progress is not None:
+            on_progress(1, 1)
+        return datetime.datetime(2026, 1, 1, 12, 0, 0, 500000)
+
+    monkeypatch.setattr(
+        "controllers.dataset_explorer_controller.earliest_h5_timestamp_utc",
+        slow_h5_scan,
+    )
+    QTimer.singleShot(25, lambda: heartbeats.append(True))
+    save_path = tmp_path / "saved.json"
+    assert controller._write_dataset_json(str(save_path)) is True
+    assert heartbeats == [True]
+    assert scan_threads and scan_threads[0] is not caller_thread
+    assert json.loads(save_path.read_text())["data"][0]["events"][0]["timestamp_utc"] == (
+        "2026-01-01 12:00:01.250000"
+    )
+    assert controller._write_dataset_json(str(save_path)) is True
+    assert len(scan_threads) == 1
+
+
+def test_save_does_not_replace_file_when_dataset_changes_during_write(
+    explorer_panel_and_controller, tmp_path, monkeypatch,
+):
+    import time
+
+    _panel, controller = explorer_panel_and_controller
+    controller.dataset_json = {"version": "2.0", "labels": {}, "data": [{"id": "old", "inputs": []}]}
+    save_path = tmp_path / "saved.json"
+    save_path.write_text("original")
+    errors = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args: errors.append(args[-1]))
+
+    from controllers.dataset_explorer_controller import _DatasetWriteSnapshot
+
+    original_serialize = _DatasetWriteSnapshot._dataset_json_for_write
+
+    def slow_serialize(self, path):
+        time.sleep(0.1)
+        return original_serialize(self, path)
+
+    monkeypatch.setattr(_DatasetWriteSnapshot, "_dataset_json_for_write", slow_serialize)
+    QTimer.singleShot(20, lambda: controller.dataset_json["data"][0].update(id="new"))
+    assert controller._write_dataset_json(str(save_path)) is False
+    assert save_path.read_text() == "original"
+    assert controller.dataset_json["data"][0]["id"] == "new"
+    assert errors and "changed during saving" in errors[0]
+    assert not list(tmp_path.glob(".saved.json.*.tmp"))
+
+
+def test_worker_h5_origin_cache_rejects_changed_file(
+    explorer_panel_and_controller, tmp_path,
+):
+    from datetime import datetime
+    import os
+
+    _panel, controller = explorer_panel_and_controller
+    h5_path = tmp_path / "tracking.h5"
+    with h5py.File(h5_path, "w") as h5_file:
+        h5_file.create_dataset(
+            "timestamp_utc", data=np.asarray([b"2026-01-01 12:00:00.500000"])
+        )
+    stat = h5_path.stat()
+    controller.cache_h5_timeline_origins({
+        str(h5_path): ((stat.st_mtime_ns, stat.st_size), datetime(2025, 1, 1))
+    })
+    with h5py.File(h5_path, "r+") as h5_file:
+        h5_file["timestamp_utc"][0] = b"2026-01-01 12:00:00.500000"
+    os.utime(h5_path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+    assert controller._timeline_origin_for_input({
+        "type": "player_joints_h5", "path": str(h5_path)
+    }) == datetime(2026, 1, 1, 12, 0, 0, 500000)
 
 
 def test_selected_h5_inference_offset_uses_whole_sample_utc_origin(

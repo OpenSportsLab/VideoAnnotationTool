@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 )
 
 from localization_evaluation import (
-    DEFAULT_TOLERANCES_MS, eligible_segments, observed_labels,
+    DEFAULT_TOLERANCES_MS, evaluation_scope_summary,
 )
 
 
@@ -25,6 +25,7 @@ class LocalizationEvaluationDialog(QDialog):
         self.samples = samples
         self.schema = schema if isinstance(schema, dict) else {}
         self.selected_sample_id = str(selected_sample_id or "")
+        self._scope_summaries = {}
         self.setWindowTitle("Evaluate Localization")
         self.resize(590, 560)
 
@@ -148,21 +149,23 @@ class LocalizationEvaluationDialog(QDialog):
         old_mapping = self.mapping()
         truth_head = str(self.truth_combo.currentData() or "")
         prediction_head = str(self.prediction_combo.currentData() or "")
+        scope = str(self.scope_combo.currentData())
         try:
-            segments, skipped = eligible_segments(
-                self.samples, str(self.scope_combo.currentData()),
-                self.selected_sample_id, (truth_head, prediction_head),
-            )
+            if scope not in self._scope_summaries:
+                self._scope_summaries[scope] = evaluation_scope_summary(
+                    self.samples, scope, self.selected_sample_id
+                )
+            labels_by_head, segment_count, skipped = self._scope_summaries[scope]
         except ValueError as exc:
             self._mapping_error = True
             self.details_label.setText(str(exc))
             self.mapping_table.setRowCount(0)
             self._validate()
             return
-        self._mapping_error = False
+        self._mapping_error = segment_count == 0
         truth_labels = set(self._head_labels(truth_head))
-        truth_labels |= observed_labels(segments, truth_head)
-        prediction_labels = sorted(observed_labels(segments, prediction_head))
+        truth_labels |= labels_by_head.get(truth_head, set())
+        prediction_labels = sorted(labels_by_head.get(prediction_head, set()))
         self.mapping_table.setRowCount(len(prediction_labels))
         for row, label in enumerate(prediction_labels):
             self.mapping_table.setItem(row, 0, QTableWidgetItem(label))
@@ -178,7 +181,8 @@ class LocalizationEvaluationDialog(QDialog):
             combo.currentIndexChanged.connect(self._validate)
             self.mapping_table.setCellWidget(row, 1, combo)
         self.details_label.setText(
-            f"{len(segments)} eligible segment(s); {skipped} sample(s) skipped by annotation status."
+            f"{segment_count} eligible segment(s); {skipped} sample(s) skipped by annotation status."
+            if segment_count else "No verified samples or intervals are available for evaluation."
         )
         self._validate()
 

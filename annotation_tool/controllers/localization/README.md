@@ -145,14 +145,27 @@ offset back onto the original sample timeline.
   and do not emit mutation or media intents.
 - The panel's Evaluate intent reaches `MainWindow` through the Localization
   controller's `evaluationRequested` signal. `MainWindow` snapshots project
-  JSON, projects valid UTC events against each sample's timeline origin, and
-  starts `LocalizationEvaluationWorker`. A changed project generation or JSON
-  content discards its result. The worker reads saved heads only and never
-  emits a history mutation intent.
+  JSON and opens the selection dialog without reading H5 timelines. The dialog
+  caches a lightweight label summary per scope; interval position validation
+  remains in the worker. After submission, `LocalizationEvaluationWorker`
+  projects valid UTC events against each sample's timeline origin and scores
+  them. It scans timelines only for eligible samples with timestamped events
+  in the selected heads. H5 origin reads use the same chunked helper as the
+  dataset explorer, run off the UI thread, and check cancellation between
+  chunks. The worker returns file-signature/origin pairs for the explorer's
+  session cache, avoiding another H5 read on save. A changed project generation
+  or JSON content discards the result.
+  The worker reads saved heads only and never emits a history mutation intent.
+- `LocalizationEvaluationWorker.progress(int, str)` reports a 0–100 completion
+  estimate and the current stage. `MainWindow` updates the progress dialog and
+  an elapsed-time label once a second. The worker checks cancellation during
+  H5 reads and large AP calculations.
 - `localization_evaluation.py` splits verified samples into logical intervals,
   excludes unlabeled and excluded samples, and rejects selected-head events
   with missing labels or positions outside declared intervals. Intervals use
-  half-open `[start_time_ms, end_time_ms)` boundaries. It maps observed
+  half-open `[start_time_ms, end_time_ms)` boundaries. Sorted interval starts
+  assign each event with a binary search, so interval preparation scales with
+  events rather than every event/interval pair. It maps observed
   prediction labels to ground-truth labels and calls
   OpenSportsLib's sparse spotting AP helpers using canonical `position_ms` and
   millisecond tolerances. It scores all ground-truth-head events, treats missing
@@ -161,6 +174,14 @@ offset back onto the original sample timeline.
   trapezoidal tolerance averaging over 1–5 and 5–60 seconds. The dialog adds
   independent AP columns for every selected 0.1-second tolerance. Mapping and
   report state are transient; no settings or project JSON fields are added.
+- OpenSportsLib's `LocalizationModel.evaluate()` is a model/config evaluation
+  workflow that may run inference. Comparing two existing VAT heads uses
+  `parse_ground_truth()`, `get_predictions()`, and
+  `compute_average_precision()` directly. For classes with more than two
+  million estimated prediction/truth comparisons per tolerance, VAT uses an
+  indexed matcher with the same greedy matching and interpolation rules; this
+  keeps large head comparisons responsive and permits progress/cancellation
+  within each AP calculation. Tests compare its results against OpenSportsLib.
 
 ## Conventions
 - Emit mutation intents; do not apply persisted mutation policy locally.

@@ -255,7 +255,11 @@ ground-truth head count as truth, including unconfirmed inferred events.
 Predictions without a usable confidence score are included at 100% confidence.
 Events in either selected head need a label and a valid timeline position;
 events outside declared intervals cause an error instead of being silently
-omitted. If the project changes while scoring runs, its report is discarded.
+omitted. The dialog opens without scanning tracking H5 files; after you choose
+**Evaluate**, UTC timeline projection and scoring run in the background with a
+cancelable progress dialog. The progress bar shows timeline preparation and
+class/tolerance scoring, including the current AP tolerance and elapsed time.
+If the project changes while scoring runs, its report is discarded.
 The report is read-only and is not stored in project JSON or application
 settings.
 

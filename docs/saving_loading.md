@@ -29,6 +29,12 @@ visible. An active sample keeps playing if it moves off-page.
 - **Save Dataset** (`Ctrl+S`) writes to the current path.
 - **Save Dataset As** (`Ctrl+Shift+S`) writes to a new path.
 
+A progress dialog appears while saving. The app remains responsive when it
+reads H5 timestamps or writes a large JSON file. Closing the dataset waits for
+an in-progress save to finish. If saving fails, the existing file remains
+intact; if the dataset changes during the save, save again to include those
+changes.
+
 On write, paths in `data[].inputs[].path` are rewritten relative to the chosen
 save location when possible.
 

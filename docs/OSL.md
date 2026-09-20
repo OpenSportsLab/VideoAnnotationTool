@@ -632,3 +632,8 @@ On save/export, the app:
 - Does not persist localization `label_colors`; label colors live in app
   settings.
 - Preserves unknown root and sample fields where possible.
+
+Save/export resolves an H5 timeline origin only for samples with temporal
+annotations that need normalization. A previously evaluated H5 origin can be
+reused while the source file is unchanged; editing the H5 file makes the app
+read its timestamps again.

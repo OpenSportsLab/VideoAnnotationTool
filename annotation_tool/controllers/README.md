@@ -27,6 +27,16 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `create_new_project_flow()`: create blank dataset (after close checks).
 - `import_annotations()`, `open_project_from_path()`, `load_project()`: open/normalize/load dataset.
 - `save_project()`, `export_project()`: write dataset JSON to disk.
+  Both keep their synchronous success/failure return contract for the close
+  flow, but run normalization, H5 origin scans, and JSON writing in a
+  `_DatasetSaveWorker` thread while a modal progress dialog processes GUI
+  events. `_DatasetWriteSnapshot` contains only copied data and filesystem
+  paths; the worker never accesses the controller or widgets. The worker writes
+  a temporary file beside the destination. The GUI thread checks the project
+  generation and snapshot before atomically replacing the destination and
+  committing the normalized JSON. Failed or stale writes remove the temporary
+  file and preserve the existing destination. No settings or JSON fields are
+  added by this save path.
 - `populate_tree()`, `handle_filter_change()`: build the runtime projection and
   establish its bounded page.
 - `_on_selection_changed()`, `_route_media_for_selection()`, `_focus_media_for_selection()`: selection context plus preserve-state route, ordinary route, or focus-only media intent emission.
@@ -302,6 +312,12 @@ and atomic, with no inference or evidence. See [its contracts](streaming_vqa/REA
 - No-op mutation requests should not change stacks.
 - Save/export normalizes temporal annotations using a genuine resolved origin;
   it must not invent one for relative-only samples.
+- `_normalize_dataset_json()` already deep-copies canonical JSON; the write
+  path mutates that copy directly. Samples without temporal annotations skip
+  timeline-origin resolution. `cache_h5_timeline_origins()` accepts the
+  evaluation worker's file-signature/origin pairs and reuses each only while
+  its source file's size and modification time still match. This avoids
+  rereading H5 timestamp arrays on the next save without persisting a cache.
 - Tab changes must not repopulate tree or restart media unnecessarily.
 - Selecting an input child of the already active sample emits
   `mediaFocusRequested(path)`, not `mediaRouteRequested(...)`. `MainWindow`
