@@ -1,9 +1,10 @@
-# Local and Remote Inference
+# Inference Providers and Jobs
 
 The application can run models in the local Python process through
 OpenSportsLib or use the official OpenSportsLib inference server. All annotation
-modes share the same model-selection, queue, review, and error workflow. Remote
-inference currently supports Classification and Localization with one or more
+modes share the same model-selection, queue, review, and error workflow. Any
+number of named remote servers can be configured alongside the permanent
+**Local** provider. Remote inference currently supports Classification and Localization with one or more
 videos per sample, and Q/A with exactly one video per sample. Remote Description,
 Dense Description, and H5 inference are not available.
 VAT pins OpenSportsLib `0.3.1.dev12`, whose remote-only wrappers and public
@@ -19,6 +20,15 @@ after it completes.
 
 Open **Edit → Settings → Inference**. This is the only inference setup
 surface; the run dialog never edits models or servers.
+
+The provider selector always lists **Local** first. Use **Add Server…** to add
+remote providers with unique display names and normalized URLs. Each remote has
+its own enabled state and administration token. Selecting a provider shows its
+configuration, health, and models in one shared table. **Test**, **Refresh**,
+**Add from Hugging Face…**, **Add Manually**, **Remove**, and **Set Default**
+apply to the selected provider. Model operations take effect immediately;
+closing Settings does not undo them. Remote configuration edits are saved only
+with **Apply** or **OK**.
 
 - **Local Models** is an editable registry containing task, model ID, display
   name, config YAML, and optional weights. Fresh installations start with an
@@ -50,9 +60,9 @@ surface; the run dialog never edits models or servers.
   edges). Config keys are case-sensitive. Fix the repository config or select
   a compatible model repository, then retry the import.
   Cancellation is best-effort during a single Hugging Face file operation, but
-  a cancelled result is never inserted. The downloaded row is only a Settings
-  draft until **Apply** or **OK**; **Cancel** discards it. **Add Manually**
-  remains available for paths already on disk.
+  a cancelled result is never inserted. A completed import is added to the
+  Local registry immediately. **Add Manually** remains available for paths
+  already on disk.
 - The official `OpenSportsLab/OSL-loc-snbas-2025-e2e` and
   `OpenSportsLab/OSL-loc-snbas-2023-e2e` localization checkpoints use a legacy
   pickle format. Only these exact allowlisted repository identities may opt
@@ -60,12 +70,14 @@ surface; the run dialog never edits models or servers.
   repository, revision, or weights path revokes that opt-in; arbitrary Hugging
   Face and manual checkpoints always remain safe-by-default. Only import legacy
   artifacts from sources you trust.
-- **Remote Server** has an explicit **Enable remote inference** switch. When it
+- Each remote server has an explicit **Enabled** switch. When it
   is off, discovery and execution never construct an HTTP client. When it is
   on, enter the base URL (default `http://127.0.0.1:8000`) and use **Test
   Connection**. The client calls `/health` and reports API, Redis, worker, and
   configured-model health.
-- **Refresh Models** reads the public server registry. The table shows every
+- **Refresh** reads the selected server registry. Cached catalogs appear
+  immediately, and VAT automatically refreshes every enabled server when
+  Settings or Run Inference opens. The table shows every
   `registering`, `ready`, `failed`, or `unregistering` model and marks task
   defaults; only healthy `ready` models appear in **Run Inference…**. Server
   task `vqa` appears as Q/A.
@@ -79,7 +91,9 @@ surface; the run dialog never edits models or servers.
   removes a model after confirmation. These actions take effect immediately on
   the external server; cancelling Settings does not undo them. Registration
   and removal are asynchronous, and VAT refreshes transient status every two
-  seconds while Settings remains open.
+  seconds while Settings remains open. If a refresh fails, VAT retains the
+  last successful catalog and marks it stale. Cached ready models remain
+  selectable; execution reports the current connection failure if it persists.
 - Server-local paths must be visible to the server and are entered as text; VAT
   deliberately does not open a client-side file picker for them. Shared-root
   and resumable-upload settings from older VAT versions remain ignored.
@@ -87,6 +101,11 @@ surface; the run dialog never edits models or servers.
 Connection tests and catalog refreshes use the current unsaved form values.
 Only **Apply** or **OK** persists the setup; **Cancel** leaves saved settings
 unchanged.
+
+Existing Local and single-server settings are migrated automatically. The
+provider registry stores stable provider IDs, cached catalogs, task defaults,
+last successful refresh times, and connection status. Administration tokens
+are stored separately in application settings and never enter the catalog.
 
 Inference and public registry reads require no authentication. Registry changes
 require the server's `OSL_MODEL_ADMIN_TOKEN`. Localhost HTTP is allowed. An HTTP
@@ -113,8 +132,9 @@ range, even if you later return to the original sample. A run with a model that
 does not support time ranges leaves the remembered values intact. The range is
 kept only while the application is open; it is not stored in settings or
 project JSON.
-The model list combines saved Local models and, when enabled, discovered Remote
-models. Entries are prefixed **Local —** or **Remote —**; selecting one chooses
+The model list combines saved Local models and cached or discovered models from
+every enabled remote provider. Entries are prefixed with the provider name;
+selecting one chooses
 the provider automatically. Local executes OpenSportsLib directly and never
 contacts the configured server. Remote constructs the matching
 `opensportslib.apis` wrapper and uses its official remote client.
@@ -280,11 +300,12 @@ settings; no evaluation field enters project JSON.
 
 ## Background execution
 
-Inference uses two session-only FIFO queues: one for Local models and one for
-Remote models. Each queue runs one job at a time, while one Local and one Remote
-job may run concurrently. Additional **Run Inference…** actions remain available
-and append work to the selected model's provider queue. Local providers and
-Remote uploads/jobs are not created until their request reaches the front.
+Inference uses one FIFO lane per provider. One Local job and one job for every
+remote server may run concurrently, while jobs for the same provider never
+overlap. Additional **Run Inference…** actions append work to the selected
+provider's lane. A queued request keeps an immutable endpoint and model
+configuration snapshot without administration credentials. Disabling or
+removing a provider blocks new submissions but does not alter its queued jobs.
 
 The dock is placed below the Annotation Editor and is available from
 **View → Inference Jobs**. It opens automatically when work is queued and is
@@ -292,13 +313,14 @@ raised when a job fails. It hides with the other project docks when returning
 to the welcome screen, where its View action is disabled. Its previous visible
 or hidden preference is restored when a project workspace is shown again. The
 application status bar remains reserved for normal
-status messages. The dock shows both lanes, active and waiting jobs, progress,
-per-job **Cancel**, and **Cancel All**. Cancelling a waiting job removes it immediately;
-cancelling an active Remote job also removes it immediately and starts the next
-Remote request. Active Local cancellation remains in `Cancelling` until its
-worker exits. The panel retains the latest 20 completed, failed, or cancelled
-Local jobs and successful or failed Remote jobs for the current application
-session and provides **Clear History**. **Details** shows a bounded, timestamped
+status messages. One table shows queued, running, cancelling, succeeded,
+failed, and cancelled jobs with provider, queue position, progress, timestamps,
+per-job **Cancel**, and **Cancel All**. **Clear Finished** removes terminal
+records. Terminal metadata and each job's bounded event log persist in an
+application-wide SQLite database until cleared. Inference payloads, media,
+credentials, and nonterminal work are not stored, so a crash never resumes a
+job. If history storage is unreadable, the panel reports the error and uses
+session-only history. **Details** shows a bounded, timestamped
 timeline of state, progress-stage, cancellation, and error messages.
 Dataset navigation, playback, editing, saving, and tab switching remain
 available throughout.
@@ -310,16 +332,15 @@ Navigating from sample A to sample B therefore leaves A's predictions pending;
 they appear when A is selected again and its Smart Labelled status updates in
 the explorer. Completion never changes the currently selected annotation mode,
 Classification head, or Localization head. Removed or renamed sample targets are discarded rather than
-redirected. Opening, creating, or closing a project cancels both active jobs,
-discards both waiting queues, and suppresses late results from the previous
+redirected. Opening, creating, or closing a project cancels active jobs,
+discards waiting queues, and suppresses late results from the previous
 project.
 
-OpenSportsLib wrapper calls are indivisible. Cancelling active Local work leaves
-the job in `Cancelling` until the current call returns. Cancelling active Remote
-work instead forgets the request immediately: it disappears from the dock and
-history, its eventual signals and output are ignored, and the next queued Remote
-request starts at once. This is client-side abandonment; the already submitted
-server job may continue because the official server has no cancellation endpoint.
+OpenSportsLib wrapper calls are indivisible. Cancelling active work leaves the
+job in `Cancelling` until its worker returns. The next job in that provider's
+lane starts only after cleanup, preventing two requests from overlapping on
+the same server. An already submitted server job may continue because the
+official server has no cancellation endpoint.
 A waiting request is cancelled immediately and is never submitted.
 
 Every annotation panel uses the same pending-result footer for Accept/Reject and
@@ -432,21 +453,32 @@ VAT normalizes the returned OSL `data` item into its existing private
 
 ### Developer architecture and contracts
 
-`InferenceController` remains the queue and worker owner and now also owns the
-thread-safe, process-local VQA session cache. It supplies that cache to each
-request-scoped `RemoteInferenceProvider`. Project-generation changes and saved
-server-setting changes are routed by `MainWindow`, which clears the cache
-without exposing it to editor controllers. Shutdown clears it as well.
+`InferenceController` owns dynamic FIFO lanes keyed by `provider_id`, worker
+lifecycle, the SQLite `InferenceHistoryStore`, and the thread-safe process-local
+VQA session cache. `InferenceModelChoice`, `InferenceRequest`, queue entries,
+remembered task choices, and logs carry the stable provider ID plus display
+name and kind. Each request receives one deep-copied provider snapshot with its
+endpoint and catalog; administration tokens are removed. `MainWindow` remains
+the only cross-module route. Project changes cancel current lanes and discard
+late results. Shutdown waits for workers and closes history storage.
 
-`RemoteInferenceProvider` is the only official-server adapter. It discovers
+`InferenceProvider` defines the shared catalog, health, model operation,
+execution, and cleanup contract. `LocalInferenceProvider` calls OpenSportsLib
+in process; `RemoteInferenceProvider` is the official-server adapter. It discovers
 models, constructs `ClassificationModel`, `LocalizationModel`, or `VQAModel`
 with only `remote=server_url` and `remote_model_id=model_id`. Remote model IDs
 are independent of local weights and never trigger local config or Hugging Face
 resolution. `ModelDescriptor.status` and `is_default` expose registry state to
-Settings; `InferenceRequest`, `InferenceResult`, editor and queue signals,
+Settings; `InferenceResult`, editor signals,
 pending-review behavior, history mutations, and persisted OSL JSON remain
 unchanged. Effective acceptance still creates exactly one history entry;
 rejection and unreviewed inference create none.
+
+The provider registry is application state in `QSettings`. Local is permanent;
+remote providers use UUIDs and require unique case-insensitive names and
+normalized URLs. Catalogs, defaults, refresh times, and status are stored per
+provider. Tokens use a separate settings value. Legacy Local and one-server
+keys migrate once and are removed only after the new registry is saved.
 
 Authenticated registry operations run in a separate controller-owned worker,
 one at a time. `MainWindow` is the only cross-module route between Settings and
@@ -458,11 +490,11 @@ by the server.
 
 Network failures and timeouts are retryable `InferenceError`s. HTTP 4xx and
 model execution failures are non-retryable, except cached-session HTTP 404/410,
-which performs one fresh VQA upload. On Remote cancellation the controller
-detaches the blocking worker, removes all request state without adding a history
-entry, ignores late signals, and dispatches the next Remote request immediately.
-Detached workers are still retained until they exit so their threads can be
-cleaned up safely; shutdown waits for them within its normal timeout.
+which performs one fresh VQA upload. Cancellation marks the active record and
+signals its worker. The lane stays occupied until that worker exits; terminal
+metadata is then appended to SQLite and the next request is dispatched.
+SQLite failures leave execution available and surface through
+`historyErrorChanged`; queued and running records are never written.
 
 ## Local model availability
 

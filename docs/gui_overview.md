@@ -126,14 +126,16 @@ prediction rows remain inline in the editor above it.
 
 The **Inference Jobs** dock sits below the Annotation Editor. Its single
 **Run Inference…** action opens a runtime-only dialog for the active annotation
-mode, with task-compatible Local/Remote models, inputs, and applicable task
+mode, with task-compatible models from Local and any enabled remote providers,
+inputs, and applicable task
 parameters. Server and model setup lives in **Edit → Settings → Inference**.
-The dock shows active progress, FIFO waiting jobs, cancellation, recent outcomes,
-and timestamped per-job details while leaving the status bar unobstructed.
+The dock's single table shows active progress, per-provider FIFO positions,
+cancellation, persistent outcomes, and timestamped per-job details while
+leaving the status bar unobstructed.
 It hides when the project closes and the welcome screen is restored; its View
 action is disabled there, and its prior visibility returns with the workspace.
-One Local and one Remote job may run
-at the same time, and more runs can be queued without blocking the annotation
+One job per provider may run at the same time, so Local and several remote
+servers can work concurrently. More runs can be queued without blocking the annotation
 workspace. Predictions stay associated with the sample from which each request
 was submitted even if another sample is selected before completion, and
 completion does not switch the active annotation or head tab.

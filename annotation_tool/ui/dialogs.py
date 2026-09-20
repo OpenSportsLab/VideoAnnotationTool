@@ -1,4 +1,5 @@
 import os
+import time
 from urllib.parse import urlparse
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QRadioButton, QTreeView, QDialogButtonBox,
@@ -6,6 +7,7 @@ from PyQt6.QtWidgets import (
     QFrame, QListWidget, QComboBox, QPushButton, QLabel, QProgressBar,
     QMessageBox, QWidget, QListWidgetItem, QStyle, QButtonGroup, QScrollArea,
     QFileDialog, QCheckBox, QSizePolicy, QSpinBox, QDoubleSpinBox, QTabWidget, QTableWidget,
+    QInputDialog,
     QTableWidgetItem, QHeaderView, QPlainTextEdit, QKeySequenceEdit
 )
 from PyQt6.QtCore import QDir, Qt, QSize, QSettings, QTimer, pyqtSignal
@@ -20,11 +22,9 @@ from media_control_settings import (
 from inference_settings import (
     DEFAULT_SERVER_URL,
     KNOWN_HF_LOCAL_MODEL_IDS,
-    REMOTE_ADMIN_TOKEN_KEY,
-    SERVER_URL_KEY,
-    load_local_models,
+    load_inference_providers,
+    new_remote_provider,
     normalize_server_url,
-    remote_inference_enabled,
     trusted_legacy_allowed,
 )
 from inference_types import INFERENCE_TASKS
@@ -281,440 +281,464 @@ class RemoteModelRegistrationDialog(QDialog):
 
 
 class InferenceSetupWidget(QWidget):
-    """Settings-only editor for Local models and one Remote server."""
+    """Provider registry editor with one model table for Local and remotes."""
 
     testConnectionRequested = pyqtSignal(object)
-    remoteCatalogRefreshRequested = pyqtSignal(object)
+    providerCatalogRefreshRequested = pyqtSignal(object)
     huggingFaceModelRequested = pyqtSignal(object)
     huggingFaceModelCancelRequested = pyqtSignal()
-    remoteModelOperationRequested = pyqtSignal(str, object)
+    providerModelOperationRequested = pyqtSignal(str, object)
     configurationChanged = pyqtSignal()
 
     def __init__(self, config=None, parent=None):
         super().__init__(parent)
         config = dict(config or {})
+        self._providers = [dict(item) for item in config.get("providers", [])]
+        if not self._providers:
+            self._providers = [{
+                "id": "local", "kind": "local", "name": "Local",
+                "enabled": True, "models": list(config.get("local_models", [])),
+                "defaults": {}, "catalog_updated_at": 0.0,
+                "connection_status": "",
+            }]
+        self._loading = False
+        self._remote_operation_busy = False
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+        provider_row = QHBoxLayout()
+        provider_row.addWidget(QLabel("Provider:", self))
+        self.provider_combo = QComboBox(self)
+        self.add_provider_button = QPushButton("Add Server…", self)
+        self.remove_provider_button = QPushButton("Remove Server", self)
+        provider_row.addWidget(self.provider_combo, 1)
+        provider_row.addWidget(self.add_provider_button)
+        provider_row.addWidget(self.remove_provider_button)
+        root.addLayout(provider_row)
 
-        local_group = QGroupBox("Local Models", self)
-        local_layout = QVBoxLayout(local_group)
-        self.local_model_table = QTableWidget(0, 5, local_group)
-        self.local_model_table.setHorizontalHeaderLabels(["Task", "Model ID", "Display name", "Config YAML", "Weights"])
-        self.local_model_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        local_layout.addWidget(self.local_model_table)
-        model_buttons = QHBoxLayout()
-        self.add_local_model_button = QPushButton("Add Manually", local_group)
-        self.add_hf_model_button = QPushButton("Add from Hugging Face…", local_group)
-        self.remove_local_model_button = QPushButton("Remove Local Model", local_group)
-        model_buttons.addWidget(self.add_local_model_button)
-        model_buttons.addWidget(self.add_hf_model_button)
-        model_buttons.addWidget(self.remove_local_model_button)
-        model_buttons.addStretch(1)
-        local_layout.addLayout(model_buttons)
-        transfer_row = QHBoxLayout()
-        self.local_model_status = QLabel("", local_group)
-        self.local_model_status.setWordWrap(True)
-        self.local_model_progress = QProgressBar(local_group)
-        self.local_model_progress.setRange(0, 3)
-        self.local_model_progress.hide()
-        self.cancel_hf_model_button = QPushButton("Cancel Download", local_group)
-        self.cancel_hf_model_button.hide()
-        transfer_row.addWidget(self.local_model_status, 1)
-        transfer_row.addWidget(self.local_model_progress)
-        transfer_row.addWidget(self.cancel_hf_model_button)
-        local_layout.addLayout(transfer_row)
-        root.addWidget(local_group)
-
-        self.remote_group = QGroupBox("Remote Server", self)
-        remote_layout = QVBoxLayout(self.remote_group)
-        self.remote_enabled_checkbox = QCheckBox("Enable remote inference", self.remote_group)
-        self.remote_enabled_checkbox.setChecked(bool(config.get("remote_enabled", False)))
-        remote_layout.addWidget(self.remote_enabled_checkbox)
-        remote_form = QFormLayout()
-        remote_layout.addLayout(remote_form)
-        server_row = QWidget(self.remote_group)
-        server_layout = QHBoxLayout(server_row)
-        server_layout.setContentsMargins(0, 0, 0, 0)
-        self.server_url_edit = QLineEdit(str(config.get("server_url") or DEFAULT_SERVER_URL), server_row)
-        self.test_button = QPushButton("Test Connection", server_row)
-        self.refresh_remote_models_button = QPushButton("Refresh Models", server_row)
-        server_layout.addWidget(self.server_url_edit, 1)
-        server_layout.addWidget(self.test_button)
-        server_layout.addWidget(self.refresh_remote_models_button)
-        remote_form.addRow("Server URL:", server_row)
-        self.admin_token_edit = QLineEdit(self.remote_group)
+        self.provider_group = QGroupBox("Provider Configuration", self)
+        form = QFormLayout(self.provider_group)
+        self.provider_name_edit = QLineEdit(self.provider_group)
+        self.remote_enabled_checkbox = QCheckBox("Enabled", self.provider_group)
+        self.server_url_edit = QLineEdit(self.provider_group)
+        self.admin_token_edit = QLineEdit(self.provider_group)
         self.admin_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.admin_token_edit.setText(str(config.get("admin_token") or ""))
-        self.admin_token_edit.setPlaceholderText("Saved locally when Settings is applied")
-        self.admin_token_edit.setToolTip(
-            "Stored in local application settings when you choose Apply or OK."
-        )
-        remote_form.addRow("Admin token:", self.admin_token_edit)
-        self.connection_status = QLabel("", self.remote_group)
+        form.addRow("Name:", self.provider_name_edit)
+        form.addRow("Server URL:", self.server_url_edit)
+        form.addRow("Admin token:", self.admin_token_edit)
+        form.addRow("", self.remote_enabled_checkbox)
+        connection_row = QHBoxLayout()
+        self.test_button = QPushButton("Test", self.provider_group)
+        self.refresh_remote_models_button = QPushButton("Refresh", self.provider_group)
+        connection_row.addWidget(self.test_button)
+        connection_row.addWidget(self.refresh_remote_models_button)
+        connection_row.addStretch(1)
+        form.addRow("Connection:", connection_row)
+        self.connection_status = QLabel("", self.provider_group)
         self.connection_status.setWordWrap(True)
-        remote_layout.addWidget(self.connection_status)
+        form.addRow("Status:", self.connection_status)
+        root.addWidget(self.provider_group)
 
-        remote_layout.addWidget(QLabel("Discovered remote models", self.remote_group))
-        self.remote_model_table = QTableWidget(0, 4, self.remote_group)
-        self.remote_model_table.setHorizontalHeaderLabels(
-            ["Task", "Model ID", "Status", "Default"]
+        root.addWidget(QLabel("Models", self))
+        self.model_table = QTableWidget(0, 5, self)
+        self.model_table.setHorizontalHeaderLabels(
+            ["Task", "Model ID", "Status", "Default", "Config / Source"]
         )
-        self.remote_model_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.remote_model_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.remote_model_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.remote_model_table.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
-        )
-        remote_layout.addWidget(self.remote_model_table)
-        remote_buttons = QHBoxLayout()
-        self.register_remote_model_button = QPushButton(
-            "Register Model…", self.remote_group
-        )
-        self.set_remote_default_button = QPushButton(
-            "Set as Default", self.remote_group
-        )
-        self.unregister_remote_model_button = QPushButton(
-            "Unregister", self.remote_group
-        )
-        remote_buttons.addWidget(self.register_remote_model_button)
-        remote_buttons.addWidget(self.set_remote_default_button)
-        remote_buttons.addWidget(self.unregister_remote_model_button)
-        remote_buttons.addStretch(1)
-        remote_layout.addLayout(remote_buttons)
-        immediate_note = QLabel(
-            "Administrative actions take effect immediately and are not undone "
-            "by cancelling this Settings dialog. The admin token is stored in "
-            "local application settings and may not be encrypted.",
-            self.remote_group,
-        )
-        immediate_note.setWordWrap(True)
-        remote_layout.addWidget(immediate_note)
+        self.model_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.model_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.model_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        root.addWidget(self.model_table)
+        buttons = QHBoxLayout()
+        self.add_hf_model_button = QPushButton("Add from Hugging Face…", self)
+        self.add_local_model_button = QPushButton("Add Manually", self)
+        self.remove_local_model_button = QPushButton("Remove", self)
+        self.set_remote_default_button = QPushButton("Set Default", self)
+        buttons.addWidget(self.add_hf_model_button)
+        buttons.addWidget(self.add_local_model_button)
+        buttons.addWidget(self.remove_local_model_button)
+        buttons.addWidget(self.set_remote_default_button)
+        buttons.addStretch(1)
+        root.addLayout(buttons)
+        self.local_model_status = QLabel("", self)
+        self.local_model_status.setWordWrap(True)
+        self.local_model_progress = QProgressBar(self)
+        self.local_model_progress.hide()
+        self.cancel_hf_model_button = QPushButton("Cancel Download", self)
+        self.cancel_hf_model_button.hide()
+        progress = QHBoxLayout()
+        progress.addWidget(self.local_model_status, 1)
+        progress.addWidget(self.local_model_progress)
+        progress.addWidget(self.cancel_hf_model_button)
+        root.addLayout(progress)
 
-        root.addWidget(self.remote_group)
-
-        for model in config.get("local_models", []):
-            self.append_local_model(model)
-        self.add_local_model_button.clicked.connect(lambda: self.append_local_model({"task": "classification"}))
-        self.add_hf_model_button.clicked.connect(self._request_hf_model)
-        self.cancel_hf_model_button.clicked.connect(self.huggingFaceModelCancelRequested)
-        self.remove_local_model_button.clicked.connect(lambda: self._remove_row(self.local_model_table))
-        self.test_button.clicked.connect(
-            lambda: self._emit_remote_config_request(self.testConnectionRequested)
-        )
-        self.refresh_remote_models_button.clicked.connect(
-            lambda: self._emit_remote_config_request(
-                self.remoteCatalogRefreshRequested
-            )
-        )
-        self.register_remote_model_button.clicked.connect(
-            self._request_remote_registration
-        )
-        self.set_remote_default_button.clicked.connect(
-            self._request_set_remote_default
-        )
-        self.unregister_remote_model_button.clicked.connect(
-            self._request_unregister_remote_model
-        )
-        self.remote_enabled_checkbox.toggled.connect(self._update_remote_enabled)
-        self.server_url_edit.textChanged.connect(self._changed)
-        self.admin_token_edit.textChanged.connect(self._update_remote_actions)
-        self.remote_model_table.itemSelectionChanged.connect(
-            self._update_remote_actions
-        )
-        self._remote_operation_busy = False
+        # Existing MainWindow and tests use these names.
+        self.local_model_table = self.remote_model_table = self.model_table
+        self.register_remote_model_button = self.add_hf_model_button
+        self.unregister_remote_model_button = self.remove_local_model_button
         self._remote_refresh_timer = QTimer(self)
         self._remote_refresh_timer.setInterval(2000)
-        self._remote_refresh_timer.timeout.connect(
-            lambda: self._emit_remote_config_request(
-                self.remoteCatalogRefreshRequested
-            )
+        self._remote_refresh_timer.timeout.connect(self._refresh_selected)
+        self._rebuild_provider_combo()
+        self.provider_combo.currentIndexChanged.connect(self._select_provider)
+        self.add_provider_button.clicked.connect(self._add_provider)
+        self.remove_provider_button.clicked.connect(self._remove_provider)
+        self.provider_name_edit.textChanged.connect(self._draft_changed)
+        self.server_url_edit.textChanged.connect(self._draft_changed)
+        self.admin_token_edit.textChanged.connect(self._draft_changed)
+        self.remote_enabled_checkbox.toggled.connect(self._draft_changed)
+        self.test_button.clicked.connect(
+            lambda: self.testConnectionRequested.emit(self.remote_payload())
         )
-        self._update_remote_enabled()
-        self._changed()
+        self.refresh_remote_models_button.clicked.connect(self._refresh_selected)
+        self.add_hf_model_button.clicked.connect(self._add_hf)
+        self.add_local_model_button.clicked.connect(self._add_manual)
+        self.remove_local_model_button.clicked.connect(self._remove_model)
+        self.set_remote_default_button.clicked.connect(self._set_default)
+        self.cancel_hf_model_button.clicked.connect(self.huggingFaceModelCancelRequested)
+        self.model_table.itemSelectionChanged.connect(self._update_actions)
+        self._select_provider(0)
 
-    def _update_remote_enabled(self, *_args):
-        enabled = self.remote_enabled_checkbox.isChecked()
-        for widget in (
-            self.server_url_edit,
-            self.admin_token_edit,
-            self.test_button,
-            self.refresh_remote_models_button,
-            self.remote_model_table,
-        ):
-            widget.setEnabled(enabled)
-        self._update_remote_actions()
-        self._changed()
+    def _current_provider(self):
+        provider_id = self.provider_combo.currentData()
+        return next((item for item in self._providers if item.get("id") == provider_id), None)
 
-    def _selected_remote_model(self):
-        row = self.remote_model_table.currentRow()
-        if row < 0:
-            return None
-        item = self.remote_model_table.item(row, 0)
-        return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
-
-    def _update_remote_actions(self, *_args):
-        enabled = (
-            self.remote_enabled_checkbox.isChecked()
-            and bool(self.admin_token_edit.text().strip())
-            and not self._remote_operation_busy
-        )
-        descriptor = self._selected_remote_model()
-        self.register_remote_model_button.setEnabled(enabled)
-        self.set_remote_default_button.setEnabled(
-            enabled
-            and descriptor is not None
-            and descriptor.status == "ready"
-            and not descriptor.is_default
-        )
-        self.unregister_remote_model_button.setEnabled(
-            enabled and descriptor is not None
-        )
-
-    def _admin_operation_payload(self, payload: dict) -> dict:
-        return {
-            **dict(payload),
-            "server_url": normalize_server_url(self.server_url_edit.text()),
+    def _store_draft(self):
+        provider = self._current_provider()
+        if provider is None or self._loading or provider.get("kind") == "local":
+            return
+        provider.update({
+            "name": self.provider_name_edit.text().strip(),
+            "url": self.server_url_edit.text().strip().rstrip("/"),
             "admin_token": self.admin_token_edit.text().strip(),
-        }
+            "enabled": self.remote_enabled_checkbox.isChecked(),
+        })
+        index = self.provider_combo.currentIndex()
+        self.provider_combo.setItemText(index, provider["name"] or "Remote Server")
 
-    def _emit_remote_config_request(self, signal) -> None:
-        try:
-            payload = self.remote_payload()
-        except ValueError as exc:
-            self._remote_refresh_timer.stop()
-            self.set_connection_status(str(exc), False)
-            return
-        signal.emit(payload)
-
-    def _emit_remote_model_operation(self, action: str, payload: dict) -> None:
-        try:
-            operation_payload = self._admin_operation_payload(payload)
-        except ValueError as exc:
-            self.set_connection_status(str(exc), False)
-            return
-        self.remoteModelOperationRequested.emit(action, operation_payload)
-
-    def _request_remote_registration(self):
-        dialog = RemoteModelRegistrationDialog(self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        payload = dialog.payload()
-        action = str(payload.pop("action"))
-        self._emit_remote_model_operation(action, payload)
-
-    def _request_set_remote_default(self):
-        descriptor = self._selected_remote_model()
-        if descriptor is None or descriptor.status != "ready":
-            return
-        self._emit_remote_model_operation(
-            "set_default",
-            {"task": descriptor.task, "model_id": descriptor.id},
-        )
-
-    def _request_unregister_remote_model(self):
-        descriptor = self._selected_remote_model()
-        if descriptor is None:
-            return
-        answer = QMessageBox.question(
-            self,
-            "Unregister Remote Model",
-            f"Unregister {descriptor.id} from the server?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        self._emit_remote_model_operation(
-            "unregister",
-            {"task": descriptor.task, "model_id": descriptor.id},
-        )
-
-    def _changed(self, *_args):
-        if hasattr(self, "_remote_refresh_timer"):
-            self._remote_refresh_timer.stop()
-        self.connection_status.clear()
-        parsed = urlparse(self.server_url_edit.text().strip())
-        if (
-            self.remote_enabled_checkbox.isChecked()
-            and parsed.scheme == "http"
-            and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
-        ):
-            self.set_connection_status(
-                "Warning: HTTP sends inference media and any admin token "
-                "unencrypted; use only a trusted network.",
-                False,
-            )
+    def _draft_changed(self, *_args):
+        self._store_draft()
         self.configurationChanged.emit()
 
-    @staticmethod
-    def _remove_row(table):
-        if table.currentRow() >= 0:
-            table.removeRow(table.currentRow())
+    def _rebuild_provider_combo(self, selected_id=""):
+        selected_id = selected_id or self.provider_combo.currentData()
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.clear()
+        for provider in self._providers:
+            self.provider_combo.addItem(provider.get("name") or provider["id"], provider["id"])
+        index = self.provider_combo.findData(selected_id)
+        self.provider_combo.setCurrentIndex(max(0, index))
+        self.provider_combo.blockSignals(False)
+
+    def _select_provider(self, _index):
+        provider = self._current_provider()
+        if provider is None:
+            return
+        self._loading = True
+        remote = provider.get("kind") == "remote"
+        self.provider_name_edit.setText(provider.get("name", ""))
+        self.server_url_edit.setText(provider.get("url", ""))
+        self.admin_token_edit.setText(provider.get("admin_token", ""))
+        self.remote_enabled_checkbox.setChecked(bool(provider.get("enabled", True)))
+        self.provider_name_edit.setEnabled(remote)
+        self.server_url_edit.setEnabled(remote)
+        self.admin_token_edit.setEnabled(remote)
+        self.remote_enabled_checkbox.setEnabled(remote)
+        self.remove_provider_button.setEnabled(remote)
+        self.test_button.setEnabled(True)
+        self.refresh_remote_models_button.setEnabled(True)
+        self._loading = False
+        self._populate_models(provider.get("models", []))
+        status = provider.get("connection_status", "")
+        if provider.get("catalog_updated_at") and not status:
+            status = "Cached catalog"
+        if provider.get("catalog_updated_at"):
+            refreshed = time.strftime(
+                "%Y-%m-%d %H:%M:%S",
+                time.localtime(float(provider["catalog_updated_at"])),
+            )
+            status = f"{status or 'Cached catalog'} · Last successful refresh: {refreshed}"
+        self.connection_status.setText(status)
+        self._update_actions()
+
+    def _add_provider(self):
+        name, ok = QInputDialog.getText(self, "Add Remote Server", "Display name:")
+        if not ok:
+            return
+        url, ok = QInputDialog.getText(self, "Add Remote Server", "Server URL:", text=DEFAULT_SERVER_URL)
+        if not ok:
+            return
+        try:
+            provider = new_remote_provider(name, url)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Server", str(exc))
+            return
+        self._providers.append(provider)
+        self._rebuild_provider_combo(provider["id"])
+        self._select_provider(self.provider_combo.currentIndex())
+        self.configurationChanged.emit()
+
+    def _remove_provider(self):
+        provider = self._current_provider()
+        if provider is None or provider.get("kind") != "remote":
+            return
+        self._providers.remove(provider)
+        self._rebuild_provider_combo("local")
+        self._select_provider(0)
+        self.configurationChanged.emit()
+
+    def _descriptor_dict(self, descriptor):
+        return descriptor.to_dict() if hasattr(descriptor, "to_dict") else dict(descriptor)
+
+    def _populate_models(self, models):
+        self.model_table.setRowCount(0)
+        provider = self._current_provider() or {}
+        remote = provider.get("kind") == "remote"
+        for raw in models or []:
+            model = self._descriptor_dict(raw)
+            row = self.model_table.rowCount()
+            self.model_table.insertRow(row)
+            values = (
+                model.get("task", ""), model.get("id", ""),
+                model.get("status") or ("ready" if model.get("available", True) else "unavailable"),
+                "Yes" if model.get("is_default") else "",
+                model.get("config_path") or model.get("hf_repo_id") or model.get("weights", ""),
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value or ""))
+                if column == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, model)
+                self.model_table.setItem(row, column, item)
+        self.model_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
+    def _selected_model(self):
+        row = self.model_table.currentRow()
+        item = self.model_table.item(row, 0) if row >= 0 else None
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _operation_payload(self, extra=None):
+        provider = self._current_provider() or {}
+        return {
+            **dict(extra or {}), "provider_id": provider.get("id", ""),
+            "provider_name": provider.get("name", ""),
+            "providers": [dict(item) for item in self._providers],
+            "server_url": provider.get("url", ""),
+            "admin_token": provider.get("admin_token", ""),
+        }
+
+    def _add_hf(self):
+        provider = self._current_provider() or {}
+        if provider.get("kind") == "local":
+            dialog = HfLocalModelDialog(self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.huggingFaceModelRequested.emit({**dialog.payload(), "provider_id": "local"})
+            return
+        dialog = RemoteModelRegistrationDialog(self)
+        dialog.source_combo.setCurrentIndex(0)
+        dialog.source_combo.setEnabled(False)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            payload = dialog.payload()
+            action = payload.pop("action")
+            self.providerModelOperationRequested.emit(action, self._operation_payload(payload))
+
+    def _add_manual(self):
+        provider = self._current_provider() or {}
+        if provider.get("kind") == "remote":
+            dialog = RemoteModelRegistrationDialog(self)
+            dialog.source_combo.setCurrentIndex(1)
+            dialog.source_combo.setEnabled(False)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                payload = dialog.payload()
+                action = payload.pop("action")
+                self.providerModelOperationRequested.emit(action, self._operation_payload(payload))
+            return
+        task, ok = QInputDialog.getItem(
+            self, "Add Local Model", "Task:", list(INFERENCE_TASKS), editable=False
+        )
+        if not ok:
+            return
+        model_id, ok = QInputDialog.getText(self, "Add Local Model", "Model ID:")
+        if not ok or not model_id.strip():
+            return
+        config_path, ok = QInputDialog.getText(self, "Add Local Model", "Config YAML path:")
+        if not ok or not config_path.strip():
+            return
+        model = {
+            "task": str(task), "id": model_id.strip(),
+            "display_name": model_id.strip(), "config_path": config_path.strip(),
+            "weights": model_id.strip(), "available": True,
+            "supports_time_range": task in {"localization", "dense_description"},
+        }
+        self.upsert_local_model(model)
+        self.providerModelOperationRequested.emit(
+            "add_local_manual", self._operation_payload({"model": model})
+        )
+
+    def _remove_model(self):
+        provider = self._current_provider() or {}
+        model = self._selected_model()
+        if model is None:
+            return
+        if provider.get("kind") == "remote":
+            self.providerModelOperationRequested.emit(
+                "unregister", self._operation_payload({"task": model.get("task"), "model_id": model.get("id")})
+            )
+        else:
+            provider["models"] = [
+                item for item in provider.get("models", [])
+                if (item.get("task"), item.get("id")) != (model.get("task"), model.get("id"))
+            ]
+            self._populate_models(provider["models"])
+            self.providerModelOperationRequested.emit("remove_local", self._operation_payload({"task": model.get("task"), "model_id": model.get("id")}))
+
+    def _set_default(self):
+        provider = self._current_provider() or {}
+        model = self._selected_model()
+        if model is None:
+            return
+        action = "set_default" if provider.get("kind") == "remote" else "set_local_default"
+        self.providerModelOperationRequested.emit(action, self._operation_payload({"task": model.get("task"), "model_id": model.get("id")}))
+
+    def _update_actions(self):
+        selected = self._selected_model() is not None
+        self.remove_local_model_button.setEnabled(selected and not self._remote_operation_busy)
+        self.set_remote_default_button.setEnabled(selected and not self._remote_operation_busy)
+
+    def _refresh_selected(self):
+        provider = self._current_provider()
+        if provider and (
+            provider.get("kind") == "local" or provider.get("enabled", True)
+        ):
+            self.providerCatalogRefreshRequested.emit(self.remote_payload())
+
+    def refresh_enabled_remotes(self):
+        # The selected server refreshes immediately. Opening Run Inference refreshes all.
+        self._refresh_selected()
 
     def append_local_model(self, model):
-        row = self.local_model_table.rowCount()
-        self.local_model_table.insertRow(row)
-        self._set_local_model_row(row, model)
-
-    def _set_local_model_row(self, row, model):
-        values = (
-            model.get("task", "classification"),
-            model.get("id", ""),
-            model.get("display_name", ""),
-            model.get("config_path", ""),
-            model.get("weights", ""),
-        )
-        for column, value in enumerate(values):
-            item = QTableWidgetItem(str(value or ""))
-            if column == 0:
-                metadata = dict(model)
-                metadata["_registry_source"] = {
-                    "id": str(model.get("id") or ""),
-                    "hf_repo_id": str(model.get("hf_repo_id") or ""),
-                    "hf_revision": str(model.get("hf_revision") or ""),
-                    "weights": str(model.get("weights") or ""),
-                }
-                item.setData(Qt.ItemDataRole.UserRole, metadata)
-            self.local_model_table.setItem(row, column, item)
+        local = next(item for item in self._providers if item.get("kind") == "local")
+        local.setdefault("models", []).append(dict(model))
+        if self._current_provider() is local:
+            self._populate_models(local["models"])
 
     def upsert_local_model(self, model):
-        key = (str(model.get("task") or ""), str(model.get("id") or ""))
-        for row in range(self.local_model_table.rowCount()):
-            current = tuple(
-                str(self.local_model_table.item(row, col).text() if self.local_model_table.item(row, col) else "").strip()
-                for col in (0, 1)
-            )
-            if current == key:
-                self.local_model_table.removeRow(row)
-                self.local_model_table.insertRow(row)
-                self._set_local_model_row(row, model)
-                self.local_model_table.selectRow(row)
-                return
-        self.append_local_model(model)
-        self.local_model_table.selectRow(self.local_model_table.rowCount() - 1)
-
-    def _request_hf_model(self):
-        dialog = HfLocalModelDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.huggingFaceModelRequested.emit(dialog.payload())
+        local = next(item for item in self._providers if item.get("kind") == "local")
+        key = (model.get("task"), model.get("id"))
+        local["models"] = [item for item in local.get("models", []) if (item.get("task"), item.get("id")) != key]
+        local["models"].append(dict(model))
+        if self._current_provider() is local:
+            self._populate_models(local["models"])
 
     def set_model_import_busy(self, busy, message=""):
-        busy = bool(busy)
         self.add_hf_model_button.setEnabled(not busy)
-        self.local_model_progress.setVisible(busy)
-        self.cancel_hf_model_button.setVisible(busy)
+        self.local_model_progress.setVisible(bool(busy))
+        self.cancel_hf_model_button.setVisible(bool(busy))
         if message:
             self.local_model_status.setText(str(message))
 
     def set_model_import_progress(self, message, current=0, total=0):
         self.local_model_status.setText(str(message or ""))
-        if total > 0:
-            self.local_model_progress.setRange(0, int(total))
+        self.local_model_progress.setRange(0, int(total)) if total else self.local_model_progress.setRange(0, 0)
+        if total:
             self.local_model_progress.setValue(max(0, min(int(current), int(total))))
-        else:
-            self.local_model_progress.setRange(0, 0)
 
     def set_connection_status(self, text, success):
+        provider = self._current_provider()
+        if provider is not None:
+            provider["connection_status"] = str(text or "")
         self.connection_status.setText(str(text or ""))
         self.connection_status.setStyleSheet("color: #27823b;" if success else "color: #d9534f;")
 
     def set_remote_catalog(self, models):
-        models = list(models or [])
-        selected = self._selected_remote_model()
-        selected_id = selected.id if selected is not None else ""
-        self.remote_model_table.setRowCount(0)
-        for descriptor in models:
-            row = self.remote_model_table.rowCount()
-            self.remote_model_table.insertRow(row)
-            for column, value in enumerate(
-                (
-                    descriptor.task,
-                    descriptor.id,
-                    descriptor.status or ("ready" if descriptor.available else "unavailable"),
-                    "Yes" if descriptor.is_default else "",
-                )
-            ):
-                item = QTableWidgetItem(str(value))
-                if column == 0:
-                    item.setData(Qt.ItemDataRole.UserRole, descriptor)
-                elif column == 2 and descriptor.unavailable_reason:
-                    item.setToolTip(descriptor.unavailable_reason)
-                self.remote_model_table.setItem(row, column, item)
-            if descriptor.id == selected_id:
-                self.remote_model_table.selectRow(row)
-        transient = any(
-            descriptor.status in {"registering", "unregistering"}
-            for descriptor in models
+        provider = self._current_provider()
+        if provider is None:
+            return
+        provider["models"] = [self._descriptor_dict(model) for model in models or []]
+        provider["catalog_updated_at"] = time.time()
+        self._populate_models(provider["models"])
+        self.set_connection_status(f"Discovered {len(provider['models'])} model(s).", True)
+
+    def set_provider_catalog(self, provider_id, models, error=""):
+        provider = next(
+            (item for item in self._providers if item.get("id") == provider_id), None
         )
-        if transient:
-            self._remote_refresh_timer.start()
+        if provider is None:
+            return
+        if error:
+            provider["connection_status"] = f"Refresh failed; cached catalog retained: {error}"
         else:
-            self._remote_refresh_timer.stop()
-        self._update_remote_actions()
-        self.set_connection_status(
-            f"Discovered {self.remote_model_table.rowCount()} remote model(s).",
-            True,
-        )
+            provider["models"] = [self._descriptor_dict(model) for model in models or []]
+            provider["catalog_updated_at"] = time.time()
+            provider["connection_status"] = f"Discovered {len(provider['models'])} model(s)."
+        if provider is self._current_provider():
+            self._populate_models(provider.get("models", []))
+            self.set_connection_status(provider["connection_status"], not bool(error))
 
-    def set_remote_model_operation_busy(
-        self, busy: bool, message: str = "", *, success: bool | None = None
-    ):
+    def set_remote_model_operation_busy(self, busy, message="", *, success=None):
         self._remote_operation_busy = bool(busy)
-        self._update_remote_actions()
+        self._update_actions()
         if message:
-            self.set_connection_status(
-                message, not busy if success is None else bool(success)
-            )
+            self.set_connection_status(message, not busy if success is None else success)
 
-    def stop_remote_model_polling(self) -> None:
+    def stop_remote_model_polling(self):
         self._remote_refresh_timer.stop()
 
     def payload(self):
-        models = []
-        for row in range(self.local_model_table.rowCount()):
-            values = [str(self.local_model_table.item(row, col).text() if self.local_model_table.item(row, col) else "").strip() for col in range(5)]
-            if not any(values):
-                continue
-            task, model_id, display_name, config_path, weights = values
-            if task not in INFERENCE_TASKS or not model_id or not config_path:
-                raise ValueError("Each local model requires a valid task, model ID, and config YAML path.")
-            first_item = self.local_model_table.item(row, 0)
-            metadata = first_item.data(Qt.ItemDataRole.UserRole) if first_item else None
-            model = dict(metadata if isinstance(metadata, dict) else {})
-            source = dict(model.pop("_registry_source", {}) or {})
-            model.update({
-                "task": task,
-                "id": model_id,
-                "display_name": display_name or model_id,
-                "config_path": config_path,
-                "weights": weights,
-                "available": True,
-                "accepted_input_types": ["video"],
-                "supports_time_range": task in {"localization", "dense_description"},
-            })
-            if source and any(
-                (
-                    model_id != source.get("id", ""),
-                    str(model.get("hf_repo_id") or "") != source.get("hf_repo_id", ""),
-                    str(model.get("hf_revision") or "") != source.get("hf_revision", ""),
-                    weights != source.get("weights", ""),
-                )
-            ):
-                model["trusted_legacy"] = False
-            model["trusted_legacy"] = trusted_legacy_allowed(model)
-            models.append(model)
-        return {
-            **self.remote_payload(),
-            "admin_token": self.admin_token_edit.text().strip(),
-            "local_models": models,
-        }
+        self._store_draft()
+        current = self._current_provider()
+        if current is not None and current.get("kind") == "local":
+            models = []
+            for row in range(self.model_table.rowCount()):
+                values = [
+                    str(self.model_table.item(row, column).text() if self.model_table.item(row, column) else "").strip()
+                    for column in range(5)
+                ]
+                if not any(values):
+                    continue
+                task, model_id, _status, default_text, config_path = values
+                first = self.model_table.item(row, 0)
+                metadata = first.data(Qt.ItemDataRole.UserRole) if first else {}
+                model = dict(metadata if isinstance(metadata, dict) else {})
+                model.update({
+                    "task": task, "id": model_id,
+                    "display_name": model.get("display_name") or model_id,
+                    "config_path": config_path,
+                    "available": True, "is_default": bool(default_text),
+                })
+                model["trusted_legacy"] = trusted_legacy_allowed(model)
+                if task not in INFERENCE_TASKS or not model_id or not config_path:
+                    raise ValueError("Each local model requires a valid task, model ID, and config path.")
+                models.append(model)
+            current["models"] = models
+        names, urls = set(), set()
+        for provider in self._providers:
+            name = str(provider.get("name") or "").strip()
+            if not name or name.casefold() in names:
+                raise ValueError("Provider names must be non-empty and unique.")
+            names.add(name.casefold())
+            if provider.get("kind") == "remote":
+                provider["url"] = normalize_server_url(provider.get("url"))
+                if provider["url"].casefold() in urls:
+                    raise ValueError("Remote server URLs must be unique.")
+                urls.add(provider["url"].casefold())
+        local = next(item for item in self._providers if item.get("kind") == "local")
+        return {"providers": [dict(item) for item in self._providers], "local_models": list(local.get("models", []))}
 
-    def remote_payload(self) -> dict:
+    def remote_payload(self):
+        self._store_draft()
+        provider = self._current_provider() or {}
+        return self._operation_payload({"remote_enabled": provider.get("enabled", False)})
+
+    def provider_payload(self, provider_id):
+        self._store_draft()
+        provider = next(
+            (item for item in self._providers if item.get("id") == provider_id), {}
+        )
         return {
-            "remote_enabled": self.remote_enabled_checkbox.isChecked(),
-            "server_url": normalize_server_url(self.server_url_edit.text()),
+            "provider_id": provider.get("id", ""),
+            "provider_name": provider.get("name", ""),
+            "providers": [dict(item) for item in self._providers],
+            "server_url": provider.get("url", ""),
+            "admin_token": provider.get("admin_token", ""),
+            "remote_enabled": provider.get("kind") == "local" or provider.get("enabled", False),
         }
 
 
@@ -724,8 +748,8 @@ class ApplicationSettingsDialog(QDialog):
     mediaControlsApplyRequested = pyqtSignal(str, str, object, object)
     inferenceSettingsApplyRequested = pyqtSignal(object)
     inferenceTestRequested = pyqtSignal()
-    inferenceRemoteCatalogRequested = pyqtSignal()
-    inferenceRemoteModelOperationRequested = pyqtSignal(str, object)
+    inferenceProviderCatalogRequested = pyqtSignal()
+    inferenceProviderModelOperationRequested = pyqtSignal(str, object)
     inferenceHfModelRequested = pyqtSignal(object)
     inferenceHfModelCancelRequested = pyqtSignal()
     explorerPageSizeApplyRequested = pyqtSignal(int)
@@ -862,12 +886,7 @@ class ApplicationSettingsDialog(QDialog):
         self._settings = settings
         inference_page = QWidget(tabs)
         inference_layout = QVBoxLayout(inference_page)
-        inference_config = {
-            "remote_enabled": remote_inference_enabled(settings),
-            "server_url": str(settings.value(SERVER_URL_KEY, DEFAULT_SERVER_URL) if settings is not None else DEFAULT_SERVER_URL),
-            "admin_token": str(settings.value(REMOTE_ADMIN_TOKEN_KEY, "") if settings is not None else ""),
-            "local_models": load_local_models(settings),
-        }
+        inference_config = {"providers": load_inference_providers(settings)}
         self.inference_setup_widget = InferenceSetupWidget(inference_config, parent=inference_page)
         inference_layout.addWidget(self.inference_setup_widget)
         self.inference_remote_enabled_checkbox = self.inference_setup_widget.remote_enabled_checkbox
@@ -916,11 +935,11 @@ class ApplicationSettingsDialog(QDialog):
                 lambda _sequence: self.shortcut_validation_label.clear()
             )
         self.inference_setup_widget.testConnectionRequested.connect(lambda _config: self.inferenceTestRequested.emit())
-        self.inference_setup_widget.remoteCatalogRefreshRequested.connect(
-            lambda _config: self.inferenceRemoteCatalogRequested.emit()
+        self.inference_setup_widget.providerCatalogRefreshRequested.connect(
+            lambda _config: self.inferenceProviderCatalogRequested.emit()
         )
-        self.inference_setup_widget.remoteModelOperationRequested.connect(
-            self.inferenceRemoteModelOperationRequested.emit
+        self.inference_setup_widget.providerModelOperationRequested.connect(
+            self.inferenceProviderModelOperationRequested.emit
         )
         self.inference_setup_widget.huggingFaceModelRequested.connect(
             self.inferenceHfModelRequested
@@ -942,6 +961,9 @@ class ApplicationSettingsDialog(QDialog):
 
     def set_remote_model_catalog(self, models):
         self.inference_setup_widget.set_remote_catalog(models)
+
+    def set_provider_model_catalog(self, provider_id, models, error=""):
+        self.inference_setup_widget.set_provider_catalog(provider_id, models, error)
 
     def set_remote_model_operation_busy(
         self, busy: bool, message: str = "", *, success: bool | None = None
@@ -974,6 +996,9 @@ class ApplicationSettingsDialog(QDialog):
     def remote_inference_payload(self) -> dict:
         return self.inference_setup_widget.remote_payload()
 
+    def provider_inference_payload(self, provider_id) -> dict:
+        return self.inference_setup_widget.provider_payload(provider_id)
+
     def done(self, result: int) -> None:
         self.stop_remote_model_polling()
         self.inference_admin_token_edit.clear()
@@ -986,11 +1011,13 @@ class ApplicationSettingsDialog(QDialog):
         self.localization_preroll_spin.setValue(DEFAULT_LOCALIZATION_PREROLL_MS)
         for name, editor in self.shortcut_edits.items():
             editor.setKeySequence(QKeySequence(DEFAULT_SHORTCUTS[name]))
-        self.inference_remote_enabled_checkbox.setChecked(False)
-        self.inference_server_url_edit.setText(DEFAULT_SERVER_URL)
-        self.inference_admin_token_edit.clear()
-        self.local_model_table.setRowCount(0)
-        self.remote_model_table.setRowCount(0)
+        self.inference_setup_widget._providers = [{
+            "id": "local", "kind": "local", "name": "Local", "enabled": True,
+            "models": [], "defaults": {}, "catalog_updated_at": 0.0,
+            "connection_status": "",
+        }]
+        self.inference_setup_widget._rebuild_provider_combo("local")
+        self.inference_setup_widget._select_provider(0)
         self.validation_label.clear()
         self.shortcut_validation_label.clear()
 
@@ -1030,12 +1057,13 @@ class ApplicationSettingsDialog(QDialog):
             self.localization_preroll_spin.value()
         )
         self.inferenceSettingsApplyRequested.emit(inference_payload)
-        parsed_server = urlparse(inference_payload["server_url"])
-        if (
-            inference_payload["remote_enabled"]
-            and parsed_server.scheme == "http"
-            and parsed_server.hostname not in {"127.0.0.1", "localhost", "::1"}
-        ):
+        insecure = next((
+            provider for provider in inference_payload["providers"]
+            if provider.get("kind") == "remote" and provider.get("enabled")
+            and urlparse(provider.get("url", "")).scheme == "http"
+            and urlparse(provider.get("url", "")).hostname not in {"127.0.0.1", "localhost", "::1"}
+        ), None)
+        if insecure:
             self.set_inference_connection_status(
                 "Warning: HTTP sends inference media and any admin token "
                 "unencrypted. Use only a trusted network.",
@@ -1255,6 +1283,8 @@ class InferenceRunDialog(QDialog):
         )
         payload = {
             "backend": choice.backend if choice is not None else "",
+            "provider_id": choice.provider_id if choice is not None else "",
+            "provider_name": choice.provider_name if choice is not None else "",
             "model_id": choice.descriptor.id if choice is not None else "",
             "inputs": self.selected_inputs(),
             "start_ms": self.start_spin.value() if supports_range else 0,

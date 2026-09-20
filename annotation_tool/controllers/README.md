@@ -188,26 +188,35 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   the tree or changing selection.
 
 ### `InferenceController`
-- Owns independent Local and Remote FIFO queues. Each lane has at most one
-  worker, the two lanes may overlap, and providers are instantiated only when
-  their requests reach the front.
+- Owns dynamic FIFO lanes keyed by stable `provider_id`. Each Local or remote
+  provider has at most one worker while different providers may overlap.
+  Providers are instantiated only when their requests reach the front.
 - Aggregates runnable task models into provider-aware choices. Local discovery
-  always runs; Remote discovery runs only when explicitly enabled and failures
-  are non-fatal when Local choices remain available. Identical model IDs remain
-  distinct through their `(backend, model_id)` identity.
+  always runs; discovery covers every enabled remote and falls back to its last
+  successful cached catalog after a transient failure. Identical model IDs
+  remain distinct through their `(provider_id, model_id)` identity.
 - Application Settings is the sole setup surface. Run requests contain an
-  immutable snapshot of the saved Local registry, Remote endpoint, and
-  enablement; the run dialog only chooses a model and runtime parameters.
-- The last successfully completed `(backend, model_id)` is stored per task and
+  immutable snapshot of the selected provider endpoint and model configuration
+  without administration credentials; the run dialog only chooses a model and
+  runtime parameters.
+- `inference_settings.py` persists a permanent Local provider and UUID-backed
+  remote providers with unique names and normalized URLs. Catalogs, defaults,
+  refresh timestamps, and status share the provider record; administration
+  tokens use a separate settings value. Legacy Local and single-server keys
+  migrate only after the provider registry is saved successfully.
+- The last successfully completed `(provider_id, model_id)` is stored per task and
   used as the preferred choice on the next run when still available.
 - `enqueue_inference()`, `cancel_request()`, `cancel_all()`, `queue_snapshot()`,
   `queueChanged`, and `clear_queue_history()` form the queue interface.
   Immutable `InferenceQueueEntry` snapshots drive the Inference Jobs dock. Each
-  entry includes a bounded immutable event timeline; repeated stage progress is
-  coalesced and the latest 20 terminal entries remain session-only.
+  entry includes a bounded immutable event timeline and repeated stage progress
+  is coalesced. Terminal entries persist without a count limit in
+  application-wide SQLite until `clear_queue_history()` removes them. Storage
+  errors fall back to session-only history and emit `historyErrorChanged`.
 - Provider work runs in one `QThread` per active lane; `MainWindow` leaves
   navigation, editing, and further inference submission enabled. A generic
-  post-provider cancellation check suppresses late Local results.
+  post-provider cancellation check suppresses late results. A cancelling lane
+  remains occupied until its worker exits before dispatching its next job.
 - `controllers.inference_runtime.configure_compute_device` is the canonical
   direct-library device resolver for Classification and Localization. It
   preserves explicit CPU and converts unavailable `auto`/CUDA requests to CPU
@@ -280,8 +289,8 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   `MainWindow.connect_signals()` routes them. The admin token is persisted in
   application-local QSettings and copied into worker memory only for a registry
   request; it never enters logs, inference requests, or project data. Server
-  actions are immediate and Settings polls public model states only while the
-  dialog is open.
+  actions are immediate. Enabled remote catalogs refresh when Settings or Run
+  Inference opens, and Settings presents cached state while refresh runs.
 - `InferenceController` owns the thread-safe VQA session cache and supplies it
   to request-scoped providers. Keys include normalized server, model, sample,
   real video path, size, and modification time. Entries expire after 25 minutes
@@ -290,12 +299,11 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   `last_remote_session_id`; follow-ups reuse the video through
   `infer(session_id=...)`. HTTP 404/410 retries once by uploading afresh.
   Sessions are never conversational context or persisted project data.
-- Remote wrapper calls cannot be interrupted server-side. Active and waiting
-  Remote cancellation immediately removes the request without retaining a
-  history row. An active worker is detached, all late signals and output are
-  ignored, and the next Remote request starts immediately; the thread remains
-  owned until it exits and shutdown includes it in the normal bounded wait.
-  Local cancellation remains deferred. Official direct files and staged
+- Remote wrapper calls cannot be interrupted server-side. Waiting cancellation
+  becomes terminal immediately. Active cancellation signals the worker and
+  keeps its provider lane in `cancelling` until the worker exits; only then can
+  the next request for that provider start. The terminal cancellation is stored
+  in job history. Official direct files and staged
   multi-file archives are memory-buffered, with no shared-root or resumable path.
 - Mode controllers emit inference intent; `MainWindow.connect_signals()` adds
   canonical sample/schema context and routes results back. Mode controllers

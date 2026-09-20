@@ -59,6 +59,11 @@ For the temporal JSON contract and multi-input UTC workflow, see the
 [OSL JSON format](https://opensportslab.github.io/VideoAnnotationTool/OSL/) and
 [synchronized playback guide](https://opensportslab.github.io/VideoAnnotationTool/synchronized_playback/).
 
+Inference supports the permanent Local provider plus multiple named remote
+OpenSportsLib servers. Jobs share one table, run one at a time per provider,
+and retain finished-job metadata across restarts until **Clear Finished** is
+used. See the [inference provider and jobs guide](https://opensportslab.github.io/VideoAnnotationTool/inference/).
+
 
 ---
 

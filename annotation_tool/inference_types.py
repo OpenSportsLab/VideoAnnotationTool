@@ -85,19 +85,26 @@ class InferenceModelChoice:
 
     backend: str
     descriptor: ModelDescriptor
+    provider_id: str = ""
+    provider_name: str = ""
 
     def __post_init__(self):
         if self.backend not in {"local", "remote"}:
             raise ValueError(f"Unsupported inference backend: {self.backend!r}")
+        if not self.provider_id:
+            object.__setattr__(self, "provider_id", self.backend)
+        if not self.provider_name:
+            object.__setattr__(
+                self, "provider_name", "Local" if self.backend == "local" else "Remote"
+            )
 
     @property
     def key(self) -> tuple[str, str]:
-        return self.backend, self.descriptor.id
+        return self.provider_id, self.descriptor.id
 
     @property
     def display_name(self) -> str:
-        provider = "Local" if self.backend == "local" else "Remote"
-        return f"{provider} — {self.descriptor.display_name}"
+        return f"{self.provider_name} — {self.descriptor.display_name}"
 
 
 @dataclass(frozen=True)
@@ -134,6 +141,8 @@ class InferenceQueueEntry:
     error_details: Any = None
     retryable: bool = False
     log_events: tuple[InferenceLogEvent, ...] = ()
+    provider_id: str = ""
+    provider_name: str = ""
 
 
 @dataclass
@@ -181,6 +190,8 @@ class InferenceRequest:
     parameters: dict[str, Any] = field(default_factory=dict)
     schema: dict[str, Any] = field(default_factory=dict)
     backend: str = "local"
+    provider_id: str = ""
+    provider_name: str = ""
     # Immutable request-scoped snapshot of the saved provider setup. The run
     # dialog selects a model and runtime parameters but never edits this data.
     provider_config: dict[str, Any] = field(default_factory=dict)
@@ -196,6 +207,16 @@ class InferenceRequest:
             raise ValueError(f"Unsupported inference task: {self.task!r}")
         if self.backend not in {"local", "remote"}:
             raise ValueError(f"Unsupported inference backend: {self.backend!r}")
+        if not self.provider_id:
+            self.provider_id = self.backend
+        if not self.provider_name:
+            self.provider_name = "Local" if self.backend == "local" else "Remote"
+        snapshot = copy.deepcopy(self.provider_config or {})
+        snapshot.pop("admin_token", None)
+        for provider in snapshot.get("providers", []) or []:
+            if isinstance(provider, dict):
+                provider.pop("admin_token", None)
+        self.provider_config = snapshot
         if not str(self.model_id or "").strip():
             raise ValueError("Inference model id cannot be empty.")
         if not self.items:
@@ -208,6 +229,9 @@ class InferenceResult:
     task: str
     model_id: str
     items: tuple[dict[str, Any], ...]
+    provider_id: str = ""
+    provider_name: str = ""
+    provider_kind: str = ""
 
 
 @dataclass(frozen=True)
@@ -222,6 +246,8 @@ class PendingPrediction:
     payload: dict[str, Any]
     confidence_score: float = 0.0
     target_context: dict[str, Any] = field(default_factory=dict)
+    provider_id: str = ""
+    provider_name: str = ""
 
     @classmethod
     def create(cls, result: InferenceResult, item: dict[str, Any], payload: dict[str, Any], *, confidence=0.0, target_context=None):
@@ -234,6 +260,8 @@ class PendingPrediction:
             payload=copy.deepcopy(payload),
             confidence_score=max(0.0, min(1.0, float(confidence or 0.0))),
             target_context=copy.deepcopy(target_context or {}),
+            provider_id=result.provider_id,
+            provider_name=result.provider_name,
         )
 
 
@@ -341,4 +369,7 @@ def validate_result_payload(request: InferenceRequest, payload: Any) -> Inferenc
         task=request.task,
         model_id=request.model_id,
         items=tuple(normalized),
+        provider_id=request.provider_id,
+        provider_name=request.provider_name,
+        provider_kind=request.backend,
     )

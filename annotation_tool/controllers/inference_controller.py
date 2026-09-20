@@ -16,12 +16,14 @@ from inference_providers import (
     RemoteInferenceProvider,
     RemoteVqaSessionCache,
 )
+from inference_history import InferenceHistoryStore
 from inference_settings import (
-    DEFAULT_SERVER_URL,
-    SERVER_URL_KEY,
+    LOCAL_PROVIDER_ID,
+    load_inference_providers,
     load_local_models,
     normalize_server_url,
-    remote_inference_enabled,
+    update_provider_catalog,
+    update_provider_status,
 )
 from inference_types import (
     INFERENCE_TASKS,
@@ -30,6 +32,7 @@ from inference_types import (
     InferenceModelChoice,
     InferenceQueueEntry,
     InferenceRequest,
+    ModelDescriptor,
 )
 
 
@@ -135,51 +138,80 @@ class InferenceController(QObject):
     discoveryFailed = pyqtSignal(str, str, str)
     modelCatalogDiscovered = pyqtSignal(str, object, str)
     modelCatalogFailed = pyqtSignal(str, str)
-    remoteCatalogDiscovered = pyqtSignal(object)
-    remoteCatalogFailed = pyqtSignal(str)
-    remoteModelOperationStarted = pyqtSignal(str)
-    remoteModelOperationSucceeded = pyqtSignal(str, object)
-    remoteModelOperationFailed = pyqtSignal(str, str)
+    providerCatalogDiscovered = pyqtSignal(str, object)
+    providerCatalogFailed = pyqtSignal(str, str)
+    providerModelOperationStarted = pyqtSignal(str)
+    providerModelOperationSucceeded = pyqtSignal(str, object)
+    providerModelOperationFailed = pyqtSignal(str, str)
     inferenceStarted = pyqtSignal(str, str)
     inferenceProgress = pyqtSignal(str, str, int, int)
     inferenceCompleted = pyqtSignal(str, object)
     inferenceFailed = pyqtSignal(str, str, str, bool, object)
     inferenceCancelled = pyqtSignal(str)
     queueChanged = pyqtSignal(object)
+    historyErrorChanged = pyqtSignal(str)
 
     SETTINGS_ORG = "OpenSportsLab"
     SETTINGS_APP = "VideoAnnotationTool"
     MAX_LOG_EVENTS_PER_JOB = 200
 
-    def __init__(self, settings=None, base_dir: str = "", parent=None):
+    def __init__(self, settings=None, base_dir: str = "", parent=None, history_path=None):
         super().__init__(parent)
         self.settings = settings or QSettings(self.SETTINGS_ORG, self.SETTINGS_APP)
         self.base_dir = base_dir or os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        self._queues = {"local": deque(), "remote": deque()}
-        self._workers = {"local": None, "remote": None}
-        self._detached_remote_workers: set[QThread] = set()
-        self._active_records = {"local": None, "remote": None}
+        self._queues = {}
+        self._workers = {}
+        self._active_records = {}
         self._records = {}
         self._seen_request_ids = set()
-        self._history = deque(maxlen=20)
+        self._history_store = InferenceHistoryStore(history_path)
+        self._history = self._history_store.load()
+        self.history_error = self._history_store.error
         self._remote_vqa_sessions = RemoteVqaSessionCache()
         self._shutting_down = False
         self.discovery_worker: QThread | None = None
-        self.remote_registry_worker: QThread | None = None
+        self.provider_registry_worker: QThread | None = None
 
     def configuration_snapshot(self) -> dict:
-        return {
-            "remote_enabled": remote_inference_enabled(self.settings),
-            "server_url": normalize_server_url(str(self.settings.value(SERVER_URL_KEY, DEFAULT_SERVER_URL) or DEFAULT_SERVER_URL)),
-            "local_models": load_local_models(self.settings),
-        }
+        providers = copy.deepcopy(load_inference_providers(self.settings))
+        for provider in providers:
+            provider.pop("admin_token", None)
+        return {"providers": providers}
 
-    def _provider(self, backend: str, config=None):
+    def _provider(self, provider_id: str, config=None):
         config = dict(config or {})
-        if backend == "local":
-            models = config.get("local_models") if "local_models" in config else None
+        providers = list(config.get("providers") or [])
+        provider_config = next(
+            (item for item in providers if item.get("id") == provider_id), None
+        )
+        # Compatibility for older callers and requests created before migration.
+        if provider_config is None and provider_id in {"local", "remote"}:
+            if provider_id == "local":
+                provider_config = {
+                    "id": LOCAL_PROVIDER_ID,
+                    "kind": "local",
+                    "models": config.get("local_models", load_local_models(self.settings)),
+                }
+            else:
+                provider_config = {
+                    "id": "remote",
+                    "kind": "remote",
+                    "url": config.get("server_url", "http://127.0.0.1:8000"),
+                }
+        if provider_config is None:
+            provider_config = next(
+                (
+                    item for item in load_inference_providers(self.settings)
+                    if item.get("id") == provider_id
+                ),
+                None,
+            )
+        if provider_config is None:
+            raise ValueError(f"Inference provider {provider_id!r} is unavailable.")
+        if provider_config.get("kind") == "local":
+            models = provider_config.get("models")
             return LocalInferenceProvider(self.settings, self.base_dir, local_models=models)
-        url = normalize_server_url(str(config.get("server_url") or self.settings.value(SERVER_URL_KEY, DEFAULT_SERVER_URL) or DEFAULT_SERVER_URL))
+        url = normalize_server_url(str(provider_config.get("url") or ""))
         return RemoteInferenceProvider(
             url,
             self.settings,
@@ -190,7 +222,7 @@ class InferenceController(QObject):
         self._remote_vqa_sessions.clear()
 
     def discover_models(self, task: str, backend: str | None = None, config=None):
-        selected_backend = backend or "local"
+        selected_backend = backend or LOCAL_PROVIDER_ID
         provider = self._provider(selected_backend, config)
         try:
             models = provider.list_models(task)
@@ -221,46 +253,99 @@ class InferenceController(QObject):
         return True
 
     def discover_model_catalog(self, task: str, config=None):
-        """Return runnable Local and enabled-Remote models for one task."""
+        """Return runnable models from Local and every enabled remote provider."""
         snapshot = self.configuration_snapshot() if config is None else dict(config)
+        if "providers" not in snapshot:
+            snapshot["providers"] = [{
+                "id": "local", "kind": "local", "name": "Local",
+                "enabled": True, "models": snapshot.get("local_models", []),
+                "defaults": {},
+            }]
+            if snapshot.get("remote_enabled"):
+                snapshot["providers"].append({
+                    "id": "remote", "kind": "remote", "name": "Remote",
+                    "enabled": True,
+                    "url": snapshot.get("server_url", "http://127.0.0.1:8000"),
+                    "models": [], "defaults": {},
+                })
         choices = []
         warnings = []
-        local_provider = self._provider("local", snapshot)
-        try:
-            local_models = local_provider.list_models(task)
-            for descriptor in local_models:
-                if descriptor.available:
-                    choices.append(InferenceModelChoice("local", descriptor))
-            unavailable = sum(not descriptor.available for descriptor in local_models)
-            if unavailable:
-                warnings.append(f"{unavailable} unavailable Local model(s) omitted.")
-        except Exception as exc:
-            warnings.append(f"Local models: {exc}")
-        finally:
-            close = getattr(local_provider, "close", None)
-            if callable(close):
-                close()
-
-        remote_enabled = snapshot.get("remote_enabled", False)
-        if isinstance(remote_enabled, str):
-            remote_enabled = remote_enabled.strip().lower() in {"1", "true", "yes", "on"}
-        if bool(remote_enabled):
-            remote_provider = self._provider("remote", snapshot)
+        for provider_config in snapshot.get("providers", []):
+            if provider_config.get("kind") == "remote" and not provider_config.get("enabled"):
+                continue
+            provider_id = str(provider_config.get("id") or "")
+            provider_name = str(provider_config.get("name") or provider_id)
+            kind = str(provider_config.get("kind") or "local")
+            provider = self._provider(provider_id, snapshot)
             try:
-                remote_models = remote_provider.list_models(task)
-                for descriptor in remote_models:
+                models = provider.list_models(task)
+                if kind == "remote":
+                    update_provider_catalog(
+                        self.settings,
+                        provider_id,
+                        self._all_remote_models(provider),
+                        status="Ready",
+                    )
+                default_id = str((provider_config.get("defaults") or {}).get(task) or "")
+                models = sorted(
+                    models,
+                    key=lambda descriptor: not (
+                        descriptor.is_default or descriptor.id == default_id
+                    ),
+                )
+                for descriptor in models:
                     if descriptor.available:
-                        choices.append(InferenceModelChoice("remote", descriptor))
-                unavailable = sum(not descriptor.available for descriptor in remote_models)
+                        choices.append(InferenceModelChoice(
+                            kind, descriptor, provider_id, provider_name
+                        ))
+                unavailable = sum(not descriptor.available for descriptor in models)
                 if unavailable:
-                    warnings.append(f"{unavailable} unavailable Remote model(s) omitted.")
+                    warnings.append(
+                        f"{unavailable} unavailable {provider_name} model(s) omitted."
+                    )
             except Exception as exc:
-                warnings.append(f"Remote models: {exc}")
+                cached = []
+                if kind == "remote":
+                    for model in provider_config.get("models", []):
+                        try:
+                            descriptor = ModelDescriptor.from_dict(model)
+                        except Exception:
+                            continue
+                        if descriptor.task == task and descriptor.available:
+                            cached.append(descriptor)
+                            choices.append(InferenceModelChoice(
+                                kind, descriptor, provider_id, provider_name
+                            ))
+                suffix = " Using the cached catalog." if cached else ""
+                warnings.append(f"{provider_name}: {exc}.{suffix}")
+                if kind == "remote":
+                    update_provider_status(
+                        self.settings, provider_id,
+                        f"Stale catalog; refresh failed: {exc}",
+                    )
             finally:
-                close = getattr(remote_provider, "close", None)
+                close = getattr(provider, "close", None)
                 if callable(close):
                     close()
         return choices, " ".join(warnings)
+
+    @staticmethod
+    def _all_remote_models(provider):
+        models_by_key = {}
+        errors = []
+        successful_tasks = 0
+        for provider_task in INFERENCE_TASKS:
+            try:
+                descriptors = provider.list_models(provider_task)
+                successful_tasks += 1
+            except Exception as exc:
+                errors.append(exc)
+                continue
+            for descriptor in descriptors:
+                models_by_key[(descriptor.task, descriptor.id)] = descriptor
+        if successful_tasks == 0 and errors:
+            raise errors[0]
+        return list(models_by_key.values())
 
     def request_model_catalog(self, task: str) -> bool:
         if self.discovery_worker is not None and self.discovery_worker.isRunning():
@@ -280,96 +365,130 @@ class InferenceController(QObject):
         worker.start()
         return True
 
-    def discover_remote_catalog(self, config) -> list:
+    def discover_provider_catalog(self, config) -> list:
         snapshot = dict(config or {})
-        provider = self._provider("remote", snapshot)
+        provider_id = str(snapshot.get("provider_id") or "remote")
+        provider = self._provider(provider_id, snapshot)
         try:
-            models_by_key = {}
-            for task in INFERENCE_TASKS:
-                for descriptor in provider.list_models(task):
-                    models_by_key[(descriptor.task, descriptor.id)] = descriptor
-            return list(models_by_key.values())
+            models = self._all_remote_models(provider)
+            update_provider_catalog(self.settings, provider_id, models, status="Ready")
+            return models
         finally:
-            provider.close()
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()
 
-    def request_remote_catalog(self, config) -> bool:
+    def request_provider_catalog(self, config) -> bool:
         if self.discovery_worker is not None and self.discovery_worker.isRunning():
             return False
         snapshot = dict(config or {})
+        provider_id = str(snapshot.get("provider_id") or "remote")
         worker = _CatalogDiscoveryWorker(
-            lambda c=snapshot: self.discover_remote_catalog(c)
+            lambda c=snapshot: self.discover_provider_catalog(c)
         )
-        worker.succeeded.connect(self.remoteCatalogDiscovered.emit)
-        worker.failed.connect(self.remoteCatalogFailed.emit)
+        worker.succeeded.connect(
+            lambda models, pid=provider_id: self.providerCatalogDiscovered.emit(
+                pid, models
+            )
+        )
+        worker.failed.connect(
+            lambda message, pid=provider_id: self.providerCatalogFailed.emit(
+                pid, message
+            )
+        )
         worker.finished.connect(lambda ref=worker: self._cleanup_discovery_worker(ref))
         self.discovery_worker = worker
         worker.start()
         return True
 
-    def request_remote_model_operation(
+    def request_all_remote_catalogs(self, config=None) -> bool:
+        if self.discovery_worker is not None and self.discovery_worker.isRunning():
+            return False
+        snapshot = self.configuration_snapshot() if config is None else dict(config)
+
+        def operation():
+            results = []
+            for provider_config in snapshot.get("providers", []):
+                if provider_config.get("kind") != "remote" or not provider_config.get("enabled"):
+                    continue
+                provider_id = str(provider_config.get("id") or "")
+                provider = self._provider(provider_id, snapshot)
+                try:
+                    models = self._all_remote_models(provider)
+                    update_provider_catalog(self.settings, provider_id, models, status="Ready")
+                    results.append((provider_id, models, ""))
+                except Exception as exc:
+                    update_provider_status(
+                        self.settings, provider_id,
+                        f"Stale catalog; refresh failed: {exc}",
+                    )
+                    results.append((provider_id, None, str(exc)))
+                finally:
+                    provider.close()
+            return results
+
+        worker = _CatalogDiscoveryWorker(operation)
+        worker.succeeded.connect(self._on_all_catalogs_discovered)
+        worker.failed.connect(lambda message: self.providerCatalogFailed.emit("", message))
+        worker.finished.connect(lambda ref=worker: self._cleanup_discovery_worker(ref))
+        self.discovery_worker = worker
+        worker.start()
+        return True
+
+    def _on_all_catalogs_discovered(self, results):
+        for provider_id, models, error in results:
+            if error:
+                self.providerCatalogFailed.emit(provider_id, error)
+            else:
+                self.providerCatalogDiscovered.emit(provider_id, models)
+
+    def request_provider_model_operation(
         self, action: str, configuration: dict
     ) -> bool:
         if (
             self._shutting_down
             or (
-                self.remote_registry_worker is not None
-                and self.remote_registry_worker.isRunning()
+                self.provider_registry_worker is not None
+                and self.provider_registry_worker.isRunning()
             )
         ):
             return False
         action = str(action or "")
         payload = copy.deepcopy(configuration or {})
-        server_url = normalize_server_url(str(payload.pop("server_url", "") or ""))
+        provider_id = str(payload.pop("provider_id", "") or "")
+        server_url = normalize_server_url(
+            str(payload.pop("server_url", payload.pop("url", "")) or "")
+        )
         admin_token = str(payload.pop("admin_token", "") or "")
         if not admin_token:
             raise ValueError("Enter the server administration token.")
 
         def operation():
-            from opensportslib import RemoteModelRegistry
-
-            registry = RemoteModelRegistry(server_url, admin_token=admin_token)
-            if action == "register_huggingface":
-                return registry.register_model(
-                    task_type=self._server_task(payload.get("task")),
-                    huggingface_model_id=str(payload.get("repository_id") or ""),
+            provider = RemoteInferenceProvider(
+                server_url, self.settings, vqa_sessions=self._remote_vqa_sessions
+            )
+            try:
+                result = provider.model_operation(
+                    action, payload, admin_token=admin_token
                 )
-            if action == "register_local":
-                return registry.register_model(
-                    task_type=self._server_task(payload.get("task")),
-                    model_id=str(payload.get("model_id") or "") or None,
-                    weights_path=str(payload.get("weights_path") or ""),
-                    config_path=str(payload.get("config_path") or "") or None,
-                )
-            if action == "set_default":
-                return registry.set_default(
-                    self._server_task(payload.get("task")),
-                    str(payload.get("model_id") or ""),
-                )
-            if action == "unregister":
-                return registry.unregister_model(str(payload.get("model_id") or ""))
-            raise ValueError(f"Unknown remote model operation: {action}")
+                return {"provider_id": provider_id, "result": result}
+            finally:
+                provider.close()
 
         worker = _RemoteRegistryWorker(action, operation)
-        worker.succeeded.connect(self.remoteModelOperationSucceeded.emit)
-        worker.failed.connect(self.remoteModelOperationFailed.emit)
+        worker.succeeded.connect(self.providerModelOperationSucceeded.emit)
+        worker.failed.connect(self.providerModelOperationFailed.emit)
         worker.finished.connect(
-            lambda ref=worker: self._cleanup_remote_registry_worker(ref)
+            lambda ref=worker: self._cleanup_provider_registry_worker(ref)
         )
-        self.remote_registry_worker = worker
-        self.remoteModelOperationStarted.emit(action)
+        self.provider_registry_worker = worker
+        self.providerModelOperationStarted.emit(action)
         worker.start()
         return True
 
-    @staticmethod
-    def _server_task(task) -> str:
-        task = str(task or "")
-        mapped = {"question_answer": "vqa"}.get(task, task)
-        if mapped not in {"classification", "localization", "vqa"}:
-            raise ValueError(f"Unsupported remote model task: {task}")
-        return mapped
-
     def test_connection(self, config=None) -> dict:
-        provider = self._provider("remote", config)
+        snapshot = dict(config or {})
+        provider = self._provider(str(snapshot.get("provider_id") or "remote"), snapshot)
         try:
             return provider.discover_capabilities()
         finally:
@@ -389,16 +508,19 @@ class InferenceController(QObject):
         self._append_log(record, "queued", "Queued", timestamp=submitted_at)
         self._seen_request_ids.add(request.request_id)
         self._records[request.request_id] = record
-        self._queues[request.backend].append(record)
-        self._dispatch_next(request.backend)
+        lane = request.provider_id
+        self._queues.setdefault(lane, deque()).append(record)
+        self._workers.setdefault(lane, None)
+        self._active_records.setdefault(lane, None)
+        self._dispatch_next(lane)
         self._emit_queue_changed()
         return self._entry_for_record(record)
 
-    def _dispatch_next(self, backend: str) -> None:
-        if self._shutting_down or self._workers[backend] is not None:
+    def _dispatch_next(self, lane: str) -> None:
+        if self._shutting_down or self._workers.get(lane) is not None:
             return
-        queue = self._queues[backend]
-        while queue and self._workers[backend] is None and not self._shutting_down:
+        queue = self._queues.setdefault(lane, deque())
+        while queue and self._workers.get(lane) is None and not self._shutting_down:
             record = queue.popleft()
             request = record.request
             record.state = "running"
@@ -410,11 +532,11 @@ class InferenceController(QObject):
                 record.message,
                 timestamp=record.started_at,
             )
-            self._active_records[backend] = record
+            self._active_records[lane] = record
             try:
-                provider = self._provider(backend, request.provider_config)
+                provider = self._provider(request.provider_id, request.provider_config)
             except Exception as exc:
-                self._active_records[backend] = None
+                self._active_records[lane] = None
                 self._terminalize(
                     record,
                     "failed",
@@ -431,24 +553,24 @@ class InferenceController(QObject):
                 continue
             worker = _InferenceWorker(provider, request)
             worker.progress.connect(
-                lambda message, current, total, b=backend, rid=request.request_id: self._on_worker_progress(
+                lambda message, current, total, b=lane, rid=request.request_id: self._on_worker_progress(
                     b, rid, message, current, total
                 )
             )
             worker.succeeded.connect(
-                lambda result, b=backend, rid=request.request_id: self._on_worker_succeeded(
+                lambda result, b=lane, rid=request.request_id: self._on_worker_succeeded(
                     b, rid, result
                 )
             )
             worker.failed.connect(
-                lambda message, code, retryable, details, b=backend, rid=request.request_id: self._on_worker_failed(
+                lambda message, code, retryable, details, b=lane, rid=request.request_id: self._on_worker_failed(
                     b, rid, message, code, retryable, details
                 )
             )
             worker.finished.connect(
-                lambda b=backend, ref=worker: self._cleanup_worker(b, ref)
+                lambda b=lane, ref=worker: self._cleanup_worker(b, ref)
             )
-            self._workers[backend] = worker
+            self._workers[lane] = worker
             self.inferenceStarted.emit(request.request_id, request.task)
             worker.start()
 
@@ -527,7 +649,12 @@ class InferenceController(QObject):
             details=error_details,
         )
         self._records.pop(record.request.request_id, None)
-        self._history.append(record)
+        entry = self._entry_for_record(record, queue_position=-1)
+        self._history.append(entry)
+        self._history_store.append(entry)
+        if self._history_store.error and self._history_store.error != self.history_error:
+            self.history_error = self._history_store.error
+            self.historyErrorChanged.emit(self.history_error)
 
     def _append_log(
         self,
@@ -569,41 +696,24 @@ class InferenceController(QObject):
 
     def cancel_request(self, request_id: str) -> bool:
         request_id = str(request_id or "")
-        for backend in ("local", "remote"):
-            active = self._active_records[backend]
+        for lane in tuple(self._queues):
+            active = self._active_records.get(lane)
             if active is not None and active.request.request_id == request_id:
                 if active.state not in {"running", "cancelling"}:
                     return False
-                if backend == "remote":
-                    worker = self._workers[backend]
-                    if worker is not None:
-                        worker.cancel()
-                        self._detached_remote_workers.add(worker)
-                    self._workers[backend] = None
-                    self._active_records[backend] = None
-                    self._records.pop(request_id, None)
-                    self.inferenceCancelled.emit(request_id)
-                    self._dispatch_next(backend)
-                    self._emit_queue_changed()
-                    return True
                 active.state = "cancelling"
                 active.message = "Cancelling inference"
                 self._append_log(active, "cancelling", active.message)
-                worker = self._workers[backend]
+                worker = self._workers.get(lane)
                 if worker is not None:
                     worker.cancel()
                 self._emit_queue_changed()
                 return True
-            queue = self._queues[backend]
+            queue = self._queues[lane]
             for record in list(queue):
                 if record.request.request_id != request_id:
                     continue
                 queue.remove(record)
-                if backend == "remote":
-                    self._records.pop(request_id, None)
-                    self.inferenceCancelled.emit(request_id)
-                    self._emit_queue_changed()
-                    return True
                 self._terminalize(
                     record,
                     "cancelled",
@@ -617,29 +727,26 @@ class InferenceController(QObject):
 
     def cancel_all(self) -> int:
         cancelled = 0
-        for backend in ("local", "remote"):
-            for record in list(self._queues[backend]):
+        for lane in tuple(self._queues):
+            for record in list(self._queues[lane]):
                 if self.cancel_request(record.request.request_id):
                     cancelled += 1
-            active = self._active_records[backend]
+            active = self._active_records.get(lane)
             if active is not None and self.cancel_request(active.request.request_id):
                 cancelled += 1
         return cancelled
 
     def queue_snapshot(self) -> tuple[InferenceQueueEntry, ...]:
         entries = []
-        for backend in ("local", "remote"):
-            active = self._active_records[backend]
+        for lane in self._queues:
+            active = self._active_records.get(lane)
             if active is not None and active.state in {"running", "cancelling"}:
                 entries.append(self._entry_for_record(active, queue_position=0))
             entries.extend(
                 self._entry_for_record(record, queue_position=index)
-                for index, record in enumerate(self._queues[backend], start=1)
+                for index, record in enumerate(self._queues[lane], start=1)
             )
-        entries.extend(
-            self._entry_for_record(record, queue_position=-1)
-            for record in reversed(self._history)
-        )
+        entries.extend(reversed(self._history))
         return tuple(entries)
 
     def _entry_for_record(self, record, queue_position=None):
@@ -648,7 +755,7 @@ class InferenceController(QObject):
                 queue_position = 0
             else:
                 try:
-                    queue_position = list(self._queues[record.request.backend]).index(record) + 1
+                    queue_position = list(self._queues[record.request.provider_id]).index(record) + 1
                 except ValueError:
                     queue_position = -1
         request = record.request
@@ -670,6 +777,8 @@ class InferenceController(QObject):
             error_details=record.error_details,
             retryable=record.retryable,
             log_events=tuple(record.log_events or ()),
+            provider_id=request.provider_id,
+            provider_name=request.provider_name,
         )
 
     def _emit_queue_changed(self):
@@ -677,13 +786,17 @@ class InferenceController(QObject):
 
     def clear_queue_history(self) -> None:
         self._history.clear()
+        self._history_store.clear()
+        if self._history_store.error and self._history_store.error != self.history_error:
+            self.history_error = self._history_store.error
+            self.historyErrorChanged.emit(self.history_error)
         self._emit_queue_changed()
 
     def has_running_inference(self) -> bool:
         return any(
             worker is not None and worker.isRunning()
             for worker in self._workers.values()
-        ) or any(worker.isRunning() for worker in self._detached_remote_workers)
+        )
 
     def shutdown(self, wait_ms: int = 3000) -> bool:
         self._shutting_down = True
@@ -695,15 +808,15 @@ class InferenceController(QObject):
             if not self.discovery_worker.wait(remaining):
                 return False
         if (
-            self.remote_registry_worker is not None
-            and self.remote_registry_worker.isRunning()
+            self.provider_registry_worker is not None
+            and self.provider_registry_worker.isRunning()
         ):
             remaining = max(0, int((deadline - time.monotonic()) * 1000))
-            if not self.remote_registry_worker.wait(remaining):
+            if not self.provider_registry_worker.wait(remaining):
                 return False
         workers = {
             worker
-            for worker in (*self._workers.values(), *self._detached_remote_workers)
+            for worker in self._workers.values()
             if worker is not None
         }
         for worker in workers:
@@ -713,6 +826,7 @@ class InferenceController(QObject):
             if not worker.wait(remaining):
                 return False
         self.clear_remote_sessions()
+        self._history_store.close()
         return True
 
     def _cleanup_discovery_worker(self, worker):
@@ -720,19 +834,18 @@ class InferenceController(QObject):
             self.discovery_worker = None
         worker.deleteLater()
 
-    def _cleanup_remote_registry_worker(self, worker):
-        if self.remote_registry_worker is worker:
-            self.remote_registry_worker = None
+    def _cleanup_provider_registry_worker(self, worker):
+        if self.provider_registry_worker is worker:
+            self.provider_registry_worker = None
         worker.deleteLater()
 
-    def _cleanup_worker(self, backend, worker):
-        self._detached_remote_workers.discard(worker)
-        if self._workers.get(backend) is worker:
-            self._workers[backend] = None
-            self._active_records[backend] = None
+    def _cleanup_worker(self, lane, worker):
+        if self._workers.get(lane) is worker:
+            self._workers[lane] = None
+            self._active_records[lane] = None
         worker.deleteLater()
         if self._shutting_down:
             self.clear_remote_sessions()
         else:
-            self._dispatch_next(backend)
+            self._dispatch_next(lane)
         self._emit_queue_changed()

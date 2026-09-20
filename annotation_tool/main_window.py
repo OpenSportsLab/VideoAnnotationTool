@@ -1,6 +1,5 @@
 import copy
 import html
-import json
 import os
 import time
 
@@ -74,17 +73,15 @@ from media_control_settings import (
     load_media_control_settings,
 )
 from inference_settings import (
-    LOCAL_MODELS_KEY,
-    LOCAL_MODELS_SCHEMA_VERSION,
-    LOCAL_MODELS_SCHEMA_VERSION_KEY,
-    REMOTE_ADMIN_TOKEN_KEY,
-    REMOTE_ENABLED_KEY,
-    SERVER_URL_KEY,
+    LOCAL_PROVIDER_ID,
+    load_inference_providers,
+    load_local_models,
     load_last_model_choice,
     load_localization_min_confidence_percent,
-    remote_inference_enabled,
     save_last_model_choice,
     save_localization_min_confidence_percent,
+    save_inference_providers,
+    save_local_models,
 )
 from inference_types import (
     InferenceItem,
@@ -617,6 +614,18 @@ class VideoAnnotationWindow(QMainWindow):
         self.inference_controller.inferenceCancelled.connect(self._on_shared_inference_cancelled)
         self.inference_controller.queueChanged.connect(
             self.inference_jobs_widget.set_entries
+        )
+        self.inference_controller.historyErrorChanged.connect(
+            self.inference_jobs_widget.set_history_error
+        )
+        self.inference_jobs_widget.set_entries(
+            self.inference_controller.queue_snapshot()
+        )
+        self.inference_jobs_widget.set_history_error(
+            self.inference_controller.history_error
+        )
+        self.inference_jobs_widget.set_providers(
+            load_inference_providers(self.dataset_explorer_controller.settings)
         )
         self.dataset_explorer_controller.mediaRouteRequested.connect(
             self._handle_media_route
@@ -1359,11 +1368,11 @@ class VideoAnnotationWindow(QMainWindow):
         )
         dialog.inferenceSettingsApplyRequested.connect(self._save_inference_settings)
         dialog.inferenceTestRequested.connect(lambda: self._test_inference_connection(dialog))
-        dialog.inferenceRemoteCatalogRequested.connect(
-            lambda: self._refresh_remote_model_catalog(dialog)
+        dialog.inferenceProviderCatalogRequested.connect(
+            lambda: self._refresh_provider_model_catalog(dialog)
         )
-        dialog.inferenceRemoteModelOperationRequested.connect(
-            lambda action, payload: self._request_remote_model_operation(
+        dialog.inferenceProviderModelOperationRequested.connect(
+            lambda action, payload: self._request_provider_model_operation(
                 dialog, action, payload
             )
         )
@@ -1373,13 +1382,11 @@ class VideoAnnotationWindow(QMainWindow):
         dialog.inferenceHfModelCancelRequested.connect(
             self.hf_transfer_controller.cancel_model_import
         )
-        catalog_slot = lambda models: dialog.set_remote_model_catalog(models)
-        catalog_error_slot = lambda message: dialog.set_inference_connection_status(message, False)
         operation_started_slot = lambda action: dialog.set_remote_model_operation_busy(
             True, f"Starting {str(action).replace('_', ' ')}…"
         )
         operation_succeeded_slot = (
-            lambda action, result: self._on_remote_model_operation_succeeded(
+            lambda action, result: self._on_provider_model_operation_succeeded(
                 dialog, action, result
             )
         )
@@ -1390,33 +1397,52 @@ class VideoAnnotationWindow(QMainWindow):
                 success=False,
             )
         )
-        self.inference_controller.remoteCatalogDiscovered.connect(catalog_slot)
-        self.inference_controller.remoteCatalogFailed.connect(catalog_error_slot)
-        self.inference_controller.remoteModelOperationStarted.connect(
+        self.inference_controller.providerModelOperationStarted.connect(
             operation_started_slot
         )
-        self.inference_controller.remoteModelOperationSucceeded.connect(
+        self.inference_controller.providerModelOperationSucceeded.connect(
             operation_succeeded_slot
         )
-        self.inference_controller.remoteModelOperationFailed.connect(
+        self.inference_controller.providerModelOperationFailed.connect(
             operation_failed_slot
         )
+        provider_catalog_slot = (
+            lambda provider_id, models: dialog.set_provider_model_catalog(
+                provider_id, models
+            )
+        )
+        provider_catalog_error_slot = (
+            lambda provider_id, message: dialog.set_provider_model_catalog(
+                provider_id, [], message
+            )
+        )
+        self.inference_controller.providerCatalogDiscovered.connect(
+            provider_catalog_slot
+        )
+        self.inference_controller.providerCatalogFailed.connect(
+            provider_catalog_error_slot
+        )
+        self.inference_controller.request_all_remote_catalogs()
         dialog.exec()
         dialog.stop_remote_model_polling()
         if self._active_hf_model_settings_dialog is dialog:
             self.hf_transfer_controller.cancel_model_import()
             self._active_hf_model_settings_dialog = None
         try:
-            self.inference_controller.remoteCatalogDiscovered.disconnect(catalog_slot)
-            self.inference_controller.remoteCatalogFailed.disconnect(catalog_error_slot)
-            self.inference_controller.remoteModelOperationStarted.disconnect(
+            self.inference_controller.providerModelOperationStarted.disconnect(
                 operation_started_slot
             )
-            self.inference_controller.remoteModelOperationSucceeded.disconnect(
+            self.inference_controller.providerModelOperationSucceeded.disconnect(
                 operation_succeeded_slot
             )
-            self.inference_controller.remoteModelOperationFailed.disconnect(
+            self.inference_controller.providerModelOperationFailed.disconnect(
                 operation_failed_slot
+            )
+            self.inference_controller.providerCatalogDiscovered.disconnect(
+                provider_catalog_slot
+            )
+            self.inference_controller.providerCatalogFailed.disconnect(
+                provider_catalog_error_slot
             )
         except Exception:
             pass
@@ -1425,19 +1451,30 @@ class VideoAnnotationWindow(QMainWindow):
         settings = getattr(self.dataset_explorer_controller, "settings", None)
         if settings is None:
             return
-        previous_enabled = remote_inference_enabled(settings)
-        next_enabled = bool(payload.get("remote_enabled", False))
-        previous_url = str(settings.value(SERVER_URL_KEY, "") or "").rstrip("/")
-        next_url = str(payload.get("server_url") or "").rstrip("/")
-        settings.setValue(REMOTE_ENABLED_KEY, next_enabled)
-        settings.setValue(SERVER_URL_KEY, next_url)
-        settings.setValue(
-            REMOTE_ADMIN_TOKEN_KEY, str(payload.get("admin_token") or "").strip()
-        )
-        settings.setValue(LOCAL_MODELS_KEY, json.dumps(list(payload.get("local_models") or [])))
-        settings.setValue(LOCAL_MODELS_SCHEMA_VERSION_KEY, LOCAL_MODELS_SCHEMA_VERSION)
-        settings.sync()
-        if previous_url != next_url or previous_enabled != next_enabled:
+        previous = load_inference_providers(settings)
+        providers = payload.get("providers")
+        if providers is None:
+            providers = previous
+            local = next(item for item in providers if item["kind"] == "local")
+            local["models"] = list(payload.get("local_models") or [])
+            remote = next((item for item in providers if item["kind"] == "remote"), None)
+            if remote is None and any(
+                key in payload for key in ("remote_enabled", "server_url", "admin_token")
+            ):
+                from inference_settings import new_remote_provider
+                remote = new_remote_provider("Remote Server", payload.get("server_url") or "http://127.0.0.1:8000")
+                providers.append(remote)
+            if remote is not None:
+                remote.update({
+                    "enabled": bool(payload.get("remote_enabled", remote.get("enabled"))),
+                    "url": str(payload.get("server_url") or remote.get("url") or ""),
+                    "admin_token": str(payload.get("admin_token") or remote.get("admin_token") or ""),
+                })
+        saved = save_inference_providers(settings, providers)
+        jobs_widget = getattr(self, "inference_jobs_widget", None)
+        if jobs_widget is not None:
+            jobs_widget.set_providers(saved)
+        if previous != saved:
             self.inference_controller.clear_remote_sessions()
 
     def _start_hf_model_import(self, dialog, payload: dict) -> None:
@@ -1467,6 +1504,16 @@ class VideoAnnotationWindow(QMainWindow):
         self._active_hf_model_settings_dialog = None
         if dialog is not None:
             dialog.add_downloaded_hf_model(descriptor)
+        settings = getattr(self.dataset_explorer_controller, "settings", None)
+        if settings is not None:
+            models = load_local_models(settings)
+            key = (descriptor.get("task"), descriptor.get("id"))
+            models = [
+                model for model in models
+                if (model.get("task"), model.get("id")) != key
+            ]
+            models.append(dict(descriptor))
+            save_local_models(settings, models)
         self.show_temp_msg(
             "Hugging Face Model",
             f"Added {descriptor.get('id', 'model')} to the Settings draft.",
@@ -1490,26 +1537,60 @@ class VideoAnnotationWindow(QMainWindow):
             )
         self.show_temp_msg("Hugging Face Model", "Model download cancelled.", 3000)
 
-    def _refresh_remote_model_catalog(self, dialog) -> None:
+    def _refresh_provider_model_catalog(self, dialog) -> None:
         try:
             config = dialog.remote_inference_payload()
         except ValueError as exc:
             dialog.set_inference_connection_status(str(exc), False)
             return
-        if not config.get("remote_enabled", False):
+        provider = next(
+            (item for item in config.get("providers", []) if item.get("id") == config.get("provider_id")),
+            {},
+        )
+        if provider.get("kind") == "remote" and not config.get("remote_enabled", False):
             dialog.set_inference_connection_status(
                 "Enable remote inference before refreshing models.", False
             )
             return
-        dialog.set_inference_connection_status("Discovering remote models…", True)
-        if not self.inference_controller.request_remote_catalog(config):
+        dialog.set_inference_connection_status("Refreshing provider models…", True)
+        if not self.inference_controller.request_provider_catalog(config):
             dialog.set_inference_connection_status(
                 "Another model discovery request is still running.", False
             )
 
-    def _request_remote_model_operation(self, dialog, action, payload) -> None:
+    def _request_provider_model_operation(self, dialog, action, payload) -> None:
+        if action in {"add_local_manual", "remove_local", "set_local_default"}:
+            providers = load_inference_providers(
+                getattr(self.dataset_explorer_controller, "settings", None)
+            )
+            local = next(item for item in providers if item["id"] == LOCAL_PROVIDER_ID)
+            task = str(payload.get("task") or "")
+            model_id = str(payload.get("model_id") or "")
+            if action == "add_local_manual":
+                model = dict(payload.get("model") or {})
+                key = (model.get("task"), model.get("id"))
+                local["models"] = [
+                    item for item in local.get("models", [])
+                    if (item.get("task"), item.get("id")) != key
+                ]
+                local["models"].append(model)
+            elif action == "remove_local":
+                local["models"] = [
+                    model for model in local.get("models", [])
+                    if (model.get("task"), model.get("id")) != (task, model_id)
+                ]
+            else:
+                local.setdefault("defaults", {})[task] = model_id
+                for model in local.get("models", []):
+                    if model.get("task") == task:
+                        model["is_default"] = model.get("id") == model_id
+            save_inference_providers(
+                getattr(self.dataset_explorer_controller, "settings", None), providers
+            )
+            dialog.set_remote_model_operation_busy(False, "Local model registry updated.")
+            return
         try:
-            started = self.inference_controller.request_remote_model_operation(
+            started = self.inference_controller.request_provider_model_operation(
                 action, payload
             )
         except Exception as exc:
@@ -1520,14 +1601,16 @@ class VideoAnnotationWindow(QMainWindow):
         if not started:
             dialog.set_remote_model_operation_busy(
                 False,
-                "Another remote model operation is still running.",
+                "Another provider model operation is still running.",
                 success=False,
             )
 
-    def _on_remote_model_operation_succeeded(
+    def _on_provider_model_operation_succeeded(
         self, dialog, action: str, result
     ) -> None:
-        model_id = str((result or {}).get("model_id") or "model")
+        wrapped = result or {}
+        operation_result = wrapped.get("result", wrapped) if isinstance(wrapped, dict) else {}
+        model_id = str((operation_result or {}).get("model_id") or "model")
         messages = {
             "register_huggingface": f"Registration accepted for {model_id}.",
             "register_local": f"Registration accepted for {model_id}.",
@@ -1535,13 +1618,28 @@ class VideoAnnotationWindow(QMainWindow):
             "unregister": f"Unregistration accepted for {model_id}.",
         }
         dialog.set_remote_model_operation_busy(
-            False, messages.get(action, "Remote model operation accepted.")
+            False, messages.get(action, "Provider model operation accepted.")
         )
-        self._refresh_remote_model_catalog(dialog)
+        provider_id = str(wrapped.get("provider_id") or "") if isinstance(wrapped, dict) else ""
+        if provider_id:
+            config = dialog.provider_inference_payload(provider_id)
+            self.inference_controller.request_provider_catalog(config)
 
     def _test_inference_connection(self, dialog) -> None:
         try:
             config = dialog.remote_inference_payload()
+            provider_config = next(
+                (item for item in config.get("providers", []) if item.get("id") == config.get("provider_id")),
+                {},
+            )
+            if provider_config.get("kind") == "local":
+                capabilities = self.inference_controller.test_connection(config)
+                dialog.set_inference_connection_status(
+                    "Local OpenSportsLib is ready "
+                    f"({capabilities.get('version', 'installed')}).",
+                    True,
+                )
+                return
             if not config.get("remote_enabled", False):
                 dialog.set_inference_connection_status(
                     "Enable remote inference before testing the connection.", False
@@ -1740,14 +1838,21 @@ class VideoAnnotationWindow(QMainWindow):
         if not request_items or len(request_items) != len(samples):
             QMessageBox.warning(self, "Inference", "Every batch sample must retain at least one input.")
             return
+        provider_id = str(payload.get("provider_id") or payload["backend"])
+        provider_name = str(payload.get("provider_name") or payload["backend"].title())
+        configured_providers = self.inference_controller.configuration_snapshot().get("providers", [])
+        selected_provider = next(
+            (copy.deepcopy(item) for item in configured_providers if item.get("id") == provider_id),
+            {"id": provider_id, "kind": payload["backend"], "name": provider_name},
+        )
         request = InferenceRequest(
             task=task,
             model_id=payload["model_id"],
             backend=payload["backend"],
+            provider_id=provider_id,
+            provider_name=provider_name,
             dataset_root=str(self.dataset_explorer_controller.project_root or ""),
-            provider_config=copy.deepcopy(
-                self.inference_controller.configuration_snapshot()
-            ),
+            provider_config={"providers": [selected_provider]},
             target_context=copy.deepcopy(context),
             schema=copy.deepcopy(self.dataset_explorer_controller.label_definitions),
             parameters=parameters,
@@ -1762,6 +1867,7 @@ class VideoAnnotationWindow(QMainWindow):
             "project_generation": self.dataset_explorer_controller.project_generation,
             "context": copy.deepcopy(parameters),
             "backend": payload["backend"],
+            "provider_id": provider_id,
             "model_id": payload["model_id"],
             "invalidated": False,
         }
@@ -1785,12 +1891,12 @@ class VideoAnnotationWindow(QMainWindow):
         if entry.state == "queued":
             self.show_temp_msg(
                 "Inference",
-                f"Added to the {entry.backend.title()} queue at position {entry.queue_position}.",
+                f"Added to the {getattr(entry, 'provider_name', entry.backend.title())} queue at position {entry.queue_position}.",
                 2500,
             )
         elif entry.state == "running":
             self.show_temp_msg(
-                "Inference", f"Started {entry.backend.title()} inference.", 1800
+                "Inference", f"Started {getattr(entry, 'provider_name', entry.backend.title())} inference.", 1800
             )
 
     def _on_shared_inference_completed(self, request_id: str, result) -> None:
@@ -1811,7 +1917,7 @@ class VideoAnnotationWindow(QMainWindow):
         save_last_model_choice(
             getattr(self.dataset_explorer_controller, "settings", None),
             pending["task"],
-            pending.get("backend", ""),
+            pending.get("provider_id", pending.get("backend", "")),
             pending.get("model_id", ""),
         )
         request_items = dict(pending.get("request_items") or {})
@@ -1839,6 +1945,9 @@ class VideoAnnotationWindow(QMainWindow):
                 task=result.task,
                 model_id=result.model_id,
                 items=surviving_items,
+                provider_id=result.provider_id,
+                provider_name=result.provider_name,
+                provider_kind=result.provider_kind,
             )
         handlers = {
             "classification": self.classification_editor_controller.apply_shared_inference_result,

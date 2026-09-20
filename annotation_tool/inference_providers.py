@@ -10,13 +10,13 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 import httpx
 import yaml
 
 from controllers.inference_runtime import configure_compute_device
-from inference_settings import load_local_models, normalize_server_url
+from inference_settings import load_local_models, normalize_server_url, save_local_models
 from inference_types import (
     InferenceError,
     InferenceRequest,
@@ -26,6 +26,16 @@ from inference_types import (
 
 
 ProgressCallback = Callable[[str, int, int], None]
+
+
+class InferenceProvider(Protocol):
+    """Common runtime contract implemented by Local and remote adapters."""
+
+    def discover_capabilities(self) -> dict[str, Any]: ...
+    def list_models(self, task: str) -> list[ModelDescriptor]: ...
+    def model_operation(self, action: str, payload: dict, *, admin_token: str = ""): ...
+    def run(self, request: InferenceRequest, progress: ProgressCallback, cancel_event): ...
+    def close(self) -> None: ...
 
 
 def _cancelled(cancel_event) -> bool:
@@ -111,6 +121,40 @@ class LocalInferenceProvider:
         self.settings = settings
         self.base_dir = base_dir or os.path.dirname(__file__)
         self.local_models = copy.deepcopy(local_models) if local_models is not None else None
+
+    def close(self):
+        pass
+
+    def discover_capabilities(self) -> dict[str, Any]:
+        import opensportslib
+        return {
+            "status": "ok", "provider": "local",
+            "version": str(getattr(opensportslib, "__version__", "installed")),
+        }
+
+    def model_operation(self, action: str, payload: dict, *, admin_token: str = ""):
+        models = copy.deepcopy(
+            self.local_models if self.local_models is not None
+            else load_local_models(self.settings)
+        )
+        task = str(payload.get("task") or "")
+        model_id = str(payload.get("model_id") or "")
+        if action == "add":
+            model = dict(payload.get("model") or {})
+            key = (model.get("task"), model.get("id"))
+            models = [item for item in models if (item.get("task"), item.get("id")) != key]
+            models.append(model)
+        elif action == "remove":
+            models = [item for item in models if (item.get("task"), item.get("id")) != (task, model_id)]
+        elif action == "set_default":
+            for model in models:
+                if model.get("task") == task:
+                    model["is_default"] = model.get("id") == model_id
+        else:
+            raise ValueError(f"Unknown Local model operation: {action}")
+        save_local_models(self.settings, models)
+        self.local_models = models
+        return {"model_id": model_id or str((payload.get("model") or {}).get("id") or "")}
 
     def list_models(self, task: str) -> list[ModelDescriptor]:
         from opensportslib import model
@@ -530,6 +574,35 @@ class RemoteInferenceProvider:
             raise InferenceError("Health response must be an object.", code="invalid_response")
         self.capabilities = payload
         return copy.deepcopy(payload)
+
+    def model_operation(self, action: str, payload: dict, *, admin_token: str = ""):
+        if not admin_token:
+            raise ValueError("Enter the server administration token.")
+        from opensportslib import RemoteModelRegistry
+
+        registry = RemoteModelRegistry(self.base_url, admin_token=admin_token)
+        task = {"question_answer": "vqa"}.get(
+            str(payload.get("task") or ""), str(payload.get("task") or "")
+        )
+        if task not in {"classification", "localization", "vqa"}:
+            raise ValueError(f"Unsupported remote model task: {payload.get('task')}")
+        if action == "register_huggingface":
+            return registry.register_model(
+                task_type=task,
+                huggingface_model_id=str(payload.get("repository_id") or ""),
+            )
+        if action == "register_local":
+            return registry.register_model(
+                task_type=task,
+                model_id=str(payload.get("model_id") or "") or None,
+                weights_path=str(payload.get("weights_path") or ""),
+                config_path=str(payload.get("config_path") or "") or None,
+            )
+        if action == "set_default":
+            return registry.set_default(task, str(payload.get("model_id") or ""))
+        if action == "unregister":
+            return registry.unregister_model(str(payload.get("model_id") or ""))
+        raise ValueError(f"Unknown remote model operation: {action}")
 
     def _discover_catalog(self) -> list[ModelDescriptor]:
         if self._catalog is not None:

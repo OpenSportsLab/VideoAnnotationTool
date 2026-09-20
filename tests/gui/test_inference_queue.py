@@ -3,6 +3,8 @@ import threading
 import pytest
 
 from controllers.inference_controller import InferenceController
+import controllers.inference_controller as inference_controller_module
+from inference_history import InferenceHistoryStore
 from inference_types import (
     InferenceError,
     InferenceInput,
@@ -10,6 +12,16 @@ from inference_types import (
     InferenceRequest,
     InferenceResult,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_inference_history(monkeypatch, tmp_path):
+    history_path = tmp_path / "inference-history.sqlite3"
+    monkeypatch.setattr(
+        inference_controller_module,
+        "InferenceHistoryStore",
+        lambda _path=None: InferenceHistoryStore(str(history_path)),
+    )
 
 
 def _request(backend, model_id):
@@ -24,6 +36,19 @@ def _request(backend, model_id):
             )
         ],
     )
+
+
+def _provider_request(provider_id, model_id):
+    request = _request("remote", model_id)
+    request.provider_id = provider_id
+    request.provider_name = provider_id.title()
+    request.provider_config = {
+        "providers": [{
+            "id": provider_id, "kind": "remote", "name": provider_id.title(),
+            "url": f"https://{provider_id}.example", "enabled": True,
+        }]
+    }
+    return request
 
 
 def _result(request):
@@ -105,6 +130,104 @@ def test_local_and_remote_queues_run_concurrently_and_each_remains_fifo(
 
 
 @pytest.mark.gui
+def test_each_remote_provider_has_an_independent_fifo_lane(qtbot, monkeypatch):
+    controller = InferenceController()
+    entered = {name: threading.Event() for name in ("a-1", "a-2", "b-1")}
+    release = {name: threading.Event() for name in entered}
+
+    class Provider:
+        def run(self, request, _progress, _cancel_event):
+            entered[request.model_id].set()
+            release[request.model_id].wait(2)
+            return _result(request)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(controller, "_provider", lambda *_args, **_kwargs: Provider())
+    requests = [
+        _provider_request("server-a", "a-1"),
+        _provider_request("server-a", "a-2"),
+        _provider_request("server-b", "b-1"),
+    ]
+    for request in requests:
+        controller.enqueue_inference(request)
+    qtbot.waitUntil(lambda: entered["a-1"].is_set() and entered["b-1"].is_set())
+    assert not entered["a-2"].is_set()
+    release["a-1"].set()
+    qtbot.waitUntil(entered["a-2"].is_set)
+    release["a-2"].set()
+    release["b-1"].set()
+    qtbot.waitUntil(lambda: not controller.has_running_inference())
+    assert controller.shutdown()
+
+
+@pytest.mark.gui
+def test_terminal_history_restores_from_sqlite_and_clear_is_persistent(
+    qtbot, monkeypatch, tmp_path
+):
+    path = tmp_path / "restored.sqlite3"
+    monkeypatch.setattr(
+        inference_controller_module,
+        "InferenceHistoryStore",
+        lambda _path=None: InferenceHistoryStore(str(path)),
+    )
+
+    class Provider:
+        def run(self, request, _progress, _cancel_event):
+            return _result(request)
+
+        def close(self):
+            pass
+
+    first = InferenceController()
+    monkeypatch.setattr(first, "_provider", lambda *_args, **_kwargs: Provider())
+    request = _provider_request("server-a", "persisted")
+    first.enqueue_inference(request)
+    qtbot.waitUntil(lambda: not first.has_running_inference())
+    assert first.shutdown()
+
+    restored = InferenceController()
+    entries = restored.queue_snapshot()
+    assert [(entry.request_id, entry.provider_id) for entry in entries] == [
+        (request.request_id, "server-a")
+    ]
+    restored.clear_queue_history()
+    assert restored.queue_snapshot() == ()
+    assert restored.shutdown()
+    empty = InferenceController()
+    assert empty.queue_snapshot() == ()
+    assert empty.shutdown()
+
+
+@pytest.mark.gui
+def test_corrupt_history_falls_back_to_session_only(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / "corrupt.sqlite3"
+    path.write_bytes(b"not a sqlite database")
+    monkeypatch.setattr(
+        inference_controller_module,
+        "InferenceHistoryStore",
+        lambda _path=None: InferenceHistoryStore(str(path)),
+    )
+    controller = InferenceController()
+    assert "session-only" in controller.history_error
+    assert controller.queue_snapshot() == ()
+    class Provider:
+        def run(self, request, _progress, _cancel_event):
+            return _result(request)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(controller, "_provider", lambda *_args, **_kwargs: Provider())
+    controller.enqueue_inference(_request("local", "still-runs"))
+    qtbot.waitUntil(lambda: not controller.has_running_inference())
+    qtbot.waitUntil(lambda: len(controller.queue_snapshot()) == 1)
+    assert controller.queue_snapshot()[0].state == "succeeded"
+    assert controller.shutdown()
+
+
+@pytest.mark.gui
 def test_queued_cancel_is_immediate_and_active_cancel_suppresses_late_success(
     qtbot, monkeypatch
 ):
@@ -147,7 +270,7 @@ def test_queued_cancel_is_immediate_and_active_cancel_suppresses_late_success(
 
 
 @pytest.mark.gui
-def test_remote_cancel_forgets_job_and_dispatches_next_without_waiting(
+def test_remote_cancel_waits_for_worker_before_dispatching_next(
     qtbot, monkeypatch
 ):
     controller = InferenceController()
@@ -183,16 +306,13 @@ def test_remote_cancel_forgets_job_and_dispatches_next_without_waiting(
     assert controller.cancel_request(waiting.request_id)
     assert controller.cancel_request(active.request_id)
 
-    assert cancelled == [waiting.request_id, active.request_id]
-    assert not any(
-        entry.request_id in {waiting.request_id, active.request_id}
-        for entry in controller.queue_snapshot()
-    )
+    assert cancelled == [waiting.request_id]
+    assert not entered["next"].is_set()
+    release["active"].set()
+    qtbot.waitUntil(lambda: cancelled == [waiting.request_id, active.request_id])
     qtbot.waitUntil(entered["next"].is_set)
-
     release["next"].set()
     qtbot.waitUntil(lambda: completed == [following.request_id])
-    release["active"].set()
     qtbot.waitUntil(lambda: not controller.has_running_inference())
     assert completed == [following.request_id]
     assert controller.shutdown()
@@ -239,7 +359,7 @@ def test_waiting_request_keeps_submission_time_provider_snapshot(qtbot, monkeypa
 
 
 @pytest.mark.gui
-def test_failure_advances_only_its_lane_and_recent_history_is_bounded(
+def test_failure_advances_only_its_lane_and_terminal_history_is_unlimited(
     qtbot, monkeypatch
 ):
     controller = InferenceController()
@@ -267,10 +387,10 @@ def test_failure_advances_only_its_lane_and_recent_history_is_bounded(
     for index in range(21):
         controller.enqueue_inference(_request("local", f"history-{index}"))
     qtbot.waitUntil(
-        lambda: len([entry for entry in controller.queue_snapshot() if entry.state in {"succeeded", "failed", "cancelled"}]) == 20,
+        lambda: len([entry for entry in controller.queue_snapshot() if entry.state in {"succeeded", "failed", "cancelled"}]) == 23,
         timeout=5000,
     )
-    assert len(controller.queue_snapshot()) == 20
+    assert len(controller.queue_snapshot()) == 23
     controller.clear_queue_history()
     assert controller.queue_snapshot() == ()
     assert controller.enqueue_inference(following) is None

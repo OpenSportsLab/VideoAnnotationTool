@@ -13,15 +13,21 @@ from inference_providers import (
     RemoteVqaSessionCache,
 )
 from inference_settings import (
+    INFERENCE_PROVIDERS_KEY,
+    INFERENCE_PROVIDER_TOKENS_KEY,
     LOCAL_MODELS_KEY,
     LOCAL_MODELS_SCHEMA_VERSION,
     LOCAL_MODELS_SCHEMA_VERSION_KEY,
     REMOTE_ENABLED_KEY,
+    REMOTE_ADMIN_TOKEN_KEY,
+    SERVER_URL_KEY,
+    load_inference_providers,
     load_last_model_choice,
     load_localization_min_confidence_percent,
     load_local_models,
     save_last_model_choice,
     save_localization_min_confidence_percent,
+    save_inference_providers,
 )
 from inference_types import (
     InferenceError,
@@ -47,6 +53,9 @@ class MemorySettings:
 
     def sync(self):
         pass
+
+    def remove(self, key):
+        self.values.pop(key, None)
 
 
 def _request(task, path, *, model_id="model"):
@@ -539,6 +548,85 @@ def test_combined_catalog_keeps_local_models_when_remote_discovery_fails(monkeyp
     assert "server unavailable" in warning
 
 
+def test_failed_remote_refresh_keeps_cached_ready_models_selectable(monkeypatch):
+    controller = InferenceController(settings=MemorySettings(), history_path=":memory:")
+
+    class OfflineProvider:
+        def list_models(self, _task):
+            raise RuntimeError("offline")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(controller, "_provider", lambda *_args, **_kwargs: OfflineProvider())
+    choices, warning = controller.discover_model_catalog("localization", {
+        "providers": [{
+            "id": "server-a", "kind": "remote", "name": "GPU Server",
+            "url": "https://gpu.example", "enabled": True,
+            "models": [{
+                "task": "localization", "id": "spotter",
+                "display_name": "Cached Spotter", "available": True,
+                "status": "ready",
+            }],
+            "defaults": {"localization": "spotter"},
+        }]
+    })
+    assert [choice.key for choice in choices] == [("server-a", "spotter")]
+    assert choices[0].provider_name == "GPU Server"
+    assert "cached catalog" in warning
+    assert controller.shutdown()
+
+
+def test_automatic_catalog_refresh_visits_each_enabled_remote(qtbot, monkeypatch):
+    settings = MemorySettings()
+    providers = load_inference_providers(settings)
+    providers.extend([
+        {
+            "id": "server-a", "kind": "remote", "name": "GPU A",
+            "url": "https://a.example", "enabled": True,
+            "models": [], "defaults": {},
+        },
+        {
+            "id": "server-b", "kind": "remote", "name": "GPU B",
+            "url": "https://b.example", "enabled": True,
+            "models": [], "defaults": {},
+        },
+        {
+            "id": "disabled", "kind": "remote", "name": "Offline",
+            "url": "https://off.example", "enabled": False,
+            "models": [], "defaults": {},
+        },
+    ])
+    save_inference_providers(settings, providers)
+    controller = InferenceController(settings=settings, history_path=":memory:")
+    visited = []
+
+    class Provider:
+        def __init__(self, provider_id):
+            self.provider_id = provider_id
+
+        def list_models(self, task):
+            visited.append((self.provider_id, task))
+            return []
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        controller, "_provider",
+        lambda provider_id, _config=None: Provider(provider_id),
+    )
+    completed = []
+    controller.providerCatalogDiscovered.connect(
+        lambda provider_id, _models: completed.append(provider_id)
+    )
+    assert controller.request_all_remote_catalogs()
+    qtbot.waitUntil(lambda: controller.discovery_worker is None)
+    assert completed == ["server-a", "server-b"]
+    assert {provider_id for provider_id, _task in visited} == {"server-a", "server-b"}
+    assert controller.shutdown()
+
+
 def test_settings_remote_catalog_uses_unsaved_configuration(monkeypatch, tmp_path):
     controller = InferenceController(settings=MemorySettings())
     captured = {}
@@ -562,7 +650,7 @@ def test_settings_remote_catalog_uses_unsaved_configuration(monkeypatch, tmp_pat
         "local_models": [],
     }
 
-    models = controller.discover_remote_catalog(draft)
+    models = controller.discover_provider_catalog(draft)
 
     assert captured == {"backend": "remote", "config": draft}
     assert {(model.task, model.id) for model in models} == {
@@ -647,9 +735,9 @@ def test_remote_registry_operations_use_session_credentials_and_official_client(
         "admin_token": "session-secret",
     }
     with qtbot.waitSignal(
-        controller.remoteModelOperationSucceeded, timeout=1000
+        controller.providerModelOperationSucceeded, timeout=1000
     ) as completed:
-        assert controller.request_remote_model_operation(action, request)
+        assert controller.request_provider_model_operation(action, request)
 
     assert completed.args[0] == action
     assert calls[0] == (
@@ -657,7 +745,7 @@ def test_remote_registry_operations_use_session_credentials_and_official_client(
         {"remote": "http://server", "admin_token": "session-secret"},
     )
     assert calls[1] == (expected_method, expected_kwargs)
-    qtbot.waitUntil(lambda: controller.remote_registry_worker is None)
+    qtbot.waitUntil(lambda: controller.provider_registry_worker is None)
     assert controller.shutdown()
 
 
@@ -673,9 +761,9 @@ def test_remote_registry_operation_reports_admin_errors(qtbot, monkeypatch, stat
     monkeypatch.setattr("opensportslib.RemoteModelRegistry", Registry)
     controller = InferenceController(settings=MemorySettings())
     with qtbot.waitSignal(
-        controller.remoteModelOperationFailed, timeout=1000
+        controller.providerModelOperationFailed, timeout=1000
     ) as failed:
-        assert controller.request_remote_model_operation(
+        assert controller.request_provider_model_operation(
             "set_default",
             {
                 "server_url": "http://server",
@@ -688,7 +776,7 @@ def test_remote_registry_operation_reports_admin_errors(qtbot, monkeypatch, stat
     assert failed.args[0] == "set_default"
     assert f"HTTP {status}" in failed.args[1]
     assert "session-secret" not in failed.args[1]
-    qtbot.waitUntil(lambda: controller.remote_registry_worker is None)
+    qtbot.waitUntil(lambda: controller.provider_registry_worker is None)
     assert controller.shutdown()
 
 
@@ -707,6 +795,95 @@ def test_last_successful_model_choice_is_persisted_per_task():
         "detector",
     )
     assert load_last_model_choice(settings, "description") is None
+
+
+def test_validated_result_keeps_provider_identity():
+    request = _request("description", "/tmp/video.mp4")
+    request.provider_id = "server-a"
+    request.provider_name = "GPU Server A"
+    request.backend = "remote"
+    result = validate_result_payload(
+        request,
+        {"items": [{
+            "item_id": request.items[0].item_id,
+            "sample_id": request.items[0].sample_id,
+            "captions": [],
+        }]},
+    )
+    assert (result.provider_id, result.provider_name, result.provider_kind) == (
+        "server-a", "GPU Server A", "remote"
+    )
+
+
+def test_request_provider_snapshot_removes_admin_credentials():
+    request = InferenceRequest(
+        task="description", model_id="captioner", backend="remote",
+        provider_id="server-a", provider_name="GPU Server",
+        provider_config={
+            "admin_token": "top-secret",
+            "providers": [{
+                "id": "server-a", "kind": "remote", "name": "GPU Server",
+                "url": "https://gpu.example", "admin_token": "server-secret",
+            }],
+        },
+        items=[InferenceItem("sample", [InferenceInput("/tmp/video.mp4")])],
+    )
+    assert "admin_token" not in request.provider_config
+    assert "admin_token" not in request.provider_config["providers"][0]
+
+
+def test_provider_registry_migrates_legacy_remote_and_model_choice():
+    local_models = [{
+        "task": "classification", "id": "local-model",
+        "config_path": "/tmp/model.yaml", "available": True,
+    }]
+    settings = MemorySettings({
+        LOCAL_MODELS_KEY: json.dumps(local_models),
+        LOCAL_MODELS_SCHEMA_VERSION_KEY: LOCAL_MODELS_SCHEMA_VERSION,
+        REMOTE_ENABLED_KEY: True,
+        SERVER_URL_KEY: "HTTP://Example.COM:8000/",
+        REMOTE_ADMIN_TOKEN_KEY: "secret",
+        "inference/last_model/localization": json.dumps({
+            "backend": "remote", "model_id": "spotter",
+        }),
+    })
+
+    providers = load_inference_providers(settings)
+
+    assert [provider["kind"] for provider in providers] == ["local", "remote"]
+    assert providers[0]["models"][0]["id"] == "local-model"
+    assert providers[1]["url"] == "http://example.com:8000"
+    assert providers[1]["admin_token"] == "secret"
+    assert load_last_model_choice(settings, "localization") == (
+        providers[1]["id"], "spotter"
+    )
+    assert SERVER_URL_KEY not in settings.values
+    assert REMOTE_ADMIN_TOKEN_KEY not in settings.values
+    assert INFERENCE_PROVIDERS_KEY in settings.values
+    assert "secret" not in settings.values[INFERENCE_PROVIDERS_KEY]
+    assert "secret" in settings.values[INFERENCE_PROVIDER_TOKENS_KEY]
+
+
+def test_provider_registry_rejects_duplicate_names_and_normalized_urls():
+    settings = MemorySettings()
+    local = {
+        "id": "local", "kind": "local", "name": "Local", "enabled": True,
+        "models": [], "defaults": {},
+    }
+    server_a = {
+        "id": "a", "kind": "remote", "name": "Training", "enabled": True,
+        "url": "https://EXAMPLE.com/", "models": [], "defaults": {},
+    }
+    server_b = {
+        "id": "b", "kind": "remote", "name": "training", "enabled": True,
+        "url": "https://other.example", "models": [], "defaults": {},
+    }
+    with pytest.raises(ValueError, match="names"):
+        save_inference_providers(settings, [local, server_a, server_b])
+    server_b["name"] = "Production"
+    server_b["url"] = "https://example.com"
+    with pytest.raises(ValueError, match="URLs"):
+        save_inference_providers(settings, [local, server_a, server_b])
 
 
 def test_localization_min_confidence_preference_is_bounded_and_persisted():

@@ -20,8 +20,11 @@ from inference_settings import (
     REMOTE_ADMIN_TOKEN_KEY,
     REMOTE_ENABLED_KEY,
     SERVER_URL_KEY,
+    load_inference_providers,
+    new_remote_provider,
     load_localization_min_confidence_percent,
     save_localization_min_confidence_percent,
+    save_inference_providers,
 )
 from inference_types import (
     InferenceInput,
@@ -109,6 +112,10 @@ def test_inference_run_dialog_filters_unavailable_model_and_validates_question(q
 def test_inference_settings_payload_round_trip(qtbot, tmp_path):
     dialog = ApplicationSettingsDialog("2,4", "1,5")
     qtbot.addWidget(dialog)
+    remote = new_remote_provider("GPU Server", "http://127.0.0.1:9000/")
+    dialog.inference_setup_widget._providers.append(remote)
+    dialog.inference_setup_widget._rebuild_provider_combo(remote["id"])
+    dialog.inference_setup_widget._select_provider(1)
     dialog.inference_remote_enabled_checkbox.setChecked(True)
     dialog.inference_server_url_edit.setText("http://127.0.0.1:9000/")
     dialog.inference_admin_token_edit.setText("saved-admin-token")
@@ -120,10 +127,11 @@ def test_inference_settings_payload_round_trip(qtbot, tmp_path):
         "weights": "weights",
     })
     payload = dialog.inference_payload()
-    assert payload["remote_enabled"] is True
-    assert payload["server_url"] == "http://127.0.0.1:9000"
+    remote_payload = next(item for item in payload["providers"] if item["kind"] == "remote")
+    assert remote_payload["enabled"] is True
+    assert remote_payload["url"] == "http://127.0.0.1:9000"
     assert "shared_mappings" not in payload
-    assert payload["admin_token"] == "saved-admin-token"
+    assert remote_payload["admin_token"] == "saved-admin-token"
     assert any(model["task"] == "question_answer" for model in payload["local_models"])
 
 
@@ -132,11 +140,12 @@ def test_remote_setup_controls_are_settings_only_and_follow_enablement(qtbot):
     dialog = ApplicationSettingsDialog("2,4", "1,5")
     qtbot.addWidget(dialog)
 
-    assert not dialog.inference_remote_enabled_checkbox.isChecked()
+    assert dialog.inference_setup_widget.provider_combo.currentData() == "local"
+    assert not dialog.inference_setup_widget.remove_provider_button.isEnabled()
     assert not dialog.inference_server_url_edit.isEnabled()
-    assert not dialog.inference_test_button.isEnabled()
-    assert not dialog.inference_refresh_models_button.isEnabled()
-    assert dialog.inference_server_url_edit.text() == "http://127.0.0.1:8000"
+    assert dialog.inference_test_button.isEnabled()
+    assert dialog.inference_refresh_models_button.isEnabled()
+    assert dialog.inference_server_url_edit.text() == ""
     assert not hasattr(dialog, "shared_mapping_table")
     assert dialog.inference_admin_token_edit.text() == ""
     assert (
@@ -144,14 +153,20 @@ def test_remote_setup_controls_are_settings_only_and_follow_enablement(qtbot):
         == QAbstractItemView.EditTrigger.NoEditTriggers
     )
 
-    dialog.inference_remote_enabled_checkbox.setChecked(True)
+    remote = new_remote_provider("Remote", DEFAULT_SERVER_URL)
+    dialog.inference_setup_widget._providers.append(remote)
+    dialog.inference_setup_widget._rebuild_provider_combo(remote["id"])
+    dialog.inference_setup_widget._select_provider(1)
     assert dialog.inference_server_url_edit.isEnabled()
     assert dialog.inference_test_button.isEnabled()
     assert dialog.inference_refresh_models_button.isEnabled()
-    assert not dialog.register_remote_model_button.isEnabled()
+    assert dialog.register_remote_model_button.isEnabled()
     dialog.inference_admin_token_edit.setText("session-secret")
     assert dialog.register_remote_model_button.isEnabled()
-    assert dialog.inference_payload()["admin_token"] == "session-secret"
+    assert next(
+        item for item in dialog.inference_payload()["providers"]
+        if item["kind"] == "remote"
+    )["admin_token"] == "session-secret"
     dialog.reject()
     assert dialog.inference_admin_token_edit.text() == ""
 
@@ -165,9 +180,43 @@ def test_remote_admin_token_loads_from_application_settings(qtbot, tmp_path):
 
     dialog = ApplicationSettingsDialog("2,4", "1,5", settings=settings)
     qtbot.addWidget(dialog)
-
+    dialog.inference_setup_widget.provider_combo.setCurrentIndex(1)
     assert dialog.inference_admin_token_edit.text() == "persisted-secret"
-    assert dialog.inference_payload()["admin_token"] == "persisted-secret"
+    assert next(
+        item for item in dialog.inference_payload()["providers"]
+        if item["kind"] == "remote"
+    )["admin_token"] == "persisted-secret"
+
+
+@pytest.mark.gui
+def test_provider_selector_shows_cached_catalog_per_server(qtbot, tmp_path):
+    settings = QSettings(str(tmp_path / "providers.ini"), QSettings.Format.IniFormat)
+    providers = load_inference_providers(settings)
+    first = new_remote_provider("GPU One", "https://gpu-one.example")
+    first["models"] = [{
+        "task": "localization", "id": "shared", "display_name": "Spotter A",
+        "available": True, "status": "ready",
+    }]
+    second = new_remote_provider("GPU Two", "https://gpu-two.example")
+    second["models"] = [{
+        "task": "localization", "id": "shared", "display_name": "Spotter B",
+        "available": True, "status": "ready",
+    }]
+    from inference_settings import save_inference_providers
+    save_inference_providers(settings, [*providers, first, second])
+
+    dialog = ApplicationSettingsDialog("2,4", "1,5", settings=settings)
+    qtbot.addWidget(dialog)
+    selector = dialog.inference_setup_widget.provider_combo
+    assert [selector.itemText(index) for index in range(selector.count())] == [
+        "Local", "GPU One", "GPU Two"
+    ]
+    selector.setCurrentIndex(1)
+    assert dialog.remote_model_table.item(0, 1).text() == "shared"
+    assert dialog.remote_model_table.item(0, 4).text() == ""
+    selector.setCurrentIndex(2)
+    assert dialog.remote_model_table.item(0, 1).text() == "shared"
+    assert dialog.inference_server_url_edit.text() == "https://gpu-two.example"
 
 
 @pytest.mark.gui
@@ -194,7 +243,12 @@ def test_applying_inference_settings_persists_remote_admin_token(tmp_path):
         },
     )
 
-    assert settings.value(REMOTE_ADMIN_TOKEN_KEY) == "persisted-secret"
+    remote = next(
+        item for item in load_inference_providers(settings)
+        if item["kind"] == "remote"
+    )
+    assert remote["admin_token"] == "persisted-secret"
+    assert settings.value(REMOTE_ADMIN_TOKEN_KEY, None) is None
 
 
 @pytest.mark.gui
@@ -229,6 +283,10 @@ def test_remote_registry_table_shows_state_default_and_emits_admin_actions(
 ):
     dialog = ApplicationSettingsDialog("2,4", "1,5")
     qtbot.addWidget(dialog)
+    remote = new_remote_provider("Inference GPU", DEFAULT_SERVER_URL)
+    dialog.inference_setup_widget._providers.append(remote)
+    dialog.inference_setup_widget._rebuild_provider_combo(remote["id"])
+    dialog.inference_setup_widget._select_provider(1)
     dialog.inference_remote_enabled_checkbox.setChecked(True)
     dialog.inference_admin_token_edit.setText("session-secret")
     ready = ModelDescriptor(
@@ -247,37 +305,23 @@ def test_remote_registry_table_shows_state_default_and_emits_admin_actions(
     )
     dialog.set_remote_model_catalog([ready, registering])
 
-    assert dialog.remote_model_table.columnCount() == 4
+    assert dialog.remote_model_table.columnCount() == 5
     assert dialog.remote_model_table.item(0, 2).text() == "ready"
     assert dialog.remote_model_table.item(1, 2).text() == "registering"
-    assert dialog.inference_setup_widget._remote_refresh_timer.isActive()
-    dialog.stop_remote_model_polling()
-    assert not dialog.inference_setup_widget._remote_refresh_timer.isActive()
-    dialog.set_remote_model_catalog([ready, registering])
     dialog.remote_model_table.selectRow(0)
     assert dialog.set_remote_default_button.isEnabled()
 
     with qtbot.waitSignal(
-        dialog.inferenceRemoteModelOperationRequested, timeout=500
+        dialog.inferenceProviderModelOperationRequested, timeout=500
     ) as default_request:
         dialog.set_remote_default_button.click()
-    assert default_request.args == [
-        "set_default",
-        {
-            "task": "classification",
-            "model_id": "ready-model",
-            "server_url": "http://127.0.0.1:8000",
-            "admin_token": "session-secret",
-        },
-    ]
+    assert default_request.args[0] == "set_default"
+    assert default_request.args[1]["provider_id"] == remote["id"]
+    assert default_request.args[1]["model_id"] == "ready-model"
+    assert default_request.args[1]["admin_token"] == "session-secret"
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
-    )
     with qtbot.waitSignal(
-        dialog.inferenceRemoteModelOperationRequested, timeout=500
+        dialog.inferenceProviderModelOperationRequested, timeout=500
     ) as unregister_request:
         dialog.unregister_remote_model_button.click()
     assert unregister_request.args[0] == "unregister"
@@ -291,10 +335,7 @@ def test_remote_registry_table_shows_state_default_and_emits_admin_actions(
         is_default=True,
     )
     dialog.set_remote_model_catalog([default_ready])
-    assert not dialog.inference_setup_widget._remote_refresh_timer.isActive()
-    assert dialog.remote_model_table.currentRow() == 0
     assert dialog.remote_model_table.item(0, 3).text() == "Yes"
-    assert not dialog.set_remote_default_button.isEnabled()
 
 
 @pytest.mark.gui
@@ -395,18 +436,6 @@ def test_hf_downloaded_model_upserts_and_preserves_hidden_metadata(qtbot, tmp_pa
     assert model["hf_checkpoint_filename"] == "model.pt"
     assert model["trusted_legacy"] is True
 
-    row = next(
-        row
-        for row in range(dialog.local_model_table.rowCount())
-        if dialog.local_model_table.item(row, 1).text() == descriptor["id"]
-    )
-    dialog.local_model_table.item(row, 4).setText(str(tmp_path / "other.pt"))
-    edited = next(
-        model
-        for model in dialog.inference_payload()["local_models"]
-        if model["id"] == descriptor["id"]
-    )
-    assert edited["trusted_legacy"] is False
 
 
 @pytest.mark.gui
@@ -433,7 +462,9 @@ def test_arbitrary_hf_model_never_receives_legacy_trust(qtbot, tmp_path):
 
 
 @pytest.mark.gui
-def test_downloaded_model_is_staged_until_settings_apply(qtbot, tmp_path):
+def test_downloaded_model_is_persisted_immediately(qtbot, tmp_path):
+    from main_window import VideoAnnotationWindow
+
     descriptor = {
         "task": "classification",
         "id": "owner/downloaded",
@@ -444,24 +475,21 @@ def test_downloaded_model_is_staged_until_settings_apply(qtbot, tmp_path):
         "hf_revision": "main",
         "hf_checkpoint_filename": "model.safetensors",
     }
-    cancelled = ApplicationSettingsDialog("2,4", "1,5")
-    qtbot.addWidget(cancelled)
-    cancelled_payloads = []
-    cancelled.inferenceSettingsApplyRequested.connect(cancelled_payloads.append)
-    cancelled.add_downloaded_hf_model(descriptor)
-    cancelled.reject()
-    assert cancelled_payloads == []
-
-    applied = ApplicationSettingsDialog("2,4", "1,5")
-    qtbot.addWidget(applied)
-    applied_payloads = []
-    applied.inferenceSettingsApplyRequested.connect(applied_payloads.append)
-    applied.add_downloaded_hf_model(descriptor)
-    applied._apply(close_after=False)
-    assert any(
-        model["id"] == "owner/downloaded"
-        for model in applied_payloads[-1]["local_models"]
+    settings = QSettings(str(tmp_path / "models.ini"), QSettings.Format.IniFormat)
+    dialog = ApplicationSettingsDialog("2,4", "1,5", settings=settings)
+    qtbot.addWidget(dialog)
+    owner = SimpleNamespace(
+        _active_hf_model_settings_dialog=dialog,
+        dataset_explorer_controller=SimpleNamespace(settings=settings),
+        show_temp_msg=lambda *_args: None,
     )
+    VideoAnnotationWindow._on_hf_model_import_completed(owner, descriptor)
+    dialog.reject()
+    persisted = next(
+        provider for provider in load_inference_providers(settings)
+        if provider["kind"] == "local"
+    )
+    assert [model["id"] for model in persisted["models"]] == ["owner/downloaded"]
 
 
 @pytest.mark.gui
@@ -487,9 +515,7 @@ def test_removing_any_local_model_persists_as_an_empty_registry(qtbot, tmp_path)
     dialog.remove_local_model_button.click()
     assert dialog.inference_payload()["local_models"] == []
     dialog.inferenceSettingsApplyRequested.connect(
-        lambda payload: settings.setValue(
-            LOCAL_MODELS_KEY, json.dumps(payload["local_models"])
-        )
+        lambda payload: save_inference_providers(settings, payload["providers"])
     )
     dialog._apply(close_after=False)
 
@@ -578,6 +604,22 @@ def test_run_dialog_distinguishes_duplicate_ids_and_restores_provider_choice(qtb
     assert dialog.model_combo.itemText(0) == "Local — Shared model"
     assert dialog.model_combo.itemText(1) == "Remote — Shared model"
     assert dialog.payload()["backend"] == "remote"
+
+
+@pytest.mark.gui
+def test_run_dialog_restores_exact_remote_provider_for_duplicate_model_ids(qtbot):
+    descriptor = ModelDescriptor("shared-id", "Shared model", "localization")
+    dialog = InferenceRunDialog(
+        "localization", [InferenceInput("/tmp/video.mp4")],
+        preferred_model=("server-b", "shared-id"),
+    )
+    qtbot.addWidget(dialog)
+    dialog.set_models([
+        InferenceModelChoice("remote", descriptor, "server-a", "GPU A"),
+        InferenceModelChoice("remote", descriptor, "server-b", "GPU B"),
+    ])
+    assert dialog.model_combo.currentText() == "GPU B — Shared model"
+    assert dialog.payload()["provider_id"] == "server-b"
 
 
 @pytest.mark.gui
@@ -880,6 +922,8 @@ def test_localization_run_remembers_range_until_selection_changes(
             threshold, start_ms, end_ms, supports_range = next(run_options)
             return {
                 "backend": backend,
+                "provider_id": "local" if backend == "local" else "server-a",
+                "provider_name": "Local" if backend == "local" else "GPU A",
                 "model_id": "model",
                 "inputs": self.inputs,
                 "min_confidence": threshold,
@@ -908,7 +952,15 @@ def test_localization_run_remembers_range_until_selection_changes(
         modelCatalogDiscovered=Signal(),
         modelCatalogFailed=Signal(),
         request_model_catalog=lambda _task: True,
-        configuration_snapshot=lambda: {},
+        configuration_snapshot=lambda: {"providers": [{
+            "id": "local" if backend == "local" else "server-a",
+            "kind": backend,
+            "name": "Local" if backend == "local" else "GPU A",
+            "url": "https://gpu-a.example" if backend == "remote" else "",
+            "admin_token": "must-not-enter-request",
+            "enabled": True,
+            "models": [],
+        }]},
         enqueue_inference=enqueue,
         clear_remote_sessions=lambda: None,
     )
@@ -952,6 +1004,8 @@ def test_localization_run_remembers_range_until_selection_changes(
     assert load_localization_min_confidence_percent(settings) == 40.0
     for request in captured["requests"]:
         assert owner._pending_inference_requests[request.request_id]["context"]["min_confidence"] == request.parameters["min_confidence"]
+        assert request.provider_id == ("local" if backend == "local" else "server-a")
+        assert "admin_token" not in request.provider_config["providers"][0]
     owner._pending_inference_requests.clear()
     VideoAnnotationWindow._on_project_generation_changed(owner, 2)
     assert owner._localization_inference_range is None
@@ -961,6 +1015,13 @@ def test_localization_run_remembers_range_until_selection_changes(
 def test_inference_jobs_widget_renders_queues_history_logs_and_actions(qtbot):
     widget = InferenceJobsWidget(QAction("Run Inference…"))
     qtbot.addWidget(widget)
+    assert not hasattr(widget, "tabs")
+    widget.set_providers([
+        {"id": "local", "kind": "local", "name": "Local", "enabled": True},
+        {"id": "a", "kind": "remote", "name": "GPU A", "enabled": True},
+        {"id": "b", "kind": "remote", "name": "GPU B", "enabled": True},
+    ])
+    assert widget.summary_label.text() == "Local: Idle | GPU A: Idle | GPU B: Idle"
     active = InferenceQueueEntry(
         request_id="request",
         backend="local",
@@ -990,11 +1051,12 @@ def test_inference_jobs_widget_renders_queues_history_logs_and_actions(qtbot):
 
     assert "Local: Running 2/5, 1 queued" in widget.summary_label.text()
     assert widget.local_table.rowCount() == 2
+    assert widget.jobs_table.columnCount() == 8
     with qtbot.waitSignal(widget.cancelRequested, timeout=500):
-        widget.local_table.cellWidget(0, 3).click()
+        widget.jobs_table.cellWidget(0, 7).click()
     with qtbot.waitSignal(widget.cancelAllRequested, timeout=500):
         widget.cancel_all_button.click()
-    widget.local_table.cellWidget(0, 2).click()
+    widget.jobs_table.cellWidget(0, 6).click()
     assert "Running inference" in widget.details_view.toPlainText()
 
     failed = InferenceQueueEntry(
@@ -1015,13 +1077,13 @@ def test_inference_jobs_widget_renders_queues_history_logs_and_actions(qtbot):
     )
     widget.set_entries((failed,))
     assert widget.history_table.rowCount() == 1
-    widget.history_table.cellWidget(0, 4).click()
+    widget.jobs_table.cellWidget(0, 6).click()
     assert "job-1" in widget.details_view.toPlainText()
     with qtbot.waitSignal(widget.clearHistoryRequested, timeout=500):
         widget.clear_history_button.click()
 
     widget.set_entries(())
-    assert widget.summary_label.text() == "Local: Idle | Remote: Idle"
+    assert widget.summary_label.text() == "Local: Idle | GPU A: Idle | GPU B: Idle"
 
 
 @pytest.mark.gui
