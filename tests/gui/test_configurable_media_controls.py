@@ -65,7 +65,7 @@ def test_media_panel_builds_symmetric_seek_buttons_in_one_row(qtbot):
 
 
 @pytest.mark.gui
-def test_settings_dialog_validates_applies_normalizes_and_restores_defaults(qtbot):
+def test_settings_dialog_validates_applies_and_normalizes(qtbot):
     dialog = ApplicationSettingsDialog("2,4", "1,5", 750)
     qtbot.addWidget(dialog)
     applied = []
@@ -86,11 +86,8 @@ def test_settings_dialog_validates_applies_normalizes_and_restores_defaults(qtbo
     assert page_sizes == [900]
     assert dialog.result() == 0
 
-    qtbot.mouseClick(dialog.restore_defaults_button, Qt.MouseButton.LeftButton)
-    assert dialog.playback_factors_edit.text() == "2,4"
-    assert dialog.seek_intervals_edit.text() == "1,5"
-    assert dialog.explorer_page_size_spin.value() == 500
     assert len(applied) == 1
+    assert not hasattr(dialog, "restore_defaults_button")
 
 
 @pytest.mark.gui
@@ -136,13 +133,7 @@ def test_settings_dialog_validates_and_applies_localization_shortcuts(qtbot):
     assert applied[-1]["localization_accept"] == "Alt+Return"
     assert applied[-1]["localization_reject"] == "Alt+Backspace"
 
-    qtbot.mouseClick(dialog.restore_defaults_button, Qt.MouseButton.LeftButton)
-    assert accept_edit.keySequence().toString() == DEFAULT_SHORTCUTS[
-        "localization_accept"
-    ]
-    assert reject_edit.keySequence().toString() == DEFAULT_SHORTCUTS[
-        "localization_reject"
-    ]
+    assert not hasattr(dialog, "restore_defaults_button")
 
 
 @pytest.mark.gui

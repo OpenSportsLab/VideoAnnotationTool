@@ -22,6 +22,7 @@ from inference_settings import (
     load_inference_providers,
     load_local_models,
     normalize_server_url,
+    save_inference_providers,
     update_provider_catalog,
     update_provider_status,
 )
@@ -117,7 +118,7 @@ class _CatalogDiscoveryWorker(QThread):
             self.failed.emit(str(exc))
 
 
-class _RemoteRegistryWorker(QThread):
+class _ProviderModelOperationWorker(QThread):
     succeeded = pyqtSignal(str, object)
     failed = pyqtSignal(str, str)
 
@@ -259,14 +260,13 @@ class InferenceController(QObject):
             snapshot["providers"] = [{
                 "id": "local", "kind": "local", "name": "Local",
                 "enabled": True, "models": snapshot.get("local_models", []),
-                "defaults": {},
             }]
             if snapshot.get("remote_enabled"):
                 snapshot["providers"].append({
                     "id": "remote", "kind": "remote", "name": "Remote",
                     "enabled": True,
                     "url": snapshot.get("server_url", "http://127.0.0.1:8000"),
-                    "models": [], "defaults": {},
+                    "models": [],
                 })
         choices = []
         warnings = []
@@ -286,13 +286,6 @@ class InferenceController(QObject):
                         self._all_remote_models(provider),
                         status="Ready",
                     )
-                default_id = str((provider_config.get("defaults") or {}).get(task) or "")
-                models = sorted(
-                    models,
-                    key=lambda descriptor: not (
-                        descriptor.is_default or descriptor.id == default_id
-                    ),
-                )
                 for descriptor in models:
                     if descriptor.available:
                         choices.append(InferenceModelChoice(
@@ -475,7 +468,56 @@ class InferenceController(QObject):
             finally:
                 provider.close()
 
-        worker = _RemoteRegistryWorker(action, operation)
+        worker = _ProviderModelOperationWorker(action, operation)
+        worker.succeeded.connect(self.providerModelOperationSucceeded.emit)
+        worker.failed.connect(self.providerModelOperationFailed.emit)
+        worker.finished.connect(
+            lambda ref=worker: self._cleanup_provider_registry_worker(ref)
+        )
+        self.provider_registry_worker = worker
+        self.providerModelOperationStarted.emit(action)
+        worker.start()
+        return True
+
+    def request_local_model_validation(self, configuration: dict) -> bool:
+        if (
+            self._shutting_down
+            or (
+                self.provider_registry_worker is not None
+                and self.provider_registry_worker.isRunning()
+            )
+        ):
+            return False
+        payload = copy.deepcopy(configuration or {})
+
+        def operation():
+            validated = LocalInferenceProvider.validate_model(
+                dict(payload.get("model") or {})
+            )
+            providers = load_inference_providers(self.settings)
+            local = next(
+                provider
+                for provider in providers
+                if provider["id"] == LOCAL_PROVIDER_ID
+            )
+            key = (validated.get("task"), validated.get("id"))
+            local["models"] = [
+                model
+                for model in local.get("models", [])
+                if (model.get("task"), model.get("id")) != key
+            ]
+            local["models"].append(validated)
+            save_inference_providers(self.settings, providers)
+            return {
+                "provider_id": LOCAL_PROVIDER_ID,
+                "result": {
+                    "model_id": str(validated.get("id") or ""),
+                    "model": validated,
+                },
+            }
+
+        action = "add_local_manual"
+        worker = _ProviderModelOperationWorker(action, operation)
         worker.succeeded.connect(self.providerModelOperationSucceeded.emit)
         worker.failed.connect(self.providerModelOperationFailed.emit)
         worker.finished.connect(

@@ -25,17 +25,17 @@ The provider selector always lists **Local** first. Use **Add Server…** to add
 remote providers with unique display names and normalized URLs. Each remote has
 its own enabled state and administration token. Selecting a provider shows its
 configuration, health, and models in one shared table. **Test**, **Refresh**,
-**Add from Hugging Face…**, **Add Manually**, **Remove**, and **Set Default**
+**Add from Hugging Face…**, **Add Manually**, and **Remove**
 apply to the selected provider. Model operations take effect immediately;
 closing Settings does not undo them. Remote configuration edits are saved only
-with **Apply** or **OK**.
+with **Apply** or **OK**. Removing a remote provider requires confirmation.
 
 - **Local Models** is an editable registry containing task, model ID, display
   name, config YAML, and optional weights. Fresh installations start with an
   empty registry. Every model is explicitly added and every row can be removed;
-  saving an empty registry keeps it empty when Settings is reopened. **Restore
-  Defaults** also clears the registry. Retired `jeetv` entries persisted by
-  earlier application versions are filtered during loading. The former
+  saving an empty registry keeps it empty when Settings is reopened. There is
+  no global reset action that can clear the registry. Retired `jeetv` entries
+  persisted by earlier application versions are filtered during loading. The former
   automatically seeded OpenSportsLab rows are also migrated out when they still
   use repository IDs as lazy weights; explicitly imported cache-backed rows are
   retained.
@@ -61,8 +61,12 @@ with **Apply** or **OK**.
   a compatible model repository, then retry the import.
   Cancellation is best-effort during a single Hugging Face file operation, but
   a cancelled result is never inserted. A completed import is added to the
-  Local registry immediately. **Add Manually** remains available for paths
-  already on disk.
+  Local registry immediately. **Add Manually** provides file pickers for a
+  required configuration and optional weights. Config-only models leave the
+  weights field empty. VAT constructs the matching OpenSportsLib task model
+  in a background worker before marking the row `ready`; a constructor or
+  configuration failure keeps the row visible as `failed` and excludes it from
+  Run Inference.
 - The official `OpenSportsLab/OSL-loc-snbas-2025-e2e` and
   `OpenSportsLab/OSL-loc-snbas-2023-e2e` localization checkpoints use a legacy
   pickle format. Only these exact allowlisted repository identities may opt
@@ -78,8 +82,8 @@ with **Apply** or **OK**.
 - **Refresh** reads the selected server registry. Cached catalogs appear
   immediately, and VAT automatically refreshes every enabled server when
   Settings or Run Inference opens. The table shows every
-  `registering`, `ready`, `failed`, or `unregistering` model and marks task
-  defaults; only healthy `ready` models appear in **Run Inference…**. Server
+  `registering`, `ready`, `failed`, or `unregistering` model; only healthy
+  `ready` models appear in **Run Inference…**. Server
   task `vqa` appears as Q/A.
 - **Admin token** is saved in VAT's local application settings when you choose
   **Apply** or **OK**. It is restored the next time Settings or VAT is opened,
@@ -87,8 +91,7 @@ with **Apply** or **OK**.
   may not encrypt it, so use this only on a trusted workstation; clear the
   field and apply the change to remove it. With a token, **Register Model…** adds
   either a Hugging Face repository or server-local weights/config paths,
-  **Set as Default** changes the selected task default, and **Unregister**
-  removes a model after confirmation. These actions take effect immediately on
+  and **Unregister** removes a model. These actions take effect immediately on
   the external server; cancelling Settings does not undo them. Registration
   and removal are asynchronous, and VAT refreshes transient status every two
   seconds while Settings remains open. If a refresh fails, VAT retains the
@@ -103,8 +106,8 @@ Only **Apply** or **OK** persists the setup; **Cancel** leaves saved settings
 unchanged.
 
 Existing Local and single-server settings are migrated automatically. The
-provider registry stores stable provider IDs, cached catalogs, task defaults,
-last successful refresh times, and connection status. Administration tokens
+provider registry stores stable provider IDs, cached catalogs, last successful
+refresh times, and connection status. Administration tokens
 are stored separately in application settings and never enter the catalog.
 
 Inference and public registry reads require no authentication. Registry changes
@@ -435,9 +438,7 @@ these official endpoints without an `/api/v1` prefix:
 |---|---|
 | `GET /health` | API, Redis, worker, and configured-model health |
 | `GET /models` | Public model IDs, tasks, and lifecycle states |
-| `GET /config-capabilities?task_type=…` | Identify each task's current default model |
 | `POST /models` | Authenticated Hugging Face or server-local registration |
-| `PUT /models/defaults/{task_type}` | Authenticated task-default update |
 | `DELETE /models/{model_id}` | Authenticated asynchronous removal |
 | `POST /predict` | Multipart video submission or session-based VQA follow-up |
 | `GET /jobs/{job_id}` | Poll asynchronous job status |
@@ -475,16 +476,16 @@ in process; `RemoteInferenceProvider` is the official-server adapter. It discove
 models, constructs `ClassificationModel`, `LocalizationModel`, or `VQAModel`
 with only `remote=server_url` and `remote_model_id=model_id`. Remote model IDs
 are independent of local weights and never trigger local config or Hugging Face
-resolution. `ModelDescriptor.status` and `is_default` expose registry state to
-Settings; `InferenceResult`, editor signals,
+resolution. `ModelDescriptor.status` exposes registry state to Settings;
+`InferenceResult`, editor signals,
 pending-review behavior, history mutations, and persisted OSL JSON remain
 unchanged. Effective acceptance still creates exactly one history entry;
 rejection and unreviewed inference create none.
 
 The provider registry is application state in `QSettings`. Local is permanent;
 remote providers use UUIDs and require unique case-insensitive names and
-normalized URLs. Catalogs, defaults, refresh times, and status are stored per
-provider. Tokens use a separate settings value. Legacy Local and one-server
+normalized URLs. Catalogs, refresh times, and status are stored per provider.
+Tokens use a separate settings value. Legacy Local and one-server
 keys migrate once and are removed only after the new registry is saved.
 
 Authenticated registry operations run in a separate controller-owned worker,

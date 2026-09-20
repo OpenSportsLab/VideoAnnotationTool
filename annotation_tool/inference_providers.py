@@ -146,15 +146,76 @@ class LocalInferenceProvider:
             models.append(model)
         elif action == "remove":
             models = [item for item in models if (item.get("task"), item.get("id")) != (task, model_id)]
-        elif action == "set_default":
-            for model in models:
-                if model.get("task") == task:
-                    model["is_default"] = model.get("id") == model_id
         else:
             raise ValueError(f"Unknown Local model operation: {action}")
         save_local_models(self.settings, models)
         self.local_models = models
         return {"model_id": model_id or str((payload.get("model") or {}).get("id") or "")}
+
+    @staticmethod
+    def validate_model(model_definition: dict) -> dict:
+        """Construct a manually configured model and return its registry state."""
+        model_definition = copy.deepcopy(model_definition or {})
+        task = str(model_definition.get("task") or "")
+        config_path = os.path.abspath(
+            os.path.expanduser(str(model_definition.get("config_path") or ""))
+        )
+        weights = str(model_definition.get("weights") or "").strip()
+        if weights:
+            weights = os.path.abspath(os.path.expanduser(weights))
+        model_definition.update(
+            config_path=config_path,
+            weights=weights,
+            checkpoint_free=not bool(weights),
+            trusted_legacy=False,
+        )
+        try:
+            if task not in {
+                "classification", "localization", "description",
+                "dense_description", "question_answer",
+            }:
+                raise ValueError(f"Unsupported inference task: {task!r}")
+            if not os.path.isfile(config_path):
+                raise ValueError(f"Config file does not exist: {config_path}")
+            if weights and not os.path.isfile(weights):
+                raise ValueError(f"Weights file does not exist: {weights}")
+            from opensportslib import model
+
+            class_name = {
+                "classification": "ClassificationModel",
+                "localization": "LocalizationModel",
+                "description": "DescriptionModel",
+                "dense_description": "DenseDescriptionModel",
+                "question_answer": "VQAModel",
+            }[task]
+            model_class = getattr(model, class_name, None)
+            if model_class is None:
+                raise ValueError(
+                    f"Installed OpenSportsLib has no {class_name} API."
+                )
+            runner = model_class(config=config_path)
+            configured_task = str(
+                getattr(getattr(runner, "config", None), "TASK", "") or ""
+            ).strip().lower()
+            if configured_task == "vqa":
+                configured_task = "question_answer"
+            if configured_task and configured_task != task:
+                raise ValueError(
+                    f"The config declares task {configured_task!r}, not {task!r}."
+                )
+        except Exception as exc:
+            model_definition.update(
+                available=False,
+                status="failed",
+                unavailable_reason=str(exc),
+            )
+        else:
+            model_definition.update(
+                available=True,
+                status="ready",
+                unavailable_reason="",
+            )
+        return model_definition
 
     def list_models(self, task: str) -> list[ModelDescriptor]:
         from opensportslib import model
@@ -598,8 +659,6 @@ class RemoteInferenceProvider:
                 weights_path=str(payload.get("weights_path") or ""),
                 config_path=str(payload.get("config_path") or "") or None,
             )
-        if action == "set_default":
-            return registry.set_default(task, str(payload.get("model_id") or ""))
         if action == "unregister":
             return registry.unregister_model(str(payload.get("model_id") or ""))
         raise ValueError(f"Unknown remote model operation: {action}")
@@ -621,7 +680,6 @@ class RemoteInferenceProvider:
             and health.get("redis_reachable")
             and health.get("worker_alive")
         )
-        defaults = self._discover_defaults()
         catalog = []
         for record in registry["models"]:
             if not isinstance(record, dict):
@@ -671,34 +729,10 @@ class RemoteInferenceProvider:
                     max_inputs=1 if vat_task == "question_answer" else None,
                     supports_time_range=vat_task == "localization",
                     status=status,
-                    is_default=defaults.get(server_task) == model_id,
                 )
             )
         self._catalog = catalog
         return catalog
-
-    def _discover_defaults(self) -> dict[str, str]:
-        defaults = {}
-        for server_task in self._VAT_TASKS:
-            try:
-                payload = self._request(
-                    "GET",
-                    "/config-capabilities",
-                    params={"task_type": server_task},
-                ).json()
-            except InferenceError as exc:
-                if exc.code == "http_404":
-                    continue
-                raise
-            if not isinstance(payload, dict):
-                raise InferenceError(
-                    "Configuration capabilities response must be an object.",
-                    code="invalid_response",
-                )
-            model_id = str(payload.get("model_id") or "").strip()
-            if model_id:
-                defaults[server_task] = model_id
-        return defaults
 
     def list_models(self, task: str) -> list[ModelDescriptor]:
         if task not in self._SERVER_TASKS:

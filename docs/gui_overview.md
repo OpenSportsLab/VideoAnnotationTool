@@ -39,12 +39,15 @@ The **Inference** settings tab selects Local or Remote execution, configures the
 official OpenSportsLib server URL, tests `/health`, shows the discovered remote
 model registry and lifecycle states, and manages local model config/weights
 entries. A locally persisted admin token enables immediate server registration,
-task-default selection, and unregistration. The token may be stored unencrypted
+and unregistration. Removing a configured server requires confirmation. The
+token may be stored unencrypted
 by the platform settings backend and never enters project JSON. Remote connection
 status includes Redis, worker, and configured-model health. **Add
 from Hugging Face…** downloads a validated OpenSportsLib configuration and
 checkpoint in the background and stages the cached paths until Settings is
-applied; **Add Manually** retains direct path entry. See
+applied; Local **Add Manually** selects a config file and optional weights file,
+then verifies that OpenSportsLib can construct the model before showing it as
+ready. See
 [Local and Remote Inference](inference.md).
 
 The **Help → Info** dialog shows the application, OpenSportsLib, and PyTorch
@@ -107,8 +110,7 @@ present. For example, `2,4,8` creates `0.125x`, `0.25x`, `0.5x`, `1x`, `2x`,
 `4x`, and `8x`. Seek intervals such as `1,5,10,30,60` create matching backward
 and forward buttons around the Play/Pause button. Values must be positive,
 finite comma-separated numbers; duplicates are normalized and displayed with
-at most three decimal places. **Restore Defaults** restores `2,4` and `1,5` in
-the dialog and takes effect after **Apply** or **OK**.
+at most three decimal places. Changes take effect after **Apply** or **OK**.
 
 See [Synchronized Multi-Modality Playback](synchronized_playback.md) for UTC
 alignment rules and the synchronization workflow.

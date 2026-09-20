@@ -41,7 +41,6 @@ class ModelDescriptor:
     trusted_legacy: bool = False
     checkpoint_free: bool = False
     status: str = ""
-    is_default: bool = False
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ModelDescriptor":
@@ -70,7 +69,6 @@ class ModelDescriptor:
             trusted_legacy=_explicit_bool(payload.get("trusted_legacy", False)),
             checkpoint_free=_explicit_bool(payload.get("checkpoint_free", False)),
             status=str(payload.get("status") or ""),
-            is_default=_explicit_bool(payload.get("is_default", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:

@@ -198,10 +198,12 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - Application Settings is the sole setup surface. Run requests contain an
   immutable snapshot of the selected provider endpoint and model configuration
   without administration credentials; the run dialog only chooses a model and
-  runtime parameters.
+  runtime parameters. The Settings dialog has no global reset action because a
+  reset would also discard the provider registry and Local model catalog;
+  providers and models are removed only through their explicit row actions.
 - `inference_settings.py` persists a permanent Local provider and UUID-backed
-  remote providers with unique names and normalized URLs. Catalogs, defaults,
-  refresh timestamps, and status share the provider record; administration
+  remote providers with unique names and normalized URLs. Catalogs, refresh
+  timestamps, and status share the provider record; administration
   tokens use a separate settings value. Legacy Local and single-server keys
   migrate only after the provider registry is saved successfully.
 - The last successfully completed `(provider_id, model_id)` is stored per task and
@@ -267,6 +269,13 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   `trusted_legacy=True` through `ModelDescriptor` to `LocInferenceWorker`.
   Registry serialization revalidates that allowlist and revokes trust after a
   relevant manual edit.
+- Manual Local registration stores a required config path and an optional
+  weights path. `LocalInferenceProvider.validate_model()` checks both selected
+  files and constructs the task-specific OpenSportsLib wrapper in the provider
+  model-operation worker. The worker persists `status=ready` only after
+  successful construction; failures persist as
+  unavailable `status=failed` rows with the constructor error. An omitted
+  weights file records `checkpoint_free=True`.
 - Local adapters call public OpenSportsLib task classes. Missing native
   Description/Dense APIs are advertised as unavailable rather than emulated.
 - Localization receives that dataset root in its request-scoped context and
@@ -281,16 +290,16 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   manifest/media upload path with `remote_mode="full_test_set"`. The provider
   discovers the public model registry through `/health` and `/models`; all
   lifecycle states are exposed to Settings, while only healthy `ready` models
-  are runnable. It detects task defaults through `/config-capabilities`,
-  translates the selected VAT head to and from OSL's `action` schema, preserves
+  are runnable. It translates the selected VAT head to and from OSL's `action`
+  schema, preserves
   Localization clip/timeline offsets, and validates task-native results.
 - Remote wrappers are constructed with only the server URL and registry model
   ID. Server-local IDs therefore never trigger local weights/config resolution.
   Initial VQA calls the updated direct `infer()` API and caches
   `last_remote_session_id`; follow-ups continue using the controller-owned
   session cache.
-- Authenticated registration, default selection, and unregistration use one
-  separate controller-owned registry worker. Settings emits intents and
+- Manual Local validation and authenticated remote registration or
+  unregistration share one controller-owned model-operation worker. Settings emits intents and
   `MainWindow.connect_signals()` routes them. The admin token is persisted in
   application-local QSettings and copied into worker memory only for a registry
   request; it never enters logs, inference requests, or project data. Server

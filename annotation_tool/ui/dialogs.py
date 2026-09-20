@@ -35,13 +35,11 @@ from explorer_settings import (
     normalize_explorer_page_size,
 )
 from shortcut_settings import (
-    DEFAULT_SHORTCUTS,
     SHORTCUT_DEFINITIONS,
     load_application_shortcuts,
     validate_application_shortcuts,
 )
 from localization_settings import (
-    DEFAULT_LOCALIZATION_PREROLL_MS,
     MAX_LOCALIZATION_PREROLL_MS,
     load_localization_preroll_ms,
 )
@@ -176,6 +174,124 @@ class HfLocalModelDialog(QDialog):
         self.accept()
 
 
+class LocalManualModelDialog(QDialog):
+    """Collect local OpenSportsLib config and optional checkpoint files."""
+
+    _TASK_LABELS = (
+        ("Classification", "classification"),
+        ("Localization", "localization"),
+        ("Description", "description"),
+        ("Dense Description", "dense_description"),
+        ("Question / Answer", "question_answer"),
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Local Model Manually")
+        self.setModal(True)
+        self.resize(620, 230)
+        root = QVBoxLayout(self)
+        form = QFormLayout()
+        root.addLayout(form)
+
+        self.task_combo = QComboBox(self)
+        for label, task in self._TASK_LABELS:
+            self.task_combo.addItem(label, task)
+        form.addRow("Task:", self.task_combo)
+        self.model_id_edit = QLineEdit(self)
+        self.model_id_edit.setPlaceholderText("Unique model name")
+        form.addRow("Model ID:", self.model_id_edit)
+
+        self.config_path_edit = QLineEdit(self)
+        self.config_browse_button = QPushButton("Browse…", self)
+        config_row = QWidget(self)
+        config_layout = QHBoxLayout(config_row)
+        config_layout.setContentsMargins(0, 0, 0, 0)
+        config_layout.addWidget(self.config_path_edit, 1)
+        config_layout.addWidget(self.config_browse_button)
+        form.addRow("Config file:", config_row)
+
+        self.weights_path_edit = QLineEdit(self)
+        self.weights_path_edit.setPlaceholderText("Optional for config-only models")
+        self.weights_browse_button = QPushButton("Browse…", self)
+        weights_row = QWidget(self)
+        weights_layout = QHBoxLayout(weights_row)
+        weights_layout.setContentsMargins(0, 0, 0, 0)
+        weights_layout.addWidget(self.weights_path_edit, 1)
+        weights_layout.addWidget(self.weights_browse_button)
+        form.addRow("Weights file (optional):", weights_row)
+
+        note = QLabel(
+            "VAT will construct the selected OpenSportsLib model with this "
+            "configuration before marking it Ready.",
+            self,
+        )
+        note.setWordWrap(True)
+        root.addWidget(note)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Add")
+        buttons.accepted.connect(self._validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+        self.config_browse_button.clicked.connect(self._browse_config)
+        self.weights_browse_button.clicked.connect(self._browse_weights)
+
+    def _browse_config(self):
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Select OpenSportsLib Configuration",
+            self.config_path_edit.text().strip(),
+            "Configuration (*.yaml *.yml *.json);;All Files (*)",
+        )
+        if path:
+            self.config_path_edit.setText(path)
+
+    def _browse_weights(self):
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Select Optional Model Weights",
+            self.weights_path_edit.text().strip(),
+            "Model Weights (*.safetensors *.pth *.tar *.pt *.bin);;All Files (*)",
+        )
+        if path:
+            self.weights_path_edit.setText(path)
+
+    def payload(self) -> dict:
+        model_id = self.model_id_edit.text().strip()
+        config_path = self.config_path_edit.text().strip()
+        weights_path = self.weights_path_edit.text().strip()
+        if not model_id:
+            raise ValueError("Enter a model ID.")
+        if not config_path:
+            raise ValueError("Select an OpenSportsLib configuration file.")
+        if not os.path.isfile(config_path):
+            raise ValueError(f"Config file does not exist: {config_path}")
+        if weights_path and not os.path.isfile(weights_path):
+            raise ValueError(f"Weights file does not exist: {weights_path}")
+        task = str(self.task_combo.currentData() or "")
+        return {
+            "task": task,
+            "id": model_id,
+            "display_name": model_id,
+            "config_path": config_path,
+            "weights": weights_path,
+            "checkpoint_free": not bool(weights_path),
+            "supports_time_range": task in {"localization", "dense_description"},
+        }
+
+    def _validate_and_accept(self):
+        try:
+            self.payload()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Local Model", str(exc))
+            return
+        self.accept()
+
+
 class RemoteModelRegistrationDialog(QDialog):
     """Collect one server-side model registration request."""
 
@@ -298,7 +414,7 @@ class InferenceSetupWidget(QWidget):
             self._providers = [{
                 "id": "local", "kind": "local", "name": "Local",
                 "enabled": True, "models": list(config.get("local_models", [])),
-                "defaults": {}, "catalog_updated_at": 0.0,
+                "catalog_updated_at": 0.0,
                 "connection_status": "",
             }]
         self._loading = False
@@ -339,9 +455,9 @@ class InferenceSetupWidget(QWidget):
         root.addWidget(self.provider_group)
 
         root.addWidget(QLabel("Models", self))
-        self.model_table = QTableWidget(0, 5, self)
+        self.model_table = QTableWidget(0, 4, self)
         self.model_table.setHorizontalHeaderLabels(
-            ["Task", "Model ID", "Status", "Default", "Config / Source"]
+            ["Task", "Model ID", "Status", "Config / Source"]
         )
         self.model_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.model_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -351,11 +467,9 @@ class InferenceSetupWidget(QWidget):
         self.add_hf_model_button = QPushButton("Add from Hugging Face…", self)
         self.add_local_model_button = QPushButton("Add Manually", self)
         self.remove_local_model_button = QPushButton("Remove", self)
-        self.set_remote_default_button = QPushButton("Set Default", self)
         buttons.addWidget(self.add_hf_model_button)
         buttons.addWidget(self.add_local_model_button)
         buttons.addWidget(self.remove_local_model_button)
-        buttons.addWidget(self.set_remote_default_button)
         buttons.addStretch(1)
         root.addLayout(buttons)
         self.local_model_status = QLabel("", self)
@@ -392,7 +506,6 @@ class InferenceSetupWidget(QWidget):
         self.add_hf_model_button.clicked.connect(self._add_hf)
         self.add_local_model_button.clicked.connect(self._add_manual)
         self.remove_local_model_button.clicked.connect(self._remove_model)
-        self.set_remote_default_button.clicked.connect(self._set_default)
         self.cancel_hf_model_button.clicked.connect(self.huggingFaceModelCancelRequested)
         self.model_table.itemSelectionChanged.connect(self._update_actions)
         self._select_provider(0)
@@ -480,6 +593,17 @@ class InferenceSetupWidget(QWidget):
         provider = self._current_provider()
         if provider is None or provider.get("kind") != "remote":
             return
+        answer = QMessageBox.question(
+            self,
+            "Remove Remote Server?",
+            f"Remove {provider.get('name') or 'this remote server'} from VAT?\n\n"
+            "This removes its saved URL, token, and cached model list. "
+            "Models registered on the server are not removed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
         self._providers.remove(provider)
         self._rebuild_provider_combo("local")
         self._select_provider(0)
@@ -490,8 +614,6 @@ class InferenceSetupWidget(QWidget):
 
     def _populate_models(self, models):
         self.model_table.setRowCount(0)
-        provider = self._current_provider() or {}
-        remote = provider.get("kind") == "remote"
         for raw in models or []:
             model = self._descriptor_dict(raw)
             row = self.model_table.rowCount()
@@ -499,7 +621,6 @@ class InferenceSetupWidget(QWidget):
             values = (
                 model.get("task", ""), model.get("id", ""),
                 model.get("status") or ("ready" if model.get("available", True) else "unavailable"),
-                "Yes" if model.get("is_default") else "",
                 model.get("config_path") or model.get("hf_repo_id") or model.get("weights", ""),
             )
             for column, value in enumerate(values):
@@ -550,24 +671,10 @@ class InferenceSetupWidget(QWidget):
                 action = payload.pop("action")
                 self.providerModelOperationRequested.emit(action, self._operation_payload(payload))
             return
-        task, ok = QInputDialog.getItem(
-            self, "Add Local Model", "Task:", list(INFERENCE_TASKS), editable=False
-        )
-        if not ok:
+        dialog = LocalManualModelDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        model_id, ok = QInputDialog.getText(self, "Add Local Model", "Model ID:")
-        if not ok or not model_id.strip():
-            return
-        config_path, ok = QInputDialog.getText(self, "Add Local Model", "Config YAML path:")
-        if not ok or not config_path.strip():
-            return
-        model = {
-            "task": str(task), "id": model_id.strip(),
-            "display_name": model_id.strip(), "config_path": config_path.strip(),
-            "weights": model_id.strip(), "available": True,
-            "supports_time_range": task in {"localization", "dense_description"},
-        }
-        self.upsert_local_model(model)
+        model = dialog.payload()
         self.providerModelOperationRequested.emit(
             "add_local_manual", self._operation_payload({"model": model})
         )
@@ -589,18 +696,9 @@ class InferenceSetupWidget(QWidget):
             self._populate_models(provider["models"])
             self.providerModelOperationRequested.emit("remove_local", self._operation_payload({"task": model.get("task"), "model_id": model.get("id")}))
 
-    def _set_default(self):
-        provider = self._current_provider() or {}
-        model = self._selected_model()
-        if model is None:
-            return
-        action = "set_default" if provider.get("kind") == "remote" else "set_local_default"
-        self.providerModelOperationRequested.emit(action, self._operation_payload({"task": model.get("task"), "model_id": model.get("id")}))
-
     def _update_actions(self):
         selected = self._selected_model() is not None
         self.remove_local_model_button.setEnabled(selected and not self._remote_operation_busy)
-        self.set_remote_default_button.setEnabled(selected and not self._remote_operation_busy)
 
     def _refresh_selected(self):
         provider = self._current_provider()
@@ -689,11 +787,11 @@ class InferenceSetupWidget(QWidget):
             for row in range(self.model_table.rowCount()):
                 values = [
                     str(self.model_table.item(row, column).text() if self.model_table.item(row, column) else "").strip()
-                    for column in range(5)
+                    for column in range(4)
                 ]
                 if not any(values):
                     continue
-                task, model_id, _status, default_text, config_path = values
+                task, model_id, status, config_path = values
                 first = self.model_table.item(row, 0)
                 metadata = first.data(Qt.ItemDataRole.UserRole) if first else {}
                 model = dict(metadata if isinstance(metadata, dict) else {})
@@ -701,7 +799,8 @@ class InferenceSetupWidget(QWidget):
                     "task": task, "id": model_id,
                     "display_name": model.get("display_name") or model_id,
                     "config_path": config_path,
-                    "available": True, "is_default": bool(default_text),
+                    "available": bool(model.get("available", status == "ready")),
+                    "status": status,
                 })
                 model["trusted_legacy"] = trusted_legacy_allowed(model)
                 if task not in INFERENCE_TASKS or not model_id or not config_path:
@@ -899,9 +998,6 @@ class ApplicationSettingsDialog(QDialog):
         self.register_remote_model_button = (
             self.inference_setup_widget.register_remote_model_button
         )
-        self.set_remote_default_button = (
-            self.inference_setup_widget.set_remote_default_button
-        )
         self.unregister_remote_model_button = (
             self.inference_setup_widget.unregister_remote_model_button
         )
@@ -914,9 +1010,6 @@ class ApplicationSettingsDialog(QDialog):
         self.resize(760, 620)
 
         self.buttons = QDialogButtonBox(self)
-        self.restore_defaults_button = self.buttons.addButton(
-            "Restore Defaults", QDialogButtonBox.ButtonRole.ResetRole
-        )
         self.apply_button = self.buttons.addButton(
             QDialogButtonBox.StandardButton.Apply
         )
@@ -924,7 +1017,6 @@ class ApplicationSettingsDialog(QDialog):
         self.cancel_button = self.buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
         root_layout.addWidget(self.buttons)
 
-        self.restore_defaults_button.clicked.connect(self._restore_defaults)
         self.apply_button.clicked.connect(lambda: self._apply(close_after=False))
         self.ok_button.clicked.connect(lambda: self._apply(close_after=True))
         self.cancel_button.clicked.connect(self.reject)
@@ -979,7 +1071,6 @@ class ApplicationSettingsDialog(QDialog):
         self.inference_setup_widget.set_model_import_busy(busy, message)
         self.apply_button.setEnabled(not busy)
         self.ok_button.setEnabled(not busy)
-        self.restore_defaults_button.setEnabled(not busy)
 
     def set_hf_model_import_progress(self, message, current=0, total=0):
         self.inference_setup_widget.set_model_import_progress(message, current, total)
@@ -1003,23 +1094,6 @@ class ApplicationSettingsDialog(QDialog):
         self.stop_remote_model_polling()
         self.inference_admin_token_edit.clear()
         super().done(result)
-
-    def _restore_defaults(self) -> None:
-        self.playback_factors_edit.setText(DEFAULT_PLAYBACK_FACTORS)
-        self.seek_intervals_edit.setText(DEFAULT_SEEK_INTERVALS)
-        self.explorer_page_size_spin.setValue(DEFAULT_EXPLORER_PAGE_SIZE)
-        self.localization_preroll_spin.setValue(DEFAULT_LOCALIZATION_PREROLL_MS)
-        for name, editor in self.shortcut_edits.items():
-            editor.setKeySequence(QKeySequence(DEFAULT_SHORTCUTS[name]))
-        self.inference_setup_widget._providers = [{
-            "id": "local", "kind": "local", "name": "Local", "enabled": True,
-            "models": [], "defaults": {}, "catalog_updated_at": 0.0,
-            "connection_status": "",
-        }]
-        self.inference_setup_widget._rebuild_provider_combo("local")
-        self.inference_setup_widget._select_provider(0)
-        self.validation_label.clear()
-        self.shortcut_validation_label.clear()
 
     def _apply(self, *, close_after: bool) -> None:
         try:

@@ -25,7 +25,7 @@ LAST_MODEL_KEY_PREFIX = "inference/last_model"
 LOCALIZATION_MIN_CONFIDENCE_PERCENT_KEY = "inference/localization_min_confidence_percent"
 INFERENCE_PROVIDERS_KEY = "inference/providers"
 INFERENCE_PROVIDERS_SCHEMA_VERSION_KEY = "inference/providers_schema_version"
-INFERENCE_PROVIDERS_SCHEMA_VERSION = 1
+INFERENCE_PROVIDERS_SCHEMA_VERSION = 2
 INFERENCE_PROVIDER_TOKENS_KEY = "inference/provider_tokens"
 LOCAL_PROVIDER_ID = "local"
 
@@ -286,8 +286,6 @@ def _normalize_provider(provider: dict[str, Any]) -> dict[str, Any] | None:
         provider_id = LOCAL_PROVIDER_ID
     if not provider_id:
         return None
-    raw_defaults = provider.get("defaults")
-    raw_defaults = raw_defaults if isinstance(raw_defaults, dict) else {}
     try:
         catalog_updated_at = float(provider.get("catalog_updated_at") or 0.0)
     except (TypeError, ValueError):
@@ -298,11 +296,6 @@ def _normalize_provider(provider: dict[str, Any]) -> dict[str, Any] | None:
         "name": str(provider.get("name") or ("Local" if kind == "local" else "Remote Server")).strip(),
         "enabled": True if kind == "local" else _setting_bool(provider.get("enabled", True)),
         "models": _normalized_catalog(provider.get("models")),
-        "defaults": {
-            str(task): str(model_id)
-            for task, model_id in raw_defaults.items()
-            if task in INFERENCE_TASKS and str(model_id).strip()
-        },
         "catalog_updated_at": catalog_updated_at,
         "connection_status": str(provider.get("connection_status") or ""),
     }
@@ -350,7 +343,6 @@ def _validate_provider_registry(providers) -> list[dict[str, Any]]:
             "name": "Local",
             "enabled": True,
             "models": [],
-            "defaults": {},
             "catalog_updated_at": 0.0,
             "connection_status": "",
         })
@@ -365,7 +357,6 @@ def _legacy_providers(settings) -> list[dict[str, Any]]:
         "name": "Local",
         "enabled": True,
         "models": load_local_models(settings),
-        "defaults": {},
         "catalog_updated_at": 0.0,
         "connection_status": "",
     }]
@@ -384,7 +375,6 @@ def _legacy_providers(settings) -> list[dict[str, Any]]:
             "enabled": _setting_bool(raw_enabled),
             "url": url,
             "models": [],
-            "defaults": {},
             "catalog_updated_at": 0.0,
             "connection_status": "",
             "admin_token": str(raw_token or ""),
@@ -444,7 +434,7 @@ def save_inference_providers(settings, providers) -> list[dict[str, Any]]:
     if not any(item.get("kind") == "local" for item in raw_providers):
         raw_providers.insert(0, {
             "id": LOCAL_PROVIDER_ID, "kind": "local", "name": "Local",
-            "enabled": True, "models": [], "defaults": {},
+            "enabled": True, "models": [],
             "catalog_updated_at": 0.0, "connection_status": "",
         })
     names = [str(item.get("name") or "").strip().casefold() for item in raw_providers]
@@ -491,7 +481,6 @@ def new_remote_provider(name: str, url: str) -> dict[str, Any]:
         "url": normalized_url,
         "admin_token": "",
         "models": [],
-        "defaults": {},
         "catalog_updated_at": 0.0,
         "connection_status": "",
     }

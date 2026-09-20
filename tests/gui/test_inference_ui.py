@@ -6,7 +6,13 @@ from types import SimpleNamespace
 import pytest
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QAbstractItemView, QDialog, QMessageBox, QPushButton
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
+    QFileDialog,
+    QMessageBox,
+    QPushButton,
+)
 
 from controllers.classification import ClassificationEditorController
 from controllers.dense_description import DenseEditorController
@@ -42,6 +48,7 @@ from ui.dialogs import (
     ApplicationSettingsDialog,
     HfLocalModelDialog,
     InferenceRunDialog,
+    LocalManualModelDialog,
     RemoteModelRegistrationDialog,
 )
 from ui.classification import ClassificationAnnotationPanel
@@ -213,7 +220,7 @@ def test_provider_selector_shows_cached_catalog_per_server(qtbot, tmp_path):
     ]
     selector.setCurrentIndex(1)
     assert dialog.remote_model_table.item(0, 1).text() == "shared"
-    assert dialog.remote_model_table.item(0, 4).text() == ""
+    assert dialog.remote_model_table.item(0, 3).text() == ""
     selector.setCurrentIndex(2)
     assert dialog.remote_model_table.item(0, 1).text() == "shared"
     assert dialog.inference_server_url_edit.text() == "https://gpu-two.example"
@@ -278,7 +285,7 @@ def test_remote_registration_dialog_supports_hf_and_server_local(qtbot):
 
 
 @pytest.mark.gui
-def test_remote_registry_table_shows_state_default_and_emits_admin_actions(
+def test_remote_registry_table_shows_state_and_emits_remove_action(
     qtbot, monkeypatch
 ):
     dialog = ApplicationSettingsDialog("2,4", "1,5")
@@ -294,7 +301,6 @@ def test_remote_registry_table_shows_state_default_and_emits_admin_actions(
         "Ready",
         "classification",
         status="ready",
-        is_default=False,
     )
     registering = ModelDescriptor(
         "loading-model",
@@ -305,20 +311,15 @@ def test_remote_registry_table_shows_state_default_and_emits_admin_actions(
     )
     dialog.set_remote_model_catalog([ready, registering])
 
-    assert dialog.remote_model_table.columnCount() == 5
+    assert dialog.remote_model_table.columnCount() == 4
+    assert [
+        dialog.remote_model_table.horizontalHeaderItem(column).text()
+        for column in range(dialog.remote_model_table.columnCount())
+    ] == ["Task", "Model ID", "Status", "Config / Source"]
     assert dialog.remote_model_table.item(0, 2).text() == "ready"
     assert dialog.remote_model_table.item(1, 2).text() == "registering"
     dialog.remote_model_table.selectRow(0)
-    assert dialog.set_remote_default_button.isEnabled()
-
-    with qtbot.waitSignal(
-        dialog.inferenceProviderModelOperationRequested, timeout=500
-    ) as default_request:
-        dialog.set_remote_default_button.click()
-    assert default_request.args[0] == "set_default"
-    assert default_request.args[1]["provider_id"] == remote["id"]
-    assert default_request.args[1]["model_id"] == "ready-model"
-    assert default_request.args[1]["admin_token"] == "session-secret"
+    assert not hasattr(dialog, "set_remote_default_button")
 
     with qtbot.waitSignal(
         dialog.inferenceProviderModelOperationRequested, timeout=500
@@ -327,19 +328,91 @@ def test_remote_registry_table_shows_state_default_and_emits_admin_actions(
     assert unregister_request.args[0] == "unregister"
     assert unregister_request.args[1]["model_id"] == "ready-model"
 
-    default_ready = ModelDescriptor(
-        "ready-model",
-        "Ready",
-        "classification",
-        status="ready",
-        is_default=True,
+
+@pytest.mark.gui
+def test_remove_remote_provider_requires_confirmation(qtbot, monkeypatch):
+    dialog = ApplicationSettingsDialog("2,4", "1,5")
+    qtbot.addWidget(dialog)
+    remote = new_remote_provider("Inference GPU", DEFAULT_SERVER_URL)
+    setup = dialog.inference_setup_widget
+    setup._providers.append(remote)
+    setup._rebuild_provider_combo(remote["id"])
+    setup._select_provider(setup.provider_combo.currentIndex())
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
     )
-    dialog.set_remote_model_catalog([default_ready])
-    assert dialog.remote_model_table.item(0, 3).text() == "Yes"
+    setup._remove_provider()
+    assert any(provider["id"] == remote["id"] for provider in setup._providers)
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    setup._remove_provider()
+    assert all(provider["id"] != remote["id"] for provider in setup._providers)
 
 
 @pytest.mark.gui
-def test_fresh_settings_registry_is_empty(qtbot):
+def test_manual_local_model_dialog_selects_config_and_optional_weights(
+    qtbot, tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("TASK: localization\n", encoding="utf-8")
+    weights_path = tmp_path / "model.pth"
+    weights_path.write_bytes(b"weights")
+    selected = iter((str(config_path), str(weights_path)))
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: (next(selected), ""),
+    )
+    dialog = LocalManualModelDialog()
+    qtbot.addWidget(dialog)
+    dialog.task_combo.setCurrentIndex(1)
+    dialog.model_id_edit.setText("header-spotter")
+    dialog.config_browse_button.click()
+    assert dialog.config_path_edit.text() == str(config_path)
+    assert dialog.payload()["weights"] == ""
+    assert dialog.payload()["checkpoint_free"] is True
+
+    dialog.weights_browse_button.click()
+    payload = dialog.payload()
+    assert payload["config_path"] == str(config_path)
+    assert payload["weights"] == str(weights_path)
+    assert payload["checkpoint_free"] is False
+
+
+@pytest.mark.gui
+def test_failed_manual_local_model_stays_unavailable_in_settings(qtbot, tmp_path):
+    dialog = ApplicationSettingsDialog("2,4", "1,5")
+    qtbot.addWidget(dialog)
+    config_path = tmp_path / "broken.yaml"
+    config_path.write_text("TASK: classification\n", encoding="utf-8")
+    dialog.inference_setup_widget.upsert_local_model({
+        "task": "classification",
+        "id": "broken-model",
+        "display_name": "Broken model",
+        "config_path": str(config_path),
+        "weights": "",
+        "status": "failed",
+        "available": False,
+        "unavailable_reason": "broken architecture",
+        "checkpoint_free": True,
+    })
+
+    assert dialog.local_model_table.item(0, 2).text() == "failed"
+    stored = dialog.inference_payload()["local_models"][0]
+    assert stored["status"] == "failed"
+    assert stored["available"] is False
+    assert stored["unavailable_reason"] == "broken architecture"
+
+
+@pytest.mark.gui
+def test_settings_has_no_global_reset_that_can_clear_model_registry(qtbot):
     dialog = ApplicationSettingsDialog("2,4", "1,5")
     qtbot.addWidget(dialog)
     payload = dialog.inference_payload()
@@ -350,8 +423,10 @@ def test_fresh_settings_registry_is_empty(qtbot):
         "display_name": "Custom",
         "config_path": "/tmp/config.yaml",
     })
-    dialog._restore_defaults()
-    assert dialog.inference_payload()["local_models"] == []
+    assert not hasattr(dialog, "restore_defaults_button")
+    assert [
+        model["id"] for model in dialog.inference_payload()["local_models"]
+    ] == ["custom/model"]
 
 
 @pytest.mark.gui
@@ -422,7 +497,6 @@ def test_hf_downloaded_model_upserts_and_preserves_hidden_metadata(qtbot, tmp_pa
     dialog.add_downloaded_hf_model(descriptor)
     assert dialog.ok_button.isEnabled()
     assert dialog.apply_button.isEnabled()
-    assert dialog.restore_defaults_button.isEnabled()
     assert dialog.local_model_table.rowCount() == before + 1
     dialog.add_downloaded_hf_model({**descriptor, "display_name": "Updated 2025"})
     assert dialog.local_model_table.rowCount() == before + 1

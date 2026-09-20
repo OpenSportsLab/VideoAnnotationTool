@@ -471,6 +471,93 @@ def test_local_discovery_uses_only_explicit_registry_entries(tmp_path):
     assert localization == []
 
 
+def test_manual_local_model_validation_constructs_model_and_allows_no_weights(
+    monkeypatch, tmp_path
+):
+    import opensportslib
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("TASK: classification\n", encoding="utf-8")
+
+    class WorkingModel:
+        def __init__(self, config):
+            assert config == str(config_path)
+            self.config = type("Config", (), {"TASK": "classification"})()
+
+    monkeypatch.setattr(
+        opensportslib,
+        "model",
+        type("Models", (), {"ClassificationModel": WorkingModel}),
+    )
+    ready = LocalInferenceProvider.validate_model({
+        "task": "classification",
+        "id": "config-only",
+        "config_path": str(config_path),
+        "weights": "",
+    })
+    assert ready["status"] == "ready"
+    assert ready["available"] is True
+    assert ready["checkpoint_free"] is True
+
+    class BrokenModel:
+        def __init__(self, config):
+            raise ValueError("broken architecture")
+
+    monkeypatch.setattr(
+        opensportslib,
+        "model",
+        type("Models", (), {"ClassificationModel": BrokenModel}),
+    )
+    failed = LocalInferenceProvider.validate_model({
+        "task": "classification",
+        "id": "broken",
+        "config_path": str(config_path),
+    })
+    assert failed["status"] == "failed"
+    assert failed["available"] is False
+    assert failed["unavailable_reason"] == "broken architecture"
+
+
+def test_manual_local_model_validation_runs_in_worker_and_persists_failure(
+    qtbot, monkeypatch
+):
+    settings = MemorySettings()
+    controller = InferenceController(settings=settings, history_path=":memory:")
+    failed_model = {
+        "task": "classification",
+        "id": "broken",
+        "display_name": "Broken",
+        "config_path": "/tmp/broken.yaml",
+        "weights": "",
+        "checkpoint_free": True,
+        "available": False,
+        "status": "failed",
+        "unavailable_reason": "broken architecture",
+    }
+    monkeypatch.setattr(
+        LocalInferenceProvider,
+        "validate_model",
+        lambda _model: dict(failed_model),
+    )
+
+    with qtbot.waitSignal(
+        controller.providerModelOperationSucceeded, timeout=1000
+    ) as completed:
+        assert controller.request_local_model_validation({
+            "model": {"task": "classification", "id": "broken"}
+        })
+
+    assert completed.args[0] == "add_local_manual"
+    assert completed.args[1]["result"]["model"] == failed_model
+    stored = load_local_models(settings)[0]
+    assert stored["id"] == "broken"
+    assert stored["status"] == "failed"
+    assert stored["available"] is False
+    assert stored["unavailable_reason"] == "broken architecture"
+    qtbot.waitUntil(lambda: controller.provider_registry_worker is None)
+    assert controller.shutdown()
+
+
 def test_local_discovery_never_constructs_http_client(monkeypatch, tmp_path):
     monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("HTTP used for local inference")))
     controller = InferenceController(settings=MemorySettings(), base_dir=str(Path(__file__).parents[1] / "annotation_tool"))
@@ -568,7 +655,6 @@ def test_failed_remote_refresh_keeps_cached_ready_models_selectable(monkeypatch)
                 "display_name": "Cached Spotter", "available": True,
                 "status": "ready",
             }],
-            "defaults": {"localization": "spotter"},
         }]
     })
     assert [choice.key for choice in choices] == [("server-a", "spotter")]
@@ -584,17 +670,17 @@ def test_automatic_catalog_refresh_visits_each_enabled_remote(qtbot, monkeypatch
         {
             "id": "server-a", "kind": "remote", "name": "GPU A",
             "url": "https://a.example", "enabled": True,
-            "models": [], "defaults": {},
+            "models": [],
         },
         {
             "id": "server-b", "kind": "remote", "name": "GPU B",
             "url": "https://b.example", "enabled": True,
-            "models": [], "defaults": {},
+            "models": [],
         },
         {
             "id": "disabled", "kind": "remote", "name": "Offline",
             "url": "https://off.example", "enabled": False,
-            "models": [], "defaults": {},
+            "models": [],
         },
     ])
     save_inference_providers(settings, providers)
@@ -691,12 +777,6 @@ def test_settings_remote_catalog_uses_unsaved_configuration(monkeypatch, tmp_pat
             },
         ),
         (
-            "set_default",
-            {"task": "classification", "model_id": "cls"},
-            "set_default",
-            {"task_type": "classification", "model_id": "cls"},
-        ),
-        (
             "unregister",
             {"task": "classification", "model_id": "cls"},
             "unregister_model",
@@ -716,12 +796,6 @@ def test_remote_registry_operations_use_session_credentials_and_official_client(
         def register_model(self, **kwargs):
             calls.append(("register_model", kwargs))
             return {"model_id": kwargs.get("model_id") or "registered"}
-
-        def set_default(self, task_type, model_id):
-            calls.append(
-                ("set_default", {"task_type": task_type, "model_id": model_id})
-            )
-            return {"model_id": model_id}
 
         def unregister_model(self, model_id):
             calls.append(("unregister_model", {"model_id": model_id}))
@@ -755,7 +829,7 @@ def test_remote_registry_operation_reports_admin_errors(qtbot, monkeypatch, stat
         def __init__(self, _remote, admin_token):
             assert admin_token == "session-secret"
 
-        def set_default(self, _task, _model_id):
+        def unregister_model(self, _model_id):
             raise RuntimeError(f"Remote model registry returned HTTP {status}: rejected")
 
     monkeypatch.setattr("opensportslib.RemoteModelRegistry", Registry)
@@ -764,7 +838,7 @@ def test_remote_registry_operation_reports_admin_errors(qtbot, monkeypatch, stat
         controller.providerModelOperationFailed, timeout=1000
     ) as failed:
         assert controller.request_provider_model_operation(
-            "set_default",
+            "unregister",
             {
                 "server_url": "http://server",
                 "admin_token": "session-secret",
@@ -773,7 +847,7 @@ def test_remote_registry_operation_reports_admin_errors(qtbot, monkeypatch, stat
             },
         )
 
-    assert failed.args[0] == "set_default"
+    assert failed.args[0] == "unregister"
     assert f"HTTP {status}" in failed.args[1]
     assert "session-secret" not in failed.args[1]
     qtbot.waitUntil(lambda: controller.provider_registry_worker is None)
@@ -868,15 +942,15 @@ def test_provider_registry_rejects_duplicate_names_and_normalized_urls():
     settings = MemorySettings()
     local = {
         "id": "local", "kind": "local", "name": "Local", "enabled": True,
-        "models": [], "defaults": {},
+        "models": [],
     }
     server_a = {
         "id": "a", "kind": "remote", "name": "Training", "enabled": True,
-        "url": "https://EXAMPLE.com/", "models": [], "defaults": {},
+        "url": "https://EXAMPLE.com/", "models": [],
     }
     server_b = {
         "id": "b", "kind": "remote", "name": "training", "enabled": True,
-        "url": "https://other.example", "models": [], "defaults": {},
+        "url": "https://other.example", "models": [],
     }
     with pytest.raises(ValueError, match="names"):
         save_inference_providers(settings, [local, server_a, server_b])
@@ -884,6 +958,24 @@ def test_provider_registry_rejects_duplicate_names_and_normalized_urls():
     server_b["url"] = "https://example.com"
     with pytest.raises(ValueError, match="URLs"):
         save_inference_providers(settings, [local, server_a, server_b])
+
+
+def test_provider_registry_drops_legacy_task_defaults():
+    settings = MemorySettings({
+        INFERENCE_PROVIDERS_KEY: json.dumps([{
+            "id": "local",
+            "kind": "local",
+            "name": "Local",
+            "enabled": True,
+            "models": [],
+            "defaults": {"classification": "old-default"},
+        }]),
+    })
+
+    providers = load_inference_providers(settings)
+    assert "defaults" not in providers[0]
+    save_inference_providers(settings, providers)
+    assert '"defaults"' not in settings.values[INFERENCE_PROVIDERS_KEY]
 
 
 def test_localization_min_confidence_preference_is_bounded_and_persisted():
@@ -945,7 +1037,7 @@ def _remote_provider(task, model_id="model", *, sessions=None):
     return provider
 
 
-def test_official_server_discovery_maps_registry_states_defaults_and_vqa():
+def test_official_server_discovery_maps_registry_states_and_vqa():
     def handler(request):
         if request.url.path == "/health":
             return httpx.Response(200, json={
@@ -985,15 +1077,6 @@ def test_official_server_discovery_maps_registry_states_defaults_and_vqa():
                     "status": "unregistering",
                 },
             ]})
-        if request.url.path == "/config-capabilities":
-            assert "model_id" not in request.url.params
-            task = str(request.url.params["task_type"])
-            defaults = {"classification": "cls-model", "vqa": "vqa-model"}
-            if task in defaults:
-                return httpx.Response(
-                    200, json={"model_id": defaults[task], "version": 1, "options": {}}
-                )
-            return httpx.Response(404, json={"detail": "no default"})
         raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
     provider = RemoteInferenceProvider(
@@ -1008,7 +1091,6 @@ def test_official_server_discovery_maps_registry_states_defaults_and_vqa():
         "retiring-model",
     ]
     assert classification[0].available is True
-    assert classification[0].is_default is True
     assert classification[0].version == "generation-3"
     assert classification[1].available is False
     assert classification[1].status == "unregistering"
@@ -1045,8 +1127,6 @@ def test_remote_registry_rejects_malformed_catalog(models_payload):
             )
         if request.url.path == "/models":
             return httpx.Response(200, json=models_payload)
-        if request.url.path == "/config-capabilities":
-            return httpx.Response(404, json={"detail": "no default"})
         raise AssertionError(request.url)
 
     provider = RemoteInferenceProvider(
@@ -1076,8 +1156,6 @@ def test_remote_registry_ready_model_is_unavailable_when_server_is_degraded():
                 "task_type": "classification",
                 "status": "ready",
             }]})
-        if request.url.path == "/config-capabilities":
-            return httpx.Response(404, json={"detail": "no default"})
         raise AssertionError(request.url)
 
     provider = RemoteInferenceProvider(

@@ -1559,35 +1559,31 @@ class VideoAnnotationWindow(QMainWindow):
             )
 
     def _request_provider_model_operation(self, dialog, action, payload) -> None:
-        if action in {"add_local_manual", "remove_local", "set_local_default"}:
+        if action == "add_local_manual":
+            if not self.inference_controller.request_local_model_validation(payload):
+                dialog.set_remote_model_operation_busy(
+                    False,
+                    "Another provider model operation is still running.",
+                    success=False,
+                )
+            return
+        if action == "remove_local":
             providers = load_inference_providers(
                 getattr(self.dataset_explorer_controller, "settings", None)
             )
             local = next(item for item in providers if item["id"] == LOCAL_PROVIDER_ID)
             task = str(payload.get("task") or "")
             model_id = str(payload.get("model_id") or "")
-            if action == "add_local_manual":
-                model = dict(payload.get("model") or {})
-                key = (model.get("task"), model.get("id"))
-                local["models"] = [
-                    item for item in local.get("models", [])
-                    if (item.get("task"), item.get("id")) != key
-                ]
-                local["models"].append(model)
-            elif action == "remove_local":
-                local["models"] = [
-                    model for model in local.get("models", [])
-                    if (model.get("task"), model.get("id")) != (task, model_id)
-                ]
-            else:
-                local.setdefault("defaults", {})[task] = model_id
-                for model in local.get("models", []):
-                    if model.get("task") == task:
-                        model["is_default"] = model.get("id") == model_id
+            local["models"] = [
+                model for model in local.get("models", [])
+                if (model.get("task"), model.get("id")) != (task, model_id)
+            ]
             save_inference_providers(
                 getattr(self.dataset_explorer_controller, "settings", None), providers
             )
-            dialog.set_remote_model_operation_busy(False, "Local model registry updated.")
+            dialog.set_remote_model_operation_busy(
+                False, "Local model registry updated.", success=True
+            )
             return
         try:
             started = self.inference_controller.request_provider_model_operation(
@@ -1611,10 +1607,25 @@ class VideoAnnotationWindow(QMainWindow):
         wrapped = result or {}
         operation_result = wrapped.get("result", wrapped) if isinstance(wrapped, dict) else {}
         model_id = str((operation_result or {}).get("model_id") or "model")
+        if action == "add_local_manual":
+            model = dict((operation_result or {}).get("model") or {})
+            dialog.inference_setup_widget.upsert_local_model(model)
+            if model.get("available", False):
+                dialog.set_remote_model_operation_busy(
+                    False, f"Added {model_id}; OpenSportsLib created it successfully.",
+                    success=True,
+                )
+            else:
+                dialog.set_remote_model_operation_busy(
+                    False,
+                    f"{model_id} could not be created: "
+                    f"{model.get('unavailable_reason') or 'unknown validation error'}",
+                    success=False,
+                )
+            return
         messages = {
             "register_huggingface": f"Registration accepted for {model_id}.",
             "register_local": f"Registration accepted for {model_id}.",
-            "set_default": f"{model_id} is now the task default.",
             "unregister": f"Unregistration accepted for {model_id}.",
         }
         dialog.set_remote_model_operation_busy(
