@@ -53,6 +53,7 @@ def streaming_project(window, monkeypatch, qtbot, synthetic_project_json):
 def test_dialog_option_identity_validation_and_unknown_fields(qtbot):
     entry = question()
     entry["custom"] = {"source": "human"}
+    entry["prediction"] = "a"
     entry["options"][1]["extra"] = 42
     dialog = StreamingVQADialog(entry)
     qtbot.addWidget(dialog)
@@ -62,6 +63,7 @@ def test_dialog_option_identity_validation_and_unknown_fields(qtbot):
     assert dialog.result_entry["correct_option_id"] == "b"
     assert dialog.result_entry["options"][0] == entry["options"][1]
     assert dialog.result_entry["custom"] == entry["custom"]
+    assert dialog.result_entry["prediction"] == "a"
 
     repair = StreamingVQADialog(dialog.result_entry)
     qtbot.addWidget(repair)
@@ -73,6 +75,75 @@ def test_dialog_option_identity_validation_and_unknown_fields(qtbot):
     repair.option_rows[1][2].setChecked(True)
     repair.accept()
     assert repair.result_entry["correct_option_id"] == "c"
+
+
+def test_prediction_and_ground_truth_display_independently(window, streaming_project):
+    both = question("both", 1000)
+    both["prediction"] = "a"
+    ground_truth_only = question("ground-truth-only", 2000)
+    prediction_only = question("prediction-only", 3000)
+    prediction_only.pop("correct_option_id")
+    prediction_only["prediction"] = "b"
+    neither = question("neither", 4000)
+    neither.pop("correct_option_id")
+    empty_prediction = question("empty-prediction", 5000)
+    empty_prediction["prediction"] = ""
+    unmatched_prediction = question("unmatched-prediction", 6000)
+    unmatched_prediction["prediction"] = "unexpected-result"
+
+    streaming_project([
+        both,
+        ground_truth_only,
+        prediction_only,
+        neither,
+        empty_prediction,
+        unmatched_prediction,
+    ])
+    panel = window.streaming_vqa_panel
+    assert [panel.table.horizontalHeaderItem(i).text() for i in range(4)] == [
+        "Ask time", "Question", "Correct", "Prediction"
+    ]
+    assert panel.table.item(0, 2).text() == "b"
+    assert panel.table.item(0, 3).text() == "a"
+    assert panel.table.item(1, 2).text() == "b"
+    assert panel.table.item(1, 3).text() == ""
+    assert panel.table.item(2, 2).text() == ""
+    assert panel.table.item(2, 3).text() == "b"
+    assert panel.table.item(3, 2).text() == ""
+    assert panel.table.item(3, 3).text() == ""
+    assert panel.table.item(4, 3).text() == ""
+    assert panel.table.item(5, 3).text() == "unexpected-result"
+
+    panel.table.selectRow(0)
+    details = panel.details.toPlainText()
+    assert "a: Player 7 (prediction)" in details
+    assert "b: Player 10 (correct)" in details
+    assert "●" not in details and "○" not in details
+
+
+def test_edit_and_save_preserves_prediction_and_ground_truth(window, monkeypatch, streaming_project):
+    entry = question()
+    entry["prediction"] = "a"
+    path = streaming_project([entry])
+    panel = window.streaming_vqa_panel
+    panel.table.selectRow(0)
+
+    def edit(dialog):
+        dialog.question_edit.setPlainText("Updated question text")
+        dialog.accept()
+        return dialog.result()
+
+    monkeypatch.setattr(StreamingVQADialog, "exec", edit)
+    panel.edit_button.click()
+    saved_entry = window.dataset_explorer_controller.get_sample("clip_1")["streaming_vqa"][0]
+    assert saved_entry["prediction"] == "a"
+    assert saved_entry["correct_option_id"] == "b"
+
+    window.dataset_explorer_controller.save_project()
+    persisted = json.loads(path.read_text())["data"][0]["streaming_vqa"][0]
+    assert persisted["prediction"] == "a"
+    assert persisted["correct_option_id"] == "b"
+    assert persisted["question"] == "Updated question text"
 
 
 def test_untouched_dialog_preserves_whitespace_and_utc_precision(qtbot):

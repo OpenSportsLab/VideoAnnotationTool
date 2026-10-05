@@ -1,6 +1,7 @@
 # Streaming VQA UI
 
-`StreamingVQAAnnotationPanel` presents a chronological question table,
+`StreamingVQAAnnotationPanel` presents a chronological question table with
+separate Correct and Prediction columns,
 read-only selected-question details, and Add/Edit/Delete/Go to Ask Time actions.
 It emits `addRequested`, `editRequested`, `deleteRequested`,
 `entrySelected(int)` (raw sample-array index), and `seekRequested` intents.
@@ -20,3 +21,7 @@ Display uses UTC when resolvable, otherwise relative `MM:SS.mmm`. The UTC editor
 retains six fractional digits to avoid precision loss on an unchanged save.
 Imported malformed entries are flagged and remain editable/deletable. There
 are no evidence widgets, draft-save actions, or inference review controls.
+An existing question-level `prediction` value is displayed by choice ID in the
+table. Selected-question details identify choices by ID and mark correct and
+predicted choices independently. The prediction is preserved through question
+edits and is independent of the optional ground-truth answer.

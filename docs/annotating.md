@@ -143,8 +143,10 @@ authoring; selecting a question does not install a playback cutoff.
    dialog. Playback remains paused. Save the dataset to write changes to disk.
 
 Questions appear chronologically in the table with ask-time markers on the
-timeline. Selecting a row or clicking **Go to Ask Time** seeks to that time.
-The details show the choices and mark the correct answer. Use **Edit** or
+timeline. The table shows **Correct** and **Prediction** as choice IDs.
+Either field may be absent. Selecting a row or clicking **Go to Ask Time**
+seeks to that time. The details identify each choice by ID and mark the correct
+and predicted choices independently. Use **Edit** or
 double-click to edit; **Delete** removes the selected question. Each committed
 add, edit, or deletion is one undoable action. Unchanged or cancelled dialogs
 do not add history entries.

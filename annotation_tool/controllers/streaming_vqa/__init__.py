@@ -123,15 +123,18 @@ class StreamingVQAEditorController(QObject):
     def _refresh(self):
         rows, markers = [], []
         for index, (entry, errors) in enumerate(self._validated_rows()):
-            question, correct = "Invalid question", ""
+            question, correct, prediction = "Invalid question", "", ""
             if isinstance(entry, dict):
                 question = str(entry.get("question") or "(Empty question)")
-                options = entry.get("options")
-                if isinstance(options, list):
-                    correct = next((str(option.get("text") or "") for option in options if isinstance(option, dict) and option.get("id") == entry.get("correct_option_id")), "")
+                correct_id = entry.get("correct_option_id")
+                if correct_id is not None and correct_id != "":
+                    correct = str(correct_id)
+                predicted_id = entry.get("prediction")
+                if predicted_id is not None and predicted_id != "":
+                    prediction = str(predicted_id)
             if not errors:
                 markers.append({"start_ms": annotation_position_ms(entry, self.origin), "color": QColor("#38BDF8")})
-            rows.append((index, format_ask_time(entry, self.origin), ("⚠ " if errors else "") + question, correct, errors))
+            rows.append((index, format_ask_time(entry, self.origin), ("⚠ " if errors else "") + question, correct, prediction, errors))
         rows.sort(key=lambda row: annotation_position_ms(self._entries[row[0]], self.origin))
         self.panel.set_rows(rows, self._selected_index)
         self.panel.add_button.setEnabled(bool(self.current_sample_id))
@@ -149,8 +152,14 @@ class StreamingVQAEditorController(QObject):
                 options = entry.get("options")
                 for option in options if isinstance(options, list) else []:
                     if isinstance(option, dict):
-                        prefix = "●" if option.get("id") == entry.get("correct_option_id") else "○"
-                        text += f"\n\n{prefix} {option.get('text', '')}"
+                        option_id = str(option.get("id") or "")
+                        annotations = []
+                        if option_id == entry.get("correct_option_id"):
+                            annotations.append("correct")
+                        if option_id == entry.get("prediction"):
+                            annotations.append("prediction")
+                        suffix = f" ({', '.join(annotations)})" if annotations else ""
+                        text += f"\n\n{option_id}: {option.get('text', '')}{suffix}"
                 seekable = type(entry.get("position_ms")) is int or parse_utc_datetime(entry.get("timestamp_utc")) is not None
             if errors:
                 text += "\n\nNeeds repair:\n" + "\n".join(dict.fromkeys(errors))

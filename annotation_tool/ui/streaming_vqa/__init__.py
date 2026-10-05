@@ -159,8 +159,8 @@ class StreamingVQAAnnotationPanel(QWidget):
             actions.addWidget(button)
             button.clicked.connect(signal.emit)
         layout.addLayout(actions)
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Ask time", "Question", "Correct"])
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Ask time", "Question", "Correct", "Prediction"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -190,10 +190,10 @@ class StreamingVQAAnnotationPanel(QWidget):
         blocked = self.table.blockSignals(True)
         self.table.setRowCount(0)
         selected_row = -1
-        for index, time, question, correct, errors in rows:
+        for index, time, question, correct, prediction, errors in rows:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            for column, text in enumerate((time, question, correct)):
+            for column, text in enumerate((time, question, correct, prediction)):
                 item = QTableWidgetItem(text)
                 item.setData(Qt.ItemDataRole.UserRole, index)
                 item.setToolTip("\n".join(errors) if errors else text)

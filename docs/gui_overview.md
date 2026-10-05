@@ -198,7 +198,9 @@ completion does not switch the active annotation or head tab.
 
 #### Streaming VQA
 
-- Chronological table with **Ask time**, **Question**, and **Correct** columns
+- Chronological table with **Ask time**, **Question**, **Correct**, and
+  **Prediction** columns showing choice IDs; details label each choice ID and
+  mark correct and predicted choices independently
 - **+ Add Question** pauses playback and captures the shared playhead position
 - Modal add/edit dialog with ask time, question, reorderable choices, and one
   correct-answer radio selection; only complete entries can be committed

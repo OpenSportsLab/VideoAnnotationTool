@@ -425,7 +425,8 @@ Ordinary Q/A remains in `answers[]`; Streaming VQA has no evidence fields.
         {"id": "o3", "text": "Player 9"},
         {"id": "o4", "text": "Player 3"}
       ],
-      "correct_option_id": "o2"
+      "correct_option_id": "o2",
+      "prediction": "o1"
     }
   ]
 }
@@ -442,6 +443,11 @@ Ordinary Q/A remains in `answers[]`; Streaming VQA has no evidence fields.
   distinct after trimming whitespace (case-sensitive).
 - `correct_option_id`: exactly one existing choice ID. Reordering choices does
   not change the correct answer; editing never renumbers choice IDs.
+- `prediction`: optional model or external prediction, commonly an option ID.
+  It is independent of `correct_option_id` and may appear with or without
+  ground truth. The editor displays the value as an ID in the table and marks
+  the matching choice in the selected-question details; unmatched values are
+  shown as-is in the table.
 
 Repeated question text, even at the same time, is preserved as separate entries.
 The table sorts by projected ask time without reordering the persisted array.
@@ -450,7 +456,9 @@ are omitted on save/export. Valid entries gain UTC and refreshed relative times
 when an origin is available; malformed imported entries remain intact, are
 flagged for repair, and do not count as annotated. Invalid new/edited entries
 cannot be committed. Repairing missing or duplicate IDs generates new UUIDs.
-There are no persisted drafts or model predictions for this task.
+The editor does not run Streaming VQA inference or create prediction values;
+existing `prediction` fields are preserved when questions are edited and shown
+alongside ground truth when present.
 
 A complete relative-time example is available in
 [`tests/data/streaming_vqa.json`](https://github.com/OpenSportsLab/VideoAnnotationTool/blob/main/tests/data/streaming_vqa.json).

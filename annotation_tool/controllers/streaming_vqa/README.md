@@ -3,6 +3,9 @@
 `StreamingVQAEditorController(panel)` owns manual question CRUD and presentation
 snapshots. It never accepts another controller, accesses `dataset_json`, or
 controls a player directly. `DatasetExplorerController` owns canonical state.
+For presentation, the controller supplies correct and prediction choice IDs
+separately in the table. Selected-question details label each choice by ID and
+mark the correct and predicted choices independently.
 
 ## Signals and wiring
 
