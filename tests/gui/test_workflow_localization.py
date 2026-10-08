@@ -1270,3 +1270,37 @@ def test_localization_inference_unknown_label_mapping_applies_selected_label(
 #     events_after_redo = window.dataset_explorer_controller.localization_events.get(current_path, [])
 #     assert len(events_after_redo) == initial_count + 1
 #     assert any(e.get("label") == "shot" for e in events_after_redo)
+
+
+@pytest.mark.gui
+def test_filter_localization_predictions_removes_only_below_cutoff(monkeypatch, qtbot):
+    try:
+        from annotation_tool.controllers.localization.localization_editor_controller import LocalizationEditorController
+        from annotation_tool.ui.localization import LocalizationAnnotationPanel
+    except ModuleNotFoundError:
+        from controllers.localization.localization_editor_controller import LocalizationEditorController
+        from ui.localization import LocalizationAnnotationPanel
+
+    panel = LocalizationAnnotationPanel()
+    qtbot.addWidget(panel)
+    controller = LocalizationEditorController(panel)
+    controller.current_sample_id = "sample-1"
+    controller.current_video_path = "video.mp4"
+    controller._current_sample_snapshot = {"events": [
+        {"head": "h", "label": "low", "position_ms": 1, "confidence_score": 0.2},
+        {"head": "h", "label": "keep", "position_ms": 2, "confidence_score": 0.8},
+        {"head": "h", "label": "confirmed", "position_ms": 3},
+    ]}
+    monkeypatch.setattr(
+        "annotation_tool.controllers.localization.localization_editor_controller.QInputDialog.getDouble",
+        lambda *args, **kwargs: (50.0, True),
+    )
+    mutations = []
+    controller.locEventsSetRequested.connect(lambda sid, events: mutations.append((sid, events)))
+
+    controller.filter_predictions_by_confidence()
+
+    assert len(mutations) == 1
+    assert mutations[0][0] == "sample-1"
+    assert [event["label"] for event in mutations[0][1]] == ["keep", "confirmed"]
+    assert [event["label"] for event in controller._snapshot_events()] == ["keep", "confirmed"]

@@ -744,6 +744,7 @@ class LocalizationAnnotationPanel(QWidget):
     evaluationRequested = pyqtSignal()
     acceptAllPredictionsRequested = pyqtSignal()
     rejectAllPredictionsRequested = pyqtSignal()
+    filterPredictionsRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -790,6 +791,10 @@ class LocalizationAnnotationPanel(QWidget):
         self.layout().addWidget(self.inference_review_bar)
         self.btn_accept_all_predictions = self.inference_review_bar.accept_all_button
         self.btn_reject_all_predictions = self.inference_review_bar.reject_all_button
+        self.btn_filter_predictions = QPushButton("Filter by Confidence…", self)
+        self.btn_filter_predictions.setObjectName("filterLocalizationPredictionsButton")
+        self.inference_review_bar.layout().itemAt(1).layout().insertWidget(0, self.btn_filter_predictions)
+        self.btn_filter_predictions.clicked.connect(self.filterPredictionsRequested.emit)
         self.inference_review_bar.acceptAllRequested.connect(self.acceptAllPredictionsRequested.emit)
         self.inference_review_bar.rejectAllRequested.connect(self.rejectAllPredictionsRequested.emit)
         self.set_prediction_actions_visible(False)
@@ -800,6 +805,7 @@ class LocalizationAnnotationPanel(QWidget):
             allow_selected=False,
             allow_bulk=True,
         )
+        self.btn_filter_predictions.setVisible(bool(visible))
 
     def set_timeline_origin(self, origin_utc):
         self.table.set_timeline_origin(origin_utc)

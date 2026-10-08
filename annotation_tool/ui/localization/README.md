@@ -27,6 +27,10 @@ live in the main-window Inference Jobs dock.
 - `statisticsRequested()`
 - `acceptAllPredictionsRequested()`
 - `rejectAllPredictionsRequested()`
+- `filterPredictionsRequested()`
+
+The review bar's **Filter by Confidence…** action requests removal of pending
+events below a selected confidence percentage from the current sample.
 
 ### Table Adapter Signals
 - `annotationSelected(int)`

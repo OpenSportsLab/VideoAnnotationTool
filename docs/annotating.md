@@ -61,6 +61,10 @@ seeking. Inference writes confidence-bearing events into the sample immediately
 after the result is applied. Confirming a row keeps the event and removes only
 the confidence marker; rejecting it deletes the event.
 
+Use **Filter by Confidence…** in the prediction review bar to remove pending
+events below a chosen percentage from the current sample. Confirmed events are
+left in place. The removal is saved to the project JSON as one undoable change.
+
 Every completed localization inference run opens one dialog showing the
 distinct returned classes. Add the predictions to the head selected when the
 run started, choose another existing task head, or create a new task head.

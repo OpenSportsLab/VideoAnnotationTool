@@ -122,6 +122,7 @@ class LocalizationEditorController(QObject):
         self.localization_panel.evaluationRequested.connect(self.evaluationRequested.emit)
         self.localization_panel.acceptAllPredictionsRequested.connect(self.accept_all_predictions)
         self.localization_panel.rejectAllPredictionsRequested.connect(self.reject_all_predictions)
+        self.localization_panel.filterPredictionsRequested.connect(self.filter_predictions_by_confidence)
 
         tabs = self.localization_panel.annot_mgmt.tabs
         table = self.localization_panel.table
@@ -1016,6 +1017,39 @@ class LocalizationEditorController(QObject):
             event for event in events
             if not (isinstance(event, dict) and "confidence_score" in event)
         ]
+        if len(remaining) == len(events):
+            return
+        self.locEventsSetRequested.emit(self.current_sample_id, copy.deepcopy(remaining))
+        self._set_snapshot_events(remaining)
+        self._display_events_for_item(self.current_video_path)
+        self.refresh_tree_icons(self.current_video_path)
+
+    def filter_predictions_by_confidence(self):
+        """Remove pending predictions below a user-selected confidence cutoff."""
+        if not self.current_sample_id:
+            return
+        cutoff, accepted = QInputDialog.getDouble(
+            self.localization_panel,
+            "Filter Predictions by Confidence",
+            "Remove inferred events below (%):",
+            50.0,
+            0.0,
+            100.0,
+            1,
+        )
+        if not accepted:
+            return
+        threshold = cutoff / 100.0
+        events = self._snapshot_events()
+        remaining = []
+        for event in events:
+            if isinstance(event, dict) and "confidence_score" in event:
+                try:
+                    if float(event["confidence_score"]) < threshold:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            remaining.append(event)
         if len(remaining) == len(events):
             return
         self.locEventsSetRequested.emit(self.current_sample_id, copy.deepcopy(remaining))

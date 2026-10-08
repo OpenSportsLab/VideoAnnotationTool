@@ -3,6 +3,10 @@
 ## Role
 Implements Localization (action spotting) behavior, including schema management,
 event CRUD, inference class mapping, and prediction review.
+The prediction review bar can also remove confidence-scored events below a
+user-selected cutoff for the current sample. It emits one full events-list
+mutation through `locEventsSetRequested`, so `HistoryManager` records one
+undoable JSON replacement; confirmed events are retained.
 
 The shared local/remote path is owned by the central inference controller.
 Remote range inputs may be clipped before upload and returned positions are
