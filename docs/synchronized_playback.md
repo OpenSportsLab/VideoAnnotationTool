@@ -142,3 +142,18 @@ it is replaced only when that annotation is explicitly edited.
 Audio-capable panes play together by default. Each pane has an independent mute
 button. The global mute button temporarily mutes all feeds without losing their
 individual mute settings.
+
+
+### TRACAB DAT
+
+Open a manifest with an explicit `tracking_tracab` input beside its video to display
+both streams. `metadata_path` links the original JSON for rosters, frame rate,
+pitch size and phase frame bounds. `tf05_path` and `tf08_path` retain their separate
+XML feeds. The manifest `metadata.periods` entries reference source phases and
+map DAT frame numbers to UTC, using the same
+sample timeline as video and annotations. Seeking an event seeks both views;
+pre-match, halftime and unavailable tracking intervals display an empty pitch.
+Changing the timing metadata reloads the tracking stream. See [the input
+contract](OSL.md#raw-tracab-tracking) for calibration fields and the required
+OpenSportsLib checkout. DAT calibration is supplied in JSON, not through an
+additional import dialog.

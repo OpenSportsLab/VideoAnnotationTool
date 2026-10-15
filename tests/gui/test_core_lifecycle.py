@@ -1328,30 +1328,34 @@ def test_hf_download_byte_progress_can_be_combined_with_xet(window):
 
 
 @pytest.mark.gui
-def test_explorer_builds_selective_input_request_with_companion(window, tmp_path):
-    clip_path = tmp_path / "clips" / "one.mp4"
-    ball_path = tmp_path / "clips" / "ball.h5"
-    clip_path.parent.mkdir(parents=True)
-    clip_path.write_bytes(b"clip")
-    ball_path.write_bytes(b"ball")
+@pytest.mark.parametrize("source_format", ["json", "parquet"])
+@pytest.mark.parametrize("input_descriptor", [
+    {"type": "video", "path": "clips/one.mp4", "ball_path": "clips/ball.h5"},
+    {"type": "tracking_tracab", "path": "tracking/match.dat",
+     "metadata_path": "tracking/metadata.json", "tf05_path": "tracking/TF05.xml",
+     "tf08_path": "tracking/TF08.xml"},
+])
+def test_explorer_builds_selective_input_request_with_companion(
+    window, tmp_path, source_format, input_descriptor
+):
+    paths = [value for key, value in input_descriptor.items() if key != "type"]
+    for path in paths:
+        local_path = tmp_path / path
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_bytes(b"synthetic transfer asset")
+    clip_path = tmp_path / input_descriptor["path"]
     json_path = tmp_path / "test.json"
     dataset = {
         "version": "2.0",
         "hf_repo_id": "OpenSportsLab/repo",
         "hf_branch": "main",
         "hf_split": "test",
-        "hf_format": "parquet",
+        "hf_format": source_format,
         "hf_commit": "abc123",
         "data": [
             {
                 "id": "sample-1",
-                "inputs": [
-                    {
-                        "path": "clips/one.mp4",
-                        "ball_path": "clips/ball.h5",
-                        "type": "video",
-                    }
-                ],
+                "inputs": [input_descriptor],
             }
         ],
     }
@@ -1368,10 +1372,10 @@ def test_explorer_builds_selective_input_request_with_companion(window, tmp_path
 
     assert window.dataset_explorer_panel._hf_source_available is True
     assert requests[0]["sample_id"] == "sample-1"
-    assert requests[0]["input_path"] == "clips/one.mp4"
-    assert requests[0]["requested_paths"] == ["clips/one.mp4", "clips/ball.h5"]
-    assert requests[0]["requested_local_paths"] == [str(clip_path), str(ball_path)]
-    assert requests[0]["existing_paths"] == ["clips/one.mp4", "clips/ball.h5"]
+    assert requests[0]["input_path"] == input_descriptor["path"]
+    assert requests[0]["requested_paths"] == paths
+    assert requests[0]["requested_local_paths"] == [str(tmp_path / path) for path in paths]
+    assert requests[0]["existing_paths"] == paths
 
     refreshed = []
     controller.mediaRefreshRequested.connect(refreshed.append)
@@ -1382,7 +1386,7 @@ def test_explorer_builds_selective_input_request_with_companion(window, tmp_path
     controller.refresh_media_after_hf_download(
         {
             "sample_id": "sample-1",
-            "input_path": "clips/one.mp4",
+            "input_path": input_descriptor["path"],
             "project_generation": controller.project_generation,
         }
     )
@@ -1391,7 +1395,7 @@ def test_explorer_builds_selective_input_request_with_companion(window, tmp_path
     controller.refresh_media_after_hf_download(
         {
             "sample_id": "sample-1",
-            "input_path": "clips/one.mp4",
+            "input_path": input_descriptor["path"],
             "project_generation": controller.project_generation - 1,
         }
     )
@@ -3033,3 +3037,41 @@ def test_upload_failure_branch_missing_prompts_create_and_retries(window, monkey
 #     should_close = window.check_and_close_current_project()
 #     assert should_close is False
 #     assert stopped["count"] == 0
+
+
+@pytest.mark.gui
+def test_tracab_routing_save_reopen_and_utc_event_seek(window, qtbot, monkeypatch, tmp_path, tracab_sidecar_source):
+    import copy
+    source = copy.deepcopy(tracab_sidecar_source)
+    source["metadata_path"] = "metadata/match.json"
+    source['path'] = 'match.dat'
+    document = {'version': '2.0', 'labels': {'headers': {'type': 'single_label', 'labels': ['header']}},
+                'data': [{'id': 'sample', 'inputs': [source], 'events': [
+                    {'head': 'headers', 'label': 'header', 'timestamp_utc': '2020-01-01 00:00:04.000000'}]}]}
+    path = tmp_path / 'annotations.json'
+    path.write_text(json.dumps(document))
+    explorer = window.dataset_explorer_controller
+    assert explorer.load_project(copy.deepcopy(document), str(path))
+    window.dataset_explorer_panel.tree.setCurrentIndex(window.tree_model.index(0, 0))
+    qtbot.wait(50)
+    routed = explorer._resolved_media_sources_for_sample(explorer.dataset_json['data'][0])[0]
+    assert routed['metadata'] == source['metadata']
+    assert routed['duration_ms'] == source['duration_ms']
+    assert routed['path'] == str(tmp_path / 'match.dat')
+    calls = []
+    monkeypatch.setattr(window.media_controller, 'set_position', calls.append)
+    window.localization_editor_controller.on_media_position_changed(0)
+    window.localization_editor_controller._navigate_annotation(1)
+    assert calls[-1] == 4000
+    written = explorer._dataset_json_for_write(str(path))
+    assert written['data'][0]['inputs'][0] == source
+    assert explorer.load_project(written, str(path))
+    assert explorer.dataset_json['data'][0]['inputs'][0] == source
+    destination = tmp_path / 'export' / 'annotations.json'
+    exported = explorer._dataset_json_for_write(str(destination))
+    saved_source = exported['data'][0]['inputs'][0]
+    assert saved_source['path'] == '../match.dat'
+    assert saved_source['metadata_path'] == '../metadata/match.json'
+    assert explorer.load_project(exported, str(destination))
+    routed = explorer._resolved_media_sources_for_sample(explorer.dataset_json['data'][0])[0]
+    assert routed['metadata_path'] == str(tmp_path / 'metadata' / 'match.json')

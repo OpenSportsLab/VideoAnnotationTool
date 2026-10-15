@@ -48,3 +48,9 @@ huggingface-cli login
 ```
 
 - If some videos fail to decode, install FFmpeg and transcode unsupported files to H.264 MP4 (see [Troubleshooting](troubleshooting.md)).
+
+
+Native `tracking_tracab` playback currently requires the updated OpenSportsLib source
+checkout in the same Python environment: `python -m pip install -e ../opensportslib`.
+The reader is not available in the currently pinned published package. Other
+media formats continue to work with the normal installation.

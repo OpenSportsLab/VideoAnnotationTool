@@ -2374,3 +2374,96 @@ def test_manual_utc_requests_pause_and_preserve_absolute_anchor(
         "%Y-%m-%d %H:%M:%S.%f"
     ) == "2026-01-01 12:00:00.200000"
     assert controller.is_playing() is False
+
+
+@pytest.mark.gui
+def test_tracab_playback_gaps_rendering_and_calibration_reload(media_panel_and_controller, qtbot, tracab_source):
+    import copy
+    panel, controller = media_panel_and_controller
+    controller.load_and_play(tracab_source)
+    qtbot.waitUntil(lambda: controller.current_position_ms() > 0, timeout=2000)
+    controller.pause()
+    backend = controller._active_backend
+    assert backend.backend_type == 'tracking_tracab'
+    assert backend.duration_ms() == 6000
+    for position, populated in [(0, False), (999, False), (1000, True), (2000, False), (3999, False), (4000, True), (5000, False)]:
+        controller.set_position(position)
+        qtbot.wait(20)
+        index = backend._frame_index_for_position(position)
+        frame = backend._clip.frame_source[index]
+        assert bool(frame['home']) == populated
+        assert not backend.render_frame_image(index, frame).isNull()
+    controller.set_position(1000)
+    controller.set_playback_rate(2)
+    controller.play()
+    qtbot.waitUntil(lambda: controller.current_position_ms() > 1200, timeout=2000)
+    controller.pause()
+    old_clip = backend._clip
+    changed = copy.deepcopy(tracab_source)
+    changed['metadata']['periods'][1]['start_utc'] = '2020-01-01 00:00:04.100000'
+    controller.load_and_play(changed)
+    assert backend._clip is not old_clip
+    assert backend._clip.frame_source.reader.row_at(4000)['homePlayers'] == []
+
+
+@pytest.mark.gui
+def test_tracab_invalid_calibration_reports_error(media_panel_and_controller, monkeypatch, tracab_source):
+    panel, controller = media_panel_and_controller
+    messages = []
+    monkeypatch.setattr(controller._single, '_trigger_error_dialog', lambda details, **kwargs: messages.append((details, kwargs)))
+    tracab_source['metadata']['periods'][1]['start_utc'] = '2020-01-01 00:00:01.000000'
+    controller.load_and_play(tracab_source)
+    assert messages and 'overlap' in messages[-1][0]
+    assert 'TRACAB' in messages[-1][1]['informative_text']
+
+
+@pytest.mark.gui
+def test_tracab_and_parquet_render_identical_positions(media_panel_and_controller, tracab_source, tmp_path):
+    import json
+    from controllers.media.tracking_tracab_backend import TracabTrackingMediaBackend
+    from controllers.media.tracking_parquet_backend import TrackingParquetMediaBackend
+    panel, controller = media_panel_and_controller
+    dat = TracabTrackingMediaBackend(controller._single)
+    parquet = TrackingParquetMediaBackend(controller._single)
+    clip = dat.build_clip(tracab_source)
+    try:
+        reader = clip.frame_source.reader
+        rows = [reader[i] for i in range(len(reader))]
+        for row in rows:
+            for key in ('homePlayers', 'awayPlayers', 'balls'):
+                row[key] = json.dumps(row[key])
+        path = tmp_path / 'equivalent.parquet'
+        pd.DataFrame(rows).to_parquet(path)
+        reference = parquet.build_clip({'type': 'tracking_parquet', 'path': str(path), 'fps': 25})
+        for index in (0, 2, 7):
+            assert dat.render_frame_image(index, clip.frame_source[index]) == parquet.render_frame_image(index, reference.frame_source[index])
+    finally:
+        clip.frame_source.close()
+
+
+@pytest.mark.gui
+def test_tracab_metadata_edits_reload_pitch_and_missing_metadata_reports_error(
+    media_panel_and_controller, tracab_sidecar_source, monkeypatch,
+):
+    import json
+    from pathlib import Path
+    _panel, controller = media_panel_and_controller
+    controller.load_and_play(tracab_sidecar_source)
+    controller.pause()
+    backend = controller._active_backend
+    old_clip = backend._clip
+    assert backend.pitch_length == 105
+    path = Path(tracab_sidecar_source['metadata_path'])
+    metadata = json.loads(path.read_text())
+    metadata['PitchLongSide'] = 11000
+    path.write_text(json.dumps(metadata))
+    controller.load_and_play(tracab_sidecar_source)
+    controller.pause()
+    assert backend._clip is not old_clip
+    assert backend.pitch_length == 110
+    assert backend._clip.frame_source.reader.row_at(1000)['homePlayers'][0]['playerId'] == 'H9'
+    messages = []
+    monkeypatch.setattr(controller._single, '_trigger_error_dialog', lambda details, **kwargs: messages.append(details))
+    path.unlink()
+    controller.load_and_play(tracab_sidecar_source)
+    assert messages and str(path) in messages[-1]

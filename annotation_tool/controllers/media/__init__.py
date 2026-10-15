@@ -5,6 +5,7 @@ from .frames_npy_backend import FramesNpyMediaBackend
 from .player_centroids_h5_backend import PlayerCentroidsH5MediaBackend
 from .player_joints_h5_backend import PlayerJointsH5MediaBackend
 from .raster_backend import BaseRasterMediaBackend, RasterClip
+from .tracking_tracab_backend import TracabTrackingMediaBackend
 from .tracking_parquet_backend import TrackingParquetMediaBackend
 from .video_backend import VideoMediaBackend
 
@@ -16,5 +17,6 @@ __all__ = [
     "PlayerJointsH5MediaBackend",
     "RasterClip",
     "TrackingParquetMediaBackend",
+    "TracabTrackingMediaBackend",
     "VideoMediaBackend",
 ]

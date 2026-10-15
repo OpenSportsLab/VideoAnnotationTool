@@ -65,6 +65,7 @@ The canonical persisted in-memory state is a single `dataset_json` owned by `Dat
     Optional `UTC_time_start` sets the modality's absolute UTC origin at local playback position `00:00.000`. It accepts ISO-compatible timestamps such as `2022-12-03 13:27:59.461000`, `T` separators, `Z`, and explicit offsets.
   - `{ "type": "frames_npy", "path": "...", "fps": 2.0 }`
   - Read-time alias: `{ "type": "frame_npy", ... }` is normalized to `frames_npy`
+  - `tracking_tracab`: original DAT plus `metadata_path` JSON and manifest UTC calibration; see `docs/OSL.md`.
   - `{ "type": "tracking_parquet", "path": "...", "fps": 2.0 }`
     `fps` is optional fallback timing used only when parquet timestamps are unusable.
     V1 supports the PFF/PFF-compatible tracking schema and renders a pitch-only preview.

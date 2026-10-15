@@ -15,7 +15,7 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
 - `dataset_explorer_controller.py`: dataset and explorer orchestration.
 - `history_manager.py`: mutation/undo/redo engine.
 - `media_controller.py`: grouped media playback, UTC alignment, synchronization, and mute routing.
-- `media/`: internal playback backends used by `MediaController` (`video`, `frames_npy`, `tracking_parquet`).
+- `media/`: internal playback backends used by `MediaController` (`video`, `frames_npy`, `tracking_parquet`, `tracking_tracab`, and player H5 inputs).
 - `welcome_controller.py`: welcome-page routing.
 - `hf_transfer_controller.py`: threaded Hugging Face dataset transfer and local-model cache orchestration for GUI actions.
 - `inference_controller.py`: canonical local/remote model discovery, execution,
@@ -166,10 +166,17 @@ Owns runtime business logic: dataset lifecycle, mutation history, playback contr
   explorer's context-action state and prompts before quitting with an active
   download. Upload presentation retains its existing busy dialog.
 - `start_upload(...)`: execute Hugging Face dataset upload from local dataset JSON inputs in a worker thread.
+  OpenSportsLib checks all referenced `tracking_tracab` files before either
+  upload format contacts the Hub. The worker reports missing paths through its
+  existing failure signal. DAT, `metadata_path`, `tf05_path`, and `tf08_path`
+  travel together for full and selective transfers. Full downloads validate
+  their local presence before reporting completion; annotations-only downloads
+  defer this to later hydration. Original file bytes and input calibration are
+  preserved in JSON and WebDataset storage.
 - `supports_safe_parquet_uploads()` and `find_missing_inputs(...)` gate Parquet
   conversion on a complete local dataset. `start_missing_inputs_download(...)`
   and `queue_missing_inputs_download(...)` use the shared background download
-  slot to hydrate missing primary and ball
+  slot to hydrate missing primary, ball, metadata JSON, and XML
   inputs from pinned provenance. `MainWindow` owns the pending-upload state and
   resumes only after a second successful preflight.
 - `start_model_import(...)`: inspect and cache one OpenSportsLib model repository
@@ -397,3 +404,18 @@ and atomic, with no inference or evidence. See [its contracts](streaming_vqa/REA
   eligibility in `MediaController`.
 - Undo/redo correctness is a business contract, not optional behavior.
 - Avoid duplicating mutation logic across explorer/mode controllers/history; use one canonical implementation.
+
+
+Raw DAT playback uses `TracabTrackingMediaBackend` and OpenSportsLib's indexed
+`TracabTrackingReader`. `PitchMediaBackend` owns shared rendering, independent of
+storage. Explorer/media normalization preserves `metadata_path`, `tf05_path`, `tf08_path`, `metadata`,
+`duration_ms`, optional FPS and UTC origin. Explorer resolves both paths against
+the manifest and rebases them on Save As. Source identity includes calibration,
+all companion paths and their size/mtime snapshots so metadata edits reload playback.
+The renderer uses pitch dimensions from the resolved reader. These runtime
+signatures and resolved rosters are not persisted into the document. Inference
+requests resolve companion paths against the project root before writing a
+temporary manifest, while preserving the original sample.
+The raster runtime owns asynchronous loading, seeking and disposal. No controller
+coupling or separate annotation mutation path is introduced. Save/reopen retains
+the complete descriptor and the existing HistoryManager mutation contract.

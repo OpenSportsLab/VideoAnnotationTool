@@ -1554,3 +1554,20 @@ def test_remote_malformed_result_and_network_error_mapping(tmp_path, monkeypatch
     )
     assert bad_request.code == "invalid_request"
     assert bad_request.retryable is False
+
+
+def test_tracab_inference_resolves_metadata_and_preserves_calibration(tmp_path, tracab_sidecar_source):
+    import copy
+    from inference_types import resolve_sample_inputs
+
+    source = copy.deepcopy(tracab_sidecar_source)
+    source['path'] = 'match.dat'
+    source['metadata_path'] = 'metadata/match.json'
+    sample = {'inputs': [source]}
+    before = copy.deepcopy(sample)
+    resolved = resolve_sample_inputs(sample, str(tmp_path / 'annotations.json'))[0].to_wire()
+    assert sample == before
+    assert resolved['path'] == str(tmp_path / 'match.dat')
+    assert resolved['metadata_path'] == str(tmp_path / 'metadata' / 'match.json')
+    assert resolved['metadata'] == source['metadata']
+    assert resolved['UTC_time_start'] == source['UTC_time_start']

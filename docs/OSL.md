@@ -154,6 +154,7 @@ Supported input types:
 |---|---|---|
 | `video` | `clips/clip_0001.mp4` | Default when type is missing and the extension is not special. |
 | `frames_npy` | `frames/clip_0001.npy` | Uses `fps` for playback timing. The legacy alias `frame_npy` is normalized to `frames_npy`. |
+| `tracking_tracab` | `tracking/match.dat` | Raw TRACAB with source references and UTC calibration; see below. |
 | `tracking_parquet` | `tracking/clip_0001.parquet` | Uses parquet timestamps when available. Optional `fps` is a fallback. |
 | `player_joints_h5` | `tracking/live_joints.h5` | Uses absolute UTC values from `timestamp_utc` for playback timing and renders a 3D stickman preview. Optional `ball_path` overlays ball XYZ from a separate H5 file. |
 | `player_centroids_h5` | `tracking/live_centroids.h5` | Uses absolute UTC values from `timestamp_utc` for playback timing and renders top-down player centroids. Optional `ball_path` overlays ball XYZ from a separate H5 file. |
@@ -645,3 +646,98 @@ Save/export never opens an H5 input to discover its timeline origin. An origin
 already learned by playback, inference, or evaluation can be reused while the
 source file is unchanged. If no valid cached origin exists, relative temporal
 annotations remain relative during the write.
+
+## Raw TRACAB tracking
+
+Use `type: "tracking_tracab"` for an original classic ASCII DAT. The original
+JSON and the distinct TF05/TF08 XML feeds are companion files. Keep source values
+in those files; `metadata` holds only the additional UTC calibration and the
+explicit mapping between DAT team codes and home/away.
+
+```json
+{
+  "type": "tracking_tracab",
+  "path": "tracking/match.dat",
+  "metadata_path": "tracking/match_metadata.json",
+  "tf05_path": "tracking/match_TF05.xml",
+  "tf08_path": "tracking/match_TF08.xml",
+  "UTC_time_start": "2020-01-01 12:00:00.000000",
+  "duration_ms": 6000,
+  "metadata": {
+    "team_codes": {"home": 1, "away": 0},
+    "periods": [
+      {"period": 1, "start_utc": "2020-01-01 12:00:01.000000"},
+      {"period": 2, "start_utc": "2020-01-01 12:00:04.000000"}
+    ]
+  }
+}
+```
+
+All paths resolve from the same manifest/media root. XML paths are optional;
+when supplied, the actual root feed ID must match the reference. TF05 and TF08
+are not interchangeable. Transfers, TAR packaging, inference bundles and VAT
+Save As include/rebase every referenced file. Source files are never rewritten.
+JSON and Parquet/WebDataset uploads require all referenced TRACAB files locally.
+Full downloads validate these references; selecting a tracking input downloads
+its DAT and all referenced companions. Annotation-only downloads defer assets
+until requested. See [dataset transfers](batch_tools.md) for the workflow.
+
+The JSON reader supports the observed flat metadata schema, for example:
+
+```json
+{
+  "GameID": "001",
+  "FrameRate": 25,
+  "PitchLongSide": 10500,
+  "PitchShortSide": 6800,
+  "Phase1StartFrame": 100,
+  "Phase1EndFrame": 102,
+  "Phase2StartFrame": 200,
+  "Phase2EndFrame": 202,
+  "HomeTeam": {"TeamID": "H", "Players": [
+    {"PlayerID": "0009", "JerseyNo": 9, "StartFrameCount": 100, "EndFrameCount": 202}
+  ]},
+  "AwayTeam": {"TeamID": "A", "Players": [
+    {"PlayerID": "0003", "JerseyNo": 3, "StartFrameCount": 100, "EndFrameCount": 202}
+  ]}
+}
+```
+
+FPS, actual pitch dimensions, rosters, active intervals and inclusive period
+bounds come from this JSON. They are not repeated under input `metadata`.
+`period: N` refers to `PhaseNStartFrame`/`PhaseNEndFrame`. Only populated phases
+may be calibrated. Source frame UTC is `start_utc + (frame - PhaseNStartFrame) /
+FrameRate`; playback position subtracts `UTC_time_start`. No UTC is inferred
+from frame numbering or timezone-free XML timestamps. Naive OSL timestamp
+strings mean UTC. Video alignment remains a constant offset within each period.
+
+The native API preserves input coordinates, field tokens, frame IDs, original
+bytes, all targets and unknown fields. VAT and the tracking graph loaders
+explicitly request the normalized view: classic centimeter coordinates and
+height become centered meters, preserving original axes and supplied speed.
+Pitch dimensions are required for this view; no standard pitch is substituted.
+There is no automatic mirroring, team reversal, smoothing or speed recomputation.
+
+Native timing duplicates, gaps and out-of-order records are preserved and
+reported. The synchronized playback view rejects duplicate/out-of-order frames,
+invalid calibration, overlapping periods, missing boundary frames and timing
+outside the declared duration. It displays an empty pitch before play, during
+halftime/missing frames and after play. Its virtual empty rows and graph sampling
+do not alter native records. Player rendering excludes non-player team codes;
+native access retains them. Ambiguous roster identities fail explicitly.
+
+This supports the inspected classic ASCII layout, not all TRACAB products or
+versions. XML attributes and unknown sections remain accessible without guessed
+semantics. Heatmap strings retain leading zeros; decoding requires independently
+established grid dimensions, cell order, orientation and value semantics.
+
+**BREAKING CHANGE from the unreleased prototype:** replace input type
+`tracab_dat` with `tracking_tracab`, rename `tracab` to `metadata`, and replace
+embedded period frame bounds with `period` references when using `metadata_path`.
+The old modality/key are not aliases. Regenerate converter-produced manifests.
+Standalone descriptors without source metadata remain available for synthetic
+or custom inputs, with explicit FPS, pitch dimensions and period frame bounds.
+
+The backend requires the updated editable OpenSportsLib checkout:
+`python -m pip install -e ../opensportslib`. Native-reader APIs and field mappings
+are documented in that checkout’s `docs/tracking_tracab.md`.

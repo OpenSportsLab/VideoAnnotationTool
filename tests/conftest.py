@@ -578,3 +578,42 @@ def synthetic_project_json(tmp_path):
         return project_path
 
     return _write
+
+
+@pytest.fixture
+def tracab_source(tmp_path):
+    """Synthetic raw tracking, with two periods and an empty break."""
+    path = tmp_path / 'match.dat'
+    path.write_text(''.join(
+        f'{frame}:1,7,9,100,-200,1;0,4,3,-300,400,2;:100,200,75,3,H,Alive;:\n'
+        for frame in [100, 101, 102, 200, 201, 202]
+    ))
+    return {'type': 'tracking_tracab', 'path': str(path), 'fps': 25, 'duration_ms': 6000,
+            'UTC_time_start': '2020-01-01 00:00:00.000000',
+            'metadata': {'team_codes': {'home': 1, 'away': 0},
+                       'pitch_length_m': 105, 'pitch_width_m': 68,
+                       'periods': [
+                           {'start_frame': 100, 'end_frame': 102, 'start_utc': '2020-01-01 00:00:01.000000'},
+                           {'start_frame': 200, 'end_frame': 202, 'start_utc': '2020-01-01 00:00:04.000000'}]}}
+
+
+@pytest.fixture
+def tracab_sidecar_source(tracab_source, tmp_path):
+    import copy
+    import json
+    source = copy.deepcopy(tracab_source)
+    tracab = source['metadata']
+    metadata = {'FrameRate': source.pop('fps'),
+                'PitchLongSide': tracab.pop('pitch_length_m') * 100,
+                'PitchShortSide': tracab.pop('pitch_width_m') * 100,
+                'HomeTeam': {'Players': [{'JerseyNo': 9, 'PlayerID': 'H9'}]},
+                'AwayTeam': {'Players': [{'JerseyNo': 3, 'PlayerID': 'A3'}]}}
+    for number, period in enumerate(tracab['periods'], 1):
+        metadata[f'Phase{number}StartFrame'] = period.pop('start_frame')
+        metadata[f'Phase{number}EndFrame'] = period.pop('end_frame')
+        period['period'] = number
+    path = tmp_path / 'metadata' / 'match.json'
+    path.parent.mkdir()
+    path.write_text(json.dumps(metadata))
+    source['metadata_path'] = str(path)
+    return source

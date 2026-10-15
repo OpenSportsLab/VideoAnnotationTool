@@ -99,11 +99,18 @@ Explorer:
 - **Download Sample Inputs from Hugging Face…** requests every input in that
   sample.
 - **Download Input from Hugging Face…** requests the selected input and its
-  optional `ball_path` companion.
+  referenced companions (`ball_path`, `metadata_path`, `tf05_path`, `tf08_path`).
+
+For `tracking_tracab`, this downloads the original DAT, metadata JSON, and both
+XML feeds when referenced. Full dataset transfers include these files for every
+sample in both JSON and Parquet/WebDataset storage. File contents and UTC
+calibration are preserved. A full download reports an error if any referenced
+TRACAB file remains missing. Annotation-only downloads intentionally fetch no
+assets; use the input action or **Queue missing samples** to fetch them later.
 
 The media viewer identifies any absent Hugging Face input as not downloaded and
 shows this right-click guidance in the pane. This applies to videos, NumPy frame
-stacks, tracking Parquet, and player H5 inputs. After a selective request starts,
+stacks, TRACAB DAT, tracking Parquet, and player H5 inputs. After a selective request starts,
 the same pane changes to **Input download in progress** until the transfer
 finishes. A file that exists but cannot be handled by its declared input type is
 reported as unsupported instead.
@@ -142,7 +149,7 @@ queued automatically after converting a Parquet dataset. Failed files remain
 marked **Failed** in the file list, and remaining queued downloads continue.
 The final failed sample does not open a dialog either.
 For Parquet/shard datasets, sample IDs remain read-only across the dataset until
-all referenced media (including ball-tracking companions) is downloaded. This
+all referenced media (including ball, metadata JSON, and XML companions) is downloaded. This
 keeps sample lookup in the source Parquet intact during partial downloads.
 
 ### Upload Dataset to HF...
@@ -152,15 +159,19 @@ Upload requires an opened dataset JSON from disk.
 Upload modes:
 
 - **Upload as JSON** uploads the current dataset JSON plus every referenced
-  primary input and `ball_path` that is currently available locally. Missing
-  files are skipped, and their count is shown when the upload completes. Files
-  already stored remotely but absent locally are left untouched.
+  primary input and companion file that is currently available locally.
+  `tracking_tracab` requires every referenced DAT/JSON/XML file to exist locally;
+  otherwise upload stops with the missing paths before contacting Hugging Face.
+  Missing files for other input types are skipped, and their count is shown when
+  the upload completes. Files already stored remotely but absent locally are
+  left untouched.
 - **Parquet + WebDataset** converts locally, then uploads generated
   Parquet/WebDataset artifacts.
 - **Use Xet for this upload** is checked by default. Uncheck it to retry through
   classic HTTP when Xet times out, typically on a very large file.
 
-Before a Parquet upload, the app verifies every primary input and `ball_path`.
+Before a Parquet upload, the app verifies every primary input and referenced
+companion, including TRACAB metadata JSON and XML feeds.
 It never creates or uploads partial shards. If files are missing and the JSON
 has complete Hugging Face provenance, choose **Download Missing Files** to
 restore them from the recorded immutable commit. The download runs in the

@@ -221,7 +221,7 @@ class BaseRasterMediaBackend(BaseMediaBackend):
 
     def _should_load_asynchronously(self, source: dict) -> bool:
         source_size = 0
-        for key in ("path", "ball_path"):
+        for key in ("path", "ball_path", "metadata_path", "tf05_path", "tf08_path"):
             try:
                 source_size += os.path.getsize(str(source.get(key) or ""))
             except (OSError, TypeError, ValueError):

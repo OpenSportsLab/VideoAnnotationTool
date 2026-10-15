@@ -557,13 +557,14 @@ class _DatasetWriteMixin:
                         new_input["path"] = os.path.relpath(abs_path, base_dir).replace("\\", "/")
                     except Exception:
                         new_input["path"] = abs_path
-                if new_input.get("ball_path"):
-                    abs_ball_path = self._resolve_media_path(new_input.get("ball_path"))
-                    if abs_ball_path:
-                        try:
-                            new_input["ball_path"] = os.path.relpath(abs_ball_path, base_dir).replace("\\", "/")
-                        except Exception:
-                            new_input["ball_path"] = abs_ball_path
+                for key in ("ball_path", "metadata_path", "tf05_path", "tf08_path"):
+                    if new_input.get(key):
+                        companion_path = self._resolve_media_path(new_input[key])
+                        if companion_path:
+                            try:
+                                new_input[key] = os.path.relpath(companion_path, base_dir).replace("\\", "/")
+                            except ValueError:
+                                new_input[key] = companion_path
                 new_inputs.append(new_input)
             sample["inputs"] = new_inputs
 
@@ -1721,7 +1722,7 @@ class DatasetExplorerController(QObject, _DatasetWriteMixin):
                 for sample in self.get_samples()
                 for input_item in sample.get("inputs", [])
                 if isinstance(input_item, dict)
-                for key in ("path", "ball_path")
+                for key in ("path", "ball_path", "metadata_path", "tf05_path", "tf08_path")
                 if input_item.get(key)
             )
             if missing:
@@ -1754,6 +1755,13 @@ class DatasetExplorerController(QObject, _DatasetWriteMixin):
         }
         if "UTC_time_start" in input_item:
             media_source["UTC_time_start"] = input_item.get("UTC_time_start")
+        if source_type == "tracking_tracab":
+            for key in ("metadata_path", "tf05_path", "tf08_path"):
+                if input_item.get(key):
+                    media_source[key] = self._resolve_media_path(input_item[key])
+            for key in ("fps", "duration_ms", "metadata"):
+                if key in input_item:
+                    media_source[key] = copy.deepcopy(input_item[key])
         if source_type in {"player_joints_h5", "player_centroids_h5"}:
             resolved_ball_path = self._resolve_media_path(input_item.get("ball_path"))
             if resolved_ball_path:
@@ -2869,7 +2877,7 @@ class DatasetExplorerController(QObject, _DatasetWriteMixin):
         requested_paths: list[str] = []
         seen: set[str] = set()
         for input_item in selected_inputs:
-            for key in ("path", "ball_path"):
+            for key in ("path", "ball_path", "metadata_path", "tf05_path", "tf08_path"):
                 raw_path = str(input_item.get(key) or "").strip()
                 normalized = raw_path.replace("\\", "/")
                 if raw_path and normalized not in seen:

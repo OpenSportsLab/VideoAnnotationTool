@@ -1,3 +1,5 @@
+import copy
+import json
 import mimetypes
 import os
 import datetime as _datetime
@@ -11,6 +13,7 @@ from controllers.media import (
     PlayerCentroidsH5MediaBackend,
     PlayerJointsH5MediaBackend,
     TrackingParquetMediaBackend,
+    TracabTrackingMediaBackend,
     VideoMediaBackend,
 )
 from utils import parse_utc_datetime
@@ -99,6 +102,7 @@ class _SingleMediaController(QObject):
         ".m4a",
         ".npy",
         ".parquet",
+        ".dat",
         ".h5",
         ".hdf5",
     }
@@ -125,6 +129,7 @@ class _SingleMediaController(QObject):
     _BACKEND_VIDEO = "video"
     _BACKEND_FRAMES_NPY = "frames_npy"
     _BACKEND_TRACKING_PARQUET = "tracking_parquet"
+    _BACKEND_TRACKING_TRACAB = "tracking_tracab"
     _BACKEND_PLAYER_JOINTS_H5 = "player_joints_h5"
     _BACKEND_PLAYER_CENTROIDS_H5 = "player_centroids_h5"
 
@@ -156,6 +161,7 @@ class _SingleMediaController(QObject):
             self._BACKEND_VIDEO: VideoMediaBackend(self),
             self._BACKEND_FRAMES_NPY: FramesNpyMediaBackend(self),
             self._BACKEND_TRACKING_PARQUET: TrackingParquetMediaBackend(self),
+            self._BACKEND_TRACKING_TRACAB: TracabTrackingMediaBackend(self),
             self._BACKEND_PLAYER_JOINTS_H5: PlayerJointsH5MediaBackend(self),
             self._BACKEND_PLAYER_CENTROIDS_H5: PlayerCentroidsH5MediaBackend(self),
         }
@@ -219,6 +225,20 @@ class _SingleMediaController(QObject):
             "path": os.path.normpath(path),
             "type": source_type,
         }
+        if source_type == self._BACKEND_TRACKING_TRACAB:
+            signatures = []
+            for key in ("metadata_path", "tf05_path", "tf08_path"):
+                if raw_source.get(key):
+                    normalized[key] = os.path.normpath(raw_source[key])
+                    try:
+                        stat = os.stat(normalized[key])
+                        signatures.append((key, stat.st_size, stat.st_mtime_ns))
+                    except OSError:
+                        signatures.append((key, None, None))
+            normalized["_metadata_signature"] = signatures
+            for key in ("fps", "duration_ms", "metadata"):
+                if key in raw_source:
+                    normalized[key] = copy.deepcopy(raw_source[key])
         if "UTC_time_start" in raw_source:
             normalized["UTC_time_start"] = raw_source.get("UTC_time_start")
         if source_type in {self._BACKEND_PLAYER_JOINTS_H5, self._BACKEND_PLAYER_CENTROIDS_H5}:
@@ -244,6 +264,7 @@ class _SingleMediaController(QObject):
             self._BACKEND_VIDEO,
             self._BACKEND_FRAMES_NPY,
             self._BACKEND_TRACKING_PARQUET,
+            self._BACKEND_TRACKING_TRACAB,
             self._BACKEND_PLAYER_JOINTS_H5,
             self._BACKEND_PLAYER_CENTROIDS_H5,
         }
@@ -251,6 +272,9 @@ class _SingleMediaController(QObject):
     def _source_key(self, source: dict) -> tuple[str, ...]:
         if not isinstance(source, dict):
             return ("", "")
+        if source.get("type") == self._BACKEND_TRACKING_TRACAB:
+            return (self._fs_path_key(source.get("path")), json.dumps(
+                {k: source.get(k) for k in ("type", "fps", "UTC_time_start", "duration_ms", "metadata", "metadata_path", "tf05_path", "tf08_path", "_metadata_signature")}, sort_keys=True))
         utc_start_key = (
             "UTC_time_start",
             str(source.get("UTC_time_start")),

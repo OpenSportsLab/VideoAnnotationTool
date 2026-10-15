@@ -642,16 +642,16 @@ def shard_rename_project(window, tmp_path):
 
 
 @pytest.mark.gui
-@pytest.mark.parametrize("missing_key", ["path", "ball_path"])
+@pytest.mark.parametrize("missing_key", ["path", "ball_path", "metadata_path", "tf05_path", "tf08_path"])
 def test_partial_shard_dataset_blocks_all_sample_renames(
     window, shard_rename_project, missing_key
 ):
     document, json_path, pending_path = shard_rename_project
-    if missing_key == "ball_path":
+    if missing_key != "path":
         document["data"][1]["inputs"] = [{
-            "type": "player_joints_h5",
+            "type": "player_joints_h5" if missing_key == "ball_path" else "tracking_tracab",
             "path": document["data"][0]["inputs"][0]["path"],
-            "ball_path": str(pending_path),
+            missing_key: str(pending_path),
         }]
     controller = window.dataset_explorer_controller
     assert controller.load_project(document, str(json_path))

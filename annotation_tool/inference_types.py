@@ -281,7 +281,14 @@ def resolve_sample_inputs(sample: dict[str, Any], project_json_path: str = "") -
         path = os.path.expanduser(str(item["path"]))
         if not os.path.isabs(path) and base_dir:
             path = os.path.join(base_dir, path)
-        resolved.append(InferenceInput.from_sample_input(item, os.path.abspath(path)))
+        resolved_item = copy.deepcopy(item)
+        for key in ("metadata_path", "tf05_path", "tf08_path"):
+            if resolved_item.get(key):
+                companion_path = os.path.expanduser(str(resolved_item[key]))
+                if not os.path.isabs(companion_path) and base_dir:
+                    companion_path = os.path.join(base_dir, companion_path)
+                resolved_item[key] = os.path.abspath(companion_path)
+        resolved.append(InferenceInput.from_sample_input(resolved_item, os.path.abspath(path)))
     return resolved
 
 

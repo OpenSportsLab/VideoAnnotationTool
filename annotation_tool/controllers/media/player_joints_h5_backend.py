@@ -10,7 +10,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPolygonF
 
 from .raster_backend import RasterClip
-from .tracking_parquet_backend import TrackingParquetMediaBackend
+from .pitch_backend import PitchMediaBackend
 
 
 @dataclass
@@ -94,7 +94,7 @@ class _H5PlayerJointsFrameSource:
             pass
 
 
-class PlayerJointsH5MediaBackend(TrackingParquetMediaBackend):
+class PlayerJointsH5MediaBackend(PitchMediaBackend):
     backend_type = "player_joints_h5"
 
     _TIME_COLUMN = "timestamp_utc"
