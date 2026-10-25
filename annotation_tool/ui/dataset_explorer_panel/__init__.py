@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
-    QDialogButtonBox,
     QHeaderView,
     QHBoxLayout,
     QLabel,
@@ -27,11 +26,11 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QTableWidgetItem,
     QToolButton,
-    QVBoxLayout,
     QWidget,
 )
 
 from utils import resource_path
+from ui.json_value_dialog import JsonValueDialog
 from explorer_settings import DEFAULT_EXPLORER_PAGE_SIZE, normalize_explorer_page_size
 
 
@@ -832,36 +831,10 @@ class DatasetExplorerPanel(QWidget):
         self._set_draft_value(key, updated)
 
     def _open_json_value_dialog(self, key: str, current_value):
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"Edit JSON: {key}")
-        dialog.resize(520, 360)
-        layout = QVBoxLayout(dialog)
-
-        editor = QPlainTextEdit(dialog)
-        editor.setPlainText(json.dumps(current_value, indent=2, ensure_ascii=False))
-        layout.addWidget(editor)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            parent=dialog,
-        )
-        layout.addWidget(buttons)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-
-        while True:
-            if dialog.exec() != QDialog.DialogCode.Accepted:
-                return self._MISSING
-            raw = editor.toPlainText().strip()
-            try:
-                value = json.loads(raw) if raw else None
-            except Exception as exc:
-                QMessageBox.warning(self, "Invalid JSON", f"Could not parse JSON:\n{exc}")
-                continue
-            if not isinstance(value, (dict, list)):
-                QMessageBox.warning(self, "Invalid Type", "Value must be a JSON object or array.")
-                continue
-            return value
+        dialog = JsonValueDialog(key, current_value, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return self._MISSING
+        return dialog.value
 
     def _parse_scalar_value(self, text: str, template):
         if isinstance(template, bool):

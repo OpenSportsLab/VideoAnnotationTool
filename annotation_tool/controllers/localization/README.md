@@ -42,6 +42,8 @@ offset back onto the original sample timeline.
 - `locLabelDeleteRequested(str, str)`
 - `locEventAddRequested(str, dict)`
 - `locEventModRequested(str, dict, dict)`
+- `locEventMetadataSetRequested(str, dict, dict)` — sample ID, original event,
+  replacement metadata object.
 - `locEventDelRequested(str, dict, int)`
 - `locEventsSetRequested(str, object)`
 - `locInferenceCommitRequested(str, object, object)`
@@ -77,6 +79,24 @@ offset back onto the original sample timeline.
 ## Business Rules
 - Schema operations enforce duplicate/name validity checks.
 - Event modify/delete requires event existence and valid selection.
+- Event metadata edits arrive through `annotationMetadataEdited(dict, dict)`.
+  `MainWindow.connect_signals()` routes `locEventMetadataSetRequested` to
+  `HistoryManager.execute_localization_event_metadata_set()`. The history owner
+  resolves the canonical event and replaces only `metadata`, preserving UTC
+  precision, compatibility positions, confidence/model fields, and custom keys.
+  It bypasses manual-edit prediction normalization and temporal reprojection.
+- Ordinary event modifications and metadata changes share the history owner's
+  `_replace_localization_event()` implementation and `LOC_EVENT_MOD` undo/redo.
+  Effective metadata changes create one history entry and clear redo; equal
+  nonempty objects and clearing absent metadata do not. Blank/whitespace-only
+  dialog input becomes `{}`, which requests deletion of the key and value;
+  clearing even an existing empty object is one undoable removal. Old invalid
+  metadata is not normalized during loading.
+- The metadata dialog shares the manifest JSON editor and requires a JSON
+  object with finite numbers throughout. The controller updates its detached
+  snapshot, refreshes the table without timeline marker updates, and restores
+  selection with selection signals blocked. No dataset tree rebuild, playback
+  restart, or seek is requested for a metadata commit.
 - Label add flow can optionally inject an event at current playback time.
 - Pause/resume around modal label dialogs is signal-driven.
 - The controller gathers distinct nonempty classes from a completed run and
@@ -122,8 +142,10 @@ offset back onto the original sample timeline.
   safe inference defaults (`batch_size`, `shuffle`, `num_workers`, `pin_memory`)
   for CPU fallback; the existing result mapping handles classes absent from the
   selected VAT head. Cached model configs and project JSON stay untouched.
-- Accepting removes prediction metadata from the event; rejecting uses the
-  tracked delete path. Manual edits invalidate pending rows.
+- Accepting removes `confidence_score` and `inference_model_id` from the event;
+  rejecting uses the tracked delete path. Manual time/head/label edits invalidate
+  pending rows. Metadata-only edits preserve prediction state, and custom event
+  `metadata` survives confirmation and subsequent event edits.
 - Single-row review selects the following row after refresh, or the preceding row
   when the reviewed row was last; ordinary selection signaling seeks playback.
 - Previous/next navigation advances from the selected table row when present, so

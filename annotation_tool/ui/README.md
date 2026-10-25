@@ -12,6 +12,14 @@ Provides all QWidget classes, `.ui` bindings, and adapter surfaces for controlle
 - `dialogs.py`: shared dialogs.
   The Hugging Face download dialog always requests JSON first and includes a
   persisted **Queue sample media** option that controls subsequent hydration.
+- `json_value_dialog.py`: shared `JsonValueDialog(key, current_value, parent,
+  objects_only=False, allow_empty=False)` for manifest nested values and action spotting metadata.
+  Successful `exec()` returns Accepted with parsed JSON in `value`; Cancel
+  returns Rejected. The default accepts objects/arrays, while `objects_only=True`
+  requires an object. Invalid input keeps the modal open with the text intact;
+  non-finite constants and overflowing numbers are rejected throughout.
+  Action spotting enables `allow_empty=True` so blank/whitespace-only input
+  returns `{}` as a metadata-removal intent. Manifest validation is unchanged.
 - `welcome_widget/`: landing page widget.
 - `dataset_explorer_panel/`: tree/filter/header inspector panel.
 - `media_player/`: center media timeline/player panel.

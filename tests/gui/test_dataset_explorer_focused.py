@@ -1171,13 +1171,19 @@ def test_panel_open_json_value_dialog_rejects_invalid_json_and_returns_missing(
 ):
     panel, _controller = explorer_panel_and_controller
 
-    exec_results = iter([QDialog.DialogCode.Accepted, QDialog.DialogCode.Rejected])
     warning_calls = {"count": 0}
 
-    monkeypatch.setattr("ui.dataset_explorer_panel.QDialog.exec", lambda self: next(exec_results))
-    monkeypatch.setattr("ui.dataset_explorer_panel.QPlainTextEdit.toPlainText", lambda self: "{invalid json")
+    def invalid_then_cancel(dialog):
+        dialog.editor.setPlainText("{invalid json")
+        dialog.accept()
+        assert dialog.result() == QDialog.DialogCode.Rejected
+        assert dialog.editor.toPlainText() == "{invalid json"
+        dialog.reject()
+        return dialog.result()
+
+    monkeypatch.setattr("ui.json_value_dialog.JsonValueDialog.exec", invalid_then_cancel)
     monkeypatch.setattr(
-        "ui.dataset_explorer_panel.QMessageBox.warning",
+        "ui.json_value_dialog.QMessageBox.warning",
         lambda *args, **kwargs: warning_calls.__setitem__("count", warning_calls["count"] + 1)
         or QMessageBox.StandardButton.Ok,
     )

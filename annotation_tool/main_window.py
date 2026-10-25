@@ -827,6 +827,9 @@ class VideoAnnotationWindow(QMainWindow):
         self.localization_editor_controller.locEventModRequested.connect(
             self.history_manager.execute_localization_event_mod
         )
+        self.localization_editor_controller.locEventMetadataSetRequested.connect(
+            self.history_manager.execute_localization_event_metadata_set
+        )
         self.localization_editor_controller.locEventDelRequested.connect(
             self.history_manager.execute_localization_event_delete
         )

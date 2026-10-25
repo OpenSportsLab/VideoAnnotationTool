@@ -1,3 +1,4 @@
+import copy
 import os
 
 from PyQt6 import uic
@@ -6,6 +7,7 @@ from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QColorDialog,
+    QDialog,
     QHeaderView,
     QHBoxLayout,
     QInputDialog,
@@ -29,6 +31,7 @@ from colors import (
     normalize_hex_color,
 )
 from ui.inference_review_bar import InferenceReviewBar
+from ui.json_value_dialog import JsonValueDialog
 from utils import (
     annotation_utc_datetime,
     format_annotation_utc_display,
@@ -238,6 +241,7 @@ class _TableAdapter(QObject):
 
     annotationSelected = pyqtSignal(int)
     annotationModified = pyqtSignal(dict, dict)
+    annotationMetadataEdited = pyqtSignal(dict, dict)
     annotationDeleted = pyqtSignal(dict)
     annotationConfirmRequested = pyqtSignal(dict)
     annotationRejectRequested = pyqtSignal(dict)
@@ -379,6 +383,7 @@ class _TableAdapter(QObject):
         if isinstance(item, dict) and "confidence_score" in item:
             act_confirm = menu.addAction("Confirm Annotation")
             act_reject = menu.addAction("Reject Annotation")
+        act_metadata = menu.addAction("Edit Metadata…")
         act_correct_utc = menu.addAction("Correct UTC Time…")
         act_delete = menu.addAction("Delete Event")
         selected_action = menu.exec(self.table.mapToGlobal(pos))
@@ -389,11 +394,27 @@ class _TableAdapter(QObject):
         if act_reject is not None and selected_action == act_reject:
             self.annotationRejectRequested.emit(item)
             return
+        if selected_action == act_metadata:
+            self._edit_metadata(item)
+            return
         if selected_action == act_correct_utc:
             self.annotationUtcCorrectRequested.emit(item)
             return
         if selected_action == act_delete:
             self.annotationDeleted.emit(item)
+
+    def _edit_metadata(self, item):
+        # The modal edits a detached value; Cancel never touches the table data.
+        old_event = copy.deepcopy(item)
+        current = old_event.get("metadata", {})
+        dialog = JsonValueDialog("metadata", current, self.table, objects_only=True, allow_empty=True)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if dialog.value and current == dialog.value:
+            return
+        if not dialog.value and "metadata" not in old_event:
+            return
+        self.annotationMetadataEdited.emit(old_event, dialog.value)
 
     def _on_table_double_clicked(self, index):
         if not index.isValid():

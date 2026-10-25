@@ -47,6 +47,7 @@ class LocalizationEditorController(QObject):
     # payload: sample_id, ...
     locEventAddRequested = pyqtSignal(str, dict)
     locEventModRequested = pyqtSignal(str, dict, dict)
+    locEventMetadataSetRequested = pyqtSignal(str, dict, dict)
     locEventDelRequested = pyqtSignal(str, dict, int)
     # payload: sample_id, full events list
     locEventsSetRequested = pyqtSignal(str, object)
@@ -141,6 +142,7 @@ class LocalizationEditorController(QObject):
         table.annotationSelected.connect(self._on_table_annotation_selected)
         table.annotationDeleted.connect(self._on_delete_single_annotation)
         table.annotationModified.connect(self._on_annotation_modified)
+        table.annotationMetadataEdited.connect(self._on_annotation_metadata_edited)
         table.annotationConfirmRequested.connect(self._on_confirm_single_annotation)
         table.annotationRejectRequested.connect(self._on_reject_single_annotation)
         table.updateTimeForSelectedRequested.connect(self._on_update_time_for_selected)
@@ -575,6 +577,30 @@ class LocalizationEditorController(QObject):
         self._reselect_event(new_event)
 
     # --- Table Modification ---
+    def _on_annotation_metadata_edited(self, old_event, metadata):
+        if not self.current_video_path or not self.current_sample_id or not isinstance(metadata, dict):
+            return
+        events = self._snapshot_events()
+        index = self._find_event_index(events, old_event)
+        if index < 0:
+            return
+        if metadata and events[index].get("metadata") == metadata:
+            return
+        if not metadata and "metadata" not in events[index]:
+            return
+
+        self.locEventMetadataSetRequested.emit(
+            self.current_sample_id, copy.deepcopy(old_event), copy.deepcopy(metadata)
+        )
+        # Metadata edits preserve prediction state and all temporal fields.
+        if metadata:
+            events[index]["metadata"] = copy.deepcopy(metadata)
+        else:
+            events[index].pop("metadata", None)
+        self._set_snapshot_events(events)
+        self._display_events_for_item(self.current_video_path, update_markers=False)
+        self._reselect_event(events[index])
+
     def _normalize_event_for_manual_edit(self, event: dict) -> dict:
         updated = copy.deepcopy(event)
         if isinstance(updated, dict):
@@ -1137,6 +1163,7 @@ class LocalizationEditorController(QObject):
     def _reselect_event(self, target_event):
         model = self.localization_panel.table.model
         table_view = self.localization_panel.table.table
+        exact_row = self._table_row_for_event(target_event)
 
         table_view.selectionModel().blockSignals(True)
 
@@ -1145,8 +1172,9 @@ class LocalizationEditorController(QObject):
             if not item:
                 continue
 
-            if (
-                item.get("position_ms") == target_event.get("position_ms")
+            if row == exact_row or (
+                exact_row < 0
+                and item.get("position_ms") == target_event.get("position_ms")
                 and item.get("head") == target_event.get("head")
                 and item.get("label") == target_event.get("label")
             ):

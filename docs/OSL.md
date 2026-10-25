@@ -299,7 +299,12 @@ a valid legacy relative row.
       "head": "action",
       "label": "pass",
       "position_ms": 1240,
-      "timestamp_utc": "2026-01-01 12:00:01.240000"
+      "timestamp_utc": "2026-01-01 12:00:01.240000",
+      "metadata": {
+        "team": "home",
+        "player": {"id": 7},
+        "tags": ["reviewed"]
+      }
     },
     {
       "head": "action",
@@ -318,6 +323,18 @@ inference also writes `inference_model_id` on predicted events. If the user
 creates a task head from an inference result, it is stored in root `labels` as
 a `single_label` head whose `labels` array contains the returned classes; its
 events use that head name.
+
+Each event may also contain `metadata`, a JSON object with arbitrary keys and
+nested JSON values. In the Localization table, right-click **Edit Metadata…**
+to edit it. The editor requires an object and rejects non-finite numbers even
+inside nested values. Missing metadata is displayed as `{}`. Accepting an empty
+object or blank/whitespace-only editor removes the event's `metadata` key and
+value, including an existing empty object; an already absent field is a no-op.
+Save/export preserves the resulting absence. Older files need no migration;
+invalid existing event metadata is retained until explicitly replaced or cleared.
+Metadata edits preserve the event's temporal fields and prediction review
+state. Confirmation removes `confidence_score` and `inference_model_id` while
+retaining custom `metadata`.
 
 ### Description
 

@@ -35,6 +35,7 @@ events below a selected confidence percentage from the current sample.
 ### Table Adapter Signals
 - `annotationSelected(int)`
 - `annotationModified(dict, dict)`
+- `annotationMetadataEdited(dict, dict)` — original event and replacement metadata object.
 - `annotationDeleted(dict)`
 - `annotationConfirmRequested(dict)`
 - `annotationRejectRequested(dict)`
@@ -67,6 +68,17 @@ events below a selected confidence percentage from the current sample.
 - `_TableAdapter.set_timeline_origin(origin_utc)`
   - Supplies sample-scoped UTC display/edit context without coupling the panel
     to `MediaController`.
+- `_TableAdapter._edit_metadata(item)`
+  - Opens the shared `ui.json_value_dialog.JsonValueDialog` for the right-clicked
+    event, with object-only validation. The dialog matches the manifest editor's
+    title, formatted text, 520×360 initial size, and OK/Cancel controls.
+  - Missing metadata displays as `{}`. Blank/whitespace-only input and `{}`
+    request removal of the event's `metadata` field, including an existing empty
+    object. Cancel, equal nonempty objects, and clearing an already absent field
+    emit no intent; edits never mutate the model's event dictionaries directly.
+  - Invalid JSON, non-object roots, and nested non-finite numbers retain the
+    dialog text and display a warning. Legacy invalid values are shown as-is
+    and must be replaced with a valid object to commit.
 - `InferenceReviewBar` is the last widget and contains review actions only.
 - `LocalizationClassMappingDialog` opens for every retained inference result
   and shows one row per returned class. Its existing-head selector defaults to
@@ -76,6 +88,9 @@ events below a selected confidence percentage from the current sample.
 
 ## Business Rules
 - Table edit emits old/new payloads; controller decides mutation validity.
+- Metadata edits use their own signal so predictions remain unconfirmed. The
+  controller refreshes the table and restores selection without seeking or
+  updating unchanged timeline markers.
 - Tabs adapter manages head/label UX including add/rename/delete requests.
 - Pending event actions are emitted as intent only; persistence remains in controller/history layer.
 - Statistics are presentation-only and never mutate annotations or history.
@@ -97,6 +112,7 @@ events below a selected confidence percentage from the current sample.
 
 ## Tests
 - `tests/gui/test_workflow_localization.py`
+- `tests/gui/test_localization_metadata.py`
 - `tests/gui/test_localization_inference_mapping.py`
 - `tests/gui/test_signal_decoupling_contract.py`
 

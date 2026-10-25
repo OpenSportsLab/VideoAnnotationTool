@@ -531,12 +531,8 @@ class HistoryManager(QObject):
             return
 
         prepared_new_event = self._prepare_temporal_event(sample_id, new_event)
-        self.model.push_undo(
-            CmdType.LOC_EVENT_MOD,
-            video_path=video_path,
-            old_event=copy.deepcopy(events[index]),
-            new_event=copy.deepcopy(prepared_new_event),
-        )
+        if events[index] == prepared_new_event:
+            return
 
         new_head = prepared_new_event.get("head")
         new_label = prepared_new_event.get("label")
@@ -551,7 +547,38 @@ class HistoryManager(QObject):
                 labels_list.append(new_label)
                 schema_changed = True
 
-        events[index] = copy.deepcopy(prepared_new_event)
+        self._replace_localization_event(video_path, events, index, prepared_new_event, schema_changed)
+
+    def execute_localization_event_metadata_set(self, sample_id: str, event: dict, metadata: dict):
+        if not isinstance(metadata, dict):
+            return
+        video_path = self._path_for_sample(sample_id)
+        if not video_path:
+            return
+        events = self.model.localization_events.get(video_path, [])
+        index = self._find_loc_event_index(events, event)
+        if index < 0:
+            return
+
+        # Start with the canonical event, not its projected table copy. In
+        # particular, do not quantize UTC timestamps through position_ms.
+        updated = copy.deepcopy(events[index])
+        if metadata:
+            updated["metadata"] = copy.deepcopy(metadata)
+        else:
+            updated.pop("metadata", None)
+        if updated == events[index]:
+            return
+        self._replace_localization_event(video_path, events, index, updated)
+
+    def _replace_localization_event(self, video_path, events, index, new_event, schema_changed=False):
+        self.model.push_undo(
+            CmdType.LOC_EVENT_MOD,
+            video_path=video_path,
+            old_event=copy.deepcopy(events[index]),
+            new_event=copy.deepcopy(new_event),
+        )
+        events[index] = copy.deepcopy(new_event)
         self._sort_events_by_time(events)
         self._emit_post_mutation(
             touched_paths=[video_path],
@@ -1276,10 +1303,17 @@ class HistoryManager(QObject):
             pass
 
         target_identity = temporal_annotation_identity(event, ("head", "label"))
+        fallback_index = -1
         for idx, candidate in enumerate(events):
             if temporal_annotation_identity(candidate, ("head", "label")) == target_identity:
-                return idx
-        return -1
+                # A table copy can have a projected position_ms. Prefer its
+                # other fields to distinguish events sharing head/label/time.
+                projected_candidate = dict(candidate, position_ms=event.get("position_ms"))
+                if projected_candidate == event:
+                    return idx
+                if fallback_index < 0:
+                    fallback_index = idx
+        return fallback_index
 
     @staticmethod
     def _find_dense_event_index(events, event):

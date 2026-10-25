@@ -30,6 +30,30 @@ In the Dataset Explorer header table:
   dialog, choose one correct option, and navigate with ask-time table rows.
   See [the workflow](annotating.md#streaming-vqa).
 
+### Action Spotting Event Metadata
+
+In Localization, right-click an event row and choose **Edit Metadata…**. The
+window uses the same formatted JSON text editor as manifest metadata and edits
+the event under the pointer, even if another row was selected.
+
+Enter a JSON object (dictionary), such as
+`{"team": "home", "player": {"id": 7}, "tags": ["reviewed"]}`, and click
+**OK**. Nested objects, arrays, and other JSON values are allowed inside the
+object. Invalid JSON, a top-level array/scalar/null, and non-finite
+numbers are rejected; the text stays available for correction. **Cancel**
+discards the dialog's edits.
+
+Events without metadata start with `{}`. Accepting `{}` or leaving the editor
+blank (including whitespace only) removes the event's `metadata` field. If the
+field is already absent, it stays absent with no undo step. Effective changes
+apply immediately in memory as one undoable edit. Use Save or Export to write
+them to JSON. Unchanged values add no undo step.
+
+Metadata is stored in `data[].events[].metadata`. Editing an unconfirmed
+prediction's metadata preserves its confidence and model information and does
+not confirm it. Metadata also survives later event edits and confirmation.
+This editor currently covers action spotting events only.
+
 ## Add or Remove Data
 
 - Right-click a sample row: **Add Input...** to attach one or more additional files (or folders of files) to that sample, or **Remove Sample**
